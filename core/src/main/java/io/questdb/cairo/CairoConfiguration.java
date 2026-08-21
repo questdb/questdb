@@ -1169,12 +1169,6 @@ public interface CairoConfiguration {
 
     boolean isParquetExportStatisticsEnabled();
 
-    /**
-     * Whether the writer reclaims the dead space a merge-append leaves behind in a composite
-     * partition's column files. See PARTITION_COMPACTION.md.
-     */
-    boolean isPartitionCompactionEnabled();
-
     boolean isPartitionEncoderParquetRawArrayEncoding();
 
     boolean isPartitionEncoderParquetStatisticsEnabled();

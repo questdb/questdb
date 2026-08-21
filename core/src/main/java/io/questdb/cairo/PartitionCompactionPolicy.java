@@ -93,9 +93,6 @@ public class PartitionCompactionPolicy implements Mutable {
     public static boolean exceedsThresholds(
             CairoConfiguration configuration, long liveRows, long deadRows, int pieceCount, long avgRecordSize
     ) {
-        if (!configuration.isPartitionCompactionEnabled()) {
-            return false;
-        }
         if (pieceCount > configuration.getPartitionCompactionMaxPieces()) {
             return true;
         }
@@ -149,21 +146,19 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     /**
-     * The partition index to compact next, or -1. Reads every partition but the last: one pass, first
-     * three rules per partition, totals for the fourth, and the piece array touched only for the
+     * The partition index to compact next, or -1. Reads every partition, including the last: one pass,
+     * first three rules per partition, totals for the fourth, and the piece array touched only for the
      * partition that gets picked. A table with no composite partition costs one resident read per
-     * partition and no {@code _geometry} I/O at all.
+     * partition and no {@code _geometry} I/O at all. The caller (TableWriter.runCompaction) is
+     * responsible for closing and reopening the active partition around a REWRITE/MOVE-TAIL of it.
      */
     public int selectPartition(TxWriter txWriter, PartitionGeometry geometry, long avgRecordSize, long nowMicros) {
         selectedReason = REASON_NONE;
         selectedPartitionIndex = -1;
-        if (!configuration.isPartitionCompactionEnabled() || txWriter.getLagRowCount() > 0) {
+        if (txWriter.getLagRowCount() > 0) {
             return -1;
         }
-        // Never the last partition. That exclusion is what keeps compaction out of the fixedRowCount /
-        // transientRowCount adjustment, closeActivePartition and openLastPartition - and it costs a
-        // table that only ever receives backdated data into one partition its compaction.
-        final int n = txWriter.getPartitionCount() - 1;
+        final int n = txWriter.getPartitionCount();
         if (n <= 0) {
             return -1;
         }
@@ -254,10 +249,12 @@ public class PartitionCompactionPolicy implements Mutable {
      * partition cut into many pieces fragmented for as long as it stays cold.
      */
     public int selectFoldablePartition(TxWriter txWriter, PartitionGeometry geometry, long nowMicros, int fromIndex) {
-        if (!configuration.isPartitionCompactionEnabled() || txWriter.getLagRowCount() > 0) {
+        if (txWriter.getLagRowCount() > 0) {
             return -1;
         }
-        final int n = txWriter.getPartitionCount() - 1;
+        // Includes the last partition: JOIN only rewrites PartitionGeometry's piece array, never a byte
+        // of the column files or the directory's nameTxn, so the writer's own active mapping stays valid.
+        final int n = txWriter.getPartitionCount();
         for (int i = Math.max(0, fromIndex); i < n; i++) {
             if (geometry.getPieceCount(i) > 1 && !isSuppressed(txWriter.getPartitionTimestampByIndex(i), nowMicros)) {
                 selectedPartitionIndex = i;

@@ -49,9 +49,9 @@ Behind `cairo.o3.partition.merge.append.enabled`. OFF in production, ON by defau
 ## Not done
 
 - Squash and purge over a composite partition
-- Compaction of dead space: JOIN (fold file-adjacent pieces) and REWRITE (copy live rows to a fresh
-  directory) are now built, behind `cairo.partition.compaction.enabled` (default off) - see
-  PARTITION_COMPACTION_state.md. MOVE-TAIL, MAKE-PLAIN and TRIM-FILES (an instalment plan that reclaims
-  space without copying a whole partition) are still not built; REWRITE stands in for all three.
+- Compaction of dead space: JOIN (fold file-adjacent pieces), MOVE-TAIL (copy only the tail to a fresh
+  sibling) and REWRITE (copy live rows to a fresh directory) are built and always on - see
+  PARTITION_COMPACTION_state.md. MAKE-PLAIN and TRIM-FILES (an instalment plan that reclaims space without
+  copying a whole partition) are still not built; REWRITE stands in for both.
 - A floor on very small pieces (attempted, crashes)
 - Parquet conversion (out of scope)

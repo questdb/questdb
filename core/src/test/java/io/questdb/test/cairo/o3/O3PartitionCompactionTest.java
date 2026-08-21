@@ -565,8 +565,8 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                 " where name like '" + day + "%'");
     }
 
+    // Compaction is always on now; kept as a no-op so call sites still document intent.
     private static void enableCompaction() {
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_ENABLED, "true");
     }
 
     private static void enableMergeAppend() {

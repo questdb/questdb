@@ -1739,11 +1739,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean isPartitionCompactionEnabled() {
-        return getDelegate().isPartitionCompactionEnabled();
-    }
-
-    @Override
     public boolean isPartitionEncoderParquetRawArrayEncoding() {
         return getDelegate().isPartitionEncoderParquetRawArrayEncoding();
     }

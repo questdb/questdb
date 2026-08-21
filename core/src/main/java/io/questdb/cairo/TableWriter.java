@@ -5118,9 +5118,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * is the only caller today: {@code produceParquetFromNative} maps each column file as one flat
      * {@code [0, liveRows)} range from byte 0, which is only correct for an ordinary partition.
      * <p>
-     * Unlike the opportunistic pass {@link #runCompaction} runs from {@code housekeep}, this ignores the
-     * {@code cairo.partition.compaction.enabled} setting and every budget (row, join, time): conversion
-     * needs the partition compacted NOW, in this transaction, not eventually over several commits. JOIN
+     * Unlike the opportunistic pass {@link #runCompaction} runs from {@code housekeep}, this ignores every
+     * budget (row, join, time): conversion needs the partition compacted NOW, in this transaction, not
+     * eventually over several commits. JOIN
      * runs first and is free; REWRITE, when JOIN alone cannot finish the job, copies the partition's live
      * rows into a fresh directory - the same shape {@link #squashPartitionForce} already gives a classic
      * split partition, just for pieces instead of sibling directories. MOVE-TAIL is deliberately never
@@ -13623,9 +13623,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * JOIN comes first and always: it copies nothing, so folding whatever can be folded before deciding
      * whether a copy is needed is free. After a fold the rules are re-evaluated on the NEXT commit, from
      * committed state, rather than continued from a stale reading here.
+     * <p>
+     * The active (last) partition is an ordinary candidate like any other. A REWRITE or MOVE-TAIL of it
+     * retires the directory or row range {@code columns[]} is currently mapped against - a JOIN does not,
+     * since it only ever rewrites {@link PartitionGeometry}'s own piece array, never a file byte or a
+     * {@code nameTxn} - so only those two outcomes need {@code columns[]} closed and reopened against
+     * whatever {@code txWriter} records as the last partition afterward, before the next append (or
+     * {@link #processPartitionRemoveCandidates()}, called right after this method returns) reaches it.
      */
     private void runCompaction(long wallClockMicros) {
-        if (!configuration.isPartitionCompactionEnabled() || !PartitionBy.isPartitioned(partitionBy)) {
+        if (!PartitionBy.isPartitioned(partitionBy)) {
             return;
         }
         if (partitionCompactionPolicy == null) {
@@ -13646,7 +13653,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // spare a clean front for - MOVE-TAIL's whole point. Every other rule goes through it first.
         final boolean allowMoveTail = reason != PartitionCompactionPolicy.REASON_AGE;
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudget();
-        switch (compactPhysicalPartition(partitionIndex, unlimited, allowMoveTail, deadline)) {
+        final boolean isActivePartition = partitionIndex == txWriter.getPartitionCount() - 1;
+        final int result = compactPhysicalPartition(partitionIndex, unlimited, allowMoveTail, deadline);
+        switch (result) {
             case COMPACTION_REWRITTEN, COMPACTION_MOVED_TAIL ->
                 // Cooling off matters only after a copy. A fold cannot repeat - the pieces it merged are
                 // gone - so suppressing the partition after one would only delay the copy that follows it.
@@ -13654,6 +13663,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             case COMPACTION_NONE -> partitionCompactionPolicy.onDeclined(partitionTs, wallClockMicros);
             default -> {
             }
+        }
+        if (isActivePartition && (result == COMPACTION_REWRITTEN || result == COMPACTION_MOVED_TAIL)) {
+            closeActivePartition(false);
+            openLastPartition();
         }
     }
 
@@ -15528,9 +15541,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ObjList<O3CompositeMergeStrategy.Action> actions,
             int actionCount
     ) {
-        if (!configuration.isPartitionCompactionEnabled()) {
-            return false;
-        }
         long liveRows = 0;
         long deadRows = geometry.getE(partitionIndex) - txWriter.getPartitionSize(partitionIndex);
         int pieceCount = 0;

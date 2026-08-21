@@ -820,19 +820,13 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
      * </ul>
      */
     private static void setRndPartitionCompactionProperties(Rnd rnd) {
-        if (rnd.nextInt(3) == 0) {
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_ENABLED, false);
-            LOG.info().$("partition compaction fuzz mode [enabled=false]").$();
-            return;
-        }
         final int maxPieces = (int) Math.round(Math.pow(10, rnd.nextDouble() * 4));
         final int deadRowsRatio = (int) Math.round(Math.pow(10, rnd.nextDouble() * 3)) - 1;
         final long deadMinSize = Math.round(Math.pow(10, 5 + rnd.nextDouble() * 7));
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_ENABLED, true);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, maxPieces);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, deadRowsRatio);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, deadMinSize);
-        LOG.info().$("partition compaction fuzz mode [enabled=true, maxPieces=").$(maxPieces)
+        LOG.info().$("partition compaction fuzz mode [maxPieces=").$(maxPieces)
                 .$(", deadRowsRatio=").$(deadRowsRatio)
                 .$(", deadMinSize=").$(deadMinSize)
                 .I$();

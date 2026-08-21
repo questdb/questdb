@@ -1713,11 +1713,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isPartitionCompactionEnabled() {
-        return false;
-    }
-
-    @Override
     public boolean isPartitionEncoderParquetRawArrayEncoding() {
         return true;
     }
