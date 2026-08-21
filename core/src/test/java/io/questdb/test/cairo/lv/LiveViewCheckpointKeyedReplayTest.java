@@ -29,6 +29,7 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.LongList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -60,6 +61,78 @@ import org.junit.Test;
 public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     private static final int ACCOUNTS = 8;
     private static final int ROWS_PER_ACCOUNT_PER_DAY = 10;
+
+    @Test
+    public void testABoundaryTheKeyedScanNeverCrossesKeepsItsOwnPosition() throws Exception {
+        // Every cadence boundary records the count of live-view rows at or below it, and
+        // the ladder is the only place that number lives - a wrong one leaves the runtime
+        // serving correct rows and a from-base recompute agreeing with it, and the first
+        // thing to read it is the resume that credits the view with the rows the root
+        // claims.
+        //
+        // A whole-segment replay reads every row of the range it repairs, so a boundary its
+        // cursor never crosses genuinely has no row between it and the last row read: the
+        // position the replay ends on is that boundary's own. A KEYED replay reads nothing
+        // of the kind. Its cursor follows the corrected keys alone, so a boundary above the
+        // last of their rows still has every other key's rows between it and the end of the
+        // segment - rows the merge accounts for rather than the replay loop. Freezing those
+        // boundaries after the merge has been drained to the end credits each of them with
+        // the whole segment.
+        //
+        // The correction here touches acct-1, whose rows in the repaired day both sit at or
+        // below 01:00, while acct-2 carries five rows above it. So the keyed cursor stops
+        // at 01:00 and every one of those five boundaries is frozen without being crossed -
+        // which is the shape that separates each one's own position from the segment's
+        // total. They share an hour, and so a partition, because the keyed read is priced
+        // per index open per page frame and has to come out cheaper than reading the day.
+        armKeyedReplay();
+        assertMemoryLeak(() -> {
+            // One row per commit at a one-row cadence, so the repaired day carries five
+            // boundaries of its own rather than one.
+            createView(row(2, 1, "acct-1"));
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                for (int minute = 10; minute <= 50; minute += 10) {
+                    commit(row(2, 1, minute, 0, "acct-2"), job);
+                }
+                // The head, which closes the second day below it.
+                commit(row(5, 1, "acct-1"), job);
+                assertLadderCountsRowsAtOrBelowEachBoundary("before");
+
+                // Below every row the day already holds, on the account whose rows stop at
+                // 01:00.
+                commit(row(2, 0, 30, 0, "acct-1"), job);
+
+                Assert.assertEquals(
+                        "the correction must be repaired by key, or the case covers nothing",
+                        1,
+                        job.keyedReplaySegmentCountForTest()
+                );
+                Assert.assertEquals(
+                        "the merge must supply every row above the last key the replay followed",
+                        5,
+                        job.keyedReplayMergedRowsForTest()
+                );
+                assertLadderCountsRowsAtOrBelowEachBoundary("after");
+                assertViewMatchesRecompute();
+            }
+
+            // The resume is what reads those positions back: it credits the view with the
+            // rows the root it selects claims, so a ladder that over-counted leaves the
+            // running total disagreeing with the table it was measured against.
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(2, 0, 45, 0, "acct-2"), job);
+                Assert.assertEquals(
+                        "the view's own row counter must still describe its table",
+                        count("select count() from lv"),
+                        viewInstance().getLvRowsTotal()
+                );
+                assertViewMatchesRecompute();
+            }
+        });
+    }
 
     @Test
     public void testAKeyedRepairIntroducingAnAccountEmitsItsRowsAndKeepsTheRest() throws Exception {
@@ -526,6 +599,24 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                         + " and cod_acct_no != '" + correctedAccount + "' order by 2, 1",
                 new StringSink()
         );
+    }
+
+    /**
+     * Holds every timeline boundary to the number of live-view rows at or below its own
+     * timestamp, read off the published ladder and off the table it describes.
+     */
+    private void assertLadderCountsRowsAtOrBelowEachBoundary(String stage) throws Exception {
+        final LongList ladder = snapshotCheckpointLadder(viewInstance());
+        Assert.assertTrue(stage + ": the view must have sealed a ladder to check", ladder.size() > 0);
+        for (int i = 0, n = ladder.size() / 2; i < n; i++) {
+            final long maxTimestamp = ladder.getQuick(i * 2);
+            Assert.assertEquals(
+                    stage + ": boundary " + i + " at " + maxTimestamp
+                            + " must count the rows at or below it",
+                    count("select count() from lv where created_at <= " + maxTimestamp + "::timestamp"),
+                    ladder.getQuick(i * 2 + 1)
+            );
+        }
     }
 
     private void restartCycle() {

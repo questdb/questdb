@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -97,6 +98,50 @@ import org.junit.Test;
 public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     private static final int ACCOUNTS = 4;
     private static final int ROWS_PER_ACCOUNT_PER_DAY = 4;
+
+    @Test
+    public void testABoundaryTheKeyedScanNeverCrossesKeepsItsOwnPosition() throws Exception {
+        // The sparse route's half of the ladder property LiveViewCheckpointKeyedReplayTest
+        // pins for the merged one. A sparse publication writes none of the rows its merge
+        // walks, but it still accounts for every one of them - a row left where it stands is
+        // still a row below a boundary - so the ladder the two routes publish is the same,
+        // to the row, and so is the way it goes wrong.
+        //
+        // The correction touches acct-1, whose rows in the repaired day stop at 01:00, while
+        // acct-2 carries five above it. The keyed cursor therefore crosses none of the five
+        // boundaries those rows sealed, and each has to take the rows at or below itself
+        // rather than the segment's total.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(row(2, 1, 0, 0, "acct-1"));
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                for (int minute = 10; minute <= 50; minute += 10) {
+                    commit(row(2, 1, minute, 0, "acct-2"), job);
+                }
+                // The head, which closes the second day below it.
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+                assertLadderCountsRowsAtOrBelowEachBoundary("before");
+
+                commit(correction("acct-1"), job);
+
+                Assert.assertEquals(
+                        "the correction must publish sparsely, or the case covers nothing",
+                        1,
+                        job.sparsePublicationCountForTest()
+                );
+                Assert.assertEquals(
+                        "the merge must account for every row above the last key the replay followed",
+                        5,
+                        job.sparsePublicationRowsKeptForTest()
+                );
+                assertLadderCountsRowsAtOrBelowEachBoundary("after");
+                assertViewMatchesRecompute();
+            }
+        });
+    }
 
     @Test
     public void testASegmentRepairOnADedupKeyedViewStillPublishesItsWholeRange() throws Exception {
@@ -1069,6 +1114,24 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         Assert.assertEquals(durableRows("lv_plain"), durableRows("lv"));
         assertViewMatchesRecompute("lv");
         assertViewMatchesRecompute("lv_plain");
+    }
+
+    /**
+     * Holds every timeline boundary to the number of live-view rows at or below its own
+     * timestamp, read off the published ladder and off the table it describes.
+     */
+    private void assertLadderCountsRowsAtOrBelowEachBoundary(String stage) throws Exception {
+        final LongList ladder = snapshotCheckpointLadder(engine.getLiveViewRegistry().getViewInstance("lv"));
+        Assert.assertTrue(stage + ": the view must have sealed a ladder to check", ladder.size() > 0);
+        for (int i = 0, n = ladder.size() / 2; i < n; i++) {
+            final long maxTimestamp = ladder.getQuick(i * 2);
+            Assert.assertEquals(
+                    stage + ": boundary " + i + " at " + maxTimestamp
+                            + " must count the rows at or below it",
+                    count("select count() from lv where created_at <= " + maxTimestamp + "::timestamp"),
+                    ladder.getQuick(i * 2 + 1)
+            );
+        }
     }
 
     private void assertViewMatchesRecompute() throws Exception {

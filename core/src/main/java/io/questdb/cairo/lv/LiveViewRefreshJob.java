@@ -7383,13 +7383,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     break;
                                 }
                             }
+                            // Boundaries the replay's cursor never crossed.
+                            //
+                            // A whole-segment replay read every row of [C, H), so a
+                            // boundary it did not cross has no row between it and the last
+                            // row read: the state the replay ends on is that boundary's
+                            // state, and so is the position.
+                            //
+                            // A keyed replay read nothing of the kind. Its cursor follows
+                            // the affected keys alone, so a boundary above the last of
+                            // their rows still has every other key's rows between it and
+                            // H - rows the merge accounts for rather than the loop. The
+                            // per-boundary drain inside the freeze is what holds each one
+                            // to the rows at or below itself, so the freeze has to run
+                            // BEFORE the rest of the merge is accounted for: draining
+                            // first leaves every uncrossed boundary carrying the whole
+                            // range up to H, which is a position no row set ever had.
+                            //
+                            // A turn that yielded owes them the rows it has not read yet,
+                            // so it freezes none.
+                            if (!yielded && timelineCapture != null) {
+                                boundaryFreezingCursor.freezeRemaining();
+                            }
                             if (keyedRoute && !yielded) {
-                                // The stored rows above the last key the replay followed.
-                                // They sit inside the range the replacement deletes, so a
-                                // repair that stopped emitting at its own last row would
-                                // drop them. Ahead of the freeze below, which is what
-                                // makes the boundaries above the replay's last row carry
-                                // the whole segment's positions.
+                                // The stored rows above the last boundary the freeze
+                                // drained to. They sit inside the range the replacement
+                                // deletes, so a repair that stopped accounting at its own
+                                // last row would drop them.
                                 keyedReplay.drainRemaining();
                                 if (keyedReplay.getMergedRows() > 0) {
                                     // The block's extremes are the two routes' together: a
@@ -7404,18 +7424,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                         replayMaxTs = mergedMaxTs;
                                     }
                                 }
-                                if (timelineCapture != null) {
-                                    boundaryFreezingCursor.setRowPosition(
-                                            durableRowsBelowFloor + appendedRows + keyedReplay.getMergedRows());
-                                }
-                            }
-                            // Boundaries above the last row the replay saw. No qualifying
-                            // row sits between them and that row, so the state the replay
-                            // ends on is their state too - and it is bounded above by H,
-                            // which every one of them is below. A turn that yielded owes
-                            // them the rows it has not read yet, so it freezes none.
-                            if (!yielded && timelineCapture != null) {
-                                boundaryFreezingCursor.freezeRemaining();
                             }
                             if (timelineCapture != null) {
                                 capturedBoundaries = boundaryFreezingCursor.getCaptured();
