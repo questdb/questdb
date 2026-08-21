@@ -87,19 +87,19 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
                 // the wide one puts a single key's run across several index row
                 // groups, which is the only way the group-skip and cross-group
                 // paths get compared against the native reader at all.
-                final long narrowImSize = fuzzOneFixture(
-                        rnd, rnd.nextInt(40_000) + 20_000, SYM_CARDINALITY, "narrow");
-                final long wideImSize = fuzzOneFixture(
-                        rnd, WIDE_RUN_ROWS, WIDE_RUN_CARDINALITY, "wide");
-                // Proof the wide fixture really does span more index row groups
-                // rather than merely holding more rows: the _im carries one
-                // section entry per row group, so a fixture with FEWER keys but
-                // MORE groups still produces the bigger sidecar. Without this
-                // the multi-group coverage is assumed, not demonstrated.
+                fuzzOneFixture(rnd, rnd.nextInt(40_000) + 20_000, SYM_CARDINALITY, "narrow");
+                final int wideGroups = fuzzOneFixture(rnd, WIDE_RUN_ROWS, WIDE_RUN_CARDINALITY, "wide");
+                // Proof, not assumption, that the wide fixture crosses a group
+                // boundary. An earlier version compared _im SIZES, which does
+                // not establish this: the _im grows with the DATA row group
+                // count too, so the wide fixture's bigger sidecar could come
+                // entirely from having more rows. Ask for the index row group
+                // count directly.
                 Assert.assertTrue(
-                        "the wide fixture must produce more index row groups than the narrow one"
-                                + " [narrowIm=" + narrowImSize + ", wideIm=" + wideImSize + ']',
-                        wideImSize > narrowImSize
+                        "the wide fixture must span more than one INDEX row group, or the"
+                                + " group-skip and cross-group paths are still untested"
+                                + " [indexRowGroups=" + wideGroups + ']',
+                        wideGroups > 1
                 );
             });
         } catch (Throwable t) {
@@ -107,7 +107,7 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private long fuzzOneFixture(Rnd rnd, long rowCount, int cardinality, String label) throws Exception {
+    private int fuzzOneFixture(Rnd rnd, long rowCount, int cardinality, String label) throws Exception {
         final String nativeArm = "native_arm_" + label;
         final String parquetArm = "parquet_arm_" + label;
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
@@ -160,10 +160,7 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
                 assertSameSequence(nativeReader, parquetReader, nativeCol, parquetCol,
                         key, lo, hi, covers, direction);
             }
-            // The form cache is filled at partition OPEN and readers open
-            // lazily, so this must follow the reads above.
-            parquetReader.openPartition(0);
-            return parquetReader.getPartitionIndexImFileSize(0, parquetCol);
+            return ((AbstractParquetPostingIndexReader) parquetFwd).getIndexRowGroupCount();
         }
     }
 

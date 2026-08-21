@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.idx;
 
+import org.jetbrains.annotations.TestOnly;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -283,6 +284,18 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      *
      * @see #collectDistinctKeys(DirectBitSet)
      */
+    /**
+     * The number of INDEX row groups in the sealed index parquet -- not the
+     * DATA row groups the partition itself has. Exposed so a differential test
+     * can prove it compares across a row-group boundary rather than assuming
+     * it: the {@code _im}'s size grows with the data row group count too, so
+     * size alone cannot tell the two apart.
+     */
+    @TestOnly
+    public int getIndexRowGroupCount() {
+        return imReader.getIndexRowGroupCount();
+    }
+
     @Override
     public int collectDistinctKeysInRange(DirectBitSet foundKeys, long rowLo, long rowHi) {
         final int groups = imReader.getIndexRowGroupCount();
