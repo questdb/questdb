@@ -43,6 +43,15 @@ public class BitSet implements Mutable {
         this.words = new long[wordIndex(nBits - 1) + 1];
     }
 
+    /**
+     * Structural copy constructor. Used to snapshot a reused/mutable BitSet before it can be
+     * cleared or repopulated by a reentrant caller (e.g. a scratch field on a SQL code generator).
+     */
+    public BitSet(BitSet other) {
+        this.initialNBits = other.initialNBits;
+        this.words = Arrays.copyOf(other.words, other.words.length);
+    }
+
     public long capacity() {
         return (long) words.length * BITS_PER_WORD;
     }

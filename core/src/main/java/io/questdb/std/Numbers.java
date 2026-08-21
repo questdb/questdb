@@ -1108,6 +1108,13 @@ public final class Numbers {
         return (eq || (a != IPv4_NULL && b != IPv4_NULL)) && (negated ? (eq || a1 > b1) : (!eq && a1 < b1));
     }
 
+    public static double longToDouble(long value) {
+        if (value != Numbers.LONG_NULL) {
+            return value;
+        }
+        return Double.NaN;
+    }
+
     public static float longToFloat(long value) {
         if (value != Numbers.LONG_NULL) {
             return value;

@@ -31,6 +31,7 @@ import io.questdb.std.BoolList;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -51,6 +52,7 @@ public class LoopingRecordSink implements RecordSink {
     private final IntList skewedIndices;
     private final BoolList strAsVarchar;
     private final BoolList symAsString;
+    private final IntList targetTypes;
     private final BoolList timestampAsNanos;
     private ObjList<Function> keyFunctions;
 
@@ -62,12 +64,32 @@ public class LoopingRecordSink implements RecordSink {
             @Nullable BitSet writeStringAsVarchar,
             @Nullable BitSet writeTimestampAsNanos
     ) {
+        this(columnTypes, columnFilter, skewIndex, writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos, null);
+    }
+
+    /**
+     * Same as {@link #LoopingRecordSink(ColumnTypes, ColumnFilter, IntList, BitSet, BitSet, BitSet)},
+     * but additionally accepts {@code targetKeyTypes}: when a JOIN key column's own real type
+     * differs from the type recorded for that same slot in {@code targetKeyTypes} (e.g. an INT
+     * column feeding a LONG-wide comparison-buffer slot), {@link #copyColumn} widens the value on
+     * write instead of assuming read type equals write type.
+     */
+    public LoopingRecordSink(
+            ColumnTypes columnTypes,
+            ColumnFilter columnFilter,
+            @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar,
+            @Nullable BitSet writeTimestampAsNanos,
+            @Nullable ColumnTypes targetKeyTypes
+    ) {
         int columnCount = columnFilter.getColumnCount();
         this.columnIndices = new IntList(columnCount);
         this.columnTypes = new IntList(columnCount);
         this.skewedIndices = new IntList(columnCount);
         this.symAsString = new BoolList(columnCount);
         this.strAsVarchar = new BoolList(columnCount);
+        this.targetTypes = new IntList(columnCount);
         this.timestampAsNanos = new BoolList(columnCount);
 
         for (int i = 0; i < columnCount; i++) {
@@ -84,6 +106,7 @@ public class LoopingRecordSink implements RecordSink {
                 this.skewedIndices.extendAndSet(i, -1);  // sentinel, not used
                 this.symAsString.extendAndSet(i, false);
                 this.strAsVarchar.extendAndSet(i, false);
+                this.targetTypes.extendAndSet(i, type);
                 this.timestampAsNanos.extendAndSet(i, false);
                 continue;
             }
@@ -94,6 +117,7 @@ public class LoopingRecordSink implements RecordSink {
             this.skewedIndices.extendAndSet(i, getSkewedIndex(actualIndex, skewIndex));
             this.symAsString.extendAndSet(i, writeSymbolAsString != null && writeSymbolAsString.get(actualIndex));
             this.strAsVarchar.extendAndSet(i, writeStringAsVarchar != null && writeStringAsVarchar.get(actualIndex));
+            this.targetTypes.extendAndSet(i, targetKeyTypes != null ? targetKeyTypes.getColumnType(i) : type);
             this.timestampAsNanos.extendAndSet(i, writeTimestampAsNanos != null && writeTimestampAsNanos.get(actualIndex));
         }
 
@@ -121,7 +145,7 @@ public class LoopingRecordSink implements RecordSink {
                 continue;
             }
 
-            copyColumn(r, w, type, skewedIdx, symStr, strVar, tsNanos);
+            copyColumn(r, w, type, targetTypes.getQuick(i), skewedIdx, symStr, strVar, tsNanos);
         }
 
         // Copy function keys
@@ -158,7 +182,80 @@ public class LoopingRecordSink implements RecordSink {
      * </ul>
      * Merging these would require either boxing primitives or complex abstractions that hurt performance.
      */
-    private void copyColumn(Record r, RecordSinkSPI w, int type, int idx, boolean symStr, boolean strVar, boolean tsNanos) {
+    private void copyColumn(Record r, RecordSinkSPI w, int type, int targetType, int idx, boolean symStr, boolean strVar, boolean tsNanos) {
+        final int sourceTag = ColumnType.tagOf(type);
+        final int targetTag = ColumnType.tagOf(targetType);
+        if (targetTag != sourceTag) {
+            // JOIN key column whose real type is numerically narrower than the shared
+            // comparison buffer's slot type -- see ColumnType.commonNumericWideningType().
+            // BYTE/SHORT have no null sentinel, so a plain widen is safe; INT/LONG must go
+            // through Numbers.xToY so the source type's own null sentinel (Integer.MIN_VALUE /
+            // Long.MIN_VALUE) maps to the target type's, instead of being silently converted
+            // into a bogus non-null value.
+            switch (sourceTag) {
+                case ColumnType.BYTE:
+                    switch (targetTag) {
+                        case ColumnType.SHORT:
+                            w.putShort(r.getByte(idx));
+                            return;
+                        case ColumnType.INT:
+                            w.putInt(r.getByte(idx));
+                            return;
+                        case ColumnType.LONG:
+                            w.putLong(r.getByte(idx));
+                            return;
+                        case ColumnType.FLOAT:
+                            w.putFloat(r.getByte(idx));
+                            return;
+                        case ColumnType.DOUBLE:
+                            w.putDouble(r.getByte(idx));
+                            return;
+                    }
+                    break;
+                case ColumnType.SHORT:
+                    switch (targetTag) {
+                        case ColumnType.INT:
+                            w.putInt(r.getShort(idx));
+                            return;
+                        case ColumnType.LONG:
+                            w.putLong(r.getShort(idx));
+                            return;
+                        case ColumnType.FLOAT:
+                            w.putFloat(r.getShort(idx));
+                            return;
+                        case ColumnType.DOUBLE:
+                            w.putDouble(r.getShort(idx));
+                            return;
+                    }
+                    break;
+                case ColumnType.INT:
+                    switch (targetTag) {
+                        case ColumnType.LONG:
+                            w.putLong(Numbers.intToLong(r.getInt(idx)));
+                            return;
+                        case ColumnType.FLOAT:
+                            w.putFloat(Numbers.intToFloat(r.getInt(idx)));
+                            return;
+                        case ColumnType.DOUBLE:
+                            w.putDouble(Numbers.intToDouble(r.getInt(idx)));
+                            return;
+                    }
+                    break;
+                case ColumnType.LONG:
+                    switch (targetTag) {
+                        case ColumnType.FLOAT:
+                            w.putFloat(Numbers.longToFloat(r.getLong(idx)));
+                            return;
+                        case ColumnType.DOUBLE:
+                            w.putDouble(Numbers.longToDouble(r.getLong(idx)));
+                            return;
+                    }
+                    break;
+                case ColumnType.FLOAT:
+                    w.putDouble(r.getFloat(idx));
+                    return;
+            }
+        }
         switch (ColumnType.tagOf(type)) {
             case ColumnType.INT:
                 w.putInt(r.getInt(idx));

@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriter;
@@ -2134,8 +2135,8 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         try {
             if (isMulti) {
                 final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
-                slaveStates.add(new HorizonJoinSlaveState(firstSlaveFactory, 1, 1, null, 1, null, null));
-                slaveStates.add(new HorizonJoinSlaveState(secondSlaveFactory, 1, 1, null, 1, null, null));
+                slaveStates.add(new HorizonJoinSlaveState(firstSlaveFactory, 1, 1, null, 1, null, null, null, null, null, null, null, null, null, null, null, null));
+                slaveStates.add(new HorizonJoinSlaveState(secondSlaveFactory, 1, 1, null, 1, null, null, null, null, null, null, null, null, null, null, null, null));
                 new AsyncMultiHorizonJoinNotKeyedRecordCursorFactory(
                         configuration,
                         new BytecodeAssembler(),
@@ -2146,8 +2147,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                         masterFactory,
                         slaveStates,
                         null,
-                        new Class[2],
-                        new Class[2],
+                        masterFactory.getMetadata(),
                         new long[]{0},
                         0,
                         groupByFunctions,
@@ -2171,6 +2171,14 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                         0,
                         groupByFunctions,
                         1,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
                         null,
                         null,
                         null,
@@ -2268,6 +2276,14 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                     null,
                     null,
                     null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
                     1,
                     null,
                     null,
@@ -2340,8 +2356,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                     masterFactory,
                     states,
                     null,
-                    new Class[3],
-                    new Class[3],
+                    masterFactory.getMetadata(),
                     new long[]{0},
                     0,
                     groups,
@@ -2558,7 +2573,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         private int getFactoryCalls;
 
         private CountingSlaveState(RecordCursorFactory factory, RuntimeException failure, int failureCall) {
-            super(factory, 1, 1, null, 1, null, null);
+            super(factory, 1, 1, null, 1, null, null, null, null, null, null, null, null, null, null, null, null);
             this.failure = failure;
             this.failureCall = failureCall;
         }
