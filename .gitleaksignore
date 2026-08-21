@@ -4,12 +4,19 @@
 #
 #     <file>:<rule-id>:<start-line>
 #
-# Do NOT use the four-part <commit>:<file>:<rule-id>:<start-line> form that the
-# gitleaks GitHub Action prints in its pull request comment. PRs here are
-# squash-merged, so the commit the action names never reaches master. A
-# four-part entry silences the finding on the pull request, then stops matching
-# once the squash commit exists, so the push scan of master reports the same
-# finding again and fails that build.
+# A failing Gitleaks job appends ready-to-paste lines in this form to its job
+# summary, under "Suppressing a false positive".
+#
+# Do NOT use the four-part <commit>:<file>:<rule-id>:<start-line> form that
+# gitleaks labels "Fingerprint:" in the job log. PRs here are squash-merged, so
+# the commit it names never reaches master. A four-part entry silences the
+# finding on the pull request, then stops matching once the squash commit
+# exists, so the push scan of master reports the same finding again and fails
+# that build.
+#
+# Note that the pull request scan covers every commit on the branch, not the
+# squashed diff. A secret-shaped line added in one commit and removed in a later
+# one still fails the check, and editing the file does not clear it.
 #
 # This file previously carried four-part entries from PR #6800. They named
 # commits that never reached master, both files they pointed at have since moved

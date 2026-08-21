@@ -372,6 +372,23 @@ Before opening a PR, please ensure:
   Reviewers should not have to reverse-engineer algorithms from code to understand
   what the PR does.
 
+## Secret scanning
+
+The `Gitleaks` check scans every commit on your branch for credentials. If it
+fails on a real secret, rotate it before doing anything else.
+
+If it is a false positive, the failing job's summary ends with the exact lines
+to add to `.gitleaksignore`, in the commit-independent three-part
+`<file>:<rule-id>:<start-line>` form. Add them and commit them to your branch.
+
+Do not paste the four-part `Fingerprint:` line that gitleaks prints in the job
+log. PRs here are squash-merged, so the commit it names never reaches `master`:
+the entry silences your PR and then fails the push scan of `master`.
+
+Note that the check covers every commit on the branch, not the squashed diff. A
+secret-shaped line added in one commit and removed in a later one still fails
+the check.
+
 ## Branching
 
 External contributors should contribute from forks of the repository. Internal

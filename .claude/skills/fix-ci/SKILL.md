@@ -82,7 +82,12 @@ gh run view {run_id} --json jobs --jq '.jobs[] | select(.conclusion == "failure"
 Report these as Category E (non-test failures) in the final output. Common cases:
 - **Danger** — PR convention issues (title format, description, labels). Show the comment: `gh pr view $PR --comments --jq '.comments[-1].body'`
 - **build** — compilation failure. The job log contains the error.
-- **gitleaks** — secret detected in diff.
+- **gitleaks** — secret detected in diff. The failing job's summary ends with
+  ready-to-paste `.gitleaksignore` lines in the commit-independent three-part
+  `<file>:<rule-id>:<start-line>` form. If the finding is a false positive, add
+  those lines and commit them. Never paste the four-part `Fingerprint:` line
+  from the job log — it names a commit the squash-merge discards, so it silences
+  the PR and then fails the push scan of `master`.
 
 ### 1e. Triage
 

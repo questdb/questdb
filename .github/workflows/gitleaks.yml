@@ -26,3 +26,26 @@ jobs:
           # then fails the push scan of master. See .gitleaksignore for the form
           # that survives. Findings still fail the job and appear in its summary.
           GITLEAKS_ENABLE_COMMENTS: "false"
+      # gitleaks prints that same four-part fingerprint itself, labelled
+      # "Fingerprint:", in the log of the step above. Dropping the comment
+      # removes the instruction but not the value, so append the form that does
+      # survive a squash to the summary the failure warning already points at.
+      - name: Report ignorable fingerprints
+        if: ${{ failure() && env.HAS_GITLEAKS_LICENSE == 'true' }}
+        run: |
+          [ -f results.sarif ] || exit 0
+          fingerprints=$(jq -r '.runs[]?.results[]? | "\(.locations[0].physicalLocation.artifactLocation.uri):\(.ruleId):\(.locations[0].physicalLocation.region.startLine)"' results.sarif 2>/dev/null | sort -u) || true
+          [ -n "$fingerprints" ] || exit 0
+          {
+            echo '### Suppressing a false positive'
+            echo
+            echo 'Add the matching line to `.gitleaksignore` and commit it to this branch:'
+            echo
+            echo '```'
+            echo "$fingerprints"
+            echo '```'
+            echo
+            echo 'Do NOT paste the four-part `Fingerprint:` line from the job log. It names a'
+            echo 'commit that the squash-merge discards, so it silences this pull request and'
+            echo 'then fails the push scan of `master`.'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
