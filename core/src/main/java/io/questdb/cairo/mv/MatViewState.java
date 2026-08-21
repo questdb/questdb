@@ -133,6 +133,9 @@ public class MatViewState implements QuietCloseable {
     private volatile long lastRefreshFinishTimestampUs = Numbers.LONG_NULL;
     private volatile long lastRefreshStartTimestampUs = Numbers.LONG_NULL;
     private volatile boolean pendingInvalidation;
+    // Set when an UPDATE_REFRESH_INTERVALS task cannot take the latch. The intervals timer
+    // re-enqueues on its next tick instead of hot-spinning the refresh worker queue.
+    private volatile boolean pendingRefreshIntervalsUpdate;
     // Protected by this.latch.
     private long recordRowCopierMetadataVersion;
     // Protected by this.latch.
@@ -140,6 +143,9 @@ public class MatViewState implements QuietCloseable {
     // Protected by this.latch.
     // Base table txn that corresponds to refreshIntervals.
     private volatile long refreshIntervalsBaseTxn = -1;
+    // Wall-clock micros when the current holder acquired the refresh latch. Cleared in unlock().
+    // MatViewTimerJob uses this to log when a parked refresh silently stalls a timer view.
+    private volatile long refreshLockTimestampUs = Numbers.LONG_NULL;
     // Wall-clock micros before which the view must not be refreshed after a transient failure
     // (e.g. base table reader pool exhausted). The view stays valid; MatViewTimerJob re-drives an
     // incremental refresh once the deadline elapses. Numbers.LONG_NULL means no pending retry.
@@ -457,6 +463,10 @@ public class MatViewState implements QuietCloseable {
         return refreshIntervalsSeq.get();
     }
 
+    public long getRefreshLockTimestampUs() {
+        return refreshLockTimestampUs;
+    }
+
     public long getRefreshRetryAfterMicros() {
         return refreshRetryAfterMicros;
     }
@@ -526,6 +536,10 @@ public class MatViewState implements QuietCloseable {
         return pendingInvalidation;
     }
 
+    public boolean isPendingRefreshIntervalsUpdate() {
+        return pendingRefreshIntervalsUpdate;
+    }
+
     public void markAsDropped() {
         dropped = true;
         telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, null, 0);
@@ -549,6 +563,18 @@ public class MatViewState implements QuietCloseable {
         this.refreshRetryCount = 0;
     }
 
+    public void markPendingRefreshIntervalsUpdate() {
+        pendingRefreshIntervalsUpdate = true;
+    }
+
+    /**
+     * Clears the flag set when an {@code UPDATE_REFRESH_INTERVALS} task could not take the refresh
+     * latch. {@link MatViewTimerJob} re-enqueues while this remains true.
+     */
+    public void clearPendingRefreshIntervalsUpdate() {
+        pendingRefreshIntervalsUpdate = false;
+    }
+
     /**
      * Clears the pending transient-refresh retry deadline <em>iff</em> it still equals
      * {@code observedDeadline}, marking the view eligible for refresh now. This is an off-latch CAS:
@@ -564,6 +590,16 @@ public class MatViewState implements QuietCloseable {
      */
     public boolean clearRefreshRetry(long observedDeadline) {
         return REFRESH_RETRY_AFTER_UPDATER.compareAndSet(this, observedDeadline, Numbers.LONG_NULL);
+    }
+
+    /**
+     * Records when this state's refresh latch was acquired. Callers invoke this immediately after a
+     * successful {@link #tryLock()} so {@link MatViewTimerJob} can detect a refresh that parks while
+     * holding the latch.
+     */
+    public void noteRefreshLocked(long nowUs) {
+        assert latch.get();
+        refreshLockTimestampUs = nowUs;
     }
 
     /**
@@ -819,6 +855,7 @@ public class MatViewState implements QuietCloseable {
     }
 
     public void unlock() {
+        refreshLockTimestampUs = Numbers.LONG_NULL;
         if (!latch.compareAndSet(true, false)) {
             throw new IllegalStateException("cannot unlock, not locked");
         }
