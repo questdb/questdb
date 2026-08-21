@@ -641,8 +641,15 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         // per frame, not the per-key factories it built them from. Those are this
         // factory's, grown across repairs and reused, so they are freed here.
         failure = Misc.freeObjListBestEffort(failure, fwdIndexedRowCursorFactories);
-        fwdIndexedRowCursorFactories.clear();
-        fwdIndexedCursorFactoriesIdx[0] = 0;
+        // A constructor that fails before this class initializes its own fields still runs
+        // close(), and leaves both of these null. Guard them so cleanup reaches the owners
+        // freed below rather than losing the original failure to a NullPointerException.
+        if (fwdIndexedRowCursorFactories != null) {
+            fwdIndexedRowCursorFactories.clear();
+        }
+        if (fwdIndexedCursorFactoriesIdx != null) {
+            fwdIndexedCursorFactoriesIdx[0] = 0;
+        }
         failure = Misc.freeBestEffort(failure, fwdPageFrameCursor);
         if (bwdPageFrameCursor != fwdPageFrameCursor) {
             failure = Misc.freeBestEffort(failure, bwdPageFrameCursor);
