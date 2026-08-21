@@ -40,6 +40,8 @@ import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.ObjHashSet;
 import io.questdb.test.mp.TestWorkerPool;
 
+import java.io.IOException;
+import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -50,6 +52,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * worker pool keeps test scheduling deterministic.
  */
 public final class RestartableQwpServer implements AutoCloseable {
+    static final int PORT_PICK_ATTEMPTS = 5;
     private static final Log LOG = LogFactory.getLog(RestartableQwpServer.class);
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine engine;
@@ -87,12 +90,68 @@ public final class RestartableQwpServer implements AutoCloseable {
     }
 
     /**
-     * Pick a free TCP port by binding port 0 and reading what the OS gave us.
+     * Picks a TCP port that a plain {@code new ServerSocket(0)} reports free on the wildcard
+     * address AND that this method then also binds successfully on the loopback address. A
+     * candidate a foreign process already LISTENs on at {@code 127.0.0.1} fails that second bind,
+     * and this method picks another one.
+     * <p>
+     * The loopback probe matters because {@code Net.socketTcp(false)} sets {@code SO_REUSEADDR}
+     * before {@code bind} (see {@code core/src/main/c/share/net.c}, reached through
+     * {@code AbstractIODispatcher}). On macOS/BSD, the platform we verified this on, the test
+     * server's wildcard bind over an existing loopback-only listener SUCCEEDS instead of failing,
+     * and the kernel then routes loopback connections to the more specific socket -- our server
+     * listens where nobody dials. That is how {@code QwpIngressOracleFuzzTest} once died on a
+     * ws-upgrade {@code HTTP/1.1 404 Not Found} that no QuestDB server in the JVM had sent. Linux
+     * is expected to behave differently: {@code inet_csk_bind_conflict} refuses a bind that
+     * conflicts with a LISTENing socket even under {@code SO_REUSEADDR}. Where the kernel refuses
+     * the bind, the server fails loudly at startup instead of listening in the wrong place, and
+     * this probe merely spares us that failure.
+     * <p>
+     * Whether an ephemeral allocator ever hands out such a port at all is platform-dependent;
+     * measurements on one machine disagreed and settled nothing, so this javadoc claims no rule
+     * about it. The probe also leaves the TOCTOU window open, because it closes the candidate
+     * before the caller binds it and the stable-port restart contract of this class rules out
+     * holding it. It rejects only what is certainly wrong: a port ALREADY occupied on the
+     * loopback address at the moment we hand it out.
      */
-    public static int pickFreePort() throws Exception {
-        try (ServerSocket s = new ServerSocket(0)) {
-            s.setReuseAddress(true);
-            return s.getLocalPort();
+    public static int pickFreePort() throws IOException {
+        return pickFreePort(RestartableQwpServer::allocateWildcardPort);
+    }
+
+    /**
+     * Seam over {@link #pickFreePort()}: the caller supplies the candidate ports the loopback
+     * probe then vets. Every caller outside this class's own unit test uses the no-argument
+     * overload, which feeds it {@code new ServerSocket(0)}. The unit test feeds it a port it
+     * holds a loopback listener on, which is the only way a test can reach the retry and
+     * exhaustion branches deterministically: occupancy is the only bind failure a test can
+     * arrange, and waiting for an ephemeral allocator to hand out an occupied port is a wait the
+     * javadoc above explains nobody can promise ever ends. The probe's bind can fail for other
+     * reasons too -- see the throw below -- but no test drives those.
+     */
+    static int pickFreePort(PortCandidateSupplier candidates) throws IOException {
+        int port = -1;
+        IOException lastError = null;
+        for (int attempt = 1; attempt <= PORT_PICK_ATTEMPTS; attempt++) {
+            port = candidates.next();
+            try (ServerSocket loopback = new ServerSocket(port, 0, InetAddress.getLoopbackAddress())) {
+                return loopback.getLocalPort();
+            } catch (IOException shadowed) {
+                lastError = shadowed;
+                LOG.info().$("picked port is taken on the loopback address, picking another [port=").$(port)
+                        .$(", attempt=").$(attempt)
+                        .$(", reason=").$(shadowed.getMessage())
+                        .I$();
+            }
+        }
+        // The loopback bind can also fail for reasons other than occupancy, such as a sandbox
+        // denying the bind. Carry the last failure as the cause so the caller sees which one hit.
+        throw new IllegalStateException("no candidate port bound on 127.0.0.1 after "
+                + PORT_PICK_ATTEMPTS + " attempts [lastPort=" + port + ']', lastError);
+    }
+
+    private static int allocateWildcardPort() throws IOException {
+        try (ServerSocket wildcard = new ServerSocket(0)) {
+            return wildcard.getLocalPort();
         }
     }
 
@@ -160,5 +219,10 @@ public final class RestartableQwpServer implements AutoCloseable {
         }
         server = null;
         workerPool = null;
+    }
+
+    @FunctionalInterface
+    interface PortCandidateSupplier {
+        int next() throws IOException;
     }
 }

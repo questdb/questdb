@@ -57,6 +57,10 @@ import org.junit.Test;
  * a runaway sort crosses the limit and fails at the offending allocation
  * site.
  * <p>
+ * The two {@code AsyncTopK} tests here breach through the atom's <em>encoded</em>
+ * buffer, not its tree chain: with the default
+ * {@code cairo.sql.orderby.sort.enabled=true} the atom never picks the tree.
+ * <p>
  * The per-query limit is applied per test in {@link #setUp()} via
  * {@code setProperty} so it survives the per-test override reset; the provider
  * reads it live on each tracker acquisition. Tests that should breach the limit
@@ -114,10 +118,14 @@ public class SortMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testAsyncTopKOpenFailureReleasesAllocations() throws Exception {
-        // A non-encodable (varchar) key forces AsyncTopK's tree-chain path, whose initial key heap honours
+        // A varchar key takes AsyncTopK's encoded path - SortKeyEncoder.isSupported() accepts every type
+        // ORDER BY accepts, varchar included - and the encoded buffer's variable-key heap is sized off
         // CAIRO_SQL_SORT_KEY_PAGE_SIZE; inflating it past the limit breaches in reopen() at cursor open,
         // regardless of worker count. Reusing one factory across opens checks the failed-open cleanup:
-        // without it the page frame sequence is never reset and the next open trips a stale-state assertion.
+        // without it the page frame sequence is never reset and the next open trips a stale-state
+        // assertion. The tree-chain arm of the same atom is covered by
+        // ParallelTopKFuzzTest.testParallelTopKTreeChain, which is the only way to reach it: it needs
+        // cairo.sql.orderby.sort.enabled=false, not a key type the encoder declines.
         setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab AS (SELECT x, cast(x AS varchar) k, x::timestamp ts FROM long_sequence(100)) TIMESTAMP(ts) PARTITION BY DAY");

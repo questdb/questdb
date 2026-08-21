@@ -134,6 +134,14 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         }
         size = 0;
         ff = null;
+        // Drop the append bounds of the mapping we no longer own. checkAndExtend() returns
+        // early for any address at or below lim, so a stale lim lets jumpTo()/appendAddressFor()
+        // hand out pointers into unmapped space instead of failing, and zero() -- which memsets
+        // lim - pageAddress bytes from pageAddress, already nulled above -- would memset lim
+        // bytes starting at address 0. Reset unconditionally: a close on an instance that never
+        // mapped anything must end in the same clean state, same as size and ff.
+        lim = 0;
+        appendAddress = 0;
     }
 
     @Override

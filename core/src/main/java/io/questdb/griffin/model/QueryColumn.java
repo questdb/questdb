@@ -40,7 +40,6 @@ public class QueryColumn implements Mutable, Sinkable {
     private int columnType = -1;
     private boolean includeIntoWildcard = true;
     private boolean isGenerated;
-    private boolean isLateralScalarCount;
 
     public QueryColumn() {
     }
@@ -52,7 +51,6 @@ public class QueryColumn implements Mutable, Sinkable {
         ast = null;
         includeIntoWildcard = true;
         isGenerated = false;
-        isLateralScalarCount = false;
         columnType = -1;
     }
 
@@ -82,10 +80,6 @@ public class QueryColumn implements Mutable, Sinkable {
 
     public boolean isIncludeIntoWildcard() {
         return includeIntoWildcard;
-    }
-
-    public boolean isLateralScalarCount() {
-        return isLateralScalarCount;
     }
 
     public boolean isWindowExpression() {
@@ -122,10 +116,6 @@ public class QueryColumn implements Mutable, Sinkable {
 
     public void setIncludeIntoWildcard(boolean includeIntoWildcard) {
         this.includeIntoWildcard = includeIntoWildcard;
-    }
-
-    public void setLateralScalarCount(boolean isLateralScalarCount) {
-        this.isLateralScalarCount = isLateralScalarCount;
     }
 
     @Override

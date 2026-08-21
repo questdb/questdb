@@ -610,10 +610,20 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         if (isDistressed()) {
             return;
         }
-        if (isInColumnarWrite()) {
-            columnarAppender.cancelColumnarWrite();
+        try {
+            if (isInColumnarWrite()) {
+                columnarAppender.cancelColumnarWrite();
+            }
+            rollback0();
+        } catch (Throwable th) {
+            // Latch so the expel path's second close attempt short-circuits on
+            // the distressed check above instead of retrying the failed IO and
+            // replacing the original exception. rollback0() already latches
+            // its own failures; this extends the same guarantee to the
+            // columnar cancel.
+            distressed = true;
+            throw th;
         }
-        rollback0();
     }
 
     private void rollback0() {
@@ -2821,9 +2831,21 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
+        public void putDecimalChar(int columnIndex, char decimalValue) {
+            int columnType = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimalChar(columnIndex, decimal256Sink, decimalValue, columnType, this);
+        }
+
+        @Override
         public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
             int columnType = metadata.getColumnType(columnIndex);
             WriterRowUtils.putDecimalStr(columnIndex, decimal256Sink, decimalValue, columnType, this);
+        }
+
+        @Override
+        public void putDecimalVarchar(int columnIndex, Utf8Sequence decimalValue) {
+            int columnType = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimalVarchar(columnIndex, decimal256Sink, decimalValue, columnType, this);
         }
 
         @Override
