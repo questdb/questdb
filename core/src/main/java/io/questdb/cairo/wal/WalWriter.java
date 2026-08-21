@@ -1475,7 +1475,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 ff.fsyncAndClose(dirFd);
             }
             lastSegmentTxn = -1;
-            LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
+            LOG.debug().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
         } finally {
             int oldMinSegmentLocked = minSegmentLocked;
             if (moveMinSegmentLock(newSegmentId)) {

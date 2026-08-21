@@ -7202,7 +7202,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // [0, E) with no hole - possible only when the run covered the whole array (newPieceCount == 1).
         final boolean stillComposite = newPieceCount > 1 || survivorRowOffset != 0 || rowCount != e;
 
-        LOG.info().$("folding adjacent partition pieces [table=").$(tableToken)
+        LOG.info().$("compacting composite partition, JOIN: folding adjacent pieces [table=").$(tableToken)
                 .$(", dir=").$(formatPartitionForTimestamp(partitionTs, nameTxn))
                 .$(", pieces=").$(bestLen)
                 .$(", rows=").$(rowCount)
@@ -8392,8 +8392,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return COMPACTION_NONE;
         }
         if (!unlimited && tailRows > configuration.getPartitionCompactionMaxRowsPerCommit()) {
-            LOG.info().$("moving a compaction tail over the per-commit row budget, nothing else has run" +
-                            " this pass [table=").$(tableToken)
+            LOG.info().$("compacting composite partition, MOVE-TAIL: tail over the per-commit row budget," +
+                            " nothing else has run this pass [table=").$(tableToken)
                     .$(", rows=").$(tailRows)
                     .$(", budget=").$(configuration.getPartitionCompactionMaxRowsPerCommit())
                     .I$();
@@ -8890,7 +8890,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
-                LOG.info().$("o3 partition update [timestampMin=").$ts(timestampDriver, timestampMin)
+                LOG.debug().$("o3 partition update [timestampMin=").$ts(timestampDriver, timestampMin)
                         .$(", last=").$(partitionTimestamp == lastPartitionTimestamp)
                         .$(", partitionTimestamp=").$ts(timestampDriver, partitionTimestamp)
                         .$(", partitionMutates=").$(partitionMutates)
@@ -13534,8 +13534,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
         final long srcNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         if (!unlimited && liveRows > configuration.getPartitionCompactionMaxRowsPerCommit()) {
-            LOG.info().$("compacting a partition over the per-commit row budget, nothing else has run" +
-                            " this pass [table=").$(tableToken)
+            LOG.info().$("compacting composite partition, REWRITE: partition over the per-commit row" +
+                            " budget, nothing else has run this pass [table=").$(tableToken)
                     .$(", dir=").$(formatPartitionForTimestamp(partitionTs, srcNameTxn))
                     .$(", rows=").$(liveRows)
                     .$(", budget=").$(configuration.getPartitionCompactionMaxRowsPerCommit())
@@ -13543,7 +13543,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         final long e = geometry.getE(partitionIndex);
-        LOG.info().$("compacting partition [table=").$(tableToken)
+        LOG.info().$("compacting composite partition, REWRITE [table=").$(tableToken)
                 .$(", dir=").$(formatPartitionForTimestamp(partitionTs, srcNameTxn))
                 .$(", pieces=").$(pieceCount)
                 .$(", liveRows=").$(liveRows)
@@ -15590,7 +15590,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         final boolean breaches = PartitionCompactionPolicy.exceedsThresholds(configuration, liveRows, deadRows, pieceCount, avgRecordSize());
         if (breaches) {
-            LOG.info().$("assembling fresh partition version: would breach compaction thresholds [table=")
+            LOG.info().$("assembling fresh composite partition version: would breach compaction thresholds [table=")
                     .$(tableToken)
                     .$(", partitionIndex=").$(partitionIndex)
                     .$(", anticipatedLiveRows=").$(liveRows)
