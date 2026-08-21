@@ -123,10 +123,19 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 if (tableToken == null) {
                     throw SqlException.tableDoesNotExist(tableOrSelectTextPos, tableName);
                 }
-                if (partitionBy != -1) {
+                // A table that carries an EXPIRE ROWS policy must export through the SELECT path: the read
+                // filter that hides expired rows lives in the parser, so a table-reader export would write
+                // out rows the table itself no longer returns. Re-partitioning needs the SELECT path too.
+                final boolean mayHaveExpiryPolicy = executionContext.getCairoEngine()
+                        .getMetadataCache().mayTableHaveExpiryPolicy(tableToken);
+                if (partitionBy != -1 || mayHaveExpiryPolicy) {
                     try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
                         int tablePartitionBy = meta.getPartitionBy();
-                        if (tablePartitionBy != partitionBy) {
+                        if (partitionBy != -1 && tablePartitionBy != partitionBy) {
+                            this.selectText = this.tableName;
+                        }
+                        final String expiryPredicate = meta.getExpiryPredicate();
+                        if (expiryPredicate != null && !expiryPredicate.isEmpty()) {
                             this.selectText = this.tableName;
                         }
                     }
