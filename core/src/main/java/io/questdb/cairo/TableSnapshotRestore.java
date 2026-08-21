@@ -963,8 +963,8 @@ public class TableSnapshotRestore implements QuietCloseable {
                     .$(", committed=").$(parquetFileSize).$(", onDisk=").$(onDiskSize).I$();
         }
 
+        refuseToRegenerateOverACoveringIndex(path, partitionDirLen);
         regenerateParquetMetaFile(path, partitionDirLen, parquetFileSize);
-        removeIndexArtifactsOrphanedByRegeneration(path, partitionDirLen);
 
         path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
         long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), taskReader);
@@ -1436,24 +1436,31 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
-     * Removes any {@code <col>.pidx.<indexTxn>.parquet} / {@code ._im} pair left
-     * in a partition whose {@code _pm} was just regenerated.
+     * Refuses to regenerate a {@code _pm} in a partition that still holds
+     * parquet-form covering index artifacts.
      * <p>
-     * The regenerated chain is a fresh single footer built from
-     * {@code data.parquet}, carrying no covering section, so nothing published
-     * references these files any more. They are also out of the sweep's reach:
-     * its fallback arm only reclaims a pair whose index txn is ABOVE the current
-     * writer txn, and a restored partition's index txns are at or below the
-     * restored txn. Left alone they would sit in the partition directory
-     * forever.
+     * A regenerated chain is a fresh single footer built from
+     * {@code data.parquet} and carries no covering section, so every covering
+     * token in the partition is gone. That is not merely a lost optimisation: a
+     * parquet-form seal does NOT write the native {@code .pk}/{@code .pv} chain,
+     * yet a {@code .pk} carrying {@code V2_NO_HEAD} is created unconditionally,
+     * and the reader treats that as an EMPTY index. An indexed query then
+     * returns the wrong rows with no error -- measured as 1 row where 3 were
+     * expected.
      * <p>
-     * Deleting here is safe specifically because a restore has the table to
-     * itself -- no reader can be bound to one of these pairs at this point.
-     * Names are collected before any removal because the visitor must not
-     * disturb the path being iterated.
+     * Rebuilding is not a way out either: {@code processParquetPartition}
+     * returns early unless {@code cairo.checkpoint.recovery.rebuild.column.indexes}
+     * is set, and it defaults to false. So on default settings nothing would
+     * rebuild what this regeneration discards.
+     * <p>
+     * The presence of {@code <col>.pidx.*} files is the signal that a covering
+     * index existed here. When they are present this throws instead, leaving
+     * every artifact in place: failing loudly is recoverable, a silently wrong
+     * result is not -- the same rule the required feature bit enforces for
+     * downgrades.
      */
-    private void removeIndexArtifactsOrphanedByRegeneration(Path path, int partitionDirLen) {
-        final ObjList<String> orphans = new ObjList<>();
+    private void refuseToRegenerateOverACoveringIndex(Path path, int partitionDirLen) {
+        final ObjList<String> artifacts = new ObjList<>();
         final StringSink fileName = Misc.getThreadLocalSink();
         path.trimTo(partitionDirLen).$();
         ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
@@ -1463,19 +1470,23 @@ public class TableSnapshotRestore implements QuietCloseable {
             fileName.clear();
             Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
             if (Chars.contains(fileName, ParquetIndexSeal.PIDX_INFIX)) {
-                orphans.add(Chars.toString(fileName));
+                artifacts.add(Chars.toString(fileName));
             }
         });
-        for (int i = 0, n = orphans.size(); i < n; i++) {
-            path.trimTo(partitionDirLen).concat(orphans.getQuick(i)).$();
-            if (ff.removeQuiet(path.$())) {
-                LOG.info().$("removed covering index artifact orphaned by _pm regeneration [path=").$(path).I$();
-            } else {
-                LOG.info().$("could not remove covering index artifact orphaned by _pm regeneration [path=").$(path)
-                        .$(", errno=").$(ff.errno()).I$();
-            }
-        }
         path.trimTo(partitionDirLen);
+        if (artifacts.size() == 0) {
+            return;
+        }
+        throw CairoException.critical(0)
+                .put("cannot regenerate the _pm of a partition holding a parquet covering index: ")
+                .put("the regenerated metadata publishes no covering token, and the partition has no ")
+                .put("native index chain to fall back on, so indexed reads would silently return the ")
+                .put("wrong rows [path=").put(path)
+                .put(", artifact=").put(artifacts.getQuick(0))
+                .put(", artifacts=").put(artifacts.size())
+                .put("]; rebuild the index with ALTER TABLE <table> ALTER COLUMN <column> DROP INDEX ")
+                .put("then ADD INDEX TYPE POSTING, or take the partition back to native with ")
+                .put("ALTER TABLE <table> CONVERT PARTITION TO NATIVE LIST '<partition>'");
     }
 
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
