@@ -328,6 +328,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean liveViewCheckpointRepairIsolatedRuntimeEnabled;
     private final boolean liveViewCheckpointRepairPerSegmentEnabled;
     private final boolean liveViewCheckpointRepairKeyedReplayEnabled;
+    private final boolean liveViewCheckpointRepairOpenSegmentKeyedReplayEnabled;
     private final boolean liveViewCheckpointRepairSegmentYieldEnabled;
     private final boolean liveViewCheckpointRepairSparsePublicationEnabled;
     private final long liveViewCheckpointRepairReplayMaxRows;
@@ -1559,6 +1560,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.liveViewCheckpointRepairPerSegmentEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, true);
             this.liveViewCheckpointRepairReplayMaxRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1_000_000L);
             this.liveViewCheckpointRepairKeyedReplayEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED, true);
+            this.liveViewCheckpointRepairOpenSegmentKeyedReplayEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, false);
             this.liveViewCheckpointRepairSegmentYieldEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SEGMENT_YIELD_ENABLED, true);
             this.liveViewCheckpointRepairSparsePublicationEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, true);
             this.liveViewCheckpointRepairKeyedScanIndexOpenRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 256L);
@@ -4288,6 +4290,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isLiveViewCheckpointRepairKeyedReplayEnabled() {
             return liveViewCheckpointRepairKeyedReplayEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled() {
+            return liveViewCheckpointRepairOpenSegmentKeyedReplayEnabled;
         }
 
         @Override

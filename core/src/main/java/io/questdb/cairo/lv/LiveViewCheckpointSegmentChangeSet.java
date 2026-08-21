@@ -91,8 +91,18 @@ public final class LiveViewCheckpointSegmentChangeSet {
     // another does not have to move anyone's keys. Retained across repairs and cleared
     // rather than dropped, so a worker pays for the growth once.
     private final ObjList<CharSequenceHashSet> keySets = new ObjList<>();
+    // The open segment's own affected keys, kept apart from the closed segments' sets
+    // because the residual is not a segment: it has no start, no end and no entry, and the
+    // repair that reads it is the resume rather than a segment replay.
+    private final CharSequenceHashSet residualKeys = new CharSequenceHashSet();
     private final LongList segments = new LongList();
     private long activeSegmentStart;
+    // Whether the caller asked for the residual's keys. A caller that did not gets the
+    // whole-commit shortcut and the empty set below, which isResidualKeyDomainComplete
+    // reports as incomplete rather than as an empty domain.
+    private boolean collectsResidualKeys;
+    private boolean hasResidualNullKey;
+    private boolean residualKeyDomainOverflowed;
     // How many distinct keys one segment may collect before the collection stops being
     // worth its memory. Zero collects none, which is what a view with no keyed repair
     // available - or a caller that cannot read the key column - asks for.
@@ -121,7 +131,8 @@ public final class LiveViewCheckpointSegmentChangeSet {
      */
     public boolean addRow(long ts, @Nullable CharSequence key, @NotNull LiveViewCheckpointAnchorPlan anchorPlan) {
         if (ts >= activeSegmentStart) {
-            addResidual(ts, ts);
+            widenResidual(ts, ts);
+            addResidualKey(key);
             return true;
         }
         if (overflowed) {
@@ -165,8 +176,12 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * active segment's start, which is every in-order commit and every shallow correction.
      */
     public void addResidual(long minTs, long maxTs) {
-        residualMinTs = residualMinTs == Numbers.LONG_NULL ? minTs : Math.min(residualMinTs, minTs);
-        residualMaxTs = residualMaxTs == Numbers.LONG_NULL ? maxTs : Math.max(residualMaxTs, maxTs);
+        widenResidual(minTs, maxTs);
+        // The shortcut folds a commit's span without visiting a row, so whatever keys it
+        // carried are keys this change set never saw. A caller collecting the residual's
+        // domain must walk those rows instead; one that takes the shortcut anyway gets an
+        // incomplete domain rather than a domain short of the keys it skipped.
+        residualKeyDomainOverflowed = true;
     }
 
     /**
@@ -191,6 +206,39 @@ public final class LiveViewCheckpointSegmentChangeSet {
      */
     public long getResidualMinTs() {
         return residualMinTs;
+    }
+
+    /**
+     * @return the affected keys of the open anchor segment - the resolved logical values
+     * the corrections at or above {@code activeSegmentStart} carried, which a keyed resume
+     * follows through the base's posting index instead of reading every row above its
+     * anchor. Meaningless unless {@link #isResidualKeyDomainComplete()} holds.
+     * <p>
+     * The set carries no null, which {@link #hasResidualNullKey()} reports separately, for
+     * the same reason a closed segment's does: a duplicate null in a keyed scan's key list
+     * yields the null key's rows twice.
+     */
+    public @NotNull CharSequenceHashSet getResidualKeys() {
+        return residualKeys;
+    }
+
+    /**
+     * @return whether the open anchor segment was touched by a correction carrying a null
+     * partition key
+     */
+    public boolean hasResidualNullKey() {
+        return hasResidualNullKey;
+    }
+
+    /**
+     * @return whether the keys collected for the open anchor segment are all of them.
+     * False when the caller collected none, when the collection reached its budget, and
+     * when any commit was folded through {@link #addResidual} without its rows being
+     * walked - in every case the resume has to read every row above its anchor, which
+     * costs what it always did.
+     */
+    public boolean isResidualKeyDomainComplete() {
+        return collectsResidualKeys && !residualKeyDomainOverflowed;
     }
 
     /**
@@ -276,7 +324,7 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * stays with the residual.
      */
     public void of(long activeSegmentStart) {
-        of(activeSegmentStart, 0);
+        of(activeSegmentStart, 0, false);
     }
 
     /**
@@ -286,11 +334,28 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * to a whole-segment replay rather than denying it.
      */
     public void of(long activeSegmentStart, int maxKeysPerSegment) {
+        of(activeSegmentStart, maxKeysPerSegment, false);
+    }
+
+    /**
+     * As above, and also collects the keys the corrections at or above
+     * {@code activeSegmentStart} carry when {@code collectResidualKeys} holds.
+     * <p>
+     * A caller that asks for them owes the walk: {@link #addResidual}'s whole-commit
+     * shortcut visits no row, so taking it leaves the domain incomplete rather than short.
+     * A caller that does not ask keeps the shortcut and the resume reads every row above
+     * its anchor, which is what every resume did before the keyed one existed.
+     */
+    public void of(long activeSegmentStart, int maxKeysPerSegment, boolean collectResidualKeys) {
         this.activeSegmentStart = activeSegmentStart;
         this.maxKeysPerSegment = maxKeysPerSegment;
+        this.collectsResidualKeys = collectResidualKeys && maxKeysPerSegment > 0;
         for (int i = 0, n = keySets.size(); i < n; i++) {
             keySets.getQuick(i).clear();
         }
+        residualKeys.clear();
+        hasResidualNullKey = false;
+        residualKeyDomainOverflowed = false;
         segments.clear();
         overflowed = false;
         residualMinTs = Numbers.LONG_NULL;
@@ -319,6 +384,40 @@ public final class LiveViewCheckpointSegmentChangeSet {
             }
         }
         return -(low + 1);
+    }
+
+    /**
+     * Joins one row's key to the open segment's domain, on the same terms
+     * {@link #addKey} joins a closed segment's.
+     */
+    private void addResidualKey(CharSequence key) {
+        if (!collectsResidualKeys) {
+            return;
+        }
+        if (key == null) {
+            hasResidualNullKey = true;
+            return;
+        }
+        final int keyIndex = residualKeys.keyIndex(key);
+        if (keyIndex < 0) {
+            return;
+        }
+        if (residualKeys.size() >= maxKeysPerSegment) {
+            residualKeyDomainOverflowed = true;
+            return;
+        }
+        // addAt copies the sequence, which the WAL's own symbol table hands out as a
+        // flyweight over its mapped pages.
+        residualKeys.addAt(keyIndex, key);
+    }
+
+    /**
+     * Widens the open segment's span without touching its key domain, which is what the
+     * row walk and the whole-commit shortcut disagree about.
+     */
+    private void widenResidual(long minTs, long maxTs) {
+        residualMinTs = residualMinTs == Numbers.LONG_NULL ? minTs : Math.min(residualMinTs, minTs);
+        residualMaxTs = residualMaxTs == Numbers.LONG_NULL ? maxTs : Math.max(residualMaxTs, maxTs);
     }
 
     /**

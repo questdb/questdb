@@ -356,6 +356,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // filled by priceKeyedSegmentScans and read by armKeyedReplay. Refilled per change-set
     // classification, so it describes the loop currently being driven and no other.
     private final LongList keyedScanCheaperSegments = new LongList();
+    // The same pricing for the OPEN anchor segment - the one the runtime is still standing
+    // in, whose corrections the resume repairs rather than a segment replay. It is one
+    // range rather than a list, so the verdict is a flag: true when the resume's own
+    // interval reads fewer rows by key than whole.
+    private boolean openSegmentKeyedScanCheaper;
+    // Whether segmentChangeSet currently holds the open anchor segment's complete key
+    // domain for the repair the caller is planning. Set by repairChangeSetSegments and
+    // cleared by everything that reaches a resume without it, because the change set is
+    // worker-owned scratch: a stale true would hand one repair's keys to another's replay.
+    private boolean openSegmentKeyDomainReady;
+    private long openSegmentKeyedCheaperCount;
+    private long openSegmentKeyedPostingRows;
+    private long openSegmentKeyedPricedCount;
+    private long openSegmentKeyedUnpricedCount;
+    private long openSegmentKeyedWholeRangeRows;
     // The keyed replay of one closed segment: the key domain its indexed scan follows, and
     // the merge that supplies every other key's row from the view's own stored output.
     // Worker-owned scratch, armed per segment and disarmed the moment the repair that took
@@ -743,6 +758,55 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public long keyedScanCheaperCountForTest() {
         return keyedScanCheaperCount;
+    }
+
+    /**
+     * Test-only: how many open-segment resumes this worker priced a keyed read below the
+     * whole-range one for. The subset of {@link #openSegmentKeyedPricedCountForTest()} that
+     * a keyed resume is available to.
+     */
+    @TestOnly
+    public long openSegmentKeyedCheaperCountForTest() {
+        return openSegmentKeyedCheaperCount;
+    }
+
+    /**
+     * Test-only: base rows the open segment's keyed scans would pull off the posting
+     * index, summed over every resume this worker priced. Comparable with
+     * {@link #openSegmentKeyedWholeRangeRowsForTest()}, which is what those same resumes
+     * read whole.
+     */
+    @TestOnly
+    public long openSegmentKeyedPostingRowsForTest() {
+        return openSegmentKeyedPostingRows;
+    }
+
+    /**
+     * Test-only: how many open-segment resumes this worker priced both ways. A resume is
+     * priced only when the decomposition collected the open segment's key domain in full.
+     */
+    @TestOnly
+    public long openSegmentKeyedPricedCountForTest() {
+        return openSegmentKeyedPricedCount;
+    }
+
+    /**
+     * Test-only: how many open-segment resumes could not be priced at all - no key domain,
+     * no index for the column, or a key the pinned reader does not hold. Each reads every
+     * row above its anchor, which is what every resume did before the keyed one existed.
+     */
+    @TestOnly
+    public long openSegmentKeyedUnpricedCountForTest() {
+        return openSegmentKeyedUnpricedCount;
+    }
+
+    /**
+     * Test-only: base rows the open segment's resumes read whole, summed over every one
+     * this worker priced.
+     */
+    @TestOnly
+    public long openSegmentKeyedWholeRangeRowsForTest() {
+        return openSegmentKeyedWholeRangeRows;
     }
 
     /**
@@ -4396,6 +4460,99 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Prices the OPEN anchor segment's keyed scan against the whole-range one the resume
+     * would otherwise take, over the interval that resume actually reads.
+     * <p>
+     * The interval is why this is priced here rather than beside the closed segments: a
+     * closed segment's bounds are its own, while a resume's floor is the anchor the plan
+     * selected and its ceiling is the end of the base table, and neither is known until
+     * the plan has run. Both sides are estimated off the same pinned reader through the
+     * same two cost models the closed segments use, so the numbers are comparable by
+     * construction.
+     *
+     * @return true when the keyed read is the cheaper of the two, which is the only case
+     * the resume may follow its keys in
+     */
+    private boolean priceOpenSegmentKeyedScan(
+            LiveViewInstance instance,
+            LiveViewCompiledPlan compiledPlan,
+            TableReader reader,
+            long lowTsInclusive,
+            long highTsInclusive
+    ) {
+        openSegmentKeyedScanCheaper = false;
+        if (!openSegmentKeyDomainReady) {
+            return false;
+        }
+        final String viewName = instance.getDefinition().getViewName();
+        final int scanColumnIndex = keyedScanColumnIndex(instance, compiledPlan);
+        if (scanColumnIndex < 0) {
+            // The view admits no keyed replay at all - an unindexed, compound or
+            // unprojected key. The domain was collected for nothing, which costs this one
+            // walk and no repair.
+            openSegmentKeyedUnpricedCount++;
+            return false;
+        }
+        final int readerColumnIndex = compiledPlan.getPageFrameFactory().getBaseColumnIndex(scanColumnIndex);
+        final long indexOpenRows = engine.getConfiguration().getLiveViewCheckpointRepairKeyedScanIndexOpenRows();
+        try {
+            scanCost.of(reader);
+            keyedScanCost.of(reader);
+            final long wholeRangeRows = scanCost.estimateScanRows(lowTsInclusive, highTsInclusive);
+            if (!resolveScanKeys(
+                    reader.getSymbolMapReader(readerColumnIndex),
+                    segmentChangeSet.getResidualKeys(),
+                    segmentChangeSet.hasResidualNullKey()
+            )) {
+                openSegmentKeyedUnpricedCount++;
+                return false;
+            }
+            final long postingRows = keyedScanCost.estimateKeyedScanRows(
+                    lowTsInclusive,
+                    highTsInclusive,
+                    readerColumnIndex,
+                    keyedScanKeys,
+                    wholeRangeRows > 0 ? wholeRangeRows : Long.MAX_VALUE
+            );
+            if (postingRows == LiveViewCheckpointKeyedScanCost.UNPRICEABLE) {
+                openSegmentKeyedUnpricedCount++;
+                return false;
+            }
+            final boolean cheaper = LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(
+                    postingRows,
+                    keyedScanCost.getIndexOpens(),
+                    keyedScanKeys.size(),
+                    wholeRangeRows,
+                    indexOpenRows
+            );
+            openSegmentKeyedPricedCount++;
+            openSegmentKeyedPostingRows += postingRows;
+            openSegmentKeyedWholeRangeRows += wholeRangeRows;
+            if (cheaper) {
+                openSegmentKeyedCheaperCount++;
+            }
+            openSegmentKeyedScanCheaper = cheaper;
+            LOG.info().$("live view open segment keyed scan priced [view=").$(viewName)
+                    .$(", replayLowTs=").$ts(lowTsInclusive)
+                    .$(", keys=").$(keyedScanKeys.size())
+                    .$(", postingRows=").$(postingRows)
+                    .$(", indexOpens=").$(keyedScanCost.getIndexOpens())
+                    .$(", keyedCostRows=").$(LiveViewCheckpointKeyedScanCost.keyedScanCostRows(
+                            postingRows, keyedScanCost.getIndexOpens(), keyedScanKeys.size(), indexOpenRows))
+                    .$(", wholeRangeRows=").$(wholeRangeRows)
+                    .$(", keyedCheaper=").$(cheaper).I$();
+            return cheaper;
+        } catch (Throwable t) {
+            // A pricing failure is not a repair failure: the resume reads every row above
+            // its anchor either way, which is what it did before this existed.
+            openSegmentKeyedUnpricedCount++;
+            LOG.info().$("live view open segment keyed scan could not be priced [view=").$(viewName)
+                    .$(", error=").$(t).I$();
+            return false;
+        }
+    }
+
+    /**
      * Resolves one segment's logical partition keys to the table-local keys the pinned
      * reader's posting index names rows by.
      * <p>
@@ -4409,13 +4566,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * @return false when a key does not resolve, leaving the segment unpriced
      */
     private boolean resolveSegmentKeys(SymbolMapReader symbols, int segmentIndex) {
+        return resolveScanKeys(
+                symbols,
+                segmentChangeSet.getSegmentKeys(segmentIndex),
+                segmentChangeSet.hasSegmentNullKey(segmentIndex)
+        );
+    }
+
+    /**
+     * Resolves one key domain into {@link #keyedScanKeys}, the pinned reader's own symbol
+     * space. Shared by the closed segments and by the open one, which collect their keys
+     * the same way and differ only in where the caller reads them from.
+     *
+     * @return false when a key does not resolve, leaving the range unpriced
+     */
+    private boolean resolveScanKeys(SymbolMapReader symbols, CharSequenceHashSet keys, boolean hasNullKey) {
         keyedScanKeys.clear();
-        if (segmentChangeSet.hasSegmentNullKey(segmentIndex)) {
+        if (hasNullKey) {
             // A partition key like any other: the index names the null value's rows under
             // its own key.
             keyedScanKeys.add(SymbolTable.VALUE_IS_NULL);
         }
-        final CharSequenceHashSet keys = segmentChangeSet.getSegmentKeys(segmentIndex);
         for (int i = 0, n = keys.size(); i < n; i++) {
             final int symbolKey = symbols.keyOf(keys.get(i));
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
@@ -4567,12 +4738,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long toSeqTxn,
             long viewLowerBoundTimestamp,
             @NotNull LiveViewCheckpointAnchorPlan anchorPlan,
-            long activeSegmentStart
+            long activeSegmentStart,
+            boolean collectResidualKeys
     ) {
         final boolean keyed = baseKeyWriterIndex > -1;
+        // The open segment's own keys, for the resume that follows them. Collecting them
+        // costs the walk the shortcut below skips - every commit's rows rather than every
+        // deep commit's - so it is asked for rather than always taken.
+        final boolean residualKeys = keyed && collectResidualKeys;
         segmentChangeSet.of(
                 activeSegmentStart,
-                keyed ? (int) Math.min(Integer.MAX_VALUE, engine.getConfiguration().getLiveViewCheckpointRepairScanMaxKeys()) : 0
+                keyed ? (int) Math.min(Integer.MAX_VALUE, engine.getConfiguration().getLiveViewCheckpointRepairScanMaxKeys()) : 0,
+                residualKeys
         );
         // The projection: the designated timestamp, named by its base-table WRITER index,
         // which is what WalSegmentPageFrameCursor matches against the segment's own
@@ -4633,7 +4810,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     continue;
                 }
                 final long txnMinTs = dataInfo.getMinTimestamp();
-                if (txnMinTs >= activeSegmentStart) {
+                if (txnMinTs >= activeSegmentStart && !residualKeys) {
                     segmentChangeSet.addResidual(txnMinTs, txnMaxTs);
                     continue;
                 }
@@ -4679,10 +4856,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         continue;
                     }
                     CharSequence key = null;
-                    if (keyed && ts < activeSegmentStart) {
-                        // Only a row that lands in a closed segment has a key worth
-                        // resolving; a residual row is repaired by the ordinary resume,
-                        // which follows no key.
+                    if (keyed && (residualKeys || ts < activeSegmentStart)) {
+                        // A row that lands in a closed segment always has a key worth
+                        // resolving. A residual row has one only for a caller collecting
+                        // the open segment's domain; the ordinary resume follows no key.
                         key = keySymbols.valueOf(Unsafe.getUnsafe().getInt(keyAddress + (row << 2)));
                     }
                     if (!segmentChangeSet.addRow(ts, key, anchorPlan)) {
@@ -4762,9 +4939,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long fromSeqTxn,
             long advanceTo
     ) throws SqlException {
+        openSegmentKeyDomainReady = false;
         if (!engine.getConfiguration().isLiveViewCheckpointRepairPerSegmentEnabled()) {
             return SEGMENT_REPAIR_NOT_TAKEN;
         }
+        // Whether this turn is also collecting the OPEN segment's key domain, for the
+        // resume that follows those keys instead of every row above its anchor. It widens
+        // the walk below - every commit's rows rather than every deep commit's - so it is
+        // read once here and carried rather than asked again per commit.
+        final boolean openSegmentKeyed =
+                engine.getConfiguration().isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled();
         if (fromSeqTxn == Numbers.LONG_NULL
                 || lateRowTs == Numbers.LONG_NULL
                 || changeMaxTs == Numbers.LONG_NULL
@@ -4799,18 +4983,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return SEGMENT_REPAIR_NOT_TAKEN;
         }
         final long activeSegmentStart = anchorPlan.getSegmentStart(runtimeFrontierTs);
-        if (activeSegmentStart == Long.MIN_VALUE || lateRowTs >= activeSegmentStart) {
+        if (activeSegmentStart == Long.MIN_VALUE) {
             // The runtime's own segment is open below - every row under a non-zero
-            // alignment origin shares one - or the trigger reaches no further down than it.
-            // Either way there is no closed segment to scope, and the ordinary plan is
-            // already the bounded one.
+            // alignment origin shares one - so there is no segmentation to decompose
+            // against at all.
+            return SEGMENT_REPAIR_NOT_TAKEN;
+        }
+        if (lateRowTs >= activeSegmentStart && !openSegmentKeyed) {
+            // The trigger reaches no further down than the runtime's own segment, so there
+            // is no closed segment to scope and the ordinary plan is already the bounded
+            // one. A turn collecting the open segment's key domain runs the decomposition
+            // anyway: the domain is what that resume follows, and nothing else produces it.
             return SEGMENT_REPAIR_NOT_TAKEN;
         }
         final long durableOutputMaxTs = readDurableOutputMaxTs(instance);
-        if (durableOutputMaxTs == Numbers.LONG_NULL || durableOutputMaxTs < runtimeFrontierTs) {
-            // Output the runtime holds but has not made durable sits above every closed
-            // segment, and a replacement stopping below it would neither re-emit it nor
-            // leave it stored. The same guard the union plan applies, applied earlier.
+        if (durableOutputMaxTs == Numbers.LONG_NULL) {
+            // The view holds no durable row at all, so there is nothing for a segment
+            // replacement to stop above and nothing for a keyed resume to keep.
+            return SEGMENT_REPAIR_NOT_TAKEN;
+        }
+        // Output the runtime holds but has not made durable sits above every closed
+        // segment, and a replacement stopping below it would neither re-emit it nor leave
+        // it stored. The keyed resume answers the same question differently - its key
+        // domain covers every commit above the durable point, so the rows it re-emits are
+        // exactly the ones the table is missing - so the guard denies the segment loop
+        // rather than the whole decomposition.
+        final boolean closedSegmentsAvailable = durableOutputMaxTs >= runtimeFrontierTs;
+        if (!closedSegmentsAvailable && !openSegmentKeyed) {
             return SEGMENT_REPAIR_NOT_TAKEN;
         }
         final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
@@ -4829,22 +5028,44 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final int baseKeyWriterIndex = keyedScanColumnWriterIndex(instance, baseToken, compiledPlan);
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
         final long pinnedSeqTxn = reader.getSeqTxn();
+        // The walk's own floor. A keyed resume re-emits the rows of its key domain and no
+        // others, so the domain has to cover every base commit whose output is not durable
+        // - not merely the range this trigger rolled back. The applied point is where
+        // durable output stops (an un-flushed lead leads it), and the minimum only ever
+        // widens the walk: a key it adds is recomputed to the value it already had.
+        final long walkFromSeqTxn = openSegmentKeyed
+                ? Math.min(fromSeqTxn, instance.getLastProcessedSeqTxn())
+                : fromSeqTxn;
         if (!classifyChangeSetSegments(
                 baseToken,
                 baseMetadata,
                 baseTimestampWriterIndex,
                 baseKeyWriterIndex,
-                fromSeqTxn,
+                walkFromSeqTxn,
                 pinnedSeqTxn,
                 viewLowerBoundTimestamp,
                 anchorPlan,
-                activeSegmentStart
+                activeSegmentStart,
+                openSegmentKeyed
         )) {
             return SEGMENT_REPAIR_NOT_TAKEN;
         }
-        final int segmentCount = segmentChangeSet.getClosedSegmentCount();
+        final int segmentCount = closedSegmentsAvailable ? segmentChangeSet.getClosedSegmentCount() : 0;
+        if (segmentCount == 0 && segmentChangeSet.getClosedSegmentCount() > 0) {
+            // The decomposition placed rows below the runtime's own segment and the
+            // un-flushed output above denies the loop that would repair them. Their range
+            // is not in the residual bounds, so handing those on would leave the closed
+            // corrections unrepaired: the union range is what covers both.
+            return SEGMENT_REPAIR_NOT_TAKEN;
+        }
         priceKeyedSegmentScans(instance, compiledPlan, reader, segmentCount);
         final boolean isResidualEmpty = segmentChangeSet.getResidualMinTs() == Numbers.LONG_NULL;
+        // The open segment's domain, for the resume the caller is about to plan. Complete
+        // means every commit above the walk's floor was visited row by row and every key
+        // they carried fitted the budget; anything less leaves the resume reading whole.
+        openSegmentKeyDomainReady = openSegmentKeyed
+                && !isResidualEmpty
+                && segmentChangeSet.isResidualKeyDomainComplete();
         if (segmentCount == 0) {
             // Nothing below the runtime's own segment after the sub-floor rows were
             // dropped. The residual bounds are still worth handing on: they carry the
@@ -5399,6 +5620,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             TableReader reader,
             LiveViewCheckpointSegmentLoop loop
     ) throws SqlException {
+        // The change set that carried the parked loop's key domain has been refilled by
+        // every repair this worker classified since, so the residual behind the loop reads
+        // whole. The loop carries its own segments' keys; nothing carries the open one's.
+        openSegmentKeyDomainReady = false;
         if (settleRepairedSegment(instance, loop, loop.getInFlightSegmentStart()) != SEGMENT_STEP_DONE) {
             return false;
         }
@@ -5507,6 +5732,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long fromSeqTxn
     ) throws SqlException {
         final String viewName = instance.getDefinition().getViewName();
+        // Nothing has decomposed this change yet, so no resume below it may follow a key
+        // domain. repairChangeSetSegments is what earns the flag back.
+        openSegmentKeyDomainReady = false;
         // An intra-commit out-of-order FIRST commit can reach the replay path
         // before any in-order cycle computed snapshot capability (which normally
         // happens in maybeWriteHeadCheckpoint). Compute it here so the
@@ -6146,6 +6374,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
             RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
             final int cursorTimestampIndex = outMetadata.getTimestampIndex();
+            // What a resume following the correction's own keys would read, against what
+            // reading every row above the anchor costs. Priced here because the interval is
+            // only known here: the floor is the anchor the plan selected and the ceiling is
+            // the end of the base table.
+            priceOpenSegmentKeyedScan(
+                    instance,
+                    compiledPlan,
+                    reader,
+                    replayLowTs,
+                    plan.getScanHighTsInclusive()
+            );
 
             // Opened before the scan, and before anything touches the timeline: the
             // capture pins the generation it reads the boundary list from, and the list

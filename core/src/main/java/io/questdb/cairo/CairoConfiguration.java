@@ -521,6 +521,19 @@ public interface CairoConfiguration {
     boolean isLiveViewCheckpointRepairKeyedReplayEnabled();
 
     /**
+     * Whether a repair of a correction landing in the <b>open</b> anchor segment may follow
+     * the keys that correction touched, instead of replaying every base row from its anchor
+     * to the end of the base table.
+     * <p>
+     * The route publishes as an upsert on the view's own dedup keys rather than as a range
+     * replacement, so it reaches only a view created under
+     * {@link #isLiveViewCheckpointRepairSparsePublicationEnabled()}, and it carries the same
+     * property change the closed-segment keyed replay does: a key the correction did not
+     * touch keeps its stored row rather than being recomputed from the base.
+     */
+    boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled();
+
+    /**
      * What one index open costs a keyed repair scan, in base rows, so the two halves of
      * its price are comparable.
      * <p>

@@ -79,6 +79,96 @@ public class LiveViewCheckpointSegmentChangeSetTest {
     }
 
     @Test
+    public void testTheOpenSegmentCollectsItsKeysWhenTheCallerAsksForThem() {
+        final LiveViewCheckpointAnchorPlan plan = dailyPlan();
+        final LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
+        changeSet.of(DAY_8, 16, true);
+
+        Assert.assertTrue(changeSet.addRow(DAY_8 + 1, "acct-1", plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8 + 2, "acct-2", plan));
+        // The same key twice is one key, and a row of a CLOSED segment is not the open
+        // segment's business however its key reads.
+        Assert.assertTrue(changeSet.addRow(DAY_8 + 3, "acct-1", plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8 - DAY + 5, "acct-9", plan));
+
+        Assert.assertTrue(changeSet.isResidualKeyDomainComplete());
+        Assert.assertEquals(2, changeSet.getResidualKeys().size());
+        Assert.assertTrue(changeSet.getResidualKeys().contains("acct-1"));
+        Assert.assertTrue(changeSet.getResidualKeys().contains("acct-2"));
+        Assert.assertFalse(changeSet.getResidualKeys().contains("acct-9"));
+        Assert.assertFalse(changeSet.hasResidualNullKey());
+    }
+
+    @Test
+    public void testTheOpenSegmentHoldsItsNullKeyBesideTheSetRatherThanInIt() {
+        // A duplicate null in a keyed scan's key list puts two cursors over one key into the
+        // heap and yields that key's rows twice, which is why the flag exists at all.
+        final LiveViewCheckpointAnchorPlan plan = dailyPlan();
+        final LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
+        changeSet.of(DAY_8, 16, true);
+
+        Assert.assertTrue(changeSet.addRow(DAY_8 + 1, null, plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8 + 2, "acct-1", plan));
+
+        Assert.assertTrue(changeSet.isResidualKeyDomainComplete());
+        Assert.assertTrue(changeSet.hasResidualNullKey());
+        Assert.assertEquals(1, changeSet.getResidualKeys().size());
+        Assert.assertTrue(changeSet.getResidualKeys().contains("acct-1"));
+    }
+
+    @Test
+    public void testTheOpenSegmentsDomainIsIncompleteWhenACommitWasFoldedWithoutItsRows() {
+        // addResidual is the whole-commit shortcut: it folds a span without visiting a row,
+        // so the keys that commit carried are keys this change set never saw. Reporting the
+        // domain complete would hand a keyed resume a set short of the keys it must correct.
+        final LiveViewCheckpointAnchorPlan plan = dailyPlan();
+        final LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
+        changeSet.of(DAY_8, 16, true);
+
+        Assert.assertTrue(changeSet.addRow(DAY_8 + 1, "acct-1", plan));
+        Assert.assertTrue(changeSet.isResidualKeyDomainComplete());
+
+        changeSet.addResidual(DAY_8 + 4, DAY_8 + 9);
+
+        Assert.assertFalse(changeSet.isResidualKeyDomainComplete());
+        Assert.assertEquals(DAY_8 + 1, changeSet.getResidualMinTs());
+        Assert.assertEquals(DAY_8 + 9, changeSet.getResidualMaxTs());
+    }
+
+    @Test
+    public void testTheOpenSegmentsDomainIsIncompleteOnceItReachesItsBudget() {
+        final LiveViewCheckpointAnchorPlan plan = dailyPlan();
+        final LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
+        changeSet.of(DAY_8, 2, true);
+
+        Assert.assertTrue(changeSet.addRow(DAY_8 + 1, "acct-1", plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8 + 2, "acct-2", plan));
+        Assert.assertTrue(changeSet.isResidualKeyDomainComplete());
+
+        Assert.assertTrue(changeSet.addRow(DAY_8 + 3, "acct-3", plan));
+
+        // The rows still land - the decomposition is not abandoned - but the domain no
+        // longer describes every key, so the resume reads whole.
+        Assert.assertFalse(changeSet.isResidualKeyDomainComplete());
+        Assert.assertEquals(2, changeSet.getResidualKeys().size());
+    }
+
+    @Test
+    public void testTheOpenSegmentCollectsNoKeysUnlessTheCallerAsksForThem() {
+        // The collection costs the walk the whole-commit shortcut skips, so a caller that
+        // does not need the domain must not be charged for it - and must not read the empty
+        // set it gets as an empty domain.
+        final LiveViewCheckpointAnchorPlan plan = dailyPlan();
+        final LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
+        changeSet.of(DAY_8, 16);
+
+        Assert.assertTrue(changeSet.addRow(DAY_8 + 1, "acct-1", plan));
+
+        Assert.assertFalse(changeSet.isResidualKeyDomainComplete());
+        Assert.assertEquals(0, changeSet.getResidualKeys().size());
+    }
+
+    @Test
     public void testRowsOfOneSegmentCollapseIntoOneEntry() {
         final LiveViewCheckpointAnchorPlan plan = dailyPlan();
         final LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
