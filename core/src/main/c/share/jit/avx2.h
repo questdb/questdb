@@ -759,7 +759,25 @@ namespace questdb::avx2 {
                 }
                 break;
             case data_type_t::i128:
-                return std::make_pair(lhs, rhs);
+                // Fail closed, like every other arm here. An (i128, i128) pairing needs no
+                // conversion and the terminal same-type return below hands it back untouched, so
+                // breaking out costs that pairing nothing. Returning HERE instead skipped the
+                // terminal check, and an (i128, i64) pairing - or any other mismatched i128 one -
+                // then fell through unharmonised while its mirror image, (i64, i128), declined
+                // through the inner switch's default. cmp_eq() and the arithmetic helpers type the
+                // instruction from the LEFT operand alone, so the unharmonised direction compared
+                // 128-bit lanes against a register holding 64-bit ones - wrong rows, silently.
+                //
+                // No IR stream the frontend emits today reaches it. An i128 operand comes from a
+                // UUID or LONG128 column, a UUID literal or a UUID / LONG128 bind variable;
+                // PredicateContext::updateType rejects any other column beside a UUID one outright,
+                // and SQL resolves no comparison operator for LONG128 against another type at all
+                // ("there is no matching operator `=` with the argument types: LONG128 = LONG").
+                // Even where the serializer is driven directly past those, an i128 operand makes
+                // getExecHint() answer MIXED_SIZE or SCALAR the moment anything narrower joins the
+                // filter, and neither hint runs an AVX2 loop. That is an argument for closing the
+                // hole, not for leaving it guarded by the absence of an input.
+                break;
             default:
                 break;
         }
@@ -841,7 +859,22 @@ namespace questdb::avx2 {
                 values.append(arena, div(c, lhs, rhs, ncheck));
                 break;
             default:
-                __builtin_unreachable();
+                // Fail closed. emit_code() routes EVERY opcode it does not handle itself into this
+                // function, so this arm sees whatever a corrupt or future-extended IR stream
+                // carries. __builtin_unreachable() made that undefined behaviour: the compiler
+                // drops the range check on the jump table and an out-of-enum opcode indexes past
+                // its end, inside the JVM and with no recovery. Declining costs a JIT decline
+                // instead, and SqlCodeGenerator falls back to the Java filter.
+                //
+                // get_arguments() already popped both operands, so push one back. avx2_loop() pops
+                // the mask this instruction owes it, and ArenaVector::pop() asserts only in a debug
+                // build - a release build underflows _size to UINT32_MAX and reads out of bounds.
+                // Every avx2 jit_value_t is a Vec, so lhs is a well-formed operand for that pop.
+                // The declined function is never register-allocated, assembled or registered:
+                // compileFunction() reads the error before c.finalize().
+                decline_filter(c, "unsupported opcode in the SIMD path");
+                values.append(arena, lhs);
+                break;
         }
     }
 

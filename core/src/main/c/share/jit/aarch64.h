@@ -1003,6 +1003,17 @@ namespace questdb::aarch64 {
         }
     };
 
+    // Declines the filter. Compiler::report_error records the reason on the JitErrorHandler that
+    // compileFunction() installed, and compileFunction() reads that error BEFORE c.finalize() and
+    // before gGlobalContext.rt.add(), so a declined function is never register-allocated, never
+    // assembled and never registered - nothing emitted after this call can run. SqlCodeGenerator
+    // then falls back to the Java filter, the same graceful decline any other unsupported shape
+    // takes. Mirrors questdb::avx2::decline_filter(); this backend cannot reach that one because
+    // avx2.h is x86-only and compiler.cpp does not include it on aarch64.
+    inline void decline_filter(Compiler &c, const char *reason) {
+        c.report_error(asmjit::Error::kInvalidState, reason);
+    }
+
     void emit_bin_op(Compiler &c, Arena &arena, const instruction_t &instr, ArenaVector<jit_value_t> &values, bool null_check,
                      bool has_short_circuit_label, opcodes next_opcode) {
         if (instr.opcode == opcodes::Eq || instr.opcode == opcodes::Ne) {
@@ -1099,19 +1110,23 @@ namespace questdb::aarch64 {
                 values.append(arena, div(c, lhs, rhs, null_check));
                 break;
             default:
-                __builtin_unreachable();
+                // Fail closed, for the same reason avx2::emit_bin_op does - and this backend is the
+                // ONLY one ARM64 has, so nothing else covers it. emit_code() routes EVERY opcode it
+                // does not handle itself into this function, so this arm sees whatever a corrupt or
+                // future-extended IR stream carries. __builtin_unreachable() made that undefined
+                // behaviour: the compiler drops the range check on the jump table and an
+                // out-of-enum opcode indexes past its end, inside the JVM and with no recovery.
+                //
+                // get_arguments() already popped both operands, so push a placeholder mask back -
+                // the same balancing the flag-optimization path above does with its flags_marker.
+                // scalar_tail() reads the top of the stack as a Gp (cbz), and lhs is a Vec for a
+                // float operand, so the placeholder is a fresh i32 register rather than lhs. It is
+                // never read: compileFunction() sees the error before c.finalize(), so the function
+                // is never register-allocated, assembled or registered.
+                decline_filter(c, "unsupported opcode in the scalar path");
+                values.append(arena, {c.new_gp32("declined_mask"), data_type_t::i32, data_kind_t::kConst});
+                break;
         }
-    }
-
-    // Declines the filter. Compiler::report_error records the reason on the JitErrorHandler that
-    // compileFunction() installed, and compileFunction() reads that error BEFORE c.finalize() and
-    // before gGlobalContext.rt.add(), so a declined function is never register-allocated, never
-    // assembled and never registered - nothing emitted after this call can run. SqlCodeGenerator
-    // then falls back to the Java filter, the same graceful decline any other unsupported shape
-    // takes. Mirrors questdb::avx2::decline_filter(); this backend cannot reach that one because
-    // avx2.h is x86-only and compiler.cpp does not include it on aarch64.
-    inline void decline_filter(Compiler &c, const char *reason) {
-        c.report_error(asmjit::Error::kInvalidState, reason);
     }
 
     void

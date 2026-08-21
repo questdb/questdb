@@ -1700,9 +1700,29 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
+    /**
+     * Rejects a filter that reaches a var-size column outside an {@code IS [NOT] NULL} check, and
+     * an opcode the serializer left as a stub. Every caller runs it over a finished stream, so a
+     * rejection here loses the filter its compiled backend and {@code SqlCodeGenerator} falls back
+     * to the Java one.
+     * <p>
+     * The walk stops at the append offset rather than at the mapped size, for the reason
+     * {@link #hasUnharmonisedOperandWidths} carries: {@code SqlCodeGenerator} serializes every JIT
+     * filter of a session into ONE buffer and hands it back with {@code truncate()}, which resets
+     * the append offset without zeroing, so everything past that offset is the PREVIOUS filter's
+     * IR and a buffer nothing has written yet holds whatever {@code malloc()} left there. All
+     * three callers run this immediately after {@code putOperator(RET)} and the walk returns at
+     * that {@code RET} - which sits one instruction inside the append offset - before it can reach
+     * a stale byte, so the two bounds answer alike at HEAD. The append offset is what keeps that a
+     * property of the METHOD rather than of its callers: a caller that asks the question before
+     * emitting its {@code RET} - the shape {@link #getExecHint} already has in
+     * {@link #serializePredicatesAndSc} and {@link #serializePredicatesOrSc} - would otherwise read
+     * the previous filter's tail and reject the current filter for a pairing it never emitted, or
+     * for a stub it never wrote.
+     */
     private void ensureOnlyVarSizeHeaderChecks() throws SqlException {
         typeStack.clear();
-        for (long offset = 0; offset < memory.size(); offset += INSTRUCTION_SIZE) {
+        for (long offset = 0, n = memory.getAppendOffset(); offset < n; offset += INSTRUCTION_SIZE) {
             int opCode = memory.getInt(offset);
             int typeCode = memory.getInt(offset + Integer.BYTES);
             switch (opCode) {
@@ -2012,10 +2032,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 //
                 // What a miss costs depends on the caller. Here it costs throughput, not rows:
                 // avx2::convert declines every pairing it cannot harmonise for the lane count in
-                // force - the (i32, f64) arm at jit/avx2.h:680-686 and the catch-all at
-                // jit/avx2.h:766-770 - and decline_filter makes compileFunction discard the function,
-                // after which SqlCodeGenerator runs the Java filter. (An i128 left operand is the
-                // one exception: convert() hands that pairing back unconverted at jit/avx2.h:761-762.)
+                // force - the (i32, f64) arm at jit/avx2.h:680-686 and, for a pairing that reaches
+                // no arm at all, the terminal lhs.dtype() != rhs.dtype() decline it falls through
+                // to - and decline_filter makes compileFunction discard the function, after which
+                // SqlCodeGenerator runs the Java filter. That holds for EVERY pairing, an i128 left
+                // operand included: convert()'s i128 arm breaks out into that terminal decline
+                // rather than handing the pairing back unharmonised.
                 // On the short-circuit paths a miss costs the compiled filter outright:
                 // serializePredicatesAndSc / serializePredicatesOrSc throw "expected scalar
                 // compilation mode" when this method answers SINGLE_SIZE or WIDE_LANE, so a
@@ -2304,8 +2326,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * backend a single-size hint, whose step is {@code 256 / (lane_bytes * 8)} - eight 32-bit lanes
      * against an 8-byte immediate. Such a pairing reaches an {@code avx2::convert} arm that
      * declines unless the loop runs four lanes - the {@code (i32, i64)} and {@code (i32, f64)}
-     * arms at {@code jit/avx2.h:675-686} - or, if it reaches no arm at all, the catch-all decline at
-     * {@code jit/avx2.h:766-770}. {@code decline_filter} records an asmjit error that
+     * arms at {@code jit/avx2.h:675-686} - or, if it reaches no arm at all, the terminal
+     * {@code lhs.dtype() != rhs.dtype()} decline {@code convert} falls through to.
+     * {@code decline_filter} records an asmjit error that
      * {@code compileFunction} reads before {@code finalize()} ({@code jit/avx2.h:519-531},
      * {@code compiler.cpp:972-989}), so such a filter loses its compiled backend and falls back to
      * the Java one rather than returning wrong rows. The predicate must still not ride that loop:
@@ -2482,7 +2505,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * {@link #isWideLaneEligible} does not admit the shape - its float arm needs a float expression
      * on an operand and its integer arm needs both operands integer - so the filter stays scalar
      * whatever this reports. Admitting the (i32, f64) pairing to wide-lane eligibility is the
-     * separate change the SYMBOL and {@code (i64, f32)} pairings are already deferred for.
+     * separate change SYMBOL is still deferred for; the {@code (i64, f32)} pairing no longer
+     * carries that deferral - {@link #isWideLaneIntCmpFloatLeafPair} admits it.
      */
     private boolean isNarrowLaneDoubleConstArith(ExpressionNode node) {
         if (node == null || node.type != ExpressionNode.OPERATION || !isArithmeticOperation(node)) {
@@ -3630,7 +3654,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * <p>
      * Only the scalar backend implements {@code Sx_I64} outside four-lane mode - {@code jit/avx2.h}'s
      * {@code emit_code} calls {@code decline_filter} when {@code wide_lane} is false, then emits
-     * anyway to keep the value stack balanced ({@code jit/avx2.h:900-909}) - so the emission carries
+     * anyway to keep the value stack balanced (its {@code opcodes::Sx_I64} arm) - so the emission carries
      * the same {@code forceScalarMode} write {@link #maybeEmitI64Widening} makes.
      * A filter holding this pairing is never wide-lane eligible in the first place
      * ({@link #isWideLaneEligible} admits no comparison of an integer arithmetic subtree against a

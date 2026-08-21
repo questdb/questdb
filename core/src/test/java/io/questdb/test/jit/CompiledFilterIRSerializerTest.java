@@ -52,6 +52,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
@@ -60,6 +61,16 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.jit.CompiledFilterIRSerializer.*;
 
 public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
+    // Byte width of one instruction_t - see putIrInstruction() for the layout. READ from
+    // CompiledFilterIRSerializer's INSTRUCTION_SIZE rather than re-spelled here: it is private, but
+    // io.questdb is an open module, so the same reflection assertUnharmonisedWidthWalk() and
+    // assertSerializerFlag() already use reaches it. A hand-kept copy silently keeps asserting the
+    // old layout when the production constant moves; this way the class fails at init instead.
+    private static final int IR_INSTRUCTION_SIZE = serializerInt("INSTRUCTION_SIZE");
+    // The stub opcode serializeConstantStub() and the symbol bind-variable path write for a value
+    // they backfill later - common.h spells the same number opcodes::Inv. Package-private in
+    // production, so the same reflection IR_INSTRUCTION_SIZE uses reaches it.
+    private static final int IR_UNDEFINED_CODE = serializerInt("UNDEFINED_CODE");
     private static final String KNOWN_SYMBOL_1 = "ABC";
     private static final String KNOWN_SYMBOL_2 = "DEF";
     private static final String UNKNOWN_SYMBOL = "XYZ";
@@ -2805,7 +2816,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // a shape isWideLaneEligible() admits runs there rather than falling all the way to scalar.
         // The scalar rows below are the shapes eligibility declines: an INT column under the
         // DOUBLE-width node, which needs the (i32, f64) pairing admitted to wide-lane eligibility
-        // first (the same deferral the SYMBOL and (i64, f32) pairings carry).
+        // first (the same deferral SYMBOL still carries; the (i64, f32) pairing no longer does -
+        // isWideLaneIntCmpFloatLeafPair admits it).
         final Object[][] widened = {
                 {"afloat + 1.0 > 16777216.5", "(f64 1.67772165E7D)(f64 1.0D)(f32 afloat)(+)(>)(ret)", OptionsHint.WIDE_LANE},
                 {"16777216.5 < afloat + 1.0", "(f64 1.0D)(f32 afloat)(+)(f64 1.67772165E7D)(<)(ret)", OptionsHint.WIDE_LANE},
@@ -2914,6 +2926,44 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         options = serialize("anint * 2 > 16777216.5", false, false, true);
         assertIR("anint * 2 > 16777216.5", "(f64 1.67772165E7D)(i32 2L)(i32 anint)(*)(>)(ret)");
         assertOptionsHint("anint * 2 > 16777216.5", options, OptionsHint.SCALAR);
+    }
+
+    @Test
+    public void testFloatArithI64AndDoubleConstChainEmitsAtF8() throws Exception {
+        // The one three-way (f32, i64 IMM, f64 IMM) chain, and a boundary between two adjacent
+        // spellings that nothing else in the tree crosses. The two literals settle the execution
+        // mode between them:
+        // - promoteArithType(F4, I8) answers F4 - the "a == F4 || b == F4" clause fires BEFORE the
+        //   integer-width one - so the inner "afloat + 5_000_000_000" is still a FLOAT
+        //   computation, and its out-of-INT constant emits as an I8 immediate beside f32 operands;
+        // - promoteArithType(F4, F8) then makes the outer "... + 1.0" node F8, and
+        //   isDoubleConst() claims its right operand;
+        // - hasEightByteLeaf() counts COLUMNS and BIND VARIABLES only, so neither literal
+        //   suppresses the source, isNarrowLaneDoubleConstArith() answers true and the filter
+        //   takes the four-lane loop - whose lanes are eight bytes wide, which is what the widened
+        //   immediate needs.
+        // Drop the DOUBLE literal and the very same predicate is SCALAR, which
+        // testEightByteArithI64ConstantKeepsVectorization pins from the other side.
+        //
+        // CompiledFilterRegressionTest#testFloatArithI64AndDoubleConstChainWidensToWideLane pins
+        // the hint and the rows over a fixture: against a 1.5 bound the two spellings return the
+        // SAME rows, so only the hint tells them apart.
+        int options = serialize("afloat + 5_000_000_000 + 1.0 > 1.5", false, false, true);
+        assertIR("afloat + 5_000_000_000 + 1.0 > 1.5",
+                "(f32 1.5D)(f64 1.0D)(i64 5000000000L)(f32 afloat)(+)(+)(>)(ret)");
+        assertOptionsHint("afloat + 5_000_000_000 + 1.0 > 1.5", options, OptionsHint.WIDE_LANE);
+
+        // The two-way control, side by side: same column, same out-of-INT constant, same bound.
+        options = serialize("afloat + 5_000_000_000 > 1.5", false, false, true);
+        assertIR("afloat + 5_000_000_000 > 1.5", "(f32 1.5D)(i64 5000000000L)(f32 afloat)(+)(>)(ret)");
+        assertOptionsHint("afloat + 5_000_000_000 > 1.5", options, OptionsHint.SCALAR);
+
+        // The reversed comparison reaches the backend as the other pairing and takes the same
+        // route.
+        options = serialize("1.5 < afloat + 5_000_000_000 + 1.0", false, false, true);
+        assertIR("1.5 < afloat + 5_000_000_000 + 1.0",
+                "(f64 1.0D)(i64 5000000000L)(f32 afloat)(+)(+)(f32 1.5D)(<)(ret)");
+        assertOptionsHint("1.5 < afloat + 5_000_000_000 + 1.0", options, OptionsHint.WIDE_LANE);
     }
 
     @Test
@@ -3040,6 +3090,314 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertException("select * from x where " + expr, 28, "cannot compare LONG with type FLOAT");
     }
 
+    @Test
+    public void testWidthWalkStopsAtAppendOffsetOverReusedMemory() throws Exception {
+        // SqlCodeGenerator compiles every JIT filter of a session into ONE buffer - its jitIRMem
+        // field - and hands it back with truncate() in a finally. MemoryCARWImpl#truncate() resets
+        // the append offset and reallocates to a single page; it does not zero, and a realloc that
+        // asks for the size the buffer already has returns the same bytes. The PREVIOUS filter's
+        // IR is therefore still readable while the next one serializes into the same buffer, and a
+        // buffer nothing has written yet holds whatever malloc() left there.
+        //
+        // hasUnharmonisedOperandWidths() bounds its walk by getAppendOffset() for that reason.
+        // size() reports the MAPPED page rather than the bytes written, so a walk bounded by it
+        // reads the previous filter's tail as if the current filter had emitted it. The walk
+        // cannot stop on its own here: getExecHint() asks this question from
+        // serializePredicatesAndSc() / serializePredicatesOrSc(), which have not emitted their RET
+        // yet, so nothing terminates the stream between the current filter's last instruction and
+        // the stale bytes.
+        //
+        // A stale read can only turn a false into a true - the walk returns at the first
+        // unharmonised pairing it meets, so trailing instructions can only add pairings, never
+        // remove one - and at that call site a false answer IS the "expected scalar compilation
+        // mode" tripwire. So no supported SQL reaches the site with a correct answer of false, and
+        // the shape is planted by hand for the same reason
+        // testShortCircuitOpcodeConsumesOneOperandInWidthWalk plants its streams: what it pins is
+        // the bound, not a shape today's emitter produces.
+        assertMemoryLeak(() -> {
+            // A buffer of its own rather than the shared irMemory: the shared one is allocated
+            // once for the class and its first page would land inside this block as an unbalanced
+            // NATIVE_JIT allocation.
+            try (
+                    MemoryCARW ir = Vm.getCARWInstance(2_048, 1, MemoryTag.NATIVE_JIT);
+                    PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
+            ) {
+                serializer.clear();
+                serializer.of(ir, sqlExecutionContext, metadata, cursor, bindVarFunctions);
+
+                // The LONGER filter: a harmonised pairing, then an unharmonised one, then its RET.
+                // Only the second pairing sits past the shorter filter's append offset, so it is
+                // the one a size()-bounded walk picks up.
+                ir.truncate();
+                putIrInstruction(ir, MEM, I8_TYPE, 0);
+                putIrInstruction(ir, IMM, I8_TYPE, 0);
+                putIrInstruction(ir, GT, 0, 0);
+                putIrInstruction(ir, MEM, I4_TYPE, 0);
+                putIrInstruction(ir, IMM, I8_TYPE, 0);
+                putIrInstruction(ir, GT, 0, 0);
+                putIrInstruction(ir, RET, 0, 0);
+                assertUnharmonisedWidthWalk("(i32 col) > (i64 imm) in the longer filter", true);
+
+                // The reuse, spelled as SqlCodeGenerator's finally spells it.
+                ir.truncate();
+
+                // The SHORTER filter, in the state getExecHint() reads it in on a short-circuit
+                // path: three instructions with no RET behind them.
+                putIrInstruction(ir, MEM, I8_TYPE, 0);
+                putIrInstruction(ir, IMM, I8_TYPE, 0);
+                putIrInstruction(ir, GT, 0, 0);
+
+                // The precondition, asserted rather than assumed: the longer filter's fourth
+                // instruction is still in the buffer, one instruction past this filter's append
+                // offset. Should truncate() ever start zeroing, this goes red and says so instead
+                // of leaving the walk assertion below quietly asserting nothing.
+                final long staleOffset = 3 * IR_INSTRUCTION_SIZE;
+                Assert.assertEquals("truncate() zeroed the buffer", MEM, ir.getInt(staleOffset));
+                Assert.assertEquals("truncate() zeroed the buffer", I4_TYPE, ir.getInt(staleOffset + Integer.BYTES));
+
+                // With the bound at size() the walk runs on into that stale (i32, i64) pairing and
+                // answers true for a filter that emitted no such pairing.
+                assertUnharmonisedWidthWalk("(i64 col) > (i64 imm) over reused memory", false);
+            } finally {
+                // The buffer above is gone; do not leave the serializer holding it. In the finally
+                // so that a failing assertion above does not skip it: the static serializer
+                // outlives this method, and clear() is what drops its reference to the closed
+                // buffer.
+                serializer.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testVarSizeHeaderCheckStopsAtAppendOffsetOverReusedMemory() throws Exception {
+        // The sibling of testWidthWalkStopsAtAppendOffsetOverReusedMemory, over the second walk of
+        // this class: ensureOnlyVarSizeHeaderChecks(). It bounded itself by memory.size(), which
+        // reports the MAPPED page rather than the bytes written, so it could read the PREVIOUS
+        // filter's IR out of the buffer SqlCodeGenerator reuses for every filter of a session.
+        //
+        // What this pins is an INVARIANT, not a bug a user could hit at HEAD, and the distinction
+        // matters. All three callers - serialize(), serializePredicatesAndSc() and
+        // serializePredicatesOrSc() - run the check immediately after putOperator(RET) with no
+        // write in between, and the walk returns at the first RET it meets. The RET therefore sits
+        // one instruction INSIDE the append offset, both bounds meet it, and neither reaches a
+        // stale byte. So the test cannot drive the defect through a query; it calls the walk
+        // directly, at the one point where the invariant CAN be violated - a stream that has not
+        // emitted its RET yet, exactly the state getExecHint() already reads on the short-circuit
+        // paths. A fourth caller of that shape is what the bound protects against.
+        //
+        // The rejected filter below is not a contrived leftover either: SqlCodeGenerator truncates
+        // jitIRMem in a finally, so a filter this very check REJECTED leaves its offending IR in
+        // the buffer for the next query to serialize over.
+        assertMemoryLeak(() -> {
+            // A buffer of its own rather than the shared irMemory: the shared one is allocated
+            // once for the class and its first page would land inside this block as an unbalanced
+            // NATIVE_JIT allocation.
+            try (
+                    MemoryCARW ir = Vm.getCARWInstance(2_048, 1, MemoryTag.NATIVE_JIT);
+                    PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
+            ) {
+                serializer.clear();
+                serializer.of(ir, sqlExecutionContext, metadata, cursor, bindVarFunctions);
+
+                // Round one, the var-size arm. The LONGER filter carries a STRING header under an
+                // ordering operator - what `astring > 'a'` would serialize to - so the check
+                // rejects it and its IR stays in the buffer. Only the second pairing sits past the
+                // shorter filter's append offset, so it is the one a size()-bounded walk picks up.
+                ir.truncate();
+                putIrInstruction(ir, MEM, I8_TYPE, 0);
+                putIrInstruction(ir, IMM, I8_TYPE, 0);
+                putIrInstruction(ir, GT, 0, 0);
+                putIrInstruction(ir, MEM, STRING_HEADER_TYPE, 0);
+                putIrInstruction(ir, IMM, I8_TYPE, 0);
+                putIrInstruction(ir, GT, 0, 0);
+                putIrInstruction(ir, RET, 0, 0);
+                assertVarSizeHeaderChecksReject(
+                        "(string header) > (i64 imm) in the rejected filter",
+                        "var-size columns can only be used in NULL checks"
+                );
+
+                // The reuse, spelled as SqlCodeGenerator's finally spells it.
+                ir.truncate();
+
+                // The SHORTER filter, in the state a pre-RET caller would read it in: three
+                // instructions, all of them fixed-size, with no RET behind them.
+                putIrInstruction(ir, MEM, I8_TYPE, 0);
+                putIrInstruction(ir, IMM, I8_TYPE, 0);
+                putIrInstruction(ir, GT, 0, 0);
+
+                // The precondition, asserted rather than assumed: the rejected filter's fourth
+                // instruction is still in the buffer, one instruction past this filter's append
+                // offset. MemoryCARWImpl#truncate() reallocates to the size the buffer already has
+                // and never zeroes, so the bytes survive verbatim. Should it ever start zeroing,
+                // this goes red and says so instead of leaving the assertion below quietly
+                // asserting nothing.
+                final long staleOffset = 3 * IR_INSTRUCTION_SIZE;
+                Assert.assertEquals("truncate() zeroed the buffer", MEM, ir.getInt(staleOffset));
+                Assert.assertEquals(
+                        "truncate() zeroed the buffer",
+                        STRING_HEADER_TYPE,
+                        ir.getInt(staleOffset + Integer.BYTES)
+                );
+
+                // With the bound at size() the walk runs on into that stale (string header, i64)
+                // pairing and rejects a filter that reached no var-size column at all.
+                assertVarSizeHeaderChecksPass("(i64 col) > (i64 imm) over reused memory");
+
+                // Round two, the harsher arm: `case -1` throws outright. UNDEFINED_CODE is the
+                // opcode serializeConstantStub() and the symbol bind-variable path write for a
+                // value they backfill later; when the backfill itself throws, serialize()
+                // propagates and the finally hands the buffer back with the stub still in it.
+                ir.truncate();
+                putIrInstruction(ir, MEM, I8_TYPE, 0);
+                putIrInstruction(ir, IMM, I8_TYPE, 0);
+                putIrInstruction(ir, GT, 0, 0);
+                putIrInstruction(ir, IR_UNDEFINED_CODE, IR_UNDEFINED_CODE, 0);
+                putIrInstruction(ir, RET, 0, 0);
+                assertVarSizeHeaderChecksReject("un-backfilled stub in the rejected filter", "invalid opcode");
+
+                ir.truncate();
+                putIrInstruction(ir, MEM, I8_TYPE, 0);
+                putIrInstruction(ir, IMM, I8_TYPE, 0);
+                putIrInstruction(ir, GT, 0, 0);
+
+                Assert.assertEquals("truncate() zeroed the buffer", IR_UNDEFINED_CODE, ir.getInt(staleOffset));
+                assertVarSizeHeaderChecksPass("(i64 col) > (i64 imm) over a reused stub");
+            } finally {
+                // The buffer above is gone; do not leave the serializer holding it. In the finally
+                // so that a failing assertion above does not skip it: the static serializer
+                // outlives this method, and clear() is what drops its reference to the closed
+                // buffer.
+                serializer.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testUnharmonisedPairingExclusionsAndWideLaneBranch() throws Exception {
+        // isUnharmonisedPairing() answers a different question for each of the two loops, and the
+        // suite reached only the narrower one. testShortCircuitOpcodeConsumesOneOperandInWidthWalk
+        // and testExecHintDemotesUnharmonisedWidthsToScalar pin the 4/8 and 8/8 cases of the
+        // single-size half; this covers the three exclusions that half carries and the wide-lane
+        // half in full.
+        //
+        // The exclusions are what keep the walk from demoting a filter that needs no demoting: it
+        // runs on every compile that reaches it, and a false positive costs the filter its
+        // vectorized backend outright.
+        //
+        // Each stream is planted by hand, as in the two tests above: what these pin is what the
+        // BACKENDS harmonise, which the emitter's current output does not enumerate.
+        assertMemoryLeak(() -> {
+            // A buffer of its own rather than the shared irMemory: the shared one is allocated
+            // once for the class and its first page would land inside this block as an unbalanced
+            // NATIVE_JIT allocation.
+            try (
+                    MemoryCARW ir = Vm.getCARWInstance(2_048, 1, MemoryTag.NATIVE_JIT);
+                    PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
+            ) {
+                serializer.clear();
+                serializer.of(ir, sqlExecutionContext, metadata, cursor, bindVarFunctions);
+
+                // A 16-byte operand - data_type_t::i128, what a UUID or LONG128 column reads as -
+                // beside an eight-byte one. The single-size half counts any byte-width mismatch, so
+                // it reports; the wide-lane half counts only a NARROW INT beside an i64, and i128
+                // is not one, so it does not - it reads the pairing as harmonised. avx2::convert()
+                // does not agree: its i128 arm breaks out to the terminal check, which declines the
+                // pairing at every lane count, four included. The disagreement is on paper only -
+                // isWideLaneEligible() admits no i128 operand (its integer arm takes an I4 or I8
+                // leaf, its float arm a float expression), so no wide-lane compile can put one in
+                // front of the assert this half runs under. The pins below hold the walk as it
+                // stands: the divergence is a rationale to record, not a behaviour to change here.
+                ir.truncate();
+                putIrInstruction(ir, MEM, I16_TYPE, 0);
+                putIrInstruction(ir, IMM, I8_TYPE, 0);
+                putIrInstruction(ir, EQ, 0, 0);
+                putIrInstruction(ir, RET, 0, 0);
+                assertUnharmonisedWidthWalk("(i128 col) = (i64 imm) on a narrow lane", true);
+                assertUnharmonisedWidthWalkForLaneMode("(i128 col) = (i64 imm) on the four-lane loop", true, false);
+
+                // Every var-size header observes as EIGHT bytes, so `<varsize> IS [NOT] NULL`
+                // pairs same-width against the I8 sentinel serializeNull() spells for it and
+                // neither half reports. The exclusion is a SIZE and not an exemption, which the
+                // fourth stream below pins from the other side.
+                for (int headerType : new int[]{STRING_HEADER_TYPE, BINARY_HEADER_TYPE, VARCHAR_HEADER_TYPE}) {
+                    ir.truncate();
+                    putIrInstruction(ir, MEM, headerType, 0);
+                    putIrInstruction(ir, IMM, I8_TYPE, 0);
+                    putIrInstruction(ir, EQ, 0, 0);
+                    putIrInstruction(ir, RET, 0, 0);
+                    assertUnharmonisedWidthWalk("(varsize header " + headerType + ") = (i64 imm)", false);
+                    assertUnharmonisedWidthWalkForLaneMode("(varsize header " + headerType + ") = (i64 imm), four lanes", true, false);
+                }
+                ir.truncate();
+                putIrInstruction(ir, MEM, STRING_HEADER_TYPE, 0);
+                putIrInstruction(ir, IMM, I4_TYPE, 0);
+                putIrInstruction(ir, EQ, 0, 0);
+                putIrInstruction(ir, RET, 0, 0);
+                assertUnharmonisedWidthWalk("(string header) = (i32 imm) is a width mismatch like any other", true);
+
+                // A comparison MASK as one half of a pairing. The walk pushes UNDEFINED_CODE for
+                // one, typeSizeBytes() answers 0, and the pairing is skipped rather than read as a
+                // zero-byte operand against an eight-byte one. Both operand positions, because the
+                // guard has to hold on either side.
+                ir.truncate();
+                putIrInstruction(ir, MEM, I4_TYPE, 0);
+                putIrInstruction(ir, IMM, I4_TYPE, 0);
+                putIrInstruction(ir, GT, 0, 0);
+                putIrInstruction(ir, IMM, I8_TYPE, 0);
+                putIrInstruction(ir, GT, 0, 0);
+                putIrInstruction(ir, RET, 0, 0);
+                assertUnharmonisedWidthWalk("(i64 imm) > (mask)", false);
+                ir.truncate();
+                putIrInstruction(ir, IMM, I8_TYPE, 0);
+                putIrInstruction(ir, MEM, I4_TYPE, 0);
+                putIrInstruction(ir, IMM, I4_TYPE, 0);
+                putIrInstruction(ir, GT, 0, 0);
+                putIrInstruction(ir, GT, 0, 0);
+                putIrInstruction(ir, RET, 0, 0);
+                assertUnharmonisedWidthWalk("(mask) > (i64 imm)", false);
+
+                // The wide-lane half, in both directions and at all three narrow widths. This is
+                // the branch the assert at areWideLaneWidthsHarmonised() runs under -ea and no
+                // test reached directly: avx2::sx_i64 widens an i32 lane into the low 128 bits, so
+                // a narrow int beside an i64 is the one pairing the four-lane loop cannot leave as
+                // it found it.
+                for (int narrowType : new int[]{I1_TYPE, I2_TYPE, I4_TYPE}) {
+                    ir.truncate();
+                    putIrInstruction(ir, MEM, narrowType, 0);
+                    putIrInstruction(ir, IMM, I8_TYPE, 0);
+                    putIrInstruction(ir, GT, 0, 0);
+                    putIrInstruction(ir, RET, 0, 0);
+                    assertUnharmonisedWidthWalkForLaneMode("(narrow " + narrowType + ") > (i64 imm), four lanes", true, true);
+                    ir.truncate();
+                    putIrInstruction(ir, IMM, I8_TYPE, 0);
+                    putIrInstruction(ir, MEM, narrowType, 0);
+                    putIrInstruction(ir, GT, 0, 0);
+                    putIrInstruction(ir, RET, 0, 0);
+                    assertUnharmonisedWidthWalkForLaneMode("(i64 imm) > (narrow " + narrowType + "), four lanes", true, true);
+                }
+
+                // ... and the pairing the two halves disagree about, which is what makes the
+                // wide-lane branch a branch rather than a copy: an (f32, i64) pairing is a byte
+                // mismatch the single-size loop cannot harmonise, and cvt_ftod / cvt_ltod harmonise
+                // it outright at four lanes. The comment on hasUnharmonisedOperandWidths() names
+                // exactly this exclusion; this is the stream that holds it.
+                ir.truncate();
+                putIrInstruction(ir, MEM, F4_TYPE, 0);
+                putIrInstruction(ir, IMM, I8_TYPE, 0);
+                putIrInstruction(ir, GT, 0, 0);
+                putIrInstruction(ir, RET, 0, 0);
+                assertUnharmonisedWidthWalk("(f32 col) > (i64 imm) on a narrow lane", true);
+                assertUnharmonisedWidthWalkForLaneMode("(f32 col) > (i64 imm) on the four-lane loop", true, false);
+            } finally {
+                // The buffer above is gone; do not leave the serializer holding it. In the finally
+                // so that a failing assertion above does not skip it: the static serializer
+                // outlives this method, and clear() is what drops its reference to the closed
+                // buffer.
+                serializer.clear();
+            }
+        });
+    }
+
     // instruction_t in common.h: a 4-byte opcode, a 4-byte options field, then a 16-byte payload.
     private static void putIrInstruction(MemoryCARW ir, int opcode, int typeCode, long payload) {
         ir.putInt(opcode);
@@ -3050,15 +3408,59 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     // Runs hasUnharmonisedOperandWidths() over whatever IR sits in irMemory. The walk is private
     // and this test lives in another package, so reflection is what reaches it - the alternative,
-    // widening the method, would leave a seam in the production class for a check with no other
-    // caller. false is the argument getExecHint() passes on the production compile path: the
-    // single-size loop at a lane narrower than eight bytes, where the backend declines a
-    // mixed-width pairing rather than promoting it.
+    // widening the method, would open the production class up for this test alone: both callers
+    // the walk has, areWideLaneWidthsHarmonised() and getExecHint(), sit inside
+    // CompiledFilterIRSerializer. false is the argument getExecHint() passes on the production
+    // compile path: the single-size loop at a lane narrower than eight bytes, where the backend
+    // declines a mixed-width pairing rather than promoting it.
     private static void assertUnharmonisedWidthWalk(String message, boolean expected) throws Exception {
+        assertUnharmonisedWidthWalkForLaneMode(message, false, expected);
+    }
+
+    // The same walk for either loop, naming the loop in the SECOND argument, where the form above
+    // carries the expectation instead - hence a name of its own rather than an overload the reader
+    // has to count arguments to tell apart. true is the argument the assert at
+    // areWideLaneWidthsHarmonised() passes - the four-lane loop, where avx2::convert() DOES promote
+    // and only a narrow-int-with-i64 pairing counts.
+    private static void assertUnharmonisedWidthWalkForLaneMode(String message, boolean isWideLane, boolean expected) throws Exception {
         final Method walk = CompiledFilterIRSerializer.class
                 .getDeclaredMethod("hasUnharmonisedOperandWidths", boolean.class);
         walk.setAccessible(true);
-        Assert.assertEquals(message, expected, walk.invoke(serializer, false));
+        Assert.assertEquals(message, expected, walk.invoke(serializer, isWideLane));
+    }
+
+    // Runs ensureOnlyVarSizeHeaderChecks() over whatever IR sits in the serializer's buffer and
+    // expects it to accept the stream. Same reasoning as assertUnharmonisedWidthWalk() for using
+    // reflection: the check is private and every caller it has - serialize() and the two
+    // short-circuit paths - sits inside CompiledFilterIRSerializer, so widening it would open the
+    // production class up for this test alone.
+    private static void assertVarSizeHeaderChecksPass(String message) throws Exception {
+        try {
+            invokeVarSizeHeaderChecks();
+        } catch (InvocationTargetException e) {
+            throw new AssertionError(message + " - rejected with: " + e.getCause().getMessage(), e.getCause());
+        }
+    }
+
+    // The same walk, expecting a rejection carrying expectedMessage.
+    private static void assertVarSizeHeaderChecksReject(String message, String expectedMessage) throws Exception {
+        try {
+            invokeVarSizeHeaderChecks();
+            Assert.fail(message + " - expected a rejection carrying: " + expectedMessage);
+        } catch (InvocationTargetException e) {
+            final Throwable cause = e.getCause();
+            Assert.assertTrue(
+                    message + " - expected an SqlException, got: " + cause,
+                    cause instanceof SqlException
+            );
+            TestUtils.assertContains(((SqlException) cause).getFlyweightMessage(), expectedMessage);
+        }
+    }
+
+    private static void invokeVarSizeHeaderChecks() throws Exception {
+        final Method check = CompiledFilterIRSerializer.class.getDeclaredMethod("ensureOnlyVarSizeHeaderChecks");
+        check.setAccessible(true);
+        check.invoke(serializer);
     }
 
     // Reads one of getExecHint()'s private gate flags after a serialize() call, so a test can pin
@@ -3069,6 +3471,19 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         final Field flag = CompiledFilterIRSerializer.class.getDeclaredField(name);
         flag.setAccessible(true);
         Assert.assertEquals(name, expected, flag.getBoolean(serializer));
+    }
+
+    // Reads a private static int constant of CompiledFilterIRSerializer, so a layout number this
+    // class depends on comes from production rather than from a copy that can drift. Same
+    // mechanism CompiledFilterRegressionTest#serializerExecHint uses for the EXEC_HINT_* table.
+    private static int serializerInt(String name) {
+        try {
+            final Field field = CompiledFilterIRSerializer.class.getDeclaredField(name);
+            field.setAccessible(true);
+            return field.getInt(null);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("cannot read CompiledFilterIRSerializer." + name, e);
+        }
     }
 
     private void assertIR(String message, String expectedIR) {
