@@ -5228,7 +5228,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         @Override
         public void setColumnTop(int columnIndex, long columnTop) {
-            transientVersions.upsertColumnTop(sinkPartitionTimestamp, columnIndex, columnTop);
+            transientVersions.mergeColumnTop(sinkPartitionTimestamp, columnIndex, columnTop);
             columnTopAfter[columnIndex] = transientVersions.getColumnTop(sinkPartitionTimestamp, columnIndex);
         }
 
