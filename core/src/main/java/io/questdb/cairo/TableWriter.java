@@ -13412,10 +13412,41 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     if (!multiCell) {
                         pCount++;
-                        latchCount += dispatchCompositeCellRange(
-                                rowCellKeys[0], partitionTimestamp, srcOooLo, srcOooHi, srcOooMax,
-                                maxTimestamp, sortedTimestampsAddr, o3Columns, cellSegmentSink
-                        );
+                        if (isCommitDedupMode()) {
+                            // DEDUP takes the SCRATCH path even for a single cell. The raw
+                            // sortedTimestampsAddr carries each row's ABSOLUTE position in the O3
+                            // batch, while the columns handed to the task are based at the dispatched
+                            // range -- measured: batch of one usable row with px at index 0, yet the
+                            // index entry referenced row 1, and the copy returned the uninitialised
+                            // bytes at that slot. Non-dedup commits do not notice because they never
+                            // read a row through the index the way the dedup merge does (proven by
+                            // CompositeSquashTest#testSameTimestampSecondCommitWithoutDedup, which
+                            // drives the identical shape and passes). buildCompositeCellGroupScratch
+                            // already produces a RELATIVE ts-index -- it was written for exactly this
+                            // mismatch on the multi-cell path.
+                            if (compositeScratchColumnsToFree == null) {
+                                compositeScratchColumnsToFree = new ObjList<>();
+                                compositeScratchRawBuffersToFree = new LongList();
+                            }
+                            final int rangeLenSingle = (int) (srcOooHi - srcOooLo + 1);
+                            final Integer[] singleOrder = new Integer[rangeLenSingle];
+                            for (int j = 0; j < rangeLenSingle; j++) {
+                                singleOrder[j] = j;
+                            }
+                            final CompositeCellScratch singleScratch = buildCompositeCellGroupScratch(
+                                    srcOooLo, singleOrder, 0, rangeLenSingle, sortedTimestampsAddr,
+                                    timestampIndex, compositeScratchColumnsToFree, compositeScratchRawBuffersToFree
+                            );
+                            latchCount += dispatchCompositeCellRange(
+                                    rowCellKeys[0], partitionTimestamp, 0, rangeLenSingle - 1, rangeLenSingle,
+                                    maxTimestamp, singleScratch.tsIndexAddr, singleScratch.columns, cellSegmentSink
+                            );
+                        } else {
+                            latchCount += dispatchCompositeCellRange(
+                                    rowCellKeys[0], partitionTimestamp, srcOooLo, srcOooHi, srcOooMax,
+                                    maxTimestamp, sortedTimestampsAddr, o3Columns, cellSegmentSink
+                            );
+                        }
                     } else {
                         if (hasVarSizeColumn) {
                             throw CairoException.critical(0)

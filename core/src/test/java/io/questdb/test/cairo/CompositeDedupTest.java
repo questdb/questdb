@@ -47,26 +47,6 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
     /**
      * Dedup on the designated timestamp alone: a repeated timestamp within ONE cell must collapse.
      */
-    @Ignore("PROVEN 2026-08-20 -- the sorted-timestamps index and the O3 columns disagree about their"
-            + " BASE, and the fix is to rebase the index for the composite single-cell dispatch."
-            + " PROOF, both measured at the merge call:"
-            + "   DBGIDX2 [srcOooMax=1, srcDataMax=1, mergeOOOLo=0, mergeOOOHi=0, o3row0=1]"
-            + "   DBGSRC  [px0=99.0, px1=6.65e-310]"
-            + " The O3 columns hold the NEW value at index 0; index 1 is uninitialised. The"
-            + " sorted-timestamps entry references index 1. That garbage IS what the query returns, so"
-            + " the index entry is wrong and the correct reference is 0. Its timestamp is right, which"
-            + " is why ts reads back correctly while exch and px do not."
-            + " The native merge (dedup.cpp) and the copy tasks are both EXONERATED -- they copy the bad"
-            + " entry verbatim (high bit CLEAR = O3 data). Same absolute-vs-relative class already fixed"
-            + " for the MULTI-CELL scratch path; the single-cell path was never audited for it because"
-            + " nothing exercised it until dedup made a stale index observable."
-            + " FIX: rebase the o3 row index in the sorted-timestamps entries to the dispatched range"
-            + " for the single-cell composite dispatch (dispatchCompositeCellRange passes"
-            + " sortedTimestampsAddr unchanged with srcOooLo/srcOooHi)."
-            + " TWELVE suspects eliminated by measurement: identical-check bounds; phantom-dir removal;"
-            + " openROFromMemoryColumns; partition nameTxn; open-column path builds; identical-check"
-            + " column source; 'O3 path not reached'; the `last` flag (HANGS); column dispatch; a"
-            + " general same-timestamp merge bug (no-dedup control PASSES); the dedup merge; the copy.")
     @Test(timeout = 60_000)
     public void testDedupOnTimestampWithinOneCell() throws Exception {
         assertMemoryLeak(() -> {
@@ -86,7 +66,6 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
      * distinct rows and must both survive -- a dedup that collapsed them would be losing data that the
      * plain twin keeps, because on the plain table the dimension column is just another column.
      */
-    @Ignore("Gated with the rest; this case PASSES with the gates lifted (verified 2026-08-20).")
     @Test(timeout = 60_000)
     public void testSameTimestampInDifferentCellsBothSurvive() throws Exception {
         assertMemoryLeak(() -> {
@@ -105,7 +84,6 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
      * timestamp. This is the shape {@code getDedupRowsWithAdditionalKeys} has to get right: the key set
      * spans a column that also decides which cell a row lives in.
      */
-    @Ignore("Gated with the rest; this case PASSES with the gates lifted (verified 2026-08-20).")
     @Test(timeout = 60_000)
     public void testUpsertWithinACellWhileSiblingHoldsSameTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -126,7 +104,6 @@ public class CompositeDedupTest extends AbstractCompositeTwinTest {
      * Dedup across an O3 write, which is where dedup and the composite cell router interact: the
      * incoming batch is out of order AND spans two cells.
      */
-    @Ignore("Gated with the rest; this case PASSES with the gates lifted (verified 2026-08-20).")
     @Test(timeout = 60_000)
     public void testDedupAcrossAnO3Write() throws Exception {
         assertMemoryLeak(() -> {

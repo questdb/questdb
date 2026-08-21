@@ -1474,12 +1474,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // to an already-existing composite table. TableRecordMetadata does not expose PartitionSpec,
         // so a quick TableReader is opened purely for this check, mirroring compileReindex's/
         // compileVacuum's own idiom elsewhere in this file.
-        try (TableReader rdr = executionContext.getReader(tableToken)) {
-            if (rdr.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
-                throw SqlException.$(tableNamePosition, "composite partitioning does not yet support DEDUP UPSERT KEYS [table=")
-                        .put(tableToken.getTableName()).put(']');
-            }
-        }
         AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupEnable(
                 tableNamePosition,
                 tableToken

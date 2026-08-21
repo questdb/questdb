@@ -249,16 +249,25 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
      * elsewhere -- confirmed reachable (this exact CREATE statement was NOT rejected before this
      * gate was added). Gated unconditionally at CREATE time.
      */
+    /**
+     * SP4 (2026-08-21): DEDUP UPSERT KEYS works on a composite table. Asserts the UPSERT actually
+     * happens -- one row, new value -- because "CREATE did not throw" would pass even if every commit
+     * afterwards silently corrupted the non-key columns, which is exactly the bug this replaces.
+     */
     @Test
-    public void testCreateCompositeWithDedupUpsertKeysGated() throws Exception {
+    public void testCompositeDedupUpsertKeysWorks() throws Exception {
         assertMemoryLeak(() -> {
-            try {
-                execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) " +
-                        "partition by day, exch wal dedup upsert keys(ts, exch)");
-                Assert.fail("expected composite + DEDUP UPSERT KEYS(ts, exch) to be rejected at CREATE time");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "composite partitioning does not yet support DEDUP UPSERT KEYS");
-            }
+            execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts)"
+                    + " PARTITION BY DAY, exch LAYOUT PLAIN WAL DEDUP UPSERT KEYS(ts, exch)");
+            execute("insert into c values ('2020-01-01T00:00:00.000000Z','A',1.0)");
+            drainWalQueue();
+            execute("insert into c values ('2020-01-01T00:00:00.000000Z','A',7.0)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            printSql("select count() from c");
+            TestUtils.assertContains(sink, "1");
+            printSql("select exch, px from c");
+            TestUtils.assertContains(sink, "A\t7.0");
         });
     }
 
@@ -272,16 +281,28 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
      * out a narrower "safe" subset. This test proves the gate condition is "any dedup key", not
      * "more than one dedup key".
      */
+    /**
+     * SP4 (2026-08-21): timestamp-only DEDUP works too. This is the case that took twelve eliminated
+     * hypotheses to fix -- the single-cell dispatch handed the dedup merge a ts-index whose row
+     * references were ABSOLUTE batch positions while the columns were based at the dispatched range,
+     * so the copy read uninitialised memory for every non-key column. Asserting the non-key columns
+     * explicitly is the point.
+     */
     @Test
-    public void testCreateCompositeWithTimestampOnlyDedupGated() throws Exception {
+    public void testCompositeTimestampOnlyDedupWorks() throws Exception {
         assertMemoryLeak(() -> {
-            try {
-                execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) " +
-                        "partition by day, exch wal dedup upsert keys(ts)");
-                Assert.fail("expected composite + DEDUP UPSERT KEYS(ts) to be rejected at CREATE time");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "composite partitioning does not yet support DEDUP UPSERT KEYS");
-            }
+            execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts)"
+                    + " PARTITION BY DAY, exch LAYOUT PLAIN WAL DEDUP UPSERT KEYS(ts)");
+            execute("insert into c values ('2020-01-01T00:00:00.000000Z','A',1.0)");
+            drainWalQueue();
+            execute("insert into c values ('2020-01-01T00:00:00.000000Z','A',9.0)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            printSql("select count() from c");
+            TestUtils.assertContains(sink, "1");
+            // the NON-KEY columns are what silently corrupted before
+            printSql("select exch, px from c");
+            TestUtils.assertContains(sink, "A\t9.0");
         });
     }
 
@@ -292,16 +313,15 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
      * already-existing composite table. Must be rejected too, synchronously (validated at compile
      * time, before any AlterOperation is built/enqueued).
      */
+    /**
+     * SP4 (2026-08-21): ALTER TABLE ... DEDUP ENABLE is accepted on a composite table.
+     */
     @Test
-    public void testAlterTableDedupEnableGated() throws Exception {
+    public void testAlterTableDedupEnableWorks() throws Exception {
         assertMemoryLeak(() -> {
             createRoutedTwoCellTable("c");
-            try {
-                execute("alter table c dedup enable upsert keys(ts, exch)");
-                Assert.fail("expected ALTER TABLE ... DEDUP ENABLE on a composite table to be rejected");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "composite partitioning does not yet support DEDUP UPSERT KEYS");
-            }
+            execute("alter table c dedup enable upsert keys(ts, exch)");
+            drainWalQueue();
             assertWalTableNotSuspended("c");
         });
     }

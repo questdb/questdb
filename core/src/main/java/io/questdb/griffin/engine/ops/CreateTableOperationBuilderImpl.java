@@ -299,10 +299,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         if (dimCount > 0) {
             for (int i = 0, n = columnNames.size(); i < n; i++) {
                 CreateTableColumnModel model = columnModels.get(columnNames.getQuick(i));
-                if (model != null && model.isDedupKey()) {
-                    throw SqlException.$(partitionDimensionExprs.getQuick(0).position, "composite partitioning does not yet support DEDUP UPSERT KEYS [table=")
-                            .put(getTableName()).put(']');
-                }
+                
             }
         }
 
