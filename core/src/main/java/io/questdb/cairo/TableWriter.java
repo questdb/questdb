@@ -13403,20 +13403,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long newNameTxn = txWriter.getTxn();
         final FrameFactory frameFactory = engine.getFrameFactory();
         Frame targetFrame = null;
-        try {
+        final int columnCount = metadata.getColumnCount();
+        // The target frame's resolved tops go here, not straight into columnVersionWriter: it is keyed by
+        // partitionTs alone, the same key the source frame reads from below, so a direct write would leak
+        // the TARGET's in-progress top into the SOURCE's view of the OLD directory on the very next piece.
+        // Same hazard, same fix, as O3PartitionJob.assembleFreshPartitionVersion's srcColumnVersions /
+        // transientVersions split - see TransientColumnVersions's own class comment. Seeding it from
+        // columnVersionWriter up front means an untouched column's lookups fall through to the same value
+        // either object would give, and syncing it back to columnVersionWriter only after the loop
+        // succeeds means a rewrite that throws partway through leaves the live writer exactly as it found
+        // it - nothing to roll back.
+        try (TransientColumnVersions targetVersions = new TransientColumnVersions()) {
+            targetVersions.readFrom(columnVersionWriter);
             other.trimTo(pathSize);
             setPathForNativePartition(other, timestampType, partitionBy, partitionTs, newNameTxn);
             createDirsOrFail(ff, other, configuration.getMkDirMode());
-            targetFrame = frameFactory.openRW(other, partitionTs, metadata, columnVersionWriter,
-                    (columnIndex, columnTop) -> columnVersionWriter.upsertColumnTop(partitionTs, columnIndex, columnTop), 0);
+            // The sink never lets a column's tracked top go DOWN, only up or unchanged: FrameAlgebra's
+            // private append takes a free ride (addTop, no bytes written) on every piece a column stays
+            // fully virtual through, and only physically writes NULLs (appendNulls) once a piece needs
+            // real bytes below it - a decision it makes purely from the TARGET's own accumulated top, so
+            // that top must never regress once a piece has genuinely advanced it.
+            targetFrame = frameFactory.openRW(other, partitionTs, metadata, targetVersions,
+                    (columnIndex, columnTop) -> targetVersions.upsertColumnTop(
+                            partitionTs, columnIndex, Math.max(columnTop, targetVersions.getColumnTop(partitionTs, columnIndex))), 0);
 
-            // Per column: does its recorded top survive this rewrite unchanged, or does some piece past
-            // the first physically materialize NULLs below it? Mirrors
-            // O3PartitionJob.assembleFreshPartitionVersion's own tracking - see markMaterializedColumns
-            // there for why this can't just be "zero every column that had a top": FrameAlgebra's private
-            // append takes a free ride (addTop, no bytes written) on the very FIRST piece copied into a
-            // column's fresh file, and only physically writes NULLs (appendNulls) for a later one.
-            final int columnCount = metadata.getColumnCount();
             long written = 0;
             path.trimTo(pathSize);
             setPathForNativePartition(path, timestampType, partitionBy, partitionTs, srcNameTxn);
@@ -13430,17 +13440,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         continue;
                     }
                     final long rowOffset = geometry.getPieceRowOffset(partitionIndex, p);
-                    if (written > 0) {
-                        for (int column = 0; column < columnCount; column++) {
-                            if (columnVersionWriter.getColumnTop(partitionTs, column) > rowOffset) {
-                                columnVersionWriter.upsertColumnTop(partitionTs, column, 0);
-                            }
-                        }
-                    }
                     FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, txWriter.getTxn() + 1L, configuration.getCommitMode());
                     addPhysicallyWrittenRows(rowCount);
                     compactionWrittenRows += rowCount;
                     written += rowCount;
+                }
+            }
+            // Only now, with every piece copied successfully, does the target's view of its own tops
+            // become the partition's real, committed one - except for a column whose top reached exactly
+            // `written`: every one of its rows was a free ride, so it never got a single real byte
+            // anywhere in the rewrite, and upserting it would pin today's row count as a permanent
+            // boundary. Leaving no record at all instead lets it keep reading as "still nothing here" as
+            // the partition grows further, the same as a column nothing has ever written to.
+            for (int column = 0; column < columnCount; column++) {
+                final long colTop = targetVersions.getColumnTop(partitionTs, column);
+                if (colTop < written) {
+                    columnVersionWriter.upsertColumnTop(partitionTs, column, colTop);
                 }
             }
         } finally {

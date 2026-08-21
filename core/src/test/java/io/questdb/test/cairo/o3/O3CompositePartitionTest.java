@@ -1098,6 +1098,65 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testConvertingCompositePartitionToParquetWithColumnAddedAfterPartitionRolledOver() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+            final String base = "SELECT x::INT i, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                    " FROM long_sequence(5760)";
+            // Keeps 2020-02-03 from being the writer's active last partition when the backdated batch
+            // lands, so that write goes through the O3 path and can be cut into pieces.
+            final String nextDay = "SELECT x::INT + 90000 i, timestamp_sequence('2020-02-06', 60*1000000L) ts" +
+                    " FROM long_sequence(50)";
+            execute("CREATE TABLE x AS (" + base + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x " + nextDay);
+            drainWalQueue();
+
+            // Lands inside 2020-02-03: the merge relocates the pieces it touches to the tail, cutting the
+            // day into several pieces instead of rewriting it whole.
+            final String backfill = "SELECT x::INT + 70000 i, timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts" +
+                    " FROM long_sequence(2000)";
+            execute("INSERT INTO x " + backfill);
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("2020-02-03 should have gone composite", reader.getGeometry().getPieceCount(0) > 1);
+            }
+
+            // Added once the writer has already rolled onto 2020-02-06: 2020-02-03 - still composite,
+            // still holding its own pieces - never gets an explicit column-version record for this column
+            // at all, unlike the ordinary case of adding a column to the still-active last partition.
+            execute("ALTER TABLE x ADD COLUMN new_col INT");
+            drainWalQueue();
+            final String moreOnNextDay = "SELECT x::INT + 95000 i, timestamp_sequence('2020-02-06T01', 60*1000000L) ts," +
+                    " (x + 95000)::INT new_col FROM long_sequence(20)";
+            execute("INSERT INTO x " + moreOnNextDay);
+            drainWalQueue();
+            Assert.assertFalse("adding the column suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-02-03'");
+            drainWalQueue();
+            Assert.assertFalse("the conversion suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            // The oracle: the same rows, assembled without ever touching the composite machinery, so any
+            // row the conversion dropped - or any wrong value it read for a column that never had real
+            // data in this directory - shows up as a row-count/content mismatch here.
+            execute("CREATE TABLE o AS (SELECT i, ts, new_col FROM (" +
+                    "SELECT x::INT i, timestamp_sequence('2020-02-03', 15*1000000L) ts, NULL::INT new_col" +
+                    " FROM long_sequence(5760)" +
+                    " UNION ALL SELECT x::INT + 90000 i, timestamp_sequence('2020-02-06', 60*1000000L) ts," +
+                    " NULL::INT new_col FROM long_sequence(50)" +
+                    " UNION ALL SELECT x::INT + 70000 i, timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts," +
+                    " NULL::INT new_col FROM long_sequence(2000)" +
+                    " UNION ALL " + moreOnNextDay +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "o", "x", LOG);
+        });
+    }
+
     /**
      * The .d file's own logical size at the given (0-based) row, read off the .i (aux) vector's own
      * offsets rather than the .d file's raw length - which can be page-rounded larger than what was
