@@ -164,6 +164,14 @@ import io.questdb.std.ObjList;
  *     count that keeps climbing across backfill intervals is the signal that the pass
  *     is not keeping up with the corrections, and the oldest timestamp is how far back
  *     a reader may be seeing pre-correction output.</li>
+ *     <li>Whether the view's own bookkeeping still describes its output -
+ *     {@code checkpoint_row_count_mismatches}. Every timeline root carries the rows the
+ *     view has emitted as its cumulative row position, so a seal compares that count
+ *     against the rows the view's table actually holds before it stamps one. Zero is the
+ *     only healthy value: a bump means the two disagreed, that the seal declined rather
+ *     than writing a ladder no reader could detect, and that the timeline was retired -
+ *     so the view keeps serving while a restart or an out-of-order correction rebuilds
+ *     the recovery state from the base.</li>
  * </ul>
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
@@ -250,6 +258,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_CHECKPOINT_REPAIR_PLAN = 49;
         private static final int COLUMN_CHECKPOINT_REPAIR_RESUMES = 47;
         private static final int COLUMN_CHECKPOINT_REPAIR_ROOTS_VERSIONED = 45;
+        private static final int COLUMN_CHECKPOINT_ROW_COUNT_MISMATCHES = 58;
         private static final int COLUMN_CHECKPOINT_SEAL_FAILURES = 52;
         private static final int COLUMN_CHECKPOINT_TIMELINE_ENTRIES = 26;
         private static final int COLUMN_CHECKPOINT_TIMELINE_GENERATION = 25;
@@ -593,6 +602,15 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // How far back the view may still be serving pre-correction
                         // output. NULL when nothing is pending.
                         case COLUMN_CHECKPOINT_PENDING_OLDEST_TIMESTAMP -> toMicros(instance.getPendingRepairsOldestTs());
+                        // Seals refused because the rows the view emitted and the rows
+                        // its table holds disagreed. Zero is the only healthy value:
+                        // any bump means rows never reached the table (or reached it
+                        // without being emitted), that the seal declined to stamp the
+                        // drifted count into a root, and that the timeline was retired
+                        // rather than extended over it. The view keeps serving, and a
+                        // restart or an O3 correction rebuilds from the base.
+                        // In-memory counter, resets on restart.
+                        case COLUMN_CHECKPOINT_ROW_COUNT_MISMATCHES -> instance.getCheckpointRowCountMismatches();
                         // START FROM BEGINNING has no lower bound and persists
                         // LONG_NULL, which passes through as NULL.
                         case COLUMN_VIEW_LOWER_BOUND_TIMESTAMP -> toMicros(definition.getViewLowerBoundTimestamp());
@@ -787,6 +805,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("checkpoint_pending_segments", ColumnType.LONG));         // 55
             metadata.add(new TableColumnMetadata("checkpoint_pending_rows", ColumnType.LONG));             // 56
             metadata.add(new TableColumnMetadata("checkpoint_pending_oldest_timestamp", ColumnType.TIMESTAMP_MICRO)); // 57
+            metadata.add(new TableColumnMetadata("checkpoint_row_count_mismatches", ColumnType.LONG));    // 58
             METADATA = metadata;
         }
     }

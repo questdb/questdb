@@ -457,6 +457,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // One-shot (self-clears on fire); always null in production.
     @TestOnly
     private QuietCloseable simulateBaseMetadataCloseFailureForTest;
+    // Test-only: when armed, a forward live-view commit goes out at the default dedup
+    // mode instead of NO_DEDUP, which is what the ordinary path did before it was
+    // stamped. On a view whose table carries the (timestamp, key) dedup keys the apply
+    // then collapses two output rows sharing the pair, so the view emits a row its
+    // table does not keep - the drift the seal's row invariant exists to catch.
+    // Sticky until cleared; always false in production.
+    @TestOnly
+    private boolean simulateForwardCommitDedupCollapseForTest;
     // Test-only: when armed, an out-of-order repair skips the inline apply of its
     // own REPLACE_RANGE block, modelling the apply silently no-opping (the LV writer
     // was busy, or its memory-pressure control backed off). Lets a test drive the
@@ -961,6 +969,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setSimulateBaseMetadataCloseFailureForTest(QuietCloseable closeFault) {
         this.simulateBaseMetadataCloseFailureForTest = closeFault;
+    }
+
+    /**
+     * Test-only: makes every forward live-view commit go out at the default dedup mode
+     * rather than {@code WAL_DEDUP_MODE_NO_DEDUP}, which is what the ordinary path did
+     * before the mode was stamped. On a dedup-keyed view the apply then collapses two
+     * output rows sharing a {@code (timestamp, key)} pair, which is the only way to
+     * produce - without an unrelated defect - a view that emitted a row its own table
+     * does not hold. Production never calls this.
+     */
+    @TestOnly
+    public void setSimulateForwardCommitDedupCollapseForTest(boolean simulate) {
+        this.simulateForwardCommitDedupCollapseForTest = simulate;
     }
 
     /**
@@ -3815,7 +3836,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * downstream can detect.
      */
     private void commitLiveViewBlock(LiveViewInstance instance, WalWriter walWriter, long maxBaseSeqTxnInBlock) {
-        fencedLiveViewCommit(instance, instance.isDedupKeyed()
+        fencedLiveViewCommit(instance, instance.isDedupKeyed() && !simulateForwardCommitDedupCollapseForTest
                 ? () -> walWriter.commitLiveViewWithoutDedup(maxBaseSeqTxnInBlock)
                 : () -> walWriter.commitLiveView(maxBaseSeqTxnInBlock));
     }
@@ -4487,6 +4508,81 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final CairoTable baseTable = metaRO.getTable(baseToken);
             return baseTable != null && baseTable.hasDedup();
         }
+    }
+
+    /**
+     * The permanent row invariant every seal is held to: the rows the view has emitted
+     * over its lifetime - {@link LiveViewInstance#getLvRowsTotal()}, already carrying
+     * {@code appendedRows} by the time this runs - against the rows its table actually
+     * holds.
+     * <p>
+     * The two are the same number by construction on every route into a seal. The
+     * forward paths add what they appended and the apply adds the same rows to the
+     * table; a segment repair and an anchor resume re-seat the counter off the durable
+     * size before they seal. Nothing else may move either side. What breaks that is a
+     * commit whose rows the apply does not keep - a live view's table can carry
+     * {@code (timestamp, key)} dedup keys, and a commit that reaches the apply at the
+     * default mode collapses two output rows sharing the pair into the last one
+     * written, which a view may legitimately emit. The rows are gone and nothing
+     * downstream notices: the seal goes on stamping the count the view emitted into
+     * {@code lvRowPosition}, and a ladder whose positions overstate the output is not
+     * something a later restart can detect, only fail on.
+     * <p>
+     * So the drift is caught here, one read before the number becomes durable, rather
+     * than at the restart that would have failed on it. A seal that finds it re-seats
+     * the counter on the table's own size, retires the timeline over the roots it can no
+     * longer vouch for and declines this seal; the next cadence opens a fresh history at
+     * the corrected position. The rows themselves are not recovered by any of that - an
+     * O3 correction or a restart rebuild recomputes them from the base, which is exactly
+     * what a retired timeline routes the view to.
+     * <p>
+     * Fails closed on a read it cannot take, and on a live view whose WAL still holds a
+     * committed block the apply has not landed: the counter legitimately leads the table
+     * there, so "cannot tell" declines the seal without retiring anything and the next
+     * cadence asks again.
+     *
+     * @return true when the seal may proceed
+     */
+    private boolean isEmittedRowCountDurable(LiveViewInstance instance, long appendedRows) {
+        final TableToken token = instance.getLiveViewToken();
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+        if (!tracker.isInitialised() || tracker.getWriterTxn() < tracker.getSeqTxn()) {
+            // A block this view committed is not in its table yet, so the counter leads
+            // the durable size by exactly that block and the comparison would name a
+            // drift that is not one. The next seal takes it once the apply lands.
+            LOG.debug().$("live view row count check skipped, apply outstanding [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", writerTxn=").$(tracker.getWriterTxn())
+                    .$(", seqTxn=").$(tracker.getSeqTxn()).I$();
+            return false;
+        }
+        final long durableRows;
+        try (TableReader lvReader = engine.getReader(token)) {
+            durableRows = lvReader.size();
+        } catch (Throwable t) {
+            LOG.error().$("could not measure live view rows before a checkpoint seal [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
+            return false;
+        }
+        final long emittedRows = instance.getLvRowsTotal();
+        if (emittedRows == durableRows) {
+            return true;
+        }
+        instance.recordCheckpointRowCountMismatch();
+        LOG.critical().$("live view emitted row count does not match its durable output, retiring the timeline [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", rowsEmitted=").$(emittedRows)
+                .$(", rowsDurable=").$(durableRows)
+                .$(", rowsThisCycle=").$(appendedRows).I$();
+        // Re-seat before the retire, so the fresh history the next cadence opens starts
+        // at the position the table can account for. Safe here and only here: the cycle's
+        // own rows are already in the counter, and no caller adds to it again before the
+        // root that would have carried it.
+        instance.setLvRowsTotal(durableRows);
+        instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+        retireCheckpointTimeline(instance);
+        return false;
     }
 
     /**
@@ -9299,6 +9395,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // splice that keeps its timeline does not, and cadence could then skip the
         // seal and strand the head at the stale maxTs.
         if (!(force || firstCp || restoredHeadFirstFlush || rowTrigger || durationTrigger)) {
+            return false;
+        }
+        // The permanent row invariant, taken where the number it protects is about
+        // to become durable: the root appended below carries lvRowsTotal as its
+        // cumulative lvRowPosition, so a counter that disagrees with the table
+        // writes a ladder nothing downstream detects.
+        if (!isEmittedRowCountDurable(instance, appendedRows)) {
             return false;
         }
 

@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -33,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -60,6 +62,12 @@ import org.junit.Test;
  * The switch also changes the view's <b>ordinary</b> path, which is why the ordinary commit
  * is stamped {@code WAL_DEDUP_MODE_NO_DEDUP} - a view may legitimately emit two rows sharing
  * the pair, and a default-mode commit on a dedup-keyed table would collapse them.
+ * <p>
+ * A stamp is a thing that can be forgotten, so the seal no longer takes it on trust: it holds
+ * every checkpoint root to the rows the view's table actually holds, because a root carries
+ * the rows the view <i>emitted</i> as its cumulative position and a collapse would put a
+ * ladder on disk that nothing detects and a restart can only fail on. The two cases at the
+ * bottom drive both arms of that invariant.
  * <p>
  * The view is the reported customer shape the keyed-replay, per-segment and uniqueness
  * cases use: an anchored WINDOW carrying an unbounded cumulative sum per account, over a
@@ -382,6 +390,108 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testACollapsedForwardRowIsRefusedBeforeItReachesTheLadder() throws Exception {
+        // The permanent invariant, and the failure it exists for. Every timeline root
+        // carries the rows the view has emitted as its cumulative lvRowPosition, so the
+        // seal compares that count against the rows the table actually holds before it
+        // stamps one.
+        //
+        // The drift is produced the only way it can be produced without an unrelated
+        // defect: the forward commit goes out at the default dedup mode - what the
+        // ordinary path did before the mode was stamped - so the apply collapses the two
+        // output rows sharing (created_at, cod_acct_no) into the last one written. The
+        // view emitted two rows and its table kept one, and nothing downstream would
+        // notice: the seal would go on stamping the count the view emitted, and a ladder
+        // whose positions overstate the output is not something a later restart can
+        // detect, only fail on.
+        //
+        // What the seal does instead is decline: it re-seats the counter on the table's
+        // own size, retires the timeline over the roots it can no longer vouch for, and
+        // leaves the next cadence to open a fresh history at the corrected position. The
+        // lost row itself comes back from the base, through the rebuild a retired
+        // timeline routes the view to.
+        armSparsePublication();
+        assertMemoryLeak(() -> {
+            createView(seedAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                final long durableBefore = durableRows();
+                Assert.assertEquals(
+                        "the counter and the table agree before anything collapses",
+                        durableBefore,
+                        instance.getLvRowsTotal()
+                );
+
+                job.setSimulateForwardCommitDedupCollapseForTest(true);
+                commit(row(5, 1, 0, 0, "acct-1") + ", " + row(5, 1, 0, 0, "acct-1"), job);
+
+                Assert.assertEquals(
+                        "the table kept one of the two rows the view emitted",
+                        durableBefore + 1,
+                        durableRows()
+                );
+                Assert.assertEquals(
+                        "the seal caught the drift rather than stamping it into a root",
+                        1,
+                        instance.getCheckpointRowCountMismatches()
+                );
+                Assert.assertEquals(
+                        "the counter is re-seated on the rows the table can account for",
+                        durableBefore + 1,
+                        instance.getLvRowsTotal()
+                );
+                Assert.assertEquals(
+                        "the head is cleared, so the next cadence opens a fresh history",
+                        Numbers.LONG_NULL,
+                        instance.getHeadCheckpointLvSeqTxn()
+                );
+                assertQuery("SELECT checkpoint_row_count_mismatches, checkpoint_timeline_generation"
+                        + " FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("checkpoint_row_count_mismatches\tcheckpoint_timeline_generation\n"
+                                + "1\tnull\n");
+            }
+        });
+    }
+
+    @Test
+    public void testTheOrdinarySealStampsTheRowCountItsTableHolds() throws Exception {
+        // The other arm, and what says the invariant costs the healthy routes nothing.
+        // The same repeated pair a stamped NO_DEDUP commit keeps, then a keyed repair
+        // that publishes sparsely on the dedup keys - two routes that move the counter
+        // and the table in different ways, one adding what it appended and the other
+        // re-seating off the durable size. Both leave the two equal, so every seal in the
+        // run stamps a position the table can account for and the mismatch counter never
+        // moves.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createView(seedAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+
+                commit(row(5, 1, 0, 0, "acct-1") + ", " + row(5, 1, 0, 0, "acct-1"), job);
+                commit(correction("acct-2"), job);
+
+                Assert.assertEquals(
+                        "the correction must be repaired by key for the sparse route to be exercised",
+                        1,
+                        job.sparsePublicationCountForTest()
+                );
+                Assert.assertEquals(0, instance.getCheckpointRowCountMismatches());
+                Assert.assertEquals(durableRows(), instance.getLvRowsTotal());
+                Assert.assertTrue(
+                        "a seal that was refused would have cleared the head",
+                        instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL
+                );
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
     public void testARestartedViewStillKeepsBothRowsOfARepeatedPair() throws Exception {
         // The identity is a schema property, so the instance a restart builds has to
         // rediscover it from the table's own metadata - the configuration cannot answer it
@@ -585,6 +695,17 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
      * The view's stored rows for one account, as text - the image a publication that does
      * not name that account must leave exactly where it found it.
      */
+    /**
+     * The rows the view's own table holds, read straight off it rather than through the
+     * view: a live-view SELECT merges the un-flushed in-memory tier, and what the seal's
+     * invariant compares against is the durable output alone.
+     */
+    private long durableRows() {
+        try (TableReader reader = engine.getReader(engine.verifyTableName("lv"))) {
+            return reader.size();
+        }
+    }
+
     private String dumpRowsOf(String account) throws Exception {
         return TestUtils.printSqlToString(
                 engine,

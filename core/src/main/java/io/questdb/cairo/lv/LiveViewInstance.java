@@ -311,6 +311,14 @@ public class LiveViewInstance implements QuietCloseable {
     private volatile long checkpointRepairOutcome;
     private volatile long checkpointRepairResumes;
     private volatile long checkpointRepairRootsVersioned;
+    // Seals this view has refused because the rows it emitted and the rows its
+    // table holds disagreed. Every timeline root carries lvRowsTotal as its
+    // cumulative lvRowPosition, so a counter that has drifted from the durable
+    // output writes a ladder no reader can detect and a restart can only fail on.
+    // The seal that finds the drift re-seats the counter, retires the timeline and
+    // bumps this. Bumped only on the refresh worker; volatile for the catalogue
+    // thread. In-memory only - it resets on restart, like the counters above.
+    private volatile long checkpointRowCountMismatches;
     // Cadence seals this view has failed, counted for the whole process lifetime
     // rather than per streak. A permanently failing seal is otherwise invisible:
     // the refresh job swallows the fault, the view keeps serving correct results,
@@ -1150,6 +1158,17 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return seals this view has refused because its emitted-row counter and its
+     * durable row count disagreed. Any non-zero value means rows the view emitted
+     * never reached its table - or rows it never emitted did - and that the
+     * timeline was retired rather than extended over the drift; see
+     * {@link #checkpointRowCountMismatches}
+     */
+    public long getCheckpointRowCountMismatches() {
+        return checkpointRowCountMismatches;
+    }
+
+    /**
      * @return cadence seals this view has failed since the process started. A
      * non-zero and growing value means the view is serving correct results while
      * its restart recovery state is stale; see {@link #checkpointSealFailures}
@@ -1894,6 +1913,14 @@ public class LiveViewInstance implements QuietCloseable {
     public void recordCheckpointRepairSplice(long rootsVersioned, long newBytes) {
         checkpointRepairRootsVersioned += rootsVersioned;
         checkpointRepairNewBytes += newBytes;
+    }
+
+    /**
+     * Records one seal refused because the emitted-row counter and the durable row
+     * count disagreed. See {@link #checkpointRowCountMismatches}.
+     */
+    public void recordCheckpointRowCountMismatch() {
+        checkpointRowCountMismatches++;
     }
 
     /**
