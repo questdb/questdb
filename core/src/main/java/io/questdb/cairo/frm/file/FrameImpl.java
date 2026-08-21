@@ -37,6 +37,7 @@ import io.questdb.cairo.frm.FrameColumnPool;
 import io.questdb.cairo.frm.FrameColumnTypePool;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Transient;
@@ -51,6 +52,14 @@ public class FrameImpl implements Frame {
     private boolean canWrite = false;
     private ReadOnlyObjList<? extends MemoryCR> columnsMemory;
     private ColumnTopSink columnTopSink;
+    /**
+     * Per-column tracked top, index = column index, -1 = untouched this open. Populated only by
+     * {@link #saveChanges} when this frame has no external {@link ColumnTopSink} - see
+     * {@link #publishColumnTops}. Reset (not reallocated) on every open/create, since a pooled
+     * {@code FrameImpl} outlives any one partition and a stale entry from a previous, unrelated use would
+     * otherwise leak through {@link #getContiguousFileFrameColumn}.
+     */
+    private final LongList columnTops = new LongList();
     private boolean create = false;
     private ColumnVersionReader crv;
     private RecycleBin<FrameImpl> frameRecycleBin;
@@ -107,6 +116,7 @@ public class FrameImpl implements Frame {
     public void createROFromMemoryColumns(ReadOnlyObjList<? extends MemoryCR> columns, TableWriterMetadata metadata, long size, long timestampIndexAddr) {
         this.timestampIndexAddr = timestampIndexAddr;
         this.metadata = metadata;
+        resetColumnTops(metadata.getColumnCount());
         this.crv = null;
         this.rowCount = size;
         this.partitionTimestamp = Long.MIN_VALUE;
@@ -120,6 +130,7 @@ public class FrameImpl implements Frame {
 
     public void createRW(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionWriter cvw, long size) {
         this.metadata = metadata;
+        resetColumnTops(metadata.getColumnCount());
         this.crv = cvw;
         this.columnTopSink = null;
         this.rowCount = size;
@@ -137,6 +148,7 @@ public class FrameImpl implements Frame {
      */
     public void createRW(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionReader cvr, ColumnTopSink columnTopSink, long size) {
         this.metadata = metadata;
+        resetColumnTops(metadata.getColumnCount());
         this.crv = cvr;
         this.columnTopSink = columnTopSink;
         this.rowCount = size;
@@ -160,6 +172,7 @@ public class FrameImpl implements Frame {
 
     public void openRO(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionReader cvr, long partitionRowCount) {
         this.metadata = metadata;
+        resetColumnTops(metadata.getColumnCount());
         this.crv = cvr;
         this.rowCount = partitionRowCount;
         this.partitionTimestamp = partitionTimestamp;
@@ -180,6 +193,7 @@ public class FrameImpl implements Frame {
             long partitionRowCount
     ) {
         this.metadata = metadata;
+        resetColumnTops(metadata.getColumnCount());
         this.crv = cvr;
         this.rowCount = partitionRowCount;
         this.partitionTimestamp = partitionTimestamp;
@@ -199,6 +213,7 @@ public class FrameImpl implements Frame {
 
     public void openRW(@Transient Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionWriter cvw, long size) {
         this.metadata = metadata;
+        resetColumnTops(metadata.getColumnCount());
         this.crv = cvw;
         this.columnTopSink = null;
         this.rowCount = size;
@@ -216,6 +231,7 @@ public class FrameImpl implements Frame {
      */
     public void openRW(@Transient Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionReader cvr, ColumnTopSink columnTopSink, long size) {
         this.metadata = metadata;
+        resetColumnTops(metadata.getColumnCount());
         this.crv = cvr;
         this.columnTopSink = columnTopSink;
         this.rowCount = size;
@@ -227,6 +243,22 @@ public class FrameImpl implements Frame {
         this.timestampIndexAddr = 0;
     }
 
+    @Override
+    public void publishColumnTops(ColumnVersionWriter cvw) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            long colTop = columnTops.getQuick(i);
+            // -1 (untouched, this frame has no sink and nothing wrote through it): nothing to record.
+            // Anything else, INCLUDING colTop == rowCount ("every row was a free ride, no real byte
+            // anywhere"), still goes through mergeColumnTop: a brand-new partition timestamp's own
+            // chronological default can resolve to something other than what this frame just
+            // determined (see ColumnVersionWriter#mergeColumnTop), and skipping here would leave that
+            // wrong default in place instead of the value this frame actually computed.
+            if (colTop > -1) {
+                cvw.mergeColumnTop(partitionTimestamp, i, colTop);
+            }
+        }
+    }
+
     public void saveChanges(FrameColumn frameColumn) {
         if (!canWrite) {
             throw CairoException.critical(0).put("cannot save column top, partition frame is read-only [path=").put(partitionPath).put(']');
@@ -234,14 +266,13 @@ public class FrameImpl implements Frame {
         if (columnTopSink != null) {
             columnTopSink.setColumnTop(frameColumn.getColumnIndex(), frameColumn.getColumnTop());
         } else {
-            // no sink implies this caller's column tops never change - see ColumnTopSink
-            if (crv.getColumnTop(partitionTimestamp, frameColumn.getColumnIndex()) != frameColumn.getColumnTop()) {
-                throw CairoException.critical(0).put("cannot save changed column top, " +
-                        "partition frame is opened without column top sink [path=").put(partitionPath)
-                        .put(", before=" ).put(crv.getColumnTop(partitionTimestamp, frameColumn.getColumnIndex()))
-                        .put(", after=").put(frameColumn.getColumnTop())
-                        .put(']');
-            }
+            // No external sink: track internally instead, for publishColumnTops to push later. Never
+            // regresses a column's tracked top - only up or unchanged, matching how a column's top can
+            // only ever advance while this frame is written to (addTop grows it; once real bytes land
+            // below it, it is fixed for good) - so a stale, smaller read can never overwrite a piece
+            // that already advanced it further.
+            int columnIndex = frameColumn.getColumnIndex();
+            columnTops.setQuick(columnIndex, Math.max(frameColumn.getColumnTop(), columnTops.getQuick(columnIndex)));
         }
     }
 
@@ -267,8 +298,15 @@ public class FrameImpl implements Frame {
         boolean isIndexed = metadata.isColumnIndexed(columnIndex);
         int indexBlockCapacity = isIndexed ? metadata.getIndexValueBlockCapacity(columnIndex) : 0;
         byte indexType = metadata.getColumnIndexType(columnIndex);
-        int crvRecIndex = crv.getRecordIndex(partitionTimestamp, columnIndex);
-        long columnTop = crv.getColumnTopByIndexOrDefault(crvRecIndex, partitionTimestamp, columnIndex, rowCount);
+        // A tracked top (only ever set by this frame's own saveChanges, when it has no external sink)
+        // takes over from crv entirely once present: it already reflects everything crv would resolve to
+        // PLUS every piece this frame has written since, and re-resolving from crv here would throw that
+        // progress away and read the OLD directory's value instead of this frame's own current one.
+        long columnTop = columnTops.getQuick(columnIndex);
+        if (columnTop < 0) {
+            int crvRecIndex = crv.getRecordIndex(partitionTimestamp, columnIndex);
+            columnTop = crv.getColumnTopByIndexOrDefault(crvRecIndex, partitionTimestamp, columnIndex, rowCount);
+        }
         long columnTxn = crv.getColumnNameTxn(partitionTimestamp, columnIndex);
 
         FrameColumnTypePool columnTypePool = columnPool.getPool(columnType);
@@ -307,6 +345,11 @@ public class FrameImpl implements Frame {
             fixColumn.ofTimestampIndex(timestampIndexAddr);
         }
         return column;
+    }
+
+    private void resetColumnTops(int columnCount) {
+        columnTops.setPos(columnCount);
+        columnTops.fill(0, columnCount, -1L);
     }
 
     void setRecycleBin(RecycleBin<FrameImpl> frameRecycleBin) {

@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.frm;
 
+import io.questdb.cairo.ColumnVersionWriter;
+
 import java.io.Closeable;
 
 /**
@@ -40,6 +42,8 @@ public interface Frame extends Closeable {
     long getOffset();
 
     long getRowCount();
+
+    void publishColumnTops(ColumnVersionWriter cvw);
 
     void saveChanges(FrameColumn column);
 

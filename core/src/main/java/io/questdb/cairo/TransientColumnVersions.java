@@ -35,6 +35,13 @@ import io.questdb.std.Vect;
  */
 public class TransientColumnVersions extends ColumnVersionReader {
 
+    /** Same logic as {@link ColumnVersionWriter#mergeColumnTop}. */
+    public void mergeColumnTop(long partitionTimestamp, int columnIndex, long colTop) {
+        if (colTop != 0 || getColumnTop(partitionTimestamp, columnIndex) != 0) {
+            upsertColumnTop(partitionTimestamp, columnIndex, colTop);
+        }
+    }
+
     /** Same logic as {@link ColumnVersionWriter#upsertColumnTop}, minus its disk-commit bookkeeping. */
     public void upsertColumnTop(long partitionTimestamp, int columnIndex, long colTop) {
         int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);

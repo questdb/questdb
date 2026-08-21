@@ -29,7 +29,6 @@ import io.questdb.Metrics;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.file.BlockFileWriter;
-import io.questdb.cairo.frm.ColumnTopSink;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
@@ -8553,6 +8552,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     written += rowCount;
                 }
             }
+            // Only now, with every tail piece copied successfully, does the target's self-tracked view of
+            // its own tops become the fresh tail partition's real, committed one.
+            targetFrame.publishColumnTops(columnVersionWriter);
         } finally {
             Misc.free(targetFrame);
             path.trimTo(pathSize);
@@ -8580,7 +8582,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         );
         txWriter.setPartitionGeometryRef(partitionTs, geometryRef);
 
+        // insertPartition only touches the attachedPartitions array. When partitionIndex was the
+        // active (last) partition, its row count lived in transientRowCount instead - see
+        // TxWriter#switchPartitions, which folds a retired active partition's count into
+        // fixedRowCount and reseeds transientRowCount for the new one the same way. Skipping this
+        // for a mid-table partitionIndex would double count: the old partition's rows are already
+        // in fixedRowCount there, unaffected by moving part of them into a sibling directory.
+        final boolean wasActivePartition = partitionIndex == txWriter.getPartitionCount() - 1;
         txWriter.insertPartition(partitionIndex + 1, tailPartitionTs, written, newNameTxn);
+        if (wasActivePartition) {
+            txWriter.fixedRowCount += prefixRows;
+            txWriter.transientRowCount = written;
+        }
 
         try {
             if (sealPostingIndexForPartition(tailPartitionTs, false)) {
@@ -9355,9 +9368,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             txWriter.insertPartition(insertPartitionIndex, newSplitPartitionTimestamp, prevPartitionSize - newPrevPartitionSize, txWriter.txn);
                             setStateForTimestamp(other, newSplitPartitionTimestamp);
                             ff.mkdir(other.$(), configuration.getMkDirMode());
-                            try (Frame targetFrame = frameFactory.createRW(other, newSplitPartitionTimestamp, metadata, columnVersionWriter,
-                                    (columnIndex, columnTop) -> columnVersionWriter.upsertColumnTop(newSplitPartitionTimestamp, columnIndex, columnTop), 0)) {
+                            // Self-tracking (no external ColumnTopSink): safe here the same way
+                            // rewritePhysicalPartition and squash are - see Frame.publishColumnTops.
+                            try (Frame targetFrame = frameFactory.createRW(other, newSplitPartitionTimestamp, metadata, columnVersionWriter, 0)) {
                                 FrameAlgebra.append(targetFrame, sourceFrame, newPrevPartitionSize, prevPartitionSize, txWriter.getTxn() + 1L, configuration.getCommitMode());
+                                targetFrame.publishColumnTops(columnVersionWriter);
                             }
                         }
                         addPhysicallyWrittenRows(prevPartitionSize - newPrevPartitionSize);
@@ -13668,31 +13683,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long newNameTxn = txWriter.getTxn();
         final FrameFactory frameFactory = engine.getFrameFactory();
         Frame targetFrame = null;
-        final int columnCount = metadata.getColumnCount();
-        // The target frame's resolved tops go here, not straight into columnVersionWriter: it is keyed by
-        // partitionTs alone, the same key the source frame reads from below, so a direct write would leak
-        // the TARGET's in-progress top into the SOURCE's view of the OLD directory on the very next piece.
-        // Same hazard, same fix, as O3PartitionJob.assembleFreshPartitionVersion's srcColumnVersions /
-        // transientVersions split - see TransientColumnVersions's own class comment. Seeding it from
-        // columnVersionWriter up front means an untouched column's lookups fall through to the same value
-        // either object would give, and syncing it back to columnVersionWriter only after the loop
-        // succeeds means a rewrite that throws partway through leaves the live writer exactly as it found
-        // it - nothing to roll back.
-        try (TransientColumnVersions targetVersions = new TransientColumnVersions()) {
-            targetVersions.readFrom(columnVersionWriter);
+        try {
             other.trimTo(pathSize);
             setPathForNativePartition(other, timestampType, partitionBy, partitionTs, newNameTxn);
             createDirsOrFail(ff, other, configuration.getMkDirMode());
-            // The sink never lets a column's tracked top go DOWN, only up or unchanged: FrameAlgebra's
-            // private append takes a free ride (addTop, no bytes written) on every piece a column stays
-            // fully virtual through, and only physically writes NULLs (appendNulls) once a piece needs
-            // real bytes below it - a decision it makes purely from the TARGET's own accumulated top, so
-            // that top must never regress once a piece has genuinely advanced it.
-            targetFrame = frameFactory.openRW(other, partitionTs, metadata, targetVersions,
-                    (columnIndex, columnTop) -> targetVersions.upsertColumnTop(
-                            partitionTs, columnIndex, Math.max(columnTop, targetVersions.getColumnTop(partitionTs, columnIndex))), 0);
+            // A frame opened this way (no external ColumnTopSink) tracks its own column tops internally
+            // and publishes them explicitly below - see Frame.publishColumnTops. Source and target both
+            // read columnVersionWriter directly and safely: the target's writes never reach it until
+            // publish, so a later piece's source-side lookup always sees the OLD directory's true, still
+            // untouched state, never the target's in-progress one.
+            targetFrame = frameFactory.openRW(other, partitionTs, metadata, columnVersionWriter, 0);
 
-            long written = 0;
             path.trimTo(pathSize);
             setPathForNativePartition(path, timestampType, partitionBy, partitionTs, srcNameTxn);
             // One source frame for the whole directory, reaching E: every piece's rows live somewhere in
@@ -13708,21 +13709,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, txWriter.getTxn() + 1L, configuration.getCommitMode());
                     addPhysicallyWrittenRows(rowCount);
                     compactionWrittenRows += rowCount;
-                    written += rowCount;
                 }
             }
-            // Only now, with every piece copied successfully, does the target's view of its own tops
-            // become the partition's real, committed one - except for a column whose top reached exactly
-            // `written`: every one of its rows was a free ride, so it never got a single real byte
-            // anywhere in the rewrite, and upserting it would pin today's row count as a permanent
-            // boundary. Leaving no record at all instead lets it keep reading as "still nothing here" as
-            // the partition grows further, the same as a column nothing has ever written to.
-            for (int column = 0; column < columnCount; column++) {
-                final long colTop = targetVersions.getColumnTop(partitionTs, column);
-                if (colTop < written) {
-                    columnVersionWriter.upsertColumnTop(partitionTs, column, colTop);
-                }
-            }
+            // Only now, with every piece copied successfully, does the target's self-tracked view of its
+            // own tops become the partition's real, committed one.
+            targetFrame.publishColumnTops(columnVersionWriter);
         } finally {
             Misc.free(targetFrame);
             path.trimTo(pathSize);
@@ -14577,11 +14568,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean rw = !copyTargetFrame;
         Frame targetFrame = null;
         FrameFactory frameFactory = engine.getFrameFactory();
-        // targetPartition itself isn't effectively final (reassigned by the search loop above), so the
-        // sink closes over this copy instead.
-        final long targetPartitionTs = targetPartition;
-        ColumnTopSink columnTopSink = (columnIndex, columnTop) -> columnVersionWriter.upsertColumnTop(targetPartitionTs, columnIndex, columnTop);
-        Frame firstPartitionFrame = frameFactory.open(rw, path, targetPartition, metadata, columnVersionWriter, columnTopSink, originalSize);
+        // Self-tracking (no external ColumnTopSink): both frames below read and, when rw, write
+        // columnVersionWriter directly and safely, the same way rewritePhysicalPartition does - see
+        // Frame.publishColumnTops. Nothing here re-reads a key after writing it, but the free max
+        // protection and the "leave no record for a still-fully-virtual column" behaviour are worth
+        // having uniformly, not just where a hazard has already been proven.
+        Frame firstPartitionFrame = frameFactory.open(rw, path, targetPartition, metadata, columnVersionWriter, originalSize);
         try {
             if (copyTargetFrame) {
                 try {
@@ -14589,7 +14581,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     createDirsOrFail(ff, other, configuration.getMkDirMode());
                     LOG.info().$("copying partition to force squash [from=").$substr(pathRootSize, path).$(", to=").$(other).I$();
 
-                    targetFrame = frameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, columnTopSink, 0);
+                    targetFrame = frameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
                     FrameAlgebra.append(targetFrame, firstPartitionFrame, txWriter.getTxn() + 1L, configuration.getCommitMode());
                     addPhysicallyWrittenRows(firstPartitionFrame.getRowCount());
                     txWriter.updatePartitionSizeAndTxnByRawIndex(targetPartitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
@@ -14649,6 +14641,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getRowCount());
+            // Squashing leaves the target one contiguous piece at row 0 spanning every row it holds -
+            // the ordinary, non-composite shape - same as rewritePhysicalPartition's result and the same
+            // reason it clears this (see there). A composite target - MOVE-TAIL leaves one behind: a
+            // live piece plus trailing dead space - would otherwise keep its stale geometry (fewer live
+            // rows, a smaller E) after the append above physically extended its files past both, hiding
+            // every row just squashed in from any composite-aware reader. A no-op when the target was
+            // already plain.
+            txWriter.setPartitionGeometryRef(targetPartition, NO_GEOMETRY_REF);
             if (!txWriter.incrementPartitionSquashCounter(targetPartitionIndex)) {
                 // The squash counter overflew its 16 bits
                 // To help back to detect partition changes we will save a file inside the partition with the current timestamp
@@ -14668,6 +14668,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 assert txWriter.fixedRowCount >= 0;
                 txWriter.transientRowCount = newTransientRowCount;
             }
+            // Only now, with every source partition squashed in successfully, does the target's
+            // self-tracked view of its own tops become the squashed partition's real, committed one.
+            targetFrame.publishColumnTops(columnVersionWriter);
         } finally {
             Misc.free(targetFrame);
             path.trimTo(pathSize);
@@ -15207,12 +15210,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long colTop = Unsafe.getLong(blockAddress);
                     blockAddress += Long.BYTES;
                     if (colTop > -1L) {
-                        // Upsert even when colTop value is 0.
+                        // Merge even when colTop value is 0.
                         // TableReader uses the record to determine if the column is supposed to be present for the partition.
-                        columnVersionWriter.upsertColumnTop(partitionTimestamp, column, colTop);
+                        columnVersionWriter.mergeColumnTop(partitionTimestamp, column, colTop);
                     } else if (o3SplitPartitionSize > 0) {
-                        // Remove column tops for the new partition part.
-                        columnVersionWriter.removeColumnTop(partitionTimestamp, column);
+                        // No job ever set an explicit top for this column on the new split part, which is
+                        // where copyColumnVersions above may have just left it holding the DONOR's own
+                        // record - stale once the donor's rows above the split point turn out to hold real
+                        // data for it. A fresh split's own data is new by construction, so 0 is the right
+                        // assumption here, same as removeColumnTop used to force unconditionally - but
+                        // mergeColumnTop reconciles instead of forcing, since that donor-inherited record
+                        // can already be the correct answer (see ColumnVersionWriter#mergeColumnTop).
+                        columnVersionWriter.mergeColumnTop(partitionTimestamp, column, 0);
                     }
                 }
             }
