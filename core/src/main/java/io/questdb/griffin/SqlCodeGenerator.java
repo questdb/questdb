@@ -4222,9 +4222,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // inconsistently against a different source column.
                             // Bare FILL(PREV) keeps self-prev semantics and is safe.
                             if (targetTag == ColumnType.SYMBOL || sourceTag == ColumnType.SYMBOL) {
-                                throw SqlException.$(fillExpr.rhs.position,
-                                                "FILL(PREV(").put(srcAlias).put(")) is not supported on SYMBOL columns; ")
-                                        .put("use bare FILL(PREV) instead");
+                                CharSequence targetAlias = groupByMetadata.getColumnName(col);
+
+                                QueryColumn targetCol = model.getAliasToColumnMap().get(targetAlias);
+                                QueryColumn sourceCol = model.getAliasToColumnMap().get(srcAlias);
+
+                                if (targetCol == null || sourceCol == null || !ExpressionNode.compareNodesExact(targetCol.getAst(), sourceCol.getAst())) {
+                                    throw SqlException.$(fillExpr.rhs.position,
+                                                    "FILL(PREV(").put(srcAlias).put(")) is not supported on SYMBOL columns; ")
+                                            .put("use bare FILL(PREV) instead");
+                                }
                             }
                             final boolean needsExactTypeMatch =
                                     ColumnType.isDecimal(targetType)
