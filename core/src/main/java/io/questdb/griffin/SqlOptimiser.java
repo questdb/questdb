@@ -2508,8 +2508,17 @@ public class SqlOptimiser implements Mutable {
                           ? tableWhere
                           : concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, tableWhere, modelWhere);
                 model.setWhereClause(combinedWhere);
+                // The dropped layers include the one a view expanded into, and this model becomes the one
+                // reading the table. Carry the view names up with the table read, so the read still knows
+                // it goes through a view: AbstractPartitionFrameCursorFactory.authorizeSelect picks the
+                // view branch off viewNameExpr, and view-name collection walks originatingViewNameExpr.
+                final ExpressionNode originatingView = findOriginatingViewNameExpr(model.getNestedModel(), table);
                 model.setNestedModel(table.getNestedModel());
                 model.setSelectModelType(IQueryModel.SELECT_MODEL_NONE);
+                model.setOriginatingViewNameExpr(originatingView);
+                // setViewNameExpr also pushes the name down into the new nested model, the way the parser
+                // does when it expands a view.
+                model.setViewNameExpr(table.getViewNameExpr());
             }
         }
         pushLatestByToTableModel(model.getNestedModel(), executionContext);
@@ -2556,6 +2565,22 @@ public class SqlOptimiser implements Mutable {
                 return null;
             }
             m = m.getNestedModel();
+        }
+        return null;
+    }
+
+    // Returns the view name expression of the outermost layer between `from` (inclusive) and `table`
+    // (inclusive) that a view expanded into, or null when no view is involved. Only the expansion root
+    // of a view carries originatingViewNameExpr, and the hoist drops the layers in between.
+    private ExpressionNode findOriginatingViewNameExpr(IQueryModel from, IQueryModel table) {
+        for (IQueryModel m = from; m != null; m = m.getNestedModel()) {
+            final ExpressionNode viewNameExpr = m.getOriginatingViewNameExpr();
+            if (viewNameExpr != null) {
+                return viewNameExpr;
+            }
+            if (m == table) {
+                break;
+            }
         }
         return null;
     }
