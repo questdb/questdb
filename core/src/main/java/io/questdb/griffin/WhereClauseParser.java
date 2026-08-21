@@ -247,7 +247,7 @@ public final class WhereClauseParser implements Mutable {
             @NotNull FunctionParser functionParser,
             @NotNull RecordMetadata metadata,
             @NotNull SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean latestByBlocksKeyExtraction,
             @NotNull TableReader reader,
             boolean noIndex
     ) throws SqlException {
@@ -273,7 +273,7 @@ public final class WhereClauseParser implements Mutable {
                     functionParser,
                     metadata,
                     executionContext,
-                    latestByMultiColumn,
+                    latestByBlocksKeyExtraction,
                     reader,
                     noIndex
             );
@@ -306,12 +306,21 @@ public final class WhereClauseParser implements Mutable {
             @NotNull FunctionParser functionParser,
             @NotNull RecordMetadata metadata,
             @NotNull SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean latestByBlocksKeyExtraction,
             @NotNull TableReader reader,
             boolean noIndex
     ) throws SqlException {
         clearKeys();
         clearExcludedKeys();
+        // The node lists track predicates this extraction lifted out of the filter, so they must
+        // start empty. Only a nested extract() resets them via clearTransientState(); sibling
+        // extractions at the same depth - union branches, join slaves - share one parser instance
+        // and reach here with whatever the previous branch left behind. A leftover node is later
+        // copied into this branch's model by applyKeyExclusions(), which attributes another
+        // query's predicate to this one. Clear rather than revert: these nodes belong to a tree
+        // that has already been generated, and their intrinsicValue is that tree's business.
+        keyNodes.clear();
+        keyExclNodes.clear();
 
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.noIndex = noIndex;
@@ -340,7 +349,7 @@ public final class WhereClauseParser implements Mutable {
                 functionParser,
                 metadata,
                 executionContext,
-                latestByMultiColumn, reader)) {
+                latestByBlocksKeyExtraction, reader)) {
             createKeyValueBindVariables(model, functionParser, executionContext);
             return model;
         }
@@ -362,7 +371,7 @@ public final class WhereClauseParser implements Mutable {
                             functionParser,
                             metadata,
                             executionContext,
-                            latestByMultiColumn,
+                            latestByBlocksKeyExtraction,
                             reader)) {
                         // Check if rhs is an OR of timestamp intrinsics
                         if (!tryExtractOrTimestampIntrinsics(timestampDriver, model, node.rhs, functionParser, metadata, executionContext)) {
@@ -378,7 +387,7 @@ public final class WhereClauseParser implements Mutable {
                             functionParser,
                             metadata,
                             executionContext,
-                            latestByMultiColumn,
+                            latestByBlocksKeyExtraction,
                             reader)) {
                         node = null;
                     } else if (tryExtractOrTimestampIntrinsics(timestampDriver, model, node.lhs, functionParser, metadata, executionContext)) {
@@ -599,7 +608,7 @@ public final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean latestByBlocksKeyExtraction,
             TableReader reader
     ) throws SqlException {
         // and_offset args are stored in reverse order: [offset, unit, predicate]
@@ -664,7 +673,7 @@ public final class WhereClauseParser implements Mutable {
                 functionParser,
                 metadata,
                 executionContext,
-                latestByMultiColumn,
+                latestByBlocksKeyExtraction,
                 reader
         );
 
@@ -762,7 +771,7 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean latestByBlocksKeyExtraction,
             TableReader reader
     ) throws SqlException {
         checkNodeValid(node);
@@ -776,7 +785,7 @@ public final class WhereClauseParser implements Mutable {
                 m,
                 functionParser,
                 executionContext,
-                latestByMultiColumn,
+                latestByBlocksKeyExtraction,
                 reader
         )
                 ||
@@ -790,7 +799,7 @@ public final class WhereClauseParser implements Mutable {
                         m,
                         functionParser,
                         executionContext,
-                        latestByMultiColumn,
+                        latestByBlocksKeyExtraction,
                         reader
                 );
     }
@@ -805,7 +814,7 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean latestByBlocksKeyExtraction,
             TableReader reader
     ) throws SqlException {
         if (nodesEqual(a, b)) {
@@ -853,7 +862,7 @@ public final class WhereClauseParser implements Mutable {
                     case ColumnType.STRING:
                     case ColumnType.LONG:
                     case ColumnType.INT:
-                        if (columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(columnName, m, latestByMultiColumn)) {
+                        if (columnIsPreferredOrIndexedAndExtractionAllowed(columnName, m, latestByBlocksKeyExtraction)) {
                             CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
                             if (Chars.equalsIgnoreCaseNc(columnName, model.keyColumn)) {
                                 if (!isCorrectType(b.type)) {
@@ -1007,7 +1016,7 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata metadata,
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean latestByBlocksKeyExtraction,
             TableReader reader
     ) throws SqlException {
         if (node.paramCount < 2) {
@@ -1037,8 +1046,8 @@ public final class WhereClauseParser implements Mutable {
             throw SqlException.invalidColumn(col.position, col.token);
         }
         return analyzeInInterval(timestampDriver, model, col, node, false, functionParser, metadata, executionContext, false)
-                || analyzeListOfValues(model, column, metadata, node, latestByMultiColumn, reader, functionParser, executionContext)
-                || analyzeInLambda(model, column, metadata, node, latestByMultiColumn, reader);
+                || analyzeListOfValues(model, column, metadata, node, latestByBlocksKeyExtraction, reader, functionParser, executionContext)
+                || analyzeInLambda(model, column, metadata, node, latestByBlocksKeyExtraction, reader);
     }
 
     private boolean analyzeInInterval(
@@ -1212,11 +1221,11 @@ public final class WhereClauseParser implements Mutable {
             CharSequence columnName,
             RecordMetadata m,
             ExpressionNode node,
-            boolean latestByMultiColumn,
+            boolean latestByBlocksKeyExtraction,
             TableReader reader
     ) throws SqlException {
         int columnIndex = m.getColumnIndex(columnName);
-        if (columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(columnName, m, latestByMultiColumn)) {
+        if (columnIsPreferredOrIndexedAndExtractionAllowed(columnName, m, latestByBlocksKeyExtraction)) {
             if (preferredKeyColumn != null && !Chars.equalsIgnoreCase(columnName, preferredKeyColumn)) {
                 return false;
             }
@@ -1295,7 +1304,7 @@ public final class WhereClauseParser implements Mutable {
             CharSequence columnName,
             RecordMetadata meta,
             ExpressionNode node,
-            boolean latestByMultiColumn,
+            boolean latestByBlocksKeyExtraction,
             TableReader reader,
             FunctionParser functionParser,
             SqlExecutionContext executionContext
@@ -1309,7 +1318,7 @@ public final class WhereClauseParser implements Mutable {
         // A: When using multi-column LATEST BY, we cannot use index-based scans because the indexed column
         //    alone doesn't provide enough information to determine the "latest" record. The "latest" determination
         //    requires all columns in the LATEST BY clause, so we must disable index usage in such cases.
-        if (columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(columnName, meta, latestByMultiColumn)) {
+        if (columnIsPreferredOrIndexedAndExtractionAllowed(columnName, meta, latestByBlocksKeyExtraction)) {
             // check if we already have indexed column, and it is of worse selectivity
             if (model.keyColumn != null
                     && (newColumn = !Chars.equalsIgnoreCase(model.keyColumn, columnName))
@@ -1691,7 +1700,7 @@ public final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean latestByBlocksKeyExtraction,
             TableReader reader
     ) throws SqlException {
 
@@ -1709,7 +1718,7 @@ public final class WhereClauseParser implements Mutable {
         if (ok) {
             notNode.intrinsicValue = IntrinsicModel.TRUE;
         } else {
-            analyzeNotListOfValues(model, column, m, node, notNode, latestByMultiColumn, reader, functionParser, executionContext);
+            analyzeNotListOfValues(model, column, m, node, notNode, latestByBlocksKeyExtraction, reader, functionParser, executionContext);
         }
 
         return ok;
@@ -1741,7 +1750,7 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean latestByBlocksKeyExtraction,
             TableReader reader
     ) throws SqlException {
         if (nodesEqual(a, b) && a.noLeafs() && b.noLeafs()) {
@@ -1783,7 +1792,7 @@ public final class WhereClauseParser implements Mutable {
                     case ColumnType.STRING:
                     case ColumnType.LONG:
                     case ColumnType.INT:
-                        if (columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(columnName, m, latestByMultiColumn)) {
+                        if (columnIsPreferredOrIndexedAndExtractionAllowed(columnName, m, latestByBlocksKeyExtraction)) {
                             CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
                             if (Chars.equalsIgnoreCaseNc(columnName, model.keyColumn)) {
                                 if (!isCorrectType(b.type)) {
@@ -1880,7 +1889,7 @@ public final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean latestByBlocksKeyExtraction,
             TableReader reader
     ) throws SqlException {
         ExpressionNode node = notNode.rhs;
@@ -1905,7 +1914,7 @@ public final class WhereClauseParser implements Mutable {
         if (ok) {
             notNode.intrinsicValue = IntrinsicModel.TRUE;
         } else {
-            analyzeNotListOfValues(model, column, m, node, notNode, latestByMultiColumn, reader, functionParser, executionContext);
+            analyzeNotListOfValues(model, column, m, node, notNode, latestByBlocksKeyExtraction, reader, functionParser, executionContext);
         }
 
         return ok;
@@ -1917,14 +1926,14 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             ExpressionNode node,
             ExpressionNode notNode,
-            boolean latestByMultiColumn,
+            boolean latestByBlocksKeyExtraction,
             TableReader reader,
             FunctionParser functionParser,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final int columnIndex = m.getColumnIndex(columnName);
         boolean newColumn = true;
-        if (columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(columnName, m, latestByMultiColumn)) {
+        if (columnIsPreferredOrIndexedAndExtractionAllowed(columnName, m, latestByBlocksKeyExtraction)) {
             if (model.keyColumn != null
                     && (newColumn = !Chars.equalsIgnoreCase(model.keyColumn, columnName))
                     && !isMoreSelective(model, m, reader, columnIndex)) {
@@ -2655,12 +2664,21 @@ public final class WhereClauseParser implements Mutable {
         return collapseWithin0(node);
     }
 
-    private boolean columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(
+    /**
+     * Decides whether a predicate on {@code columnName} may be lifted out of the residual filter
+     * into {@link IntrinsicModel#keyColumn} and the key value lists. Extraction is a promise that
+     * some index-backed cursor downstream will consume those values instead of the filter, so the
+     * caller must only allow it when it can keep that promise: {@code latestByBlocksKeyExtraction}
+     * is set by {@code SqlCodeGenerator} whenever the LATEST ON shape it is about to generate reads
+     * the residual filter and nothing else. Extracting under such a shape silently drops the
+     * predicate from the query.
+     */
+    private boolean columnIsPreferredOrIndexedAndExtractionAllowed(
             CharSequence columnName,
             RecordMetadata m,
-            boolean latestByMultiColumn
+            boolean latestByBlocksKeyExtraction
     ) {
-        return !latestByMultiColumn &&
+        return !latestByBlocksKeyExtraction &&
                 (
                         Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)
                                 || (preferredKeyColumn == null && !noIndex && useIndexedSymbolFilters && m.isColumnIndexed(m.getColumnIndex(columnName)))
@@ -2751,7 +2769,11 @@ public final class WhereClauseParser implements Mutable {
             );
             model.keyExcludedValueFuncs.add(func);
         }
+        // Hand the nodes over the same way applyKeyExclusions() does. The single-node fast path in
+        // extract0() reaches here without going through applyKeyExclusions(), so this is the only
+        // place that empties the list for that shape.
         model.keyExcludedNodes.addAll(keyExclNodes);
+        keyExclNodes.clear();
         clearExcludedKeys();
     }
 
@@ -3323,7 +3345,7 @@ public final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn,
+            boolean latestByBlocksKeyExtraction,
             TableReader reader
     ) throws SqlException {
         if (node.token == null) {
@@ -3333,7 +3355,7 @@ public final class WhereClauseParser implements Mutable {
         }
         return switch (intrinsicOps.get(node.token)) {
             case INTRINSIC_OP_IN ->
-                    analyzeIn(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
+                    analyzeIn(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByBlocksKeyExtraction, reader);
             case INTRINSIC_OP_GREATER_EQ ->
                     analyzeGreater(timestampDriver, model, node, true, functionParser, metadata, executionContext);
             case INTRINSIC_OP_GREATER ->
@@ -3343,9 +3365,9 @@ public final class WhereClauseParser implements Mutable {
             case INTRINSIC_OP_LESS ->
                     analyzeLess(timestampDriver, model, node, false, functionParser, metadata, executionContext);
             case INTRINSIC_OP_EQUAL ->
-                    analyzeEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
+                    analyzeEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByBlocksKeyExtraction, reader);
             case INTRINSIC_OP_NOT_EQ ->
-                    analyzeNotEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
+                    analyzeNotEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByBlocksKeyExtraction, reader);
             case INTRINSIC_OP_NOT -> node.rhs != null && node.rhs.token != null && ((
                     isInKeyword(node.rhs.token) && analyzeNotIn(
                             timestampDriver,
@@ -3356,7 +3378,7 @@ public final class WhereClauseParser implements Mutable {
                             functionParser,
                             metadata,
                             executionContext,
-                            latestByMultiColumn,
+                            latestByBlocksKeyExtraction,
                             reader
                     ))
                     || (
@@ -3369,14 +3391,14 @@ public final class WhereClauseParser implements Mutable {
                             functionParser,
                             metadata,
                             executionContext,
-                            latestByMultiColumn,
+                            latestByBlocksKeyExtraction,
                             reader
                     )
             ));
             case INTRINSIC_OP_BETWEEN ->
                     analyzeBetween(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext);
             case INTRINSIC_OP_AND_OFFSET ->
-                    analyzeAndOffset(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext, latestByMultiColumn, reader);
+                    analyzeAndOffset(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext, latestByBlocksKeyExtraction, reader);
             default -> false;
         };
     }
