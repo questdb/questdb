@@ -328,6 +328,70 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testACommitApplyRacedPastTheTriggerIsClassifiedIntoItsOwnSegment() throws Exception {
+        // The decomposition classifies the range the repair re-materialises, and that is not
+        // the range the drain read. The drain breaks on the first out-of-order commit, while
+        // ApplyWal2TableJob has already applied whatever the base committed after it - and the
+        // watermark the repair advances consumes those apply-ahead commits too. A
+        // decomposition stopping at the trigger would repair the two segments the trigger
+        // reached, declare the ahead commit consumed, and leave the view permanently wrong in
+        // the third.
+        //
+        // The ahead commit also corrects an account the trigger never names, which is what
+        // makes its key domain its own rather than the trigger's. Here the segments read
+        // whole, so the key buys the shape rather than an assertion;
+        // LiveViewCheckpointKeyedReplayTest holds it on the route that reads by key.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                // Head rows, so the runtime's own segment is the fifth day and the three
+                // seeded days are all closed below it.
+                commit(row(5, 1, "acct-1") + ", " + row(5, 2, "acct-2"), job);
+
+                final long resumeBefore = viewInstance().getO3ResumeReplayRows();
+                final long boundaryBefore = viewInstance().getO3BoundaryReplayRows();
+
+                // The trigger reaches the second and third days on one account; the commit
+                // apply raced past it reaches the fourth on another.
+                commitWithApplyAhead(
+                        row(2, 3, "acct-1") + ", " + row(3, 3, "acct-1"),
+                        row(4, 3, "acct-2"),
+                        job
+                );
+
+                Assert.assertEquals(
+                        "the day the ahead commit corrected must be repaired as a segment of its own",
+                        3,
+                        job.segmentRepairCountForTest()
+                );
+                Assert.assertEquals(
+                        "each of the three repairs must emit its own segment's tail and nothing between them",
+                        3,
+                        viewInstance().getO3BoundaryReplayRows() - boundaryBefore
+                );
+                Assert.assertEquals(
+                        "a change set held entirely in closed segments needs no resume",
+                        resumeBefore,
+                        viewInstance().getO3ResumeReplayRows()
+                );
+                assertViewMatchesRecompute();
+            }
+
+            // Three spliced ladders, and a restart is the only thing that reads the cumulative
+            // positions they stamped.
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
     public void testRowsBelowTheViewFloorAreDiscardedRatherThanDenyingTheRepair() throws Exception {
         // The denial the cost model attributes 75.5% of all replay to: a correction reaching
         // below the view's own START FROM boundary clamps the correction floor onto that
@@ -417,6 +481,19 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
 
     private void commit(String values, LiveViewRefreshJob job) throws Exception {
         execute("insert into tx values " + values);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * Two base commits with no refresh between them: the base applies both, then the drain
+     * breaks on the first and never reads the second at all. The second is the apply-ahead
+     * range - what {@code ApplyWal2TableJob} raced past the O3 trigger - and the repair
+     * re-materialises and consumes it whether or not the decomposition placed its rows.
+     */
+    private void commitWithApplyAhead(String triggerValues, String aheadValues, LiveViewRefreshJob job) throws Exception {
+        execute("insert into tx values " + triggerValues);
+        execute("insert into tx values " + aheadValues);
         drainWalQueue();
         driveRefreshToQuiescence(job);
     }

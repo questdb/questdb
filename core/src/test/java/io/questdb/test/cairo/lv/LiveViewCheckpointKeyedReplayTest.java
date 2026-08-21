@@ -184,6 +184,50 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAnApplyAheadCommitIsRepairedByItsOwnKeys() throws Exception {
+        // The key domain is per segment, and the change-set decomposition collects it over
+        // the whole range the repair re-materialises rather than over the commit the drain
+        // broke on. ApplyWal2TableJob races past that trigger, so a segment whose only
+        // correction arrived in the range behind it has to be repaired by the keys that
+        // commit touched - and by no others. A domain inherited from the trigger would
+        // recompute an account the ahead commit never corrected and copy the corrected
+        // accounts' stale rows forward, which loses the correction outright and reports the
+        // trigger's own merge width while doing it.
+        armKeyedReplay();
+        assertMemoryLeak(() -> {
+            createView(seedEightAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, "acct-1"), job);
+                final long rowsBefore = count("select count() from lv");
+
+                // The trigger corrects one account on the second day. The commit apply raced
+                // past it corrects two others on the third, and the drain never reads it.
+                execute("insert into tx values " + correction("acct-1"));
+                execute("insert into tx values " + row(3, 0, 30, 2, "acct-2")
+                        + ", " + row(3, 0, 30, 3, "acct-3"));
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                Assert.assertEquals(
+                        "both days must be repaired, and each by its own keys",
+                        2,
+                        job.keyedReplaySegmentCountForTest()
+                );
+                Assert.assertEquals(
+                        "the second day copies seven accounts forward and the third six, which is the"
+                                + " ahead commit's own two keys rather than the trigger's one",
+                        (ACCOUNTS - 1 + ACCOUNTS - 2) * ROWS_PER_ACCOUNT_PER_DAY,
+                        job.keyedReplayMergedRowsForTest()
+                );
+                Assert.assertEquals(2, job.segmentRepairCountForTest());
+                Assert.assertEquals(rowsBefore + 3, count("select count() from lv"));
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
     public void testAKeyedRepairIsNotTakenWhenTheWholeSegmentIsCheaper() throws Exception {
         // The route is armed and the gate is open; the cost model is what turns it down.
         // At the default index-open price a forty-row day is not worth seeking through, so
