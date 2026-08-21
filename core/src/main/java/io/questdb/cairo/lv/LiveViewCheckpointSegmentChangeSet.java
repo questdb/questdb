@@ -124,7 +124,6 @@ public final class LiveViewCheckpointSegmentChangeSet {
      *            when the caller asked for no keys, and read only for a row that lands in a
      *            closed segment - a residual row is repaired by the ordinary resume, which
      *            follows no key
-     *
      * @return false once the change set has opened more than {@link #MAX_CLOSED_SEGMENTS}
      * closed segments, after which the decomposition is abandoned and the caller
      * falls back to the union range

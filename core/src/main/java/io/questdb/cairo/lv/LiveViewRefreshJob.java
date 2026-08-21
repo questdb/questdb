@@ -5287,7 +5287,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         if (!instance.isDedupKeyed()
                 || instance.getDedupKeyColumnIndex() != LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex(
-                        instance.getCompiledPlan())) {
+                instance.getCompiledPlan())) {
             // The view carries no identity for a sparse publication to upsert on, or it
             // carries one over another column than the pair a repair would check.
             return false;
@@ -6776,17 +6776,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // posting index, rather than every row above the anchor. The merge
                         // above accounts for the rest of the range.
                         ? pageFrameFactory.getCursorInTimestampRangeForwardIndexed(
-                                executionContext,
-                                replayLowTs,
-                                plan.getScanHighTsInclusive(),
-                                keyedReplay.getBaseKeyColumnIndex(),
-                                keyedReplay.getBaseSymbolKeys()
-                        )
+                        executionContext,
+                        replayLowTs,
+                        plan.getScanHighTsInclusive(),
+                        keyedReplay.getBaseKeyColumnIndex(),
+                        keyedReplay.getBaseSymbolKeys()
+                )
                         : pageFrameFactory.getCursorInTimestampRange(
-                                executionContext,
-                                replayLowTs,
-                                plan.getScanHighTsInclusive()
-                        )) {
+                        executionContext,
+                        replayLowTs,
+                        plan.getScanHighTsInclusive()
+                )) {
                     RecordCursor source = pageCursor;
                     if (filter != null) {
                         filteringCursor.of(source, filter, executionContext);
@@ -7964,17 +7964,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // posting index, rather than every row of the range they landed
                             // in. The merge above supplies the rest of the segment.
                             ? pageFrameFactory.getCursorInTimestampRangeForwardIndexed(
-                                    executionContext,
-                                    turnLowTs,
-                                    scanHighTs,
-                                    keyedReplay.getBaseKeyColumnIndex(),
-                                    keyedReplay.getBaseSymbolKeys()
-                            )
+                            executionContext,
+                            turnLowTs,
+                            scanHighTs,
+                            keyedReplay.getBaseKeyColumnIndex(),
+                            keyedReplay.getBaseSymbolKeys()
+                    )
                             : pageFrameFactory.getCursorInTimestampRange(
-                                    executionContext,
-                                    turnLowTs,
-                                    scanHighTs
-                            )) {
+                            executionContext,
+                            turnLowTs,
+                            scanHighTs
+                    )) {
                         RecordCursor source = pageCursor;
                         if (filter != null) {
                             filteringCursor.of(source, filter, executionContext);
