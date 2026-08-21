@@ -344,8 +344,9 @@ public class QueryRegistry {
     }
 
     private Entry acquireEntry() {
-        if (CarrierIdentity.current() >= 0) {
-            final EntryHolder localPool = localQueryPool.get();
+        final int carrierId = CarrierIdentity.current();
+        if (carrierId >= 0) {
+            final EntryHolder localPool = localQueryPool.get(carrierId);
             final Entry entry = localPool.entry;
             if (entry != null) {
                 localPool.entry = null;
@@ -358,8 +359,9 @@ public class QueryRegistry {
 
     private void recycle(Entry entry) {
         entry.clear();
-        if (CarrierIdentity.current() >= 0) {
-            final EntryHolder localPool = localQueryPool.get();
+        final int carrierId = CarrierIdentity.current();
+        if (carrierId >= 0) {
+            final EntryHolder localPool = localQueryPool.get(carrierId);
             if (localPool.entry == null) {
                 localPool.entry = entry;
                 return;

@@ -222,76 +222,70 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
             long taskIncarnation,
             int eventAction
     ) {
-        try {
-            if (taskIncarnation < 1 || taskIncarnation > MAX_EVENT_INCARNATION) {
-                throw incarnationOutOfRange(taskIncarnation);
-            }
-            final long pendingEvent = (taskIncarnation << EVENT_SHIFT) | eventAction;
-            while (true) {
-                if (getIncarnation() != taskIncarnation) {
-                    return LaunchResult.STALE_INCARNATION;
-                }
-                final int state = getScheduleState();
-                if (state == STATE_OWNED) {
-                    return LaunchResult.ALREADY_OWNED;
-                }
-                if (state != STATE_IDLE && state != STATE_ARMING && state != STATE_ARMING_SIGNALLED) {
-                    return LaunchResult.TERMINAL;
-                }
-                final long currentEvent = stagedEvent;
-                if (currentEvent != 0) {
-                    if ((currentEvent >>> EVENT_SHIFT) != taskIncarnation) {
-                        if (getIncarnation() != taskIncarnation) {
-                            return LaunchResult.STALE_INCARNATION;
-                        }
-                        Unsafe.cas(this, STAGED_EVENT_OFFSET, currentEvent, 0L);
-                        continue;
-                    }
-                    return LaunchResult.ALREADY_OWNED;
-                }
-                if (Unsafe.cas(this, STAGED_EVENT_OFFSET, 0L, pendingEvent)) {
-                    isRearmed = false;
-                    break;
-                }
-            }
-
+        if (taskIncarnation < 1 || taskIncarnation > MAX_EVENT_INCARNATION) {
+            throw incarnationOutOfRange(taskIncarnation);
+        }
+        final long pendingEvent = (taskIncarnation << EVENT_SHIFT) | eventAction;
+        while (true) {
             if (getIncarnation() != taskIncarnation) {
-                return Unsafe.cas(this, STAGED_EVENT_OFFSET, pendingEvent, 0L)
-                        ? LaunchResult.STALE_INCARNATION
-                        : LaunchResult.ALREADY_OWNED;
+                return LaunchResult.STALE_INCARNATION;
             }
             final int state = getScheduleState();
             if (state == STATE_OWNED) {
-                Unsafe.cas(this, STAGED_EVENT_OFFSET, pendingEvent, 0L);
                 return LaunchResult.ALREADY_OWNED;
             }
             if (state != STATE_IDLE && state != STATE_ARMING && state != STATE_ARMING_SIGNALLED) {
-                Unsafe.cas(this, STAGED_EVENT_OFFSET, pendingEvent, 0L);
                 return LaunchResult.TERMINAL;
             }
-
-            final long readyEvent = pendingEvent | EVENT_READY;
-            if (!Unsafe.cas(this, STAGED_EVENT_OFFSET, pendingEvent, readyEvent)) {
-                if (getIncarnation() != taskIncarnation) {
-                    return LaunchResult.STALE_INCARNATION;
+            final long currentEvent = stagedEvent;
+            if (currentEvent != 0) {
+                if ((currentEvent >>> EVENT_SHIFT) != taskIncarnation) {
+                    if (getIncarnation() != taskIncarnation) {
+                        return LaunchResult.STALE_INCARNATION;
+                    }
+                    Unsafe.cas(this, STAGED_EVENT_OFFSET, currentEvent, 0L);
+                    continue;
                 }
-                return isDone() ? LaunchResult.TERMINAL : LaunchResult.ALREADY_OWNED;
+                return LaunchResult.ALREADY_OWNED;
             }
-            final LaunchResult result;
-            if (fiber != null) {
-                result = runtime.launchReserved(fiber, reservationEpoch, this, taskIncarnation);
-            } else {
-                result = runtime.launch(this, taskIncarnation);
-            }
-            if (result != LaunchResult.LAUNCHED && result != LaunchResult.ALREADY_OWNED) {
-                return resolveLaunchFailure(result, taskIncarnation, readyEvent);
-            }
-            return result;
-        } finally {
-            if (fiber != null) {
-                runtime.releaseReservedFiber(fiber, reservationEpoch);
+            if (Unsafe.cas(this, STAGED_EVENT_OFFSET, 0L, pendingEvent)) {
+                isRearmed = false;
+                break;
             }
         }
+
+        if (getIncarnation() != taskIncarnation) {
+            return Unsafe.cas(this, STAGED_EVENT_OFFSET, pendingEvent, 0L)
+                    ? LaunchResult.STALE_INCARNATION
+                    : LaunchResult.ALREADY_OWNED;
+        }
+        final int state = getScheduleState();
+        if (state == STATE_OWNED) {
+            Unsafe.cas(this, STAGED_EVENT_OFFSET, pendingEvent, 0L);
+            return LaunchResult.ALREADY_OWNED;
+        }
+        if (state != STATE_IDLE && state != STATE_ARMING && state != STATE_ARMING_SIGNALLED) {
+            Unsafe.cas(this, STAGED_EVENT_OFFSET, pendingEvent, 0L);
+            return LaunchResult.TERMINAL;
+        }
+
+        final long readyEvent = pendingEvent | EVENT_READY;
+        if (!Unsafe.cas(this, STAGED_EVENT_OFFSET, pendingEvent, readyEvent)) {
+            if (getIncarnation() != taskIncarnation) {
+                return LaunchResult.STALE_INCARNATION;
+            }
+            return isDone() ? LaunchResult.TERMINAL : LaunchResult.ALREADY_OWNED;
+        }
+        final LaunchResult result;
+        if (fiber != null) {
+            result = runtime.launchReserved(fiber, reservationEpoch, this, taskIncarnation);
+        } else {
+            result = runtime.launch(this, taskIncarnation);
+        }
+        if (result != LaunchResult.LAUNCHED && result != LaunchResult.ALREADY_OWNED) {
+            return resolveLaunchFailure(result, taskIncarnation, readyEvent);
+        }
+        return result;
     }
 
     private LaunchResult resolveLaunchFailure(LaunchResult result, long taskIncarnation, long readyEvent) {

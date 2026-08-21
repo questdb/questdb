@@ -43,8 +43,10 @@ import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.GroupByShardingContext;
+import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
 import io.questdb.mp.CountDownLatchSPI;
+import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
@@ -353,6 +355,61 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 Assert.assertEquals(0, dispatcher.getLatestByCreatedTaskCount());
             } finally {
                 pool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByJobAcknowledgesQueueSlotAfterTaskFailure() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String injectedError = "injected frame decode failure";
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public int getLatestByQueueCapacity() {
+                    return 1;
+                }
+            };
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                final MessageBus messageBus = engine.getMessageBus();
+                final RingQueue<LatestByTask> queue = messageBus.getLatestByQueue();
+                final MPSequence pubSeq = messageBus.getLatestByPubSeq();
+                final LatestByAllIndexedJob job = new LatestByAllIndexedJob(messageBus);
+                final Job.WorkerContext workerContext = new Job.WorkerContext() {
+                    @Override
+                    public int carrierId() {
+                        return -1;
+                    }
+
+                    @Override
+                    public boolean isTerminating() {
+                        return false;
+                    }
+                };
+
+                final AtomicBooleanCircuitBreaker throwingBreaker = new AtomicBooleanCircuitBreaker(engine) {
+                    @Override
+                    public boolean checkIfTripped() {
+                        throw new UnsupportedOperationException(injectedError);
+                    }
+                };
+                final AtomicInteger releaseCount = new AtomicInteger();
+                final CountDownLatchSPI doneLatch = releaseCount::incrementAndGet;
+
+                publishLatestByTask(queue, pubSeq, throwingBreaker, doneLatch);
+                try {
+                    job.run(workerContext);
+                    Assert.fail("expected the injected frame decode failure");
+                } catch (UnsupportedOperationException e) {
+                    Assert.assertEquals(injectedError, e.getMessage());
+                }
+                Assert.assertEquals(1, releaseCount.get());
+
+                // The single queue slot only wraps if the failed run acknowledged its cursor.
+                final AtomicBooleanCircuitBreaker cancelledBreaker = new AtomicBooleanCircuitBreaker(engine);
+                cancelledBreaker.cancel();
+                publishLatestByTask(queue, pubSeq, cancelledBreaker, doneLatch);
+                Assert.assertTrue(job.run(workerContext));
+                Assert.assertEquals(2, releaseCount.get());
             }
         });
     }
@@ -1001,6 +1058,21 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
     @FunctionalInterface
     private interface FiberOwnerBody {
         void run() throws Exception;
+    }
+
+    private static void publishLatestByTask(
+            RingQueue<LatestByTask> queue,
+            MPSequence pubSeq,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            CountDownLatchSPI doneLatch
+    ) {
+        final long cursor = pubSeq.next();
+        Assert.assertTrue("latest-by queue slot must be available", cursor > -1);
+        queue.get(cursor).of(
+                null, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0, 0, -1, 0, 0L, 0L,
+                doneLatch, circuitBreaker, new AsyncQueryProgressState(), new AsyncQueryErrorState()
+        );
+        pubSeq.done(cursor);
     }
 
     private static long drain(

@@ -98,20 +98,27 @@ public class CarrierLocal<T> {
         return new CarrierLocal<>(initial::get);
     }
 
-    @SuppressWarnings("unchecked")
     public T get() {
-        int id = CarrierIdentity.current();
-        if (id < 0) {
+        return get(CarrierIdentity.current());
+    }
+
+    /**
+     * Same as {@link #get()} for a carrier id the caller has already sampled through
+     * {@link CarrierIdentity#current()}. Callers that branch on the id save a downcall.
+     */
+    @SuppressWarnings("unchecked")
+    public T get(int carrierId) {
+        if (carrierId < 0) {
             return fallback().get();
         }
-        CarrierLocalMap map = mapForOrNull(id);
+        CarrierLocalMap map = mapForOrNull(carrierId);
         if (map != null) {
             CarrierLocalMap.Entry e = map.getEntry(this);
             if (e != null) {
                 return (T) e.value;
             }
         }
-        return setInitialValue(id);
+        return setInitialValue(carrierId);
     }
 
     /**

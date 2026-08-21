@@ -51,6 +51,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.Vect;
 import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private final int columnIndex;
@@ -344,16 +345,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                     } else {
                         long seq = subSeq.next();
                         if (seq > -1) {
-                            // done(seq) releases the slot
-                            final AsyncQueryProgressState stolenProgress = queue.get(seq).getProgressState();
-                            try {
-                                queue.get(seq).run();
-                            } finally {
-                                subSeq.done(seq);
-                                if (dispatcher != null) {
-                                    dispatcher.signalProgress(stolenProgress);
-                                }
-                            }
+                            runStolenTask(queue, subSeq, seq, dispatcher);
                         } else {
                             Os.pause();
                         }
@@ -405,6 +397,33 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         Vect.sortULongAscInPlace(rows.getAddress(), aLimit);
     }
 
+    // A stolen task publishes its own failure to its owner's error state and breaker before
+    // rethrowing. Propagating a foreign task's exception here would fail this healthy query with
+    // another query's error, so only an own-task failure escapes.
+    private void runStolenTask(
+            RingQueue<LatestByTask> queue,
+            Sequence subSeq,
+            long seq,
+            @Nullable QueryParallelFiberDispatcher dispatcher
+    ) {
+        final LatestByTask task = queue.get(seq);
+        final boolean isOwnTask = task.getCircuitBreaker() == sharedCircuitBreaker;
+        final AsyncQueryProgressState stolenProgress = task.getProgressState();
+        try {
+            task.run();
+        } catch (Throwable th) {
+            if (isOwnTask) {
+                throw th;
+            }
+        } finally {
+            // done(seq) releases the slot
+            subSeq.done(seq);
+            if (dispatcher != null) {
+                dispatcher.signalProgress(stolenProgress);
+            }
+        }
+    }
+
     private void processTasks(int queuedCount) {
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
         final Sequence subSeq = bus.getLatestBySubSeq();
@@ -426,16 +445,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             } else {
                 long seq = subSeq.next();
                 if (seq > -1) {
-                    // done(seq) releases the slot
-                    final AsyncQueryProgressState stolenProgress = queue.get(seq).getProgressState();
-                    try {
-                        queue.get(seq).run();
-                    } finally {
-                        subSeq.done(seq);
-                        if (dispatcher != null) {
-                            dispatcher.signalProgress(stolenProgress);
-                        }
-                    }
+                    runStolenTask(queue, subSeq, seq, dispatcher);
                 } else {
                     Os.pause();
                 }

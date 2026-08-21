@@ -266,8 +266,9 @@ public class LifecycleOrchestrator implements QuietCloseable {
                             isEveryComponentStopped = false;
                             retainHardDependencies(c, retainedComponentNames);
                             try {
+                                final String name = safeName(c);
                                 injectedLog.error()
-                                        .$("failed component cleanup failed [component=").$(c.name())
+                                        .$("failed component cleanup failed [component=").$(name)
                                         .$(", error=").$(t).I$();
                             } catch (Throwable ignore) {
                             }
@@ -304,8 +305,9 @@ public class LifecycleOrchestrator implements QuietCloseable {
                             isEveryComponentStopped = false;
                             retainHardDependencies(c, retainedComponentNames);
                             try {
+                                final String name = safeName(c);
                                 injectedLog.error()
-                                        .$("component stop failed [component=").$(c.name())
+                                        .$("component stop failed [component=").$(name)
                                         .$(", error=").$(t).I$();
                             } catch (Throwable ignore) {
                             }
@@ -712,6 +714,15 @@ public class LifecycleOrchestrator implements QuietCloseable {
      * registration prevents a future typo or accidental control character from emitting
      * malformed JSON over the wire.
      */
+    private static String safeName(Component component) {
+        try {
+            final String name = component.name();
+            return name != null ? name : "<unnamed>";
+        } catch (Throwable ignore) {
+            return "<unnamed>";
+        }
+    }
+
     private static void validateComponentName(String name) {
         if (name == null || name.isEmpty()) {
             throw new LifecycleStartupException("component name must be non-empty");
@@ -985,8 +996,9 @@ public class LifecycleOrchestrator implements QuietCloseable {
                 component.requestStop();
             } catch (Throwable t) {
                 try {
+                    final String name = safeName(component);
                     injectedLog.error()
-                            .$("component stop request failed [component=").$(component.name())
+                            .$("component stop request failed [component=").$(name)
                             .$(", error=").$(t).I$();
                 } catch (Throwable ignore) {
                 }
