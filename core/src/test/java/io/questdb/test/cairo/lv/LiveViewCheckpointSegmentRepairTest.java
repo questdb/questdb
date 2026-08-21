@@ -25,9 +25,16 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
+import io.questdb.std.LongList;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -49,11 +56,24 @@ import org.junit.Test;
  * rather than of the distance it reached - which is the whole claim, and the one an
  * end-state comparison cannot see: a union repair produces exactly the same rows.
  * <p>
+ * One case holds a third thing, because the counters cannot see it either: the cumulative
+ * row positions the repaired segment's boundaries carry, and the ones the boundaries above
+ * it inherit from the segment's point add. Nothing reads those until a restart resumes from
+ * one of them, so the case reads them directly off the published timeline.
+ * <p>
  * The view is the reported customer shape: an anchored WINDOW carrying an unbounded
  * cumulative sum and count per account, over a base whose timestamps span several anchor
  * days so closed segments exist at all.
  */
 public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
+
+    private static final int ENTRY_CHECKPOINT_ID = 1;
+    private static final int ENTRY_EFFECTIVE_POSITION = 5;
+    private static final int ENTRY_MAX_TIMESTAMP = 0;
+    private static final int ENTRY_ROOT_LENGTH = 4;
+    private static final int ENTRY_ROOT_OFFSET = 3;
+    private static final int ENTRY_ROOT_SEGMENT = 2;
+    private static final int ENTRY_SIZE = 6;
 
     @Test
     public void testABoundedFrameBesideTheAnchorKeepsTheUnionRange() throws Exception {
@@ -438,6 +458,148 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
         });
     }
 
+    @Test
+    public void testEveryBoundaryInsideARepairedSegmentTakesItsOwnCumulativePosition() throws Exception {
+        // A segment repair re-materialises one closed anchor segment and splices its boundaries
+        // back in place, and what each of those boundaries owes is its own cumulative row
+        // position - the count of live-view rows at or below it, the segment's newly inserted
+        // ones included. The ladder is the only place that number lives: no reader detects a
+        // wrong one, the view keeps serving correct results out of the runtime, and the first
+        // thing to read it is the restart that resumes from one of those roots and credits the
+        // view with the rows the root claims.
+        //
+        // The three corrected rows sit one on each side of the segment's three boundaries -
+        // below the first, tied with the second, above the third - because the three cases
+        // fail differently. A boundary counts every row at or below it, so the tied row belongs
+        // to the boundary it ties with: BoundaryFreezingCursor freezes on the first row
+        // STRICTLY above a boundary, which is what admits the complete timestamp group. A
+        // freeze one row early takes the tie out of the boundary below it and the ladder is
+        // short by exactly that row from there upwards.
+        //
+        // Above the segment, nothing was recomputed: those boundaries keep the payload roots
+        // the cadence wrote, by page identity, and only their cumulative positions move - by
+        // the segment's whole delta, through the single point add the repair publishes into
+        // LiveViewCheckpointRowPositionDelta rather than through a rewrite of the suffix.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            // One row per commit at a one-row cadence, so each commit seals a boundary of its
+            // own and the second day carries three of them - which is what makes this a case
+            // about several boundaries inside one repaired segment rather than about one.
+            createView(row(2, 1, "acct-1"));
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(2, 3, "acct-1"), job);
+                commit(row(2, 5, "acct-1"), job);
+                commit(row(3, 1, "acct-1"), job);
+                // The head, which closes the second and third days below it.
+                commit(row(5, 1, "acct-1"), job);
+
+                final LongList before = snapshotTimeline();
+                Assert.assertEquals("one boundary per commit", 5 * ENTRY_SIZE, before.size());
+                assertBoundary(before, 0, "2026-01-02T01:00:00.000000Z", 1);
+                assertBoundary(before, 1, "2026-01-02T03:00:00.000000Z", 2);
+                assertBoundary(before, 2, "2026-01-02T05:00:00.000000Z", 3);
+                assertBoundary(before, 3, "2026-01-03T01:00:00.000000Z", 4);
+                assertBoundary(before, 4, "2026-01-05T01:00:00.000000Z", 5);
+
+                // Three rows into the second day: one below its first boundary, one tied with
+                // its second - a second account, so the tie is in the timestamp alone and the
+                // output carries no repeated pair - and one above its third.
+                commit(
+                        row(2, 0, "acct-1") + ", " + row(2, 3, "acct-2") + ", " + row(2, 6, "acct-1"),
+                        job
+                );
+                Assert.assertEquals(
+                        "the second day must be repaired as a segment of its own",
+                        1,
+                        job.segmentRepairCountForTest()
+                );
+                // What the segment gained, and therefore what every boundary above it owes.
+                final int segmentRowDelta = 3;
+
+                final LongList after = snapshotTimeline();
+                Assert.assertEquals(
+                        "a splice re-versions the boundaries it repairs and neither drops one nor adds one",
+                        before.size(),
+                        after.size()
+                );
+
+                // Inside the segment: new root versions, and positions counting every row at or
+                // below each boundary. 01:00 gains the row at 00:00; 03:00 gains that row and
+                // the one tied with it; 05:00 gains nothing further of its own.
+                for (int i = 0; i <= 2; i++) {
+                    assertNewRoot(before, after, i);
+                }
+                assertBoundary(after, 0, "2026-01-02T01:00:00.000000Z", 2);
+                assertBoundary(after, 1, "2026-01-02T03:00:00.000000Z", 4);
+                assertBoundary(after, 2, "2026-01-02T05:00:00.000000Z", 5);
+
+                // Above it: the same payload roots, by page identity, carrying the segment's
+                // whole delta - the third corrected row included, which is above every boundary
+                // the segment holds and therefore reaches none of their positions.
+                for (int i = 3; i <= 4; i++) {
+                    assertSameRoot(before, after, i);
+                    Assert.assertEquals(
+                            "the boundary above the repaired segment at index " + i
+                                    + " must pick up the segment's whole delta",
+                            before.getQuick(i * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION) + segmentRowDelta,
+                            after.getQuick(i * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION)
+                    );
+                }
+                assertViewMatchesRecompute();
+            }
+
+            // The restart is what reads those positions: it resumes from a root and credits the
+            // view with the rows that root claims, so a ladder short by the tied row leaves the
+            // resumed runtime disagreeing with the rows on disk.
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute();
+                commit(row(5, 3, "acct-1"), job);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    private static void assertBoundary(LongList timeline, int index, String maxTimestamp, long effectivePosition) {
+        final int base = index * ENTRY_SIZE;
+        Assert.assertEquals(
+                "boundary timestamp at index " + index,
+                ts(maxTimestamp),
+                timeline.getQuick(base + ENTRY_MAX_TIMESTAMP)
+        );
+        Assert.assertEquals(
+                "cumulative row position at index " + index,
+                effectivePosition,
+                timeline.getQuick(base + ENTRY_EFFECTIVE_POSITION)
+        );
+    }
+
+    private static void assertNewRoot(LongList before, LongList after, int index) {
+        final int base = index * ENTRY_SIZE;
+        Assert.assertEquals(before.getQuick(base + ENTRY_MAX_TIMESTAMP), after.getQuick(base + ENTRY_MAX_TIMESTAMP));
+        Assert.assertEquals(before.getQuick(base + ENTRY_CHECKPOINT_ID), after.getQuick(base + ENTRY_CHECKPOINT_ID));
+        Assert.assertTrue(
+                "the repaired root at index " + index + " must be a new physical version",
+                before.getQuick(base + ENTRY_ROOT_SEGMENT) != after.getQuick(base + ENTRY_ROOT_SEGMENT)
+                        || before.getQuick(base + ENTRY_ROOT_OFFSET) != after.getQuick(base + ENTRY_ROOT_OFFSET)
+        );
+    }
+
+    private static void assertSameRoot(LongList before, LongList after, int index) {
+        final int base = index * ENTRY_SIZE;
+        for (int field = ENTRY_MAX_TIMESTAMP; field <= ENTRY_ROOT_LENGTH; field++) {
+            Assert.assertEquals(
+                    "reused root field " + field + " at index " + index,
+                    before.getQuick(base + field),
+                    after.getQuick(base + field)
+            );
+        }
+    }
+
     private LiveViewWindow anchorWindow() {
         final LiveViewWindow window = viewInstance().getAnchorWindow();
         Assert.assertNotNull("the view must carry an anchored window", window);
@@ -567,6 +729,42 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
         return row(2, 1, "acct-1") + ", " + row(2, 2, "acct-2") + ", "
                 + row(3, 1, "acct-1") + ", " + row(3, 2, "acct-2") + ", "
                 + row(4, 1, "acct-1") + ", " + row(4, 2, "acct-2");
+    }
+
+    /**
+     * Flattens every logical timeline entry into {@code (maxTimestamp, checkpointId, root
+     * segment/offset/length, effective position)}. Root page identity is what separates a
+     * reused payload root from a re-versioned one, and the effective position is the
+     * cumulative live-view row count a restart selecting that root would credit the view
+     * with.
+     */
+    private LongList snapshotTimeline() {
+        final LiveViewInstance instance = viewInstance();
+        final LongList rows = new LongList();
+        try (
+                Path checkpointsDir = new Path().of(configuration.getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                LiveViewCheckpointMetaStore store = new LiveViewCheckpointMetaStore(configuration);
+                LiveViewCheckpointTimelineReader reader = new LiveViewCheckpointTimelineReader(configuration);
+                LiveViewCheckpointRowPositionDeltaReader deltaReader =
+                        new LiveViewCheckpointRowPositionDeltaReader(configuration)
+        ) {
+            store.of(checkpointsDir);
+            reader.of(checkpointsDir);
+            deltaReader.of(checkpointsDir);
+            try (LiveViewCheckpointGenerationPin pin = store.pin()) {
+                reader.iterateAll(pin.getTimelineRootRef(), entry -> {
+                    rows.add(entry.maxTimestamp);
+                    rows.add(entry.checkpointId);
+                    rows.add(entry.rootRef.getSegmentId());
+                    rows.add(entry.rootRef.getOffset());
+                    rows.add(entry.rootRef.getLength());
+                    rows.add(deltaReader.effectivePosition(pin.getRowPositionDeltaRootRef(), entry));
+                });
+            }
+        }
+        return rows;
     }
 
     private LiveViewInstance viewInstance() {
