@@ -24,9 +24,12 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Where a multi-segment out-of-order repair had got to when one of its segments parked on
@@ -53,6 +56,17 @@ import org.jetbrains.annotations.NotNull;
  * runtime is still standing in, and a turn that repaired the closed segments and dropped
  * it would leave the change unconsumed and re-repair every one of them on the next drain.
  * <p>
+ * It also queues each segment's <b>affected key domain</b> {@code Q} - the keys its
+ * corrections carried - for the segments the cost model priced a keyed read cheaper on.
+ * {@code Q} is collected by the change-set decomposition, and that scratch belongs to the
+ * turn that classified it: by the time a later turn resumes the loop the same worker has
+ * refilled it for whatever it classified since. A loop that carried only the timestamps
+ * would therefore repair every segment behind a parked one whole, which is not a corner -
+ * the loop parks on the segments a keyed replay is <i>not</i> taken for, precisely because
+ * a keyed replay never parks, so the segments behind a park are the ones most likely to be
+ * keyed. {@code Q} is a per-segment coordinate like the bounds beside it, and it travels
+ * for the same reason they do.
+ * <p>
  * The backfill pass queues nothing: its work list is the durable pending set, which
  * outlives any number of turns. What it records instead is the segment in flight, so the
  * resuming turn clears exactly the entry whose replacement applied and no other, and the
@@ -74,14 +88,22 @@ public final class LiveViewCheckpointSegmentLoop {
      * residual of a decomposed one.
      */
     public static final int KIND_NONE = 0;
-    // segmentStart, minTs, maxTs per queued entry, oldest first - the order a repair has
-    // to take them in, because a later segment's cumulative row positions depend on how
-    // many rows the earlier ones added.
-    private static final int STRIDE = 3;
+    // segmentStart, minTs, maxTs, keySetIndex, hasNullKey per queued entry, oldest first -
+    // the order a repair has to take them in, because a later segment's cumulative row
+    // positions depend on how many rows the earlier ones added. keySetIndex is -1 for a
+    // segment carrying no key domain, which is every segment the cost model turned down.
+    private static final int STRIDE = 5;
+    // Q per queued segment, named by an index the entry carries rather than by the entry's
+    // position: the queue drains from its head, and an index that travels with the entry is
+    // one no removal has to move. Retained across repairs and cleared rather than dropped,
+    // so a worker pays for the growth once.
+    private final ObjList<CharSequenceHashSet> keySets = new ObjList<>();
     private final LongList segments = new LongList();
     private long durableOutputMaxTs = Numbers.LONG_NULL;
     private long finalSeqTxn = Numbers.LONG_NULL;
+    private boolean hasInFlightNullKey;
     private long holdSeqTxn = Numbers.LONG_NULL;
+    private int inFlightKeySetIndex = -1;
     private long inFlightSegmentStart = Numbers.LONG_NULL;
     private int kind = KIND_NONE;
     private long passStartUs;
@@ -94,17 +116,47 @@ public final class LiveViewCheckpointSegmentLoop {
     private long viewLowerBoundTimestamp;
 
     /**
-     * Queues one segment the loop has not reached yet.
+     * Queues one segment the loop has not reached yet, with the key domain its repair may
+     * follow.
+     *
+     * @param keys       the segment's affected keys, or null when its repair must read every
+     *                   row of it. Copied rather than referenced: the change set these come
+     *                   from is refilled by the next repair this worker classifies, and the
+     *                   loop may outlive that by any number of turns
+     * @param hasNullKey whether a correction carried the null partition key, which the
+     *                   change set holds beside its set rather than in it
      */
-    public void addSegment(long segmentStart, long minTs, long maxTs) {
+    public void addSegment(
+            long segmentStart,
+            long minTs,
+            long maxTs,
+            @Nullable CharSequenceHashSet keys,
+            boolean hasNullKey
+    ) {
+        int keySetIndex = -1;
+        if (keys != null) {
+            keySetIndex = segments.size() / STRIDE;
+            final CharSequenceHashSet carried = keySetAt(keySetIndex);
+            carried.clear();
+            // The values are Strings by the time the change set holds them, so this is a
+            // copy of references rather than of characters.
+            carried.addAll(keys);
+        }
         segments.add(segmentStart);
         segments.add(minTs);
         segments.add(maxTs);
+        segments.add(keySetIndex);
+        segments.add(keys != null && hasNullKey ? 1 : 0);
     }
 
     public void clear() {
         segments.clear();
+        for (int i = 0, n = keySets.size(); i < n; i++) {
+            keySets.getQuick(i).clear();
+        }
         kind = KIND_NONE;
+        inFlightKeySetIndex = -1;
+        hasInFlightNullKey = false;
         inFlightSegmentStart = Numbers.LONG_NULL;
         viewLowerBoundTimestamp = 0;
         holdSeqTxn = Numbers.LONG_NULL;
@@ -122,7 +174,18 @@ public final class LiveViewCheckpointSegmentLoop {
     public void copyFrom(@NotNull LiveViewCheckpointSegmentLoop src) {
         segments.clear();
         segments.addAll(src.segments);
+        for (int i = 0, n = keySets.size(); i < n; i++) {
+            keySets.getQuick(i).clear();
+        }
+        // Index for index, because that is how an entry names its set - and the entry of
+        // the segment in flight has been removed from the queue while its set is still
+        // named by the index it was added at.
+        for (int i = 0, n = src.keySets.size(); i < n; i++) {
+            keySetAt(i).addAll(src.keySets.getQuick(i));
+        }
         kind = src.kind;
+        inFlightKeySetIndex = src.inFlightKeySetIndex;
+        hasInFlightNullKey = src.hasInFlightNullKey;
         inFlightSegmentStart = src.inFlightSegmentStart;
         viewLowerBoundTimestamp = src.viewLowerBoundTimestamp;
         holdSeqTxn = src.holdSeqTxn;
@@ -163,6 +226,16 @@ public final class LiveViewCheckpointSegmentLoop {
      */
     public long getHoldSeqTxn() {
         return holdSeqTxn;
+    }
+
+    /**
+     * @return the affected keys of the segment the loop is repairing, or null when that
+     * segment has none and its repair must read every row of it. A non-null set is the
+     * verdict as well as the domain: the loop carries {@code Q} only for the segments the
+     * cost model priced a keyed read cheaper on
+     */
+    public @Nullable CharSequenceHashSet getInFlightKeys() {
+        return inFlightKeySetIndex < 0 ? null : keySets.getQuick(inFlightKeySetIndex);
     }
 
     /**
@@ -252,6 +325,14 @@ public final class LiveViewCheckpointSegmentLoop {
     }
 
     /**
+     * @return whether a correction of the segment the loop is repairing carried the null
+     * partition key. Meaningless unless {@link #getInFlightKeys()} is non-null
+     */
+    public boolean hasInFlightNullKey() {
+        return hasInFlightNullKey;
+    }
+
+    /**
      * @return whether every commit the change set covers only ADDED base rows, which is
      * what lets the residual plan a bounded repair
      */
@@ -317,9 +398,15 @@ public final class LiveViewCheckpointSegmentLoop {
     public void removeFirstSegment() {
         if (segments.size() == 0) {
             inFlightSegmentStart = Numbers.LONG_NULL;
+            inFlightKeySetIndex = -1;
+            hasInFlightNullKey = false;
             return;
         }
         inFlightSegmentStart = segments.getQuick(0);
+        // The set stays where it is and the in-flight slot names it by the same index the
+        // entry did, so dropping the entry costs no copy.
+        inFlightKeySetIndex = (int) segments.getQuick(3);
+        hasInFlightNullKey = segments.getQuick(4) != 0;
         segments.removeIndexBlock(0, STRIDE);
     }
 
@@ -329,6 +416,11 @@ public final class LiveViewCheckpointSegmentLoop {
      */
     public void segmentRepaired() {
         inFlightSegmentStart = Numbers.LONG_NULL;
+        if (inFlightKeySetIndex > -1) {
+            keySets.getQuick(inFlightKeySetIndex).clear();
+            inFlightKeySetIndex = -1;
+        }
+        hasInFlightNullKey = false;
         segmentsRepaired++;
     }
 
@@ -339,6 +431,10 @@ public final class LiveViewCheckpointSegmentLoop {
      */
     public void segmentStarted(long segmentStart) {
         inFlightSegmentStart = segmentStart;
+        // The durable pending set carries no key domain, so a pass repairs every segment
+        // whole. Carrying Q into that set is a format bump the pass does not yet own.
+        inFlightKeySetIndex = -1;
+        hasInFlightNullKey = false;
     }
 
     /**
@@ -346,5 +442,21 @@ public final class LiveViewCheckpointSegmentLoop {
      */
     public int size() {
         return segments.size() / STRIDE;
+    }
+
+    /**
+     * The pooled key set at {@code index}, growing the pool one set at a time rather than
+     * extending straight to the index asked for.
+     * <p>
+     * The distinction matters: a loop skips the pool for every segment it carries no key
+     * domain for, so the indexes it does ask for have gaps in them, and an extend-and-set
+     * would leave nulls in the ones it stepped over. Everything that walks the pool -
+     * {@link #clear()}, {@link #copyFrom} - walks all of it.
+     */
+    private @NotNull CharSequenceHashSet keySetAt(int index) {
+        while (keySets.size() <= index) {
+            keySets.add(new CharSequenceHashSet());
+        }
+        return keySets.getQuick(index);
     }
 }

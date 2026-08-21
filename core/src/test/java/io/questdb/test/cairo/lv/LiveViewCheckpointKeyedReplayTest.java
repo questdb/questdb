@@ -133,6 +133,57 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testASegmentBehindAParkedOneIsStillRepairedByItsKeys() throws Exception {
+        // The two default-on routes have to compose. A keyed replay never parks, so the
+        // segment a loop parks on is always one the cost model turned down - and the
+        // segments queued behind it are the ones most likely to be keyed. The key domain
+        // is collected by the change-set decomposition into scratch that belongs to the
+        // turn that classified it, so a loop carrying only its timestamps hands the
+        // resuming turn nothing to arm from and every segment behind the park reads whole.
+        //
+        // The shape is the reported one: an eight-account correction on the older day,
+        // which the cost model prices whole and which a one-row replay budget parks, and a
+        // one-account correction on the day above it, which it prices keyed.
+        armKeyedReplay();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedEightAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, "acct-1"), job);
+
+                commit(correctionOnEveryAccount(2) + ", " + row(3, 0, 30, 0, "acct-1"), job);
+
+                Assert.assertTrue(
+                        "a one-row replay budget must park the loop's first segment",
+                        job.segmentYieldCountForTest() > 0
+                );
+                Assert.assertEquals(
+                        "the eight-account day must be priced whole and the one-account day keyed",
+                        1,
+                        job.keyedScanCheaperCountForTest()
+                );
+                Assert.assertEquals(
+                        "the segment behind the parked one must still be repaired by its keys",
+                        1,
+                        job.keyedReplaySegmentCountForTest()
+                );
+                Assert.assertEquals(
+                        "and its merge must copy every unaffected account's row forward",
+                        (ACCOUNTS - 1) * ROWS_PER_ACCOUNT_PER_DAY,
+                        job.keyedReplayMergedRowsForTest()
+                );
+                Assert.assertEquals(
+                        "both segments must be repaired, and each exactly once",
+                        2,
+                        job.segmentRepairCountForTest()
+                );
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
     public void testAKeyedRepairIsNotTakenWhenTheWholeSegmentIsCheaper() throws Exception {
         // The route is armed and the gate is open; the cost model is what turns it down.
         // At the default index-open price a forty-row day is not worth seeking through, so
@@ -459,6 +510,23 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
      */
     private String correction(String account) {
         return row(2, 0, 30, 0, account);
+    }
+
+    /**
+     * One correction of every seeded account on 2026-01-{@code day}, at 00:30 like
+     * {@link #correction}. Eight keys against eighty rows is what makes the cost model
+     * price the day's whole-segment read below its keyed one, which is the only way to get
+     * a segment that both reads whole and may therefore park.
+     */
+    private String correctionOnEveryAccount(int day) {
+        final StringBuilder rows = new StringBuilder();
+        for (int account = 1; account <= ACCOUNTS; account++) {
+            if (rows.length() > 0) {
+                rows.append(", ");
+            }
+            rows.append(row(day, 0, 30, account, "acct-" + account));
+        }
+        return rows.toString();
     }
 
     /**

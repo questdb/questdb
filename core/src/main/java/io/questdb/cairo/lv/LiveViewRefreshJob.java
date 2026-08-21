@@ -1486,11 +1486,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     pending.getMinTs(0),
                     pending.getMaxTs(0),
                     pinnedSeqTxn,
-                    loop.getHoldSeqTxn(),
-                    // A pass drains the durable pending set, which carries no key domain,
-                    // so every segment it repairs reads whole. Carrying Q into the set is
-                    // a format bump the pass does not yet own.
-                    false
+                    loop.getHoldSeqTxn()
             );
             if (step == SEGMENT_STEP_SUSPENDED) {
                 return true;
@@ -5097,13 +5093,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 advanceTo
         );
         for (int i = 0; i < segmentCount; i++) {
+            // Q travels with the segment, for the segments the cost model priced a keyed
+            // read cheaper on. A loop that parks hands them on with everything else it
+            // carries; without that the segments behind a park read whole, and since a
+            // keyed replay never parks those are exactly the ones that would have been
+            // keyed.
+            final boolean keyed = segmentChangeSet.isSegmentKeyDomainComplete(i)
+                    && keyedScanCheaperSegments.indexOf(segmentChangeSet.getSegmentStart(i)) > -1;
             segmentLoopScratch.addSegment(
                     segmentChangeSet.getSegmentStart(i),
                     segmentChangeSet.getSegmentMinTs(i),
-                    segmentChangeSet.getSegmentMaxTs(i)
+                    segmentChangeSet.getSegmentMaxTs(i),
+                    keyed ? segmentChangeSet.getSegmentKeys(i) : null,
+                    keyed && segmentChangeSet.hasSegmentNullKey(i)
             );
         }
-        switch (driveChangeSetSegments(instance, windowFactory, reader, anchorPlan, segmentLoopScratch, true)) {
+        switch (driveChangeSetSegments(instance, windowFactory, reader, anchorPlan, segmentLoopScratch)) {
             case SEGMENT_STEP_SUSPENDED:
                 return SEGMENT_REPAIR_SUSPENDED;
             case SEGMENT_STEP_DECLINED:
@@ -5130,12 +5135,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * commits nothing, advances nothing and leaves the reader alone.
      *
      * @param loop         the loop position as it stands <b>after</b> this segment was taken
-     *                     off it, which is what a resuming turn continues from
+     *                     off it, which is what a resuming turn continues from, and which
+     *                     carries the segment's own key domain when its repair may follow one
      * @param segmentStart the segment's own inclusive start, for the log and - for a pass -
      *                     the pending entry the caller clears once the replacement applies
-     * @param commitSeqTxn  the base {@code seqTxn} this segment's replacement commits at
-     * @param keyDomainLive whether {@link #segmentChangeSet} still describes this loop, so
-     *                      the keyed route can read this segment's key domain out of it
+     * @param commitSeqTxn the base {@code seqTxn} this segment's replacement commits at
      */
     private int repairOneSegment(
             LiveViewInstance instance,
@@ -5147,8 +5151,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long segmentMinTs,
             long segmentMaxTs,
             long pinnedSeqTxn,
-            long commitSeqTxn,
-            boolean keyDomainLive
+            long commitSeqTxn
     ) throws SqlException {
         final String viewName = instance.getDefinition().getViewName();
         final boolean pass = loop.getKind() == LiveViewCheckpointSegmentLoop.KIND_BACKFILL_PASS;
@@ -5181,7 +5184,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", highTsExclusive=").$ts(repairPlan.getHighTsExclusive())
                 .$(", commitSeqTxn=").$(repairPlan.getCommitSeqTxn())
                 .$(", pinnedSeqTxn=").$(pinnedSeqTxn).I$();
-        final boolean keyed = keyDomainLive && armKeyedReplay(instance, reader, segmentStart);
+        final boolean keyed = armKeyedReplay(instance, reader, loop, segmentStart);
         try {
             if (o3HeadMissReplay(
                     instance,
@@ -5190,12 +5193,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     reader,
                     false,
                     null,
-                    // A keyed replay may not park. Its merge reads the view's own stored
-                    // output through a cursor the turn owns, and the loop position carries
-                    // no key domain to re-arm it from, so a parked keyed replay would
-                    // resume as a whole-segment one over a range it has half re-emitted.
-                    // It is also the route that needs the yield least: it reads the keys
-                    // the correction touched rather than the segment.
+                    // A keyed replay may not park. The loop now carries the key domain,
+                    // so re-arming is no longer what stops it - the merge is: it reads the
+                    // view's own stored output through a cursor the turn owns and drains it
+                    // against the replay's own rows, and a resume would restart that cursor
+                    // over a range it has half re-emitted. It is also the route that needs
+                    // the yield least: it reads the keys the correction touched rather than
+                    // the segment.
                     !keyed && engine.getConfiguration().isLiveViewCheckpointRepairSegmentYieldEnabled()
             )) {
                 segmentYieldCount++;
@@ -5212,31 +5216,40 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Arms the keyed replay for one closed segment, or leaves it disarmed so the segment
      * reads whole.
      * <p>
-     * Four things have to hold, and the first two are already decided by the time this
+     * Three things have to hold, and the first two are already decided by the time this
      * runs: the view admits a keyed replay at all - one indexed SYMBOL partition column,
      * projected into the view's own schema, which {@link #keyedScanColumnIndex} reports -
-     * and {@link LiveViewCheckpointKeyedScanCost} priced this segment's keyed read below
-     * its whole-segment one. What is left is that the correction's key domain was
-     * collected in full rather than cut short by its budget, and that every key in it
-     * resolves against the pinned reader's own symbol map.
+     * and the loop carries this segment's key domain, which it does exactly when the
+     * decomposition collected the domain in full and
+     * {@link LiveViewCheckpointKeyedScanCost} priced the keyed read below the
+     * whole-segment one. What is left is that every key in it resolves against the pinned
+     * reader's own symbol map.
+     * <p>
+     * The domain comes off the <b>loop</b> rather than off {@link #segmentChangeSet}
+     * because the loop is the only one of the two that outlives the turn that filled it.
+     * A resumed loop reads the same {@code Q} the turn that parked it collected, against
+     * the same pinned snapshot it priced that {@code Q} at.
      * <p>
      * Nothing here is a denial. A segment this leaves disarmed reads and publishes exactly
      * as it did before the keyed route existed.
      *
      * @return true when the segment's replay may follow its keys
      */
-    private boolean armKeyedReplay(LiveViewInstance instance, TableReader reader, long segmentStart) {
+    private boolean armKeyedReplay(
+            LiveViewInstance instance,
+            TableReader reader,
+            LiveViewCheckpointSegmentLoop loop,
+            long segmentStart
+    ) {
         keyedReplay.clear();
         if (!engine.getConfiguration().isLiveViewCheckpointRepairKeyedReplayEnabled()) {
             return false;
         }
-        if (keyedScanCheaperSegments.indexOf(segmentStart) < 0) {
+        final CharSequenceHashSet segmentKeys = loop.getInFlightKeys();
+        if (segmentKeys == null) {
             // Either the segment was not priced - no key domain, no index, a key the
             // reader does not hold - or the whole-segment read is the cheaper of the two.
-            return false;
-        }
-        final int segmentIndex = indexOfChangeSetSegment(segmentStart);
-        if (segmentIndex < 0 || !segmentChangeSet.isSegmentKeyDomainComplete(segmentIndex)) {
+            // A backfill pass is here too: the durable pending set carries no key domain.
             return false;
         }
         final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
@@ -5254,8 +5267,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     scanColumnIndex,
                     reader.getSymbolMapReader(readerColumnIndex),
                     projector.getCheckpointKeyColumnTypes(),
-                    segmentChangeSet.getSegmentKeys(segmentIndex),
-                    segmentChangeSet.hasSegmentNullKey(segmentIndex)
+                    segmentKeys,
+                    loop.hasInFlightNullKey()
             );
         } catch (Throwable t) {
             // Arming is not repairing: whatever went wrong here costs the localization and
@@ -5448,19 +5461,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * @return the change set's index for one closed segment, or -1 when the set does not
-     * describe it
-     */
-    private int indexOfChangeSetSegment(long segmentStart) {
-        for (int i = 0, n = segmentChangeSet.getClosedSegmentCount(); i < n; i++) {
-            if (segmentChangeSet.getSegmentStart(i) == segmentStart) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    /**
      * Books one segment repair that has just published, and reports whether the loop may
      * move on to the next one.
      * <p>
@@ -5566,8 +5566,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             WindowRecordCursorFactory windowFactory,
             TableReader reader,
             LiveViewCheckpointAnchorPlan anchorPlan,
-            LiveViewCheckpointSegmentLoop loop,
-            boolean keyDomainLive
+            LiveViewCheckpointSegmentLoop loop
     ) throws SqlException {
         final long pinnedSeqTxn = reader.getSeqTxn();
         while (loop.size() > 0) {
@@ -5592,8 +5591,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     segmentMinTs,
                     segmentMaxTs,
                     pinnedSeqTxn,
-                    isFinalRepair ? loop.getFinalSeqTxn() : loop.getHoldSeqTxn(),
-                    keyDomainLive
+                    isFinalRepair ? loop.getFinalSeqTxn() : loop.getHoldSeqTxn()
             );
             if (step != SEGMENT_STEP_DONE) {
                 return step;
@@ -5701,12 +5699,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (loop.getKind() == LiveViewCheckpointSegmentLoop.KIND_BACKFILL_PASS) {
             return drainPendingRepairs(instance, windowFactory, reader, anchorPlan, loop);
         }
-        // The change set the keyed route reads its key domain out of belonged to the turn
-        // that parked this loop, and that turn is over: segmentChangeSet has since been
-        // refilled by whatever else this worker classified. The segments behind the parked
-        // one therefore read whole, which is what every repair did before the keyed route
-        // existed.
-        final int step = driveChangeSetSegments(instance, windowFactory, reader, anchorPlan, loop, false);
+        // The segments behind the parked one may still be repaired by key: the loop carries
+        // each one's key domain, so the change set the turn that parked this loop collected
+        // it from - long since refilled by whatever else this worker classified - is not
+        // read here at all. The keys resolve against the same pinned snapshot they were
+        // priced at, which is the reader this turn was handed.
+        final int step = driveChangeSetSegments(instance, windowFactory, reader, anchorPlan, loop);
         if (step == SEGMENT_STEP_SUSPENDED) {
             return true;
         }
