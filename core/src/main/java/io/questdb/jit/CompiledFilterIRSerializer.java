@@ -51,7 +51,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.DoubleList;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
-import io.questdb.std.IntStack;
 import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
@@ -202,7 +201,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // integer and float arms each pick the 8-byte width the token calls for.
     // Separate from i64WidenLeaves on purpose: this only widens an IMM, it emits no SX_I64, so it
     // must not drag the predicate onto the scalar backend the way a leaf widening does - see
-    // hasWidthChangingI64WidenConstant() for the one hazard it does carry. Compared by identity.
+    // hasWidthChangingI64WidenConstant() for the one hazard it does carry, and
+    // markCmpOperandWidenedToI64 for the three members that hazard is not asked about. Compared by
+    // identity.
     private final ObjHashSet<ExpressionNode> i64WidenConstants = new ObjHashSet<>();
     // PURE-CONSTANT narrow integer arithmetic subtrees that a 64-bit peer reads, which descend()
     // collapses into a single I8 IMM instead of emitting the operations at INT width. See
@@ -238,16 +239,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final StringSink sink = new StringSink();
     private final ObjList<ExpressionNode> sortedPredicates = new ObjList<>();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
-    private final IntStack typeStack = new IntStack();
+    // Operand type codes of the IR walks in hasUnharmonisedOperandWidths() and
+    // ensureOnlyVarSizeHeaderChecks(), mirroring the value stack the backend builds while it emits
+    // the same stream. Deliberately NOT an IntStack: IntStack spells an absent entry as -1, which
+    // is UNDEFINED_CODE itself, so it hands a pushed UNDEFINED back without removing it and the
+    // walk's depth drifts from the backend's on every comparison mask. See popType().
+    private final IntList typeStack = new IntList();
     private ObjList<Function> bindVarFunctions;
     private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
     private SqlExecutionContext executionContext;
     // internal flag used to forcefully enable scalar mode based on filter's contents
     private boolean forceScalarMode;
     private boolean hasEmittedWideLaneConversion;
-    // Per-predicate: a marker widened a CONSTANT to a full 8-byte IMM - an out-of-INT-range
-    // integer operand of an arithmetic node (markWidthSemanticsOperand), or a DOUBLE literal the
-    // Java filter reads at f64 (markDoubleWidthConst). See hasWidthChangingI64WidenConstant().
+    // Per-predicate: a marker widened a STANDALONE CONSTANT to a full 8-byte IMM - an
+    // out-of-INT-range integer operand of an arithmetic node (markWidthSemanticsOperand), or a
+    // DOUBLE literal the Java filter reads at f64 (markDoubleWidthConst). Not every member of
+    // i64WidenConstants: the three sites that widen one half of a pairing whose other half is
+    // widened beside it leave this flag alone on purpose - see markCmpOperandWidenedToI64. See
+    // hasWidthChangingI64WidenConstant().
     private boolean hasI64WidenArithConstant;
     // Filter-wide: at least one predicate closed carrying a widened I8 IMM its own lanes are too
     // narrow to hold. Whether that matters depends on the four-lane loop, which the traversal only
@@ -473,6 +482,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     || isWideLaneIntCmpFloatConstPair(node.rhs, node.lhs)) {
                 return true;
             }
+            if (isWideLaneIntCmpFloatLeafPair(node.lhs, node.rhs)
+                    || isWideLaneIntCmpFloatLeafPair(node.rhs, node.lhs)) {
+                return true;
+            }
             return isWideLaneFloatComparisonOperand(node.lhs)
                     && isWideLaneFloatComparisonOperand(node.rhs)
                     && (containsFloatExpression(node.lhs) || containsFloatExpression(node.rhs));
@@ -498,6 +511,40 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 && (leaf.type == ExpressionNode.LITERAL || leaf.type == ExpressionNode.BIND_VARIABLE)
                 && arithExprType(leaf) == I4_TYPE
                 && isNarrowIntCmpWideningConst(constNode);
+    }
+
+    /**
+     * A genuine INT leaf against an F4 operand: the pairing whose INT side
+     * {@link #markIntCmpFloatOperand} hands to {@link #addI64WidenLeaf}. Serializing that leaf runs
+     * {@link #maybeEmitI64Widening}, which emits the SX_I64 and sets
+     * {@link #hasEmittedWideLaneConversion} - the flag {@link #getExecHint} needs before it can
+     * answer {@link #EXEC_HINT_WIDE_LANE}.
+     * <p>
+     * The conjuncts are that marker's leaf-branch accept condition, so a pair this admits is a pair
+     * the marker widens, rather than one the emission rules might yet decline the way
+     * {@link #requiresWideLane} deliberately over-accepts.
+     * <p>
+     * Unadmitted, the shape matched no arm above - the INT leaf is neither a float expression nor a
+     * numeric constant, and the F4 operand is neither an integer expression nor a widening constant
+     * - so the emitted SX_I64 met the {@code !(isWideLaneMode && hasEmittedWideLaneConversion)}
+     * term in {@code visit()} and forced the filter onto the SCALAR loop at one row per iteration,
+     * where {@code avx2::convert}'s four-lane {@code (i64, f32)} arm ({@code jit/avx2.h:698-704}) runs
+     * four.
+     * <p>
+     * I1 / I2 stay out: {@code avx2::sx_i64} widens an i32 lane and declines other widths
+     * ({@code jit/avx2.h:534-539}), and the marker returns ahead of {@link #addI64WidenLeaf} for them
+     * because a BYTE or SHORT value has an exact 32-bit float already.
+     * {@link #isGenuineIntegerLeaf} keeps SYMBOL / IPv4 / GEOINT out, matching the fail-closed
+     * backstop the marker applies to the same leaf.
+     * <p>
+     * Pinned by {@code CompiledFilterIRSerializerTest#testIntCmpFloatColumnWidensIntToI64} and
+     * {@code CompiledFilterRegressionTest#testIntCmpFloatColumnWideLaneMatchesJavaFilter}.
+     */
+    private boolean isWideLaneIntCmpFloatLeafPair(ExpressionNode intSide, ExpressionNode floatSide) {
+        return isFloatLeaf(floatSide)
+                && isNarrowIntLeaf(intSide)
+                && arithExprType(intSide) == I4_TYPE
+                && isGenuineIntegerLeaf(intSide);
     }
 
     private boolean isWideLaneFloatComparisonOperand(ExpressionNode node) {
@@ -737,6 +784,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (isWideLaneIntCmpFloatConstPair(lhs, rhs) || isWideLaneIntCmpFloatConstPair(rhs, lhs)) {
             return true;
         }
+        // An INT leaf against an F4 operand emits the same SX_I64, and the four-lane loop is again
+        // the only vectorized one that implements it. Eligibility on its own leaves isWideLaneMode
+        // false - serialize() ANDs isWideLaneEligible() with requiresWideLane() - and the emitted
+        // SX_I64 would then force the filter to SCALAR. See isWideLaneIntCmpFloatLeafPair.
+        if (isWideLaneIntCmpFloatLeafPair(lhs, rhs) || isWideLaneIntCmpFloatLeafPair(rhs, lhs)) {
+            return true;
+        }
         final int lhsType = arithExprType(lhs);
         final int rhsType = arithExprType(rhs);
         return (lhsType == I8_TYPE && rhsType == I4_TYPE && containsNarrowIntegerValue(rhs))
@@ -802,10 +856,45 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // Wide-lane mode suppresses the short-circuit path because AND_SC / OR_SC cannot branch per
         // SIMD lane. Entering the mode is not the same as emitting a conversion, though, and
         // requiresWideLane() deliberately over-accepts: when the prediction misses, getExecHint()
-        // falls back to a mixed / single size hint and the backend runs the very same scalar loop
-        // (compiler.cpp takes avx2_loop only for the single-size and wide-lane hints). Suppressing
-        // the short-circuit there buys nothing and costs an evaluation of every conjunct on every
-        // row, so only suppress it once a conversion is actually possible.
+        // cannot answer EXEC_HINT_WIDE_LANE - its sole return of that hint sits behind
+        // hasEmittedWideLaneConversion - so the wide-lane loop the suppression exists for is not
+        // what runs. Suppressing the short-circuit there buys nothing and costs an evaluation of
+        // every conjunct on every row, so only suppress it once a conversion is actually possible.
+        //
+        // Once a conversion IS possible the suppression covers the whole predicate, co-conjuncts
+        // included: the gate below asks hasWideLaneConversionSource() about the ROOT node. That is
+        // a choice rather than an oversight. A filter runs ONE backend loop - compiler.cpp:376-385
+        // picks avx2_loop or scalar_loop once per istream, and jit/avx2.h's emit_code declines a
+        // stream carrying And_Sc / Or_Sc - so a chain cannot short-circuit one conjunct and
+        // vectorize another, and scoping the suppression to the conjunct that owns the source
+        // changes which of the two loops the WHOLE filter runs rather than splitting the
+        // difference. Measured on 20M rows over "f32 * 2.0 > B and l64 > 5" plus N-2 non-selective
+        // conjuncts, four-lane against scalar-with-AND_SC, at 2 / 5 / 13 conjuncts:
+        //   count(),   25% leading selectivity: 9 / 19 / 43 ms against 79 / 79 / 92;
+        //              0.05%:                   8 / 19 / 43 ms against 20 / 25 / 22;
+        //   sum(l1),   25%:                     51 / 62 / 91 ms against 101 / 101 / 114;
+        //              0.05%:                   9 / 21 / 48 ms against 24 / 21 / 25.
+        // The short circuit is ahead in two of those twelve cells, both the last cell of a 0.05%
+        // row: a very selective leading conjunct in front of a 13-conjunct chain. serialize() is
+        // handed the tree and the table metadata, not the data distribution, so it cannot tell
+        // that case from the identically shaped filter over different data. Within the SCALAR loop
+        // the short circuit does earn its keep: scalar with AND_SC against scalar without, same
+        // shapes, reads 20 / 25 / 22 ms against 35 / 67 / 153 at 0.05% selectivity. Keeping that
+        // path open where the mode is set but the tree owns no conversion source is what the
+        // !hasWideLaneConversionSource() term below is for.
+        //
+        // That term reads a PREDICTION of its own, though: the gate runs before anything is
+        // serialized, and hasEmittedWideLaneConversion is set - if it is set at all - by that
+        // serialization. So a filter can enter the mode, own a source, lose its short circuit here
+        // and still land on the scalar loop. "adouble * 1.0 > 1.00000003 and
+        // afloat + 5_000_000_000 > 1.5" does exactly that today, pinned IR-for-IR - a plain (&&) at
+        // OptionsHint.SCALAR - by
+        // CompiledFilterIRSerializerTest#testFloatArithI64ConstantForcesScalarNotWideLane. Trading
+        // the prediction for the fact means serializing, reading the hint back and retrying on the
+        // short-circuit path, which this gate does not attempt.
+        // CompiledFilterIRSerializerTest#testWideLaneSourceSuppressesShortCircuitFilterWide and
+        // CompiledFilterRegressionTest#testDoubleConstArithChainWithLongConjunctVectorizes pin both
+        // halves of the trade.
         if (!scalarModeDetected && (!isWideLaneMode || !hasWideLaneConversionSource(node))) {
             scalarModeDetector.clear();
             traverseAlgo.traverse(node, scalarModeDetector);
@@ -1362,7 +1451,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * mismatch counts. {@link #getExecHint} demotes such a filter to {@link #EXEC_HINT_SCALAR}
      * instead, whose {@code x86::convert()} carries the complete table, so the filter keeps a
      * compiled backend. {@code getExecHint} skips this half for an eight-byte lane, where the
-     * backend now converts and the filter keeps its four rows per iteration.</li>
+     * backend now converts and the filter keeps its four rows per iteration. No SUPPORTED SQL
+     * reaches this demotion, but the shape it catches is not hypothetical: an {@code IN} list
+     * pairing a FLOAT element with an out-of-INT-range one demotes here, and what keeps it out of
+     * a user's query is {@code InLongFunctionFactory}'s element type check rather than any
+     * invariant of this file. That arm's comment carries the mechanism.</li>
      * </ul>
      * A var-size header needs no exclusion here. {@code ensureOnlyVarSizeHeaderChecks} lets it
      * reach a binary operator only as an {@code IS [NOT] NULL} check, {@code serializeNull} spells
@@ -1388,26 +1481,34 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case VAR:
                 case MEM:
                 case IMM:
-                    typeStack.push(memory.getInt(offset + Integer.BYTES));
+                    pushType(memory.getInt(offset + Integer.BYTES));
                     break;
                 case SX_I64:
-                    typeStack.pop();
-                    typeStack.push(I8_TYPE);
+                    popType();
+                    pushType(I8_TYPE);
                     break;
                 case NEG:
                     // Value-preserving: keeps its operand's width.
                     break;
                 case NOT:
-                    typeStack.pop();
-                    typeStack.push(UNDEFINED_CODE);
+                    popType();
+                    pushType(UNDEFINED_CODE);
                     break;
                 case AND:
                 case OR:
+                    popType();
+                    popType();
+                    pushType(UNDEFINED_CODE);
+                    break;
                 case AND_SC:
                 case OR_SC:
-                    typeStack.pop();
-                    typeStack.pop();
-                    typeStack.push(UNDEFINED_CODE);
+                    // A short-circuit opcode is UNARY and yields nothing: x86::emit_code and its
+                    // aarch64 twin handle opcodes::And_Sc / Or_Sc with a bare values.pop() and
+                    // append nothing back, branching on the value they popped. Anything pushed
+                    // before it stays live for the instructions that follow, so popping the AND /
+                    // OR arity here would consume an operand the backend still holds and shift
+                    // every later pairing by one.
+                    popType();
                     break;
                 case BEGIN_SC:
                 case END_SC:
@@ -1422,15 +1523,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case SUB:
                 case MUL:
                 case DIV: {
-                    final int lhsType = typeStack.pop();
-                    final int rhsType = typeStack.pop();
+                    final int lhsType = popType();
+                    final int rhsType = popType();
                     if (isUnharmonisedPairing(lhsType, rhsType, isWideLane)) {
                         return true;
                     }
                     final boolean isComparison = opCode == EQ || opCode == NE || opCode == LT
                             || opCode == LE || opCode == GT || opCode == GE;
                     // A comparison yields a lane mask, not a value of either operand's width.
-                    typeStack.push(isComparison ? UNDEFINED_CODE : Math.max(lhsType, rhsType));
+                    pushType(isComparison ? UNDEFINED_CODE : Math.max(lhsType, rhsType));
                     break;
                 }
                 default:
@@ -1456,6 +1557,32 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final int rhsSize = TypesObserver.typeSizeBytes(rhsType);
         // A zero size is UNDEFINED_CODE - a comparison mask, or a value this walk stopped tracking.
         return lhsSize != 0 && rhsSize != 0 && lhsSize != rhsSize;
+    }
+
+    /**
+     * Removes and returns the top of {@link #typeStack}, or {@link #UNDEFINED_CODE} when the walk
+     * asks for a value the stream never pushed.
+     * <p>
+     * The IR walks push {@code UNDEFINED_CODE} for every value whose width is not a lane width, so
+     * the stack has to carry -1 as an ordinary entry. {@link io.questdb.std.IntStack} cannot: it
+     * spells an absent entry as -1 too and returns that from {@code pop()} WITHOUT removing the
+     * element, so a pushed UNDEFINED stays on the stack for good and the walk's depth drifts from
+     * the backend's by one on every comparison mask. A drifted stack pairs a live operand against
+     * a stale mask, and {@link #isUnharmonisedPairing} skips a mask, so the drift can only hide a
+     * mixed-width pairing - never invent one.
+     */
+    private int popType() {
+        final int n = typeStack.size();
+        if (n == 0) {
+            return UNDEFINED_CODE;
+        }
+        final int typeCode = typeStack.getQuick(n - 1);
+        typeStack.setPos(n - 1);
+        return typeCode;
+    }
+
+    private void pushType(int typeCode) {
+        typeStack.add(typeCode);
     }
 
     private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
@@ -1586,18 +1713,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case VAR:
                 case MEM:
                 case IMM:
-                    typeStack.push(typeCode);
+                    pushType(typeCode);
                     break;
                 case NEG:
                 case NOT:
                 case SX_I64:
-                    typeStack.pop();
-                    typeStack.push(typeCode);
+                    popType();
+                    pushType(typeCode);
                     break;
                 default:
                     // If none of the above, assume it's a binary operator
-                    int lhsType = typeStack.pop();
-                    int rhsType = typeStack.pop();
+                    int lhsType = popType();
+                    int rhsType = popType();
                     if ((lhsType != rhsType && isVarSizeType(lhsType) && isVarSizeType(rhsType))
                             || (lhsType == rhsType && isVarSizeType(lhsType))) {
                         throw SqlException.$(0, "var-size columns can only be used in NULL checks");
@@ -1613,7 +1740,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             && opCode != EQ && opCode != NE) {
                         throw SqlException.$(0, "var-size columns can only be used in NULL checks");
                     }
-                    typeStack.push(typeCode);
+                    pushType(typeCode);
             }
         }
     }
@@ -1842,6 +1969,66 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // a filter that also carries a NARROW arithmetic subtree - a pure-constant INT
                 // chain the width-aware fold declined, say - and the mismatch exists only in the
                 // emitted IR. See hasUnharmonisedOperandWidths().
+                //
+                // No SUPPORTED SQL reaches the demotion, but it is not unreachable by
+                // construction and the difference is the reason the walk stays.
+                // `1 in (afloat, 5_000_000_000)` serializes to
+                // (i64 5000000000)(i64 1)(=)(f32 afloat)(i64 1)(=)(||) against a four-byte
+                // observation and arrives here with every gate above it false, so this arm is all
+                // that stands between its (f32, i64) pairing and an eight-lane loop. What keeps
+                // that filter out of a user's query is InLongFunctionFactory.newInstance: the
+                // in(LV) signature admits NULL / TIMESTAMP / LONG / INT / SHORT / BYTE / STRING /
+                // SYMBOL / VARCHAR / UNDEFINED elements and throws "cannot compare LONG with type
+                // FLOAT" for a FLOAT one. That is a type check in another subsystem, with no
+                // stated relationship to these width rules, so the population here is empty by
+                // accident rather than by construction.
+                // CompiledFilterIRSerializerTest#testExecHintDemotesUnharmonisedWidthsToScalar
+                // pins the shape through serialize(), the entry point that skips that check.
+                //
+                // Three routes intercept a mixed-width pairing before it reaches the walk:
+                // - an emitted SX_I64 sets hasEmittedWideLaneConversion at emission time, so the
+                //   filter either takes the WIDE_LANE arm above or carries the forceScalarMode
+                //   that visit()'s i64WidenLeaves gate sets;
+                // - markDoubleWidthConst and markWidthSemanticsOperand widen a CONSTANT with no
+                //   SX_I64 and set hasI64WidenArithConstant beside the widening, so
+                //   hasWidthChangingI64WidenConstant() reports it and the
+                //   hasPendingWidthChangingI64Constant gate around this block resolves it to
+                //   SCALAR;
+                // - every other operand carries the observed width, or the serializer observes it
+                //   as it emits: markFoldedI4Imm / markFoldedI8Imm observe the immediate their
+                //   fold collapses a subtree to, serializeNumber emits strictly at the width
+                //   serializeConstant hands it, a CHAR / UUID / TIMESTAMP / DATE literal needs the
+                //   column of that same width to be in the predicate at all, and
+                //   putNeverMatchingInPairing emits BOTH halves of its pairing at I4. One- and
+                //   two-byte arithmetic never arrives either - visit()'s hasArithmeticOperations
+                //   forcer sends it to SCALAR first.
+                // The FLOAT shape above is the one producer known to escape all three.
+                // markCmpOperandWidenedToI64 widens BOTH halves of a 64-bit pairing and leaves the
+                // consequence to the peer: a narrow-int leaf takes the SX_I64 of the first route,
+                // an integer constant only joins i64WidenConstants - deliberately without
+                // hasI64WidenArithConstant, see the note there - and a peer that is neither goes
+                // to forceScalarOnUnharmonisedNarrowArith, which returns at once for a node that
+                // is not an OPERATION. A bare FLOAT column is therefore marked by nothing.
+                //
+                // What a miss costs depends on the caller. Here it costs throughput, not rows:
+                // avx2::convert declines every pairing it cannot harmonise for the lane count in
+                // force - the (i32, f64) arm at jit/avx2.h:680-686 and the catch-all at
+                // jit/avx2.h:766-770 - and decline_filter makes compileFunction discard the function,
+                // after which SqlCodeGenerator runs the Java filter. (An i128 left operand is the
+                // one exception: convert() hands that pairing back unconverted at jit/avx2.h:761-762.)
+                // On the short-circuit paths a miss costs the compiled filter outright:
+                // serializePredicatesAndSc / serializePredicatesOrSc throw "expected scalar
+                // compilation mode" when this method answers SINGLE_SIZE or WIDE_LANE, so a
+                // demotion is what keeps such a filter compiled at all. Those callers do reach
+                // this walk with a uniform observer - serialize() takes them for a pure AND / OR
+                // chain whose COLUMN sizes are mixed, and putNeverMatchingInPairing's fold can
+                // then elide the very column that made them mixed, which is how
+                // `anint = 1 and abyte in (null)` gets here observing I4 alone. (Their other
+                // entry, forceScalar, returns SCALAR at the top of this method.)
+                //
+                // The price is one pass over the emitted IR, behind the cheap maxSize() test that
+                // already short-circuits it, on a compile path that also runs asmjit codegen
+                // through JNI.
                 if (typesObserver.maxSize() != 8 && hasUnharmonisedOperandWidths(false)) {
                     return EXEC_HINT_SCALAR;
                 }
@@ -1992,7 +2179,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 && (SqlKeywords.isAndKeyword(node.token) || SqlKeywords.isOrKeyword(node.token))) {
             return hasWideLaneConversionSource(node.lhs) || hasWideLaneConversionSource(node.rhs);
         }
-        // Within one predicate a conversion has exactly three sources. markFloatCmpConst fires for
+        // Within one predicate these are the conversion sources. markFloatCmpConst fires for
         // an F4 leaf against a constant that no 32-bit float reproduces; maybeEmitI64Widening
         // sign-extends a leaf but returns early unless that leaf is emitted at I1 / I2 / I4 width -
         // so it needs both a narrow leaf to widen and a 64-bit operand to widen it towards; and
@@ -2010,12 +2197,59 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // maybeEmitI64Widening runs from serializeColumn / serializeBindVariable only, never for a
         // constant. That marking emits no conversion at all; it leaves i64WidenLeaves non-empty,
         // which is what makes visit() force the scalar mode the short-circuit path expects.
+        //
+        // maybeEmitI64Widening reaches one further pairing that the NARROW_INT_LEAF / I8_OPERAND
+        // pair of searches cannot see: markIntCmpFloatOperand widens a genuine INT leaf compared
+        // against an F4 operand, and such a predicate need hold no 64-bit operand for
+        // WIDE_LANE_SOURCE_I8_OPERAND to match. It gets the both-halves-of-one-comparison walk for
+        // the reason the narrow-int pairing does.
         return (hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_FLOAT_LEAF)
                 && hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_FLOAT_WIDENING_CONST))
                 || (hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_NARROW_INT_LEAF)
                 && hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_I8_OPERAND))
                 || hasWideLaneSourceNode(node, WIDE_LANE_SOURCE_DOUBLE_CONST_ARITH)
-                || hasNarrowIntCmpWideningConstPair(node);
+                || hasNarrowIntCmpWideningConstPair(node)
+                || hasIntCmpFloatLeafPair(node);
+    }
+
+    /**
+     * Reports whether a comparison anywhere in the subtree puts a genuine INT leaf DIRECTLY against
+     * an F4 operand - the pairing {@link #isWideLaneIntCmpFloatLeafPair} admits to wide-lane mode
+     * and {@link #markIntCmpFloatOperand} widens with an SX_I64.
+     * <p>
+     * The two halves have to be operands of the SAME comparison, for the reason
+     * {@link #hasNarrowIntCmpWideningConstPair} records: a NOT holds several comparisons in one
+     * predicate, so two independent subtree searches cross-match an INT leaf from one comparison
+     * against an F4 operand from another - a pair {@link #markIntCmpFloatOperand} is never handed,
+     * because {@code onNodeDescended} calls it with the two operands of one node.
+     * <p>
+     * The IN spellings that also reach {@link #markIntCmpFloatOperand} stay out of this walk.
+     * {@link #isWideLaneInEligible} rejects an IN holding the pairing either way round - its
+     * integer arm needs each element to be an integer expression or NULL, and its float arm needs
+     * each element to be a numeric CONSTANT or NULL - so {@link #isWideLaneEligible} answers
+     * {@code false} for the filter, and {@link #serialize}'s gate short-circuits on
+     * {@code isWideLaneMode} before it asks this question.
+     */
+    private boolean hasIntCmpFloatLeafPair(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.OPERATION
+                && node.paramCount == 2
+                && isComparisonToken(node.token)
+                && (isWideLaneIntCmpFloatLeafPair(node.lhs, node.rhs)
+                || isWideLaneIntCmpFloatLeafPair(node.rhs, node.lhs))) {
+            return true;
+        }
+        if (hasIntCmpFloatLeafPair(node.lhs) || hasIntCmpFloatLeafPair(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasIntCmpFloatLeafPair(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -2068,10 +2302,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * counts columns and bind variables, never the widened immediate, so a predicate over 4-byte
      * columns still reports {@code hasMixedSizes() == false} and {@code getExecHint} hands the
      * backend a single-size hint, whose step is {@code 256 / (lane_bytes * 8)} - eight 32-bit lanes
-     * against an 8-byte immediate. {@code avx2::convert} declines an f32-with-i64 and an
-     * f32-with-f64 pairing outside the four-lane loop, so those fall back rather than return wrong
-     * rows; an i32-with-f64 one has no such arm and falls THROUGH unconverted, which is wrong rows
-     * outright. Either way the predicate must not ride that loop.
+     * against an 8-byte immediate. Such a pairing reaches an {@code avx2::convert} arm that
+     * declines unless the loop runs four lanes - the {@code (i32, i64)} and {@code (i32, f64)}
+     * arms at {@code jit/avx2.h:675-686} - or, if it reaches no arm at all, the catch-all decline at
+     * {@code jit/avx2.h:766-770}. {@code decline_filter} records an asmjit error that
+     * {@code compileFunction} reads before {@code finalize()} ({@code jit/avx2.h:519-531},
+     * {@code compiler.cpp:972-989}), so such a filter loses its compiled backend and falls back to
+     * the Java one rather than returning wrong rows. The predicate must still not ride that loop:
+     * demoting it here keeps a compiled filter, which is the cheaper destination.
      * <p>
      * When the observer already reports an 8-byte constant width the hazard does not exist: an I8
      * observation makes the widening a no-op (the immediate was going to be emitted at I8 anyway),
@@ -2155,7 +2393,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * Reports whether a constant compared against a FLOAT leaf needs the double-width treatment,
      * i.e. whether the 32-bit float {@link #serializeNumber} would emit for it differs from the
      * value the Java filter compares at double width. Two spellings reach this: an out-of-INT-range
-     * integer literal (the original rule - {@code (float) 5000000001} is 5000000000), and any other
+     * integer literal (the original rule - {@code (float) 5_000_000_001} is 5_000_000_000), and any other
      * literal with no exact float, fractional or not (see {@link #isFloatInexactConst}).
      */
     private boolean isFloatWideningConst(ExpressionNode node) {
@@ -2231,7 +2469,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * a SIBLING conjunct does not suppress the source. Neither difference changes the answer -
      * AND_SC only short-circuits an AND chain and {@link #sortPredicates} only reorders one - and
      * {@code CompiledFilterRegressionTest.testDoubleConstantInFourByteArithmeticRunsFourLaneLoop}
-     * pins the rows the four-lane loop returns against the Java filter's.
+     * pins the rows the four-lane loop returns against the Java filter's. The throughput that
+     * difference costs and buys is measured at {@link #serialize}'s detector gate, which also names
+     * a shape that pays the suppression without reaching that loop.
      * <p>
      * Requiring the DOUBLE literal to be the ONLY 8-byte source is what keeps the answer narrow. A
      * predicate that already reads a LONG or DOUBLE column types every constant at eight bytes
@@ -2548,8 +2788,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * {@code afloat + adouble}) was going to emit the constant at 8 bytes anyway, so it keeps the
      * vectorized loop it had. Where the width DOES change, that predicate answers
      * {@code hasWidthChangingI64WidenConstant()} and {@link #getExecHint} drops the filter to the
-     * scalar backend - which it must, because {@code avx2::convert} leaves an (i32, f64) pairing
-     * UNCONVERTED outside the four-lane loop. A filter that does reach the four-lane loop keeps
+     * scalar backend - which it must, because {@code avx2::convert} DECLINES an (i32, f64) pairing
+     * outside the four-lane loop ({@code jit/avx2.h:680-686}), and a decline costs the filter its
+     * compiled backend altogether. A filter that does reach the four-lane loop keeps
      * it: its lanes are eight bytes wide whatever the observed columns are, and
      * {@code avx2::convert} carries (f32, f64) and (i32, f64) there.
      */
@@ -2630,10 +2871,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * (i64, f32) pairing, and it also stops the immediate rounding through {@code cvt_itof} the
      * way the per-operation IR did;</li>
      * <li>a pure-constant subtree whose fold declines because its INT-width value IS the NULL
-     * sentinel ({@code 1073741824 * 2}). Both engines answer NaN for it already:
+     * sentinel ({@code 1_073_741_824 * 2}). Both engines answer NaN for it already:
      * {@code Numbers.intToDouble(INT_NULL)} is NaN on the Java side and
      * {@code int32_to_float(INT_NULL, null_check)} ({@code impl/x86.h:68-86}) and
-     * {@code avx2::cvt_itof} ({@code impl/avx2.h:760-770}) are NaN in the two backends - for
+     * {@code avx2::cvt_itof} ({@code jit/impl/avx2.h:760-770}) are NaN in the two backends - for
      * {@code null_check} set, which {@code SqlCodeGenerator} always passes: {@code
      * enableJitNullChecks} starts true and no configuration property clears it. The exclusion is
      * load-bearing rather than merely thrifty: {@link #descend} folds
@@ -2714,7 +2955,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
         if (isConstantArithSubtree(intSide)) {
             // The width-aware fold declined on a subtree the LONG-width fold accepts: its INT-width
-            // value is the NULL sentinel (1073741824 * 2), or a divisor that is non-zero at long
+            // value is the NULL sentinel (1_073_741_824 * 2), or a divisor that is non-zero at long
             // width wrapped to zero at INT width (7 / (65_536 * 65_536)). The two shapes skip the
             // mark for different reasons. For the sentinel a mark would be unsafe: descend()
             // replaces the whole subtree with one I4 immediate and returns false, so visit() never
@@ -2898,6 +3139,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // neither, because it sees the narrowest column anywhere in the predicate.
                 if (isNullConstant(element)) {
                     if (hasLongPairing) {
+                        // No hasI64WidenArithConstant, for the reason
+                        // markCmpOperandWidenedToI64 gives: the key this element pairs with is
+                        // widened in the same breath and carries the consequence.
                         i64WidenConstants.add(element);
                     } else if (keyType == I4_TYPE) {
                         intWidthNullElements.add(element);
@@ -2967,6 +3211,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             if (nullElement != null) {
                 final int keyWidth = arithExprType(nullElement == node.rhs ? node.lhs : node.rhs);
                 if (keyWidth == I8_TYPE) {
+                    // No hasI64WidenArithConstant here either - see markCmpOperandWidenedToI64.
                     i64WidenConstants.add(nullElement);
                 } else if (keyWidth == I4_TYPE) {
                     intWidthNullElements.add(nullElement);
@@ -2995,6 +3240,35 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // Widening an immediate needs no SX_I64 and costs no vectorization, so it goes in the
             // constant-only set: emitting `0` at I8 against an i64 peer is what the observer would
             // have done anyway whenever it saw an 8-byte column.
+            //
+            // Deliberately WITHOUT hasI64WidenArithConstant, unlike markDoubleWidthConst and
+            // markWidthSemanticsOperand. Those widen a constant that stands alone, so only that
+            // flag can carry the lane-width hazard. This one is half of a pairing whose other half
+            // this same method widens in the same breath, and the peer carries the consequence: a
+            // narrow-int leaf takes an SX_I64, which visit()'s i64WidenLeaves gate turns into
+            // forceScalarMode outside wide-lane mode, and an 8-byte peer means the observer already
+            // reports 8 bytes, where hasWidthChangingI64WidenConstant() answers false whatever this
+            // flag holds. The two NULL-element sites in markWidthSemantics - the IN args loop and
+            // the two-operand IN form - widen a constant on the same footing and omit the flag for
+            // the same reason. Measured over a 2,128-shape sweep through serialize(): 600 of the
+            // 1,084 shapes that serialize reach these three sites, and setting the flag at all
+            // three changed no execution hint. The widening only ever happens for a pairing that
+            // settled at 64 bits, so the predicate holding it either observes 8 bytes itself or
+            // carries the SX_I64 of a narrow-int peer, which settles the hint above the
+            // pending-constant gate - the FLOAT peer below being the exception.
+            //
+            // That FLOAT peer is the one that carries nothing: it is neither a narrow-int leaf nor
+            // an integer constant, and forceScalarOnUnharmonisedNarrowArith below returns at once
+            // for a node that is not an OPERATION, so `1 in (afloat, 5_000_000_000)` emits an
+            // (f32, i64) pairing that no marker reports. getExecHint's unharmonised-width walk
+            // catches that one and answers it correctly (SCALAR) rather than merely noticing it,
+            // which is why the omission stands.
+            //
+            // Anyone who wants the flag here instead has to add `hasI64WidenArithConstant = true;`
+            // beside all three i64WidenConstants.add calls. That asks a different question - the
+            // flag measures the widened immediate against the predicate's own observed width,
+            // while the walk measures emitted operands against each other - so it would demote
+            // some filters this walk passes. The sweep above found none of them.
             i64WidenConstants.add(node);
             return;
         }
@@ -3133,6 +3407,34 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // pairing stays mixed-width and has to run scalar, exactly as at a comparison boundary.
             if (isNarrowIntLeaf(child)) {
                 addI64WidenLeaf(child);
+            } else if (child != null && child.type == ExpressionNode.CONSTANT
+                    && isNarrowIntTypeCode(arithExprType(child))) {
+                // A narrow integer CONSTANT operand of the same node reaches the backend the same
+                // way, and needs the same promotion for a different reason: the Java filter folds
+                // the node through FunctionParser#functionToConstant0, whose (LL) factory reads
+                // this operand at LONG width, while the predicate-wide type observer types the
+                // immediate at the widest COLUMN or BIND VARIABLE it saw - PredicateContext's
+                // handleColumn() and handleBindVariable() both feed it. An all-INT-column
+                // predicate therefore emitted `anint >= (446_488 - 114_763L)` as
+                // (i64 114763L)(i32 446488L)(-) - a 4-byte immediate against an 8-byte one under a
+                // single operator, which is what areWideLaneWidthsHarmonised() reports. The
+                // four-lane avx2::convert() does sign-extend the i32 side, so the rows came out
+                // right, but the width the JAVA filter reads at is the frontend's answer to give
+                // and it was giving the wrong one; a NEGATED narrow constant already emitted at 8
+                // bytes here, through forceScalarOnUnharmonisedNarrowArith's fold, so the two
+                // spellings of the same operand also disagreed with each other.
+                //
+                // Widening emits no SX_I64, so this joins the CONSTANT set rather than the leaf
+                // set and answers hasWidthChangingI64WidenConstant() for the narrower lanes the
+                // widened immediate must stay off. That answer does not move, and the observer
+                // counting BIND VARIABLES as well as columns is what makes that hold: the node is
+                // 64 bits only because an operand of it is, and arithExprType0 reads I8 off a LONG
+                // column, a LONG bind variable or a LONG constant. The first two are observed at
+                // eight bytes in the same pass, so a predicate whose observed constant width is
+                // narrower than that leaves the LONG constant as the 64-bit operand, and that
+                // constant sets the same flag below.
+                i64WidenConstants.add(child);
+                hasI64WidenArithConstant = true;
             } else {
                 forceScalarOnUnharmonisedNarrowArith(child);
             }
@@ -3165,8 +3467,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * is an INT column types an out-of-INT-range constant down to I4;
      * {@link #serializeNumber} then emits it as a 32-bit float on the int-parse
      * overflow, and floats near 2^31 are spaced 256 apart, so distinct INT rows
-     * collapse onto one float and match spuriously (e.g. {@code i32 = 2147483648}
-     * admits 2147483647 / 2147483646). The Java filter reads the comparison at long
+     * collapse onto one float and match spuriously (e.g. {@code i32 = 2_147_483_648}
+     * admits 2_147_483_647 / 2_147_483_646). The Java filter reads the comparison at long
      * width - the constant is a LONG literal, so overload resolution picks the (LL) comparison and
      * reads the column through {@code IntColumn#getLong} - so no INT value equals it. Mirror that:
      * sign-extend the leaf (value-preserving) and emit the constant as a full I8 IMM. The
@@ -3305,34 +3607,35 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * <p>
      * {@code SX_I64} is a STACK opcode, not a leaf annotation: both backends pop the top of the
      * value stack and sign-extend it when its type is i8 / i16 / i32, leaving i64 / f32 / f64
-     * untouched ({@code core/src/main/c/share/jit/x86.h:1148-1166},
-     * {@code aarch64.h:1152-1169}). Emitting it here - AFTER {@code serializeOperator} has written
+     * untouched (the {@code opcodes::Sx_I64} arm of {@code emit_code} in {@code jit/x86.h} and
+     * {@code jit/aarch64.h}). Emitting it here - AFTER {@code serializeOperator} has written
      * the subtree's own opcode, in post-order - therefore widens the value the subtree produced.
      * <p>
      * That is what makes the lowering match the Java filter exactly. The subtree's OPERANDS stay
      * narrow, so the backend still dispatches {@code int32_add} / {@code int32_mul} /
      * {@code int32_div} / {@code int32_neg} and still wraps modulo 2^32, exactly as
-     * {@code AddInt#getInt} and friends do; only the wrapped result promotes, exactly as
-     * {@code IntFunction#getDouble} = {@code Numbers.intToDouble(getInt())} does. Widening the
-     * operands instead - by marking the subtree's leaves into {@code i64WidenLeaves} - would
-     * dispatch {@code int64_mul} and stop the product wrapping, which is the behaviour this PR
-     * exists to remove.
+     * {@code AddIntFunctionFactory.AddIntFunc#getInt} and friends do; only the wrapped result
+     * promotes, exactly as {@code IntFunction#getDouble} = {@code Numbers.intToDouble(getInt())}
+     * does. Widening the operands instead - by marking the subtree's leaves into
+     * {@code i64WidenLeaves} - would dispatch {@code int64_mul} and stop the product wrapping,
+     * which is the behaviour this PR exists to remove.
      * <p>
      * The NULL sentinel rides through untouched: {@code int32_to_int64(..., null_check)} maps
      * INT_NULL to LONG_NULL ({@code impl/x86.h:53-66}) and {@code int64_to_double} then maps that
      * to NaN, which is {@code Numbers.intToDouble(INT_NULL)}. This covers both ways the Java
      * filter produces the sentinel - an operand that was NULL, which the backend's own
      * {@code check_int32_null} propagates, and a wrap that LANDS on INT_MIN
-     * ({@code 1073741824 * 2}), which {@code MulInt#getInt} returns as a plain wrapped value and
-     * {@code getDouble} then reads as NULL.
+     * ({@code 1_073_741_824 * 2}), which {@code MulIntFunctionFactory.Func#getInt} returns as a
+     * plain wrapped value and {@code getDouble} then reads as NULL.
      * <p>
-     * Only the scalar backend implements {@code Sx_I64} outside four-lane mode -
-     * {@code avx2.h:862-866} bails out of the SIMD path when {@code wide_lane} is false - so the
-     * emission carries the same {@code forceScalarMode} write {@link #maybeEmitI64Widening} makes.
+     * Only the scalar backend implements {@code Sx_I64} outside four-lane mode - {@code jit/avx2.h}'s
+     * {@code emit_code} calls {@code decline_filter} when {@code wide_lane} is false, then emits
+     * anyway to keep the value stack balanced ({@code jit/avx2.h:900-909}) - so the emission carries
+     * the same {@code forceScalarMode} write {@link #maybeEmitI64Widening} makes.
      * A filter holding this pairing is never wide-lane eligible in the first place
      * ({@link #isWideLaneEligible} admits no comparison of an integer arithmetic subtree against a
      * FLOAT column), so the write always fires. Were that ever to change, the four-lane backend
-     * fails closed rather than wrong: {@code avx2::sx_i64} ({@code avx2.h:523-545}) sign-extends
+     * fails closed rather than wrong: {@code avx2::sx_i64} ({@code jit/avx2.h:533-555}) sign-extends
      * an i32 operand and calls {@code decline_filter} for anything else.
      */
     private void maybeEmitI64ArithRootWidening(ExpressionNode node) {
@@ -3724,12 +4027,27 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // leaf: the observer typed it down to I4, so serializeNumber would emit a lossy float on
             // overflow. markNarrowConstCmpWidenNode tags both sides to widen to i64.
             int numberTypeCode = typeCode;
-            if (isNarrowKept && typeCode == I8_TYPE) {
+            if (isNarrowKept && (typeCode == I8_TYPE || typeCode == F8_TYPE)) {
                 // A narrow arithmetic operand: keep the constant's own INT width so int32_* wraps
-                // with the narrow column, however wide the rest of the predicate is. Only the I8
-                // observation is overridden - a FLOAT / DOUBLE one is the promotion the Java filter
-                // performs too (IntFunction#getDouble), and forcing I4 there would turn a float
-                // division into an integer one.
+                // and carries INT_NULL exactly as AddInt / SubInt / MulInt / DivInt do, however
+                // wide the rest of the predicate is. markWidthSemanticsOperand records a constant
+                // here only when its PARENT arithmetic node is I1/I2/I4-typed, and a node is that
+                // only when every leaf under it is a narrow integer - so there is no float
+                // arithmetic for an I4 immediate to turn into an integer operation. The promotion
+                // IntFunction#getDouble performs is on the node's RESULT, which the backend still
+                // applies at the comparison through cvt_itod / int32_to_double.
+                //
+                // The F8 arm is what a DOUBLE column needs. Without it the constant fell through
+                // to serializeNumber's I8 case and the chain ran through int64_*, so
+                // `d64 > (0 - 2_147_483_647 - 1)` computed -2_147_483_648 as an ordinary 64-bit number
+                // and matched every row - where the Java filter folds the same chain through
+                // SubInt#getInt onto Numbers.INT_NULL and IntConstant#getDouble reads it as NaN,
+                // so it matches none. Only a chain the width-aware fold leaves alone reaches this:
+                // descend() collapses one whose LONG-width value overflows INT into a wrapped I4
+                // immediate, and that observation makes the predicate mixed-size. An F4
+                // observation needs no arm - serializeNumber's I4/F4 case parses an integer token
+                // to an I4 immediate already - and serializeUntypedNumber, the hasMixedSizes()
+                // path above, has always honoured isNarrowKept whatever the observation was.
                 numberTypeCode = I4_TYPE;
             } else if (isWidenedToI64
                     && (numberTypeCode == I1_TYPE || numberTypeCode == I2_TYPE || numberTypeCode == I4_TYPE)) {
