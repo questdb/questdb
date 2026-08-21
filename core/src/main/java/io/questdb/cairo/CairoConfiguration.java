@@ -535,6 +535,13 @@ public interface CairoConfiguration {
     long getPartitionCompactionMaxRowsPerCommit();
 
     /**
+     * MOVE-TAIL only splits off the tail when the clean front is at least this percentage of the
+     * partition's live rows - below it, a two-way split is not worth the extra directory and REWRITE runs
+     * instead.
+     */
+    int getPartitionCompactionPrefixMinPercent();
+
+    /**
      * The table-pressure rule turns on when the table's estimated dead BYTES exceed this, whatever the
      * percentage says.
      */
@@ -1154,19 +1161,6 @@ public interface CairoConfiguration {
      */
     boolean isO3PartitionMergeAppendEnabled();
 
-    /**
-     * DEBUG. Forces every commit that lands on an already-COMPOSITE partition to run
-     * {@code O3PartitionJob.assembleFreshPartitionVersion} - the fallback normally reserved for a
-     * {@code _geometry} chain with nowhere left to rotate to - instead of the ordinary KEEP/MERGE/
-     * NEW_PIECE write. Does not stop a partition from BECOMING composite in the first place: a commit
-     * that lands on a partition that is not yet composite still merge-appends normally, and may found
-     * pieces of its own. Only the NEXT commit to reach an already-composite partition is forced back to
-     * a fresh, non-composite version - so with this on, a partition is composite for at most one commit
-     * at a time. Exists to fuzz the fresh-version path on every commit that could reach it, not just the
-     * generation-exhausted one it exists for; default off.
-     */
-    boolean isO3PartitionMergeAppendForceRewriteEnabled();
-
     boolean isO3QuickSortEnabled();
 
     boolean isParallelIndexingEnabled();
@@ -1174,12 +1168,6 @@ public interface CairoConfiguration {
     boolean isParquetExportRawArrayEncoding();
 
     boolean isParquetExportStatisticsEnabled();
-
-    /**
-     * Whether the writer reclaims the dead space a merge-append leaves behind in a composite
-     * partition's column files. See PARTITION_COMPACTION.md.
-     */
-    boolean isPartitionCompactionEnabled();
 
     boolean isPartitionEncoderParquetRawArrayEncoding();
 

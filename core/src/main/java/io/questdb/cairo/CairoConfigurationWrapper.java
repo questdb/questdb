@@ -799,6 +799,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPartitionCompactionPrefixMinPercent() {
+        return getDelegate().getPartitionCompactionPrefixMinPercent();
+    }
+
+    @Override
     public long getPartitionCompactionTableDeadMaxSize() {
         return getDelegate().getPartitionCompactionTableDeadMaxSize();
     }
@@ -1714,11 +1719,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean isO3PartitionMergeAppendForceRewriteEnabled() {
-        return getDelegate().isO3PartitionMergeAppendForceRewriteEnabled();
-    }
-
-    @Override
     public boolean isO3QuickSortEnabled() {
         return getDelegate().isO3QuickSortEnabled();
     }
@@ -1736,11 +1736,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isParquetExportStatisticsEnabled() {
         return getDelegate().isParquetExportStatisticsEnabled();
-    }
-
-    @Override
-    public boolean isPartitionCompactionEnabled() {
-        return getDelegate().isPartitionCompactionEnabled();
     }
 
     @Override

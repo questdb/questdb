@@ -903,9 +903,10 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
 
     /**
      * A dedup commit whose overlapping rows are all duplicates, plus a few genuinely new rows above the
-     * piece's last row. The whole piece goes out as one merged image, so it is relocated to the tail of
-     * its own column files and every pre-existing row has to survive the move - before and after a reader
-     * reopen, and after a squash folds the appended tail back.
+     * piece's last row. The duplicate side merges to a no-op - the merged image is byte-identical to the
+     * piece's own bytes, so the piece is kept at its existing file offset instead of being relocated - and
+     * the few new rows land immediately after it with no gap, so the two tile into one piece with no dead
+     * space. Verified before and after a reader reopen, and after a squash folds the appended tail back.
      */
     @Test
     public void testDedupDowngradeDoesNotStampMergeAppend() throws Exception {
@@ -925,7 +926,8 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
 
             // One commit whose overlapping rows are entirely duplicates - selected out of the snapshot, so
             // the non-key columns are identical too - plus five rows past the day's last row but inside
-            // the day.
+            // the day. The duplicates alone would merge-append the whole piece to the tail; tacking on the
+            // five trailing rows must not found a second, tiny piece next to it.
             execute(
                     "CREATE TABLE w2 AS (SELECT x::INT + 9000000 i, -x - 9000000L AS j," +
                             " timestamp_sequence('2020-02-03T23:59:52', 1000000L) ts FROM long_sequence(5))"
@@ -938,9 +940,14 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             execute("INSERT INTO x SELECT * FROM w");
             drainWalQueue();
 
-            Assert.assertTrue(
-                    "the piece was rewritten in place instead of at the tail: " + describePieces("x"),
-                    pieceRowOffsetOfDay("x", 0) > 0
+            Assert.assertEquals(
+                    "the trailing rows founded a piece of their own instead of tiling onto the kept one: "
+                            + describePieces("x"),
+                    1, piecesOfDay("x")
+            );
+            Assert.assertEquals(
+                    "the no-op merge relocated the piece instead of keeping it in place: " + describePieces("x"),
+                    0L, pieceRowOffsetOfDay("x", 0)
             );
 
             final String expected = "(SELECT * FROM x0 UNION ALL SELECT * FROM w2) ORDER BY ts";
@@ -1225,104 +1232,6 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
             assertQuery("SELECT count() cnt FROM x WHERE ts IN '2020-02-03T04' AND b IS NULL")
                     .noRandomAccess().expectSize().returns("cnt\n0\n");
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
-        });
-    }
-
-    /**
-     * {@code DEBUG_CAIRO_O3_PARTITION_MERGE_APPEND_FORCE_REWRITE} routes the SECOND commit to reach an
-     * already-composite partition through {@code O3PartitionJob.assembleFreshPartitionVersion} - the same
-     * fresh-version path {@link #testGeometryChainAtMaxGenerationAssemblesAFreshNonCompositeVersion}
-     * reaches via generation exhaustion, but forced on every commit that can reach it instead of only the
-     * rare one. Unlike a normal merge-append KEEP, which writes nothing at all, that path's KEEP has to
-     * physically copy an untouched piece into the fresh directory - and a piece founded before {@code c}
-     * and {@code a} were added straddles their column tops. Fuzzing this flag (see
-     * {@code WalWriterFuzzTest#testO3PartitionMergeAppendForceRewrite}) found a real bug here, but a
-     * multi-generation one: a column's top can go stale once a LATER fresh-version assembly reads an
-     * EARLIER one's output as its own source. This test instead pins down the single-generation case -
-     * see the method-body comment by the first ALTER below for what it actually asserts.
-     */
-    @Test
-    public void testForceRewriteCopiesAPieceThatPredatesAColumnTop() throws Exception {
-        assertMemoryLeak(() -> {
-            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
-            node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_PARTITION_MERGE_APPEND_FORCE_REWRITE, "true");
-            // Below this floor a small O3 write just rewrites the whole directory in one merge rather
-            // than founding a separate piece for it - which would leave nothing for KEEP to copy.
-            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
-            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 1);
-
-            // 2020-02-03 rows 0..199 predate columns c and a; rows 200..399 carry them -> column top 200
-            // on both. c and a are var-size columns - each needs its own aux (offset) file. Both were
-            // involved in the fuzz-found crash, though reproducing THAT needs a chain of several
-            // fresh-version assemblies over generations - this test instead pins down a narrower, single-
-            // generation regression: KEEP's below-top padding for the FIRST piece it ever touches for a
-            // column is a free addTop, not a physical write (see FrameAlgebra's private append), so the
-            // fresh directory's top for c and a must stay 200, unchanged - an earlier fix that
-            // unconditionally reset every rewritten column's top to 0 broke exactly this case.
-            execute(
-                    "CREATE TABLE x AS (" +
-                            "SELECT x::INT i, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
-                            " FROM long_sequence(200)" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY WAL"
-            );
-            execute("ALTER TABLE x ADD COLUMN c STRING");
-            execute("ALTER TABLE x ADD COLUMN a DOUBLE[]");
-            execute("INSERT INTO x SELECT x::INT + 1000 i," +
-                    " timestamp_sequence('2020-02-03T00:50:00', 15*1000000L) ts, ('c' || (x::INT + 1000)) c," +
-                    " ARRAY[(x::INT + 1000)::DOUBLE] a" +
-                    " FROM long_sequence(200)");
-            // In-order filler, contiguous with the first 400 rows: the day is still one ordinary,
-            // non-composite directory of 500 rows after this, just with a later tail - a gap now sits
-            // between the original 400 rows (ending 01:39:45) and this filler (starting 03:00:00).
-            execute("INSERT INTO x SELECT x::INT + 3000 i," +
-                    " timestamp_sequence('2020-02-03T03:00:00', 15*1000000L) ts, ('c' || (x::INT + 3000)) c," +
-                    " ARRAY[(x::INT + 3000)::DOUBLE] a" +
-                    " FROM long_sequence(100)");
-            // A second day keeps 2020-02-03 a MID partition.
-            execute("INSERT INTO x SELECT x::INT + 2000 i," +
-                    " timestamp_sequence('2020-02-04', 60*1000000L) ts, ('c' || (x::INT + 2000)) c," +
-                    " ARRAY[(x::INT + 2000)::DOUBLE] a FROM long_sequence(100)");
-            drainWalQueue();
-            execute("CREATE TABLE x0 AS (SELECT * FROM x)");
-
-            // Lands in the gap between the original 400 rows and the filler: this commit's merge-append
-            // founds a new piece for it and leaves the original 500 rows as a single untouched KEEP
-            // piece - which straddles c's and a's column tops, since it spans both the rows that
-            // predate them and the rows that carry them.
-            execute(
-                    "CREATE TABLE lo AS (SELECT x::INT + 8000000 i," +
-                            " timestamp_sequence('2020-02-03T02:00:07', 1000000L) ts, ('c' || (x::INT + 8000000)) c," +
-                            " ARRAY[(x::INT + 8000000)::DOUBLE] a" +
-                            " FROM long_sequence(3))"
-            );
-            execute("INSERT INTO x SELECT * FROM lo");
-            drainWalQueue();
-            final TableToken xt = engine.verifyTableName("x");
-            Assert.assertFalse("the first composite commit suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
-            Assert.assertTrue("the day was not cut into pieces: " + describePieces("x"), piecesOfDay("x") > 1);
-
-            // Force-rewrite is on: this commit finds the partition already composite and assembles a
-            // fresh version. Another gap, past the filler and lo's piece too, keeps the original piece
-            // a KEEP here as well - so it is the fresh-version assembly, not a normal merge, that
-            // copies it.
-            execute(
-                    "CREATE TABLE hi AS (SELECT x::INT + 7000000 i," +
-                            " timestamp_sequence('2020-02-03T05:00:07', 1000000L) ts, ('c' || (x::INT + 7000000)) c," +
-                            " ARRAY[(x::INT + 7000000)::DOUBLE] a" +
-                            " FROM long_sequence(3))"
-            );
-            execute("INSERT INTO x SELECT * FROM hi");
-            drainWalQueue();
-            Assert.assertFalse(
-                    "the force-rewrite commit suspended the table",
-                    engine.getTableSequencerAPI().isSuspended(xt)
-            );
-
-            final String expected = "(SELECT * FROM x0 UNION ALL SELECT * FROM lo UNION ALL SELECT * FROM hi) ORDER BY ts";
-            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
             engine.releaseAllReaders();
             engine.releaseAllWriters();
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
