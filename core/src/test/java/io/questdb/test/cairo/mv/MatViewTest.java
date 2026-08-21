@@ -8350,6 +8350,78 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPassthroughFullRefreshRejectsNarrowedBaseSchema() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_copy as (select * from base_price)");
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('jpyusd', 103.21, '2024-09-11T13:02')"
+            );
+            drainQueues();
+            assertPassthroughMatchesBase();
+
+            // `select *` still compiles after the base loses a column, it just projects two columns
+            // onto the view's three. The refresh must refuse instead of copying by position, which
+            // would land the timestamp in the price column and report the view as valid.
+            execute("alter table base_price drop column price");
+            drainQueues();
+            execute("refresh materialized view price_copy full");
+            drainQueues();
+
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_copy\tinvalid\t[-1]: materialized view query does not match view schema [view=price_copy, queryColumnCount=2, viewColumnCount=3]
+                            """);
+
+            // The refused refresh left no rows behind, so nothing reads back the timestamp as a price.
+            assertQuery("price_copy")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("sym\tprice\tts\n");
+        });
+    }
+
+    @Test
+    public void testPassthroughFullRefreshRejectsReorderedBaseSchema() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_copy as (select * from base_price)");
+            execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')");
+            drainQueues();
+            assertPassthroughMatchesBase();
+
+            // Dropping a column and adding it back keeps the column count but moves the column to the
+            // end, so `select *` projects (price, ts, sym) onto the view's (sym, price, ts).
+            execute("alter table base_price drop column sym");
+            execute("alter table base_price add column sym varchar");
+            drainQueues();
+            execute("refresh materialized view price_copy full");
+            drainQueues();
+
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_copy\tinvalid\t[-1]: materialized view query does not match view schema [view=price_copy, columnIndex=0, queryColumn=price, viewColumn=sym]
+                            """);
+        });
+    }
+
+    @Test
     public void testPassthroughRefreshMirrorsBase() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
