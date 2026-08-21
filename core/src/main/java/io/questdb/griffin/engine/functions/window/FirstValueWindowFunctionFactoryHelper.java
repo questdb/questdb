@@ -50,6 +50,8 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -253,7 +255,8 @@ public class FirstValueWindowFunctionFactoryHelper {
                                 configuration.getSqlWindowInitialRangeBufferSize(),
                                 timestampIndex,
                                 partitionByKeyTypes,
-                                liveView
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -504,7 +507,8 @@ public class FirstValueWindowFunctionFactoryHelper {
                                 configuration.getSqlWindowInitialRangeBufferSize(),
                                 timestampIndex,
                                 partitionByKeyTypes,
-                                liveView
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -664,6 +668,9 @@ public class FirstValueWindowFunctionFactoryHelper {
         WindowFunction newFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg);
     }
 
+    // Carries the configuration on top of the live-view snapshot args, because the RANGE
+    // shape is ring-backed: the frontier sweep sizes both of its scratch containers - the
+    // state map and the ring arena - from it.
     @FunctionalInterface
     interface PartitionRangeConstructor {
         WindowFunction newFunction(
@@ -677,7 +684,8 @@ public class FirstValueWindowFunctionFactoryHelper {
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         );
     }
 
@@ -846,10 +854,22 @@ public class FirstValueWindowFunctionFactoryHelper {
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx,
-                    partitionByKeyTypes, liveView);
+                    partitionByKeyTypes, liveView, configuration);
+        }
+
+        /**
+         * IGNORE NULLS drops the frame-size slot the parent carries, so every geometry slot
+         * shifts down by one: slot 0 is the ring's start offset, slot 2 its capacity. Declared
+         * here rather than inherited, because inheriting the parent's pair would read
+         * {@code size} as an offset and {@code firstIdx} as a capacity.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 0, 2, RECORD_SIZE);
         }
 
         /**
@@ -934,7 +954,7 @@ public class FirstValueWindowFunctionFactoryHelper {
                 if (!frameLoBounded && size > 0) {
                     if (firstIdx == 0) { // use firstIdx as a flag
                         long ts = memory.getLong(startOffset);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             firstIdx = 1;
                             firstValue = memory.getLong(startOffset + Long.BYTES);
                             mapValue.putLong(3, firstIdx);
@@ -954,11 +974,11 @@ public class FirstValueWindowFunctionFactoryHelper {
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             findNewFirstValue = true;
                             this.firstValue = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         }
@@ -1367,7 +1387,7 @@ public class FirstValueWindowFunctionFactoryHelper {
             if (!frameLoBounded && size > 0) {
                 if (firstIdx == 0) { // use firstIdx as a flag firstValue has in frame.
                     long ts = memory.getLong(startOffset);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         firstIdx = 1;
                         firstValue = memory.getLong(startOffset + Long.BYTES);
                     } else {
@@ -1386,11 +1406,11 @@ public class FirstValueWindowFunctionFactoryHelper {
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) > maxDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                     newFirstIdx = (idx + 1) % capacity;
                     size--;
                 } else {
-                    if (Math.abs(timestamp - ts) >= minDiff) { // find the first not null value
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) { // find the first not null value
                         findNewFirstValue = true;
                         this.firstValue = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
                     }
@@ -1602,6 +1622,30 @@ public class FirstValueWindowFunctionFactoryHelper {
         }
 
         /**
+         * Captures the first row the predicate admits and leaves the slot alone afterwards. The
+         * empty test is the slot's own {@code LONG_NULL} rather than a flag: this family writes
+         * only payloads its predicate admits, so no captured state can be mistaken for an empty
+         * one - which is what lets it keep one slot where its respect-nulls superclass keeps two.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            if (value.getLong(windowStateValueSlot) == Numbers.LONG_NULL) {
+                final long d = readArgValue(record);
+                if (d != Numbers.LONG_NULL) {
+                    value.putLong(windowStateValueSlot, d);
+                }
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            // The family carries no flag, so the superclass's binding of it answers -1 here and
+            // nothing reads it.
+            assert projection == null || windowStateCapturedSlot < 0;
+        }
+
+        /**
          * Advances computation for the current input row and ensures the partition's first timestamp is recorded.
          * <p>
          * If a first value for the record's partition already exists in the map, this sets the function's current
@@ -1617,6 +1661,9 @@ public class FirstValueWindowFunctionFactoryHelper {
          */
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -1665,6 +1712,16 @@ public class FirstValueWindowFunctionFactoryHelper {
         @Override
         public boolean isIgnoreNulls() {
             return true;
+        }
+
+        /**
+         * The first payload the partition offered that is not {@code LONG_NULL} - a state of its
+         * own and not a reading of the respect-nulls one, which holds whatever the first row
+         * carried.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_NOT_NULL_VALUE;
         }
     }
 
@@ -1941,6 +1998,9 @@ public class FirstValueWindowFunctionFactoryHelper {
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     abstract static class FirstValueOverPartitionRangeFrameBase extends BasePartitionedWindowFunction {
         protected static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         // list of [size, startOffset] pairs marking free space within mem
@@ -1988,7 +2048,8 @@ public class FirstValueWindowFunctionFactoryHelper {
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -1997,6 +2058,7 @@ public class FirstValueWindowFunctionFactoryHelper {
             this.memory = memory;
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
+            this.configuration = configuration;
 
             frameIncludesCurrentValue = rangeHi == 0;
 
@@ -2030,6 +2092,44 @@ public class FirstValueWindowFunctionFactoryHelper {
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 1 is the ring's start offset,
+         * slot 3 its capacity. Declared on this base rather than on the DATE and TIMESTAMP
+         * leaves because the layout is this class's - the leaves add only a getter - but the
+         * IGNORE NULLS base shifts both slots and overrides with its own pair.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 1, 3, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         /**
@@ -2113,7 +2213,7 @@ public class FirstValueWindowFunctionFactoryHelper {
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             if (frameSize > 0) {
                                 frameSize--;
                             }
@@ -2145,7 +2245,7 @@ public class FirstValueWindowFunctionFactoryHelper {
                     for (long i = frameSize; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                         if (diff <= maxDiff && diff >= minDiff) {
                             frameSize++;
@@ -2157,7 +2257,7 @@ public class FirstValueWindowFunctionFactoryHelper {
                     if (size > 0) {
                         long idx = firstIdx % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             frameSize++;
                             newFirstIdx = idx;
                         }
@@ -2971,7 +3071,7 @@ public class FirstValueWindowFunctionFactoryHelper {
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         if (frameSize > 0) {
                             frameSize--;
                         }
@@ -3014,7 +3114,7 @@ public class FirstValueWindowFunctionFactoryHelper {
                 for (long i = frameSize, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                    long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                     if (diff <= maxDiff && diff >= minDiff) {
                         frameSize++;
@@ -3026,7 +3126,7 @@ public class FirstValueWindowFunctionFactoryHelper {
                 if (size > 0) {
                     long idx = firstIdx % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         frameSize++;
                         newFirstIdx = idx;
                     }
@@ -3382,6 +3482,10 @@ public class FirstValueWindowFunctionFactoryHelper {
         // map. Null outside live-view mode.
         protected final ArrayColumnTypes mapValueTypes;
         protected long value;
+        // The captured value's and the flag's slots in the group's fused map value, or -1 when
+        // this function owns its state.
+        protected int windowStateCapturedSlot = -1;
+        protected int windowStateValueSlot = -1;
 
         /**
          * Constructs a first_value window function for partitioned, row-based frames that are unbounded
@@ -3428,6 +3532,30 @@ public class FirstValueWindowFunctionFactoryHelper {
         }
 
         /**
+         * Captures the first row of the partition into the group's slice and leaves every later
+         * row alone. The flag is what says which of the two this row is; the private-map
+         * implementation below reads {@code isNew()} for the same answer.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            if (value.getLong(windowStateCapturedSlot) == 0) {
+                value.putLong(windowStateValueSlot, readArgValue(record));
+                value.putLong(windowStateCapturedSlot, 1);
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateValueSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_CAPTURED_VALUE);
+            this.windowStateCapturedSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_CAPTURED);
+        }
+
+        /**
          * Advance state using the supplied input record: determine the partition key for the record,
          * look up (or create) the per-partition map entry, and ensure the partition's first timestamp
          * value is recorded.
@@ -3440,6 +3568,11 @@ public class FirstValueWindowFunctionFactoryHelper {
          */
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group captured this row where it had to and materialized the projection
+                // before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -3517,6 +3650,16 @@ public class FirstValueWindowFunctionFactoryHelper {
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
 
+        /**
+         * Reads the payload the group captured. No empty-state test: the component's identity is
+         * {@code LONG_NULL}, which is what this window emits for a partition it has seen no row
+         * of - and a partition it has seen a row of has captured that row, whatever it held.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            this.value = value.getLong(windowStateValueSlot);
+        }
+
         @Override
         public void resetPartition(Record record) {
             // ANCHOR-driven reset. Mark the partition uninitialized so the next
@@ -3585,6 +3728,26 @@ public class FirstValueWindowFunctionFactoryHelper {
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The payload the partition's first row held, which is the whole of this function's
+         * per-partition state. The IGNORE NULLS subclass overrides this with a family of its own:
+         * the two capture different rows and so keep different states.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_LONG_FIRST_VALUE;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_CAPTURED_VALUE;
         }
     }
 

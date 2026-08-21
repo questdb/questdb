@@ -44,6 +44,7 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Decimals;
@@ -448,7 +449,7 @@ public class PostingIndexWriter implements IndexWriter {
     public void close() {
         try {
             if (keyMem.isOpen()) {
-                boolean isTrimSized = false;
+                boolean isSized = false;
                 try {
                     // v1 trimmed to KEY_FILE_RESERVED because the only live
                     // bytes were the two header pages. v2 keeps chain entries
@@ -483,40 +484,98 @@ public class PostingIndexWriter implements IndexWriter {
                     if (liveSize < KEY_FILE_RESERVED) {
                         liveSize = KEY_FILE_RESERVED;
                     }
-                    keyMem.setSize(liveSize);
-                    isTrimSized = true;
-                } catch (Throwable th) {
-                    // close() is a cleanup method and callers treat it as one:
-                    // TableWriter.doClose reaches it through
-                    // Misc.freeObjList(indexers) -> SymbolColumnIndexer.close ->
-                    // Misc.free(writer), and neither the list loop nor the indexer
-                    // guards its element. A throw here would abort that loop before
-                    // SymbolColumnIndexer frees its NATIVE_INDEX_READER buffer, before
-                    // the ~25 Misc.free(...) calls that follow, and before
-                    // releaseLock() -- leaking the writer's native memory and stranding
-                    // the table lock. Log and carry on instead. The catch is broad on
-                    // purpose: what the caller needs is to keep freeing, and that does
-                    // not depend on which throwable the sizing raised. Both throw
-                    // sources are here -- peekRegionLimit rejects a damaged header, and
-                    // setSize extends the mapping when the published high-water sits
-                    // past it, which can fail on allocate/mremap.
-                    LOG.critical()
-                            .$("posting index close could not size the .pk trim, releasing without truncation [index=").$safe(indexName)
-                            .$(", err=").$(th)
-                            .I$();
+                    // Size the mapping to the live region only while that region
+                    // still fits what this instance mapped. Once another instance
+                    // has published past this mapping, setSize -> jumpTo ->
+                    // checkAndExtend -> extend0 rounds the request up to the key
+                    // append page size (512 KB in production) and fallocates the
+                    // difference whenever the file is shorter than that -- which it
+                    // is as soon as that other instance has closed, because its own
+                    // release trims the .pk to the OS page above its regionLimit.
+                    // The truncating release right below then hands every one of
+                    // those bytes back, so the grow is dead work. Release the
+                    // mapping untruncated instead: the bytes below the published
+                    // regionLimit are already backed by whichever instance published
+                    // them, so this instance has nothing to add there and nothing it
+                    // may safely trim. The slack the untruncated release leaves past
+                    // regionLimit is inert -- the next open bounds the live region by
+                    // the header's regionLimit, not by the file length.
+                    // The condition says only that somebody published past this
+                    // mapping, not that the publisher is still open: it holds both
+                    // while a second instance is still mapped on this .pk and after
+                    // that instance has closed. PostingIndexCriticalIssuesTest's
+                    // testCloseOnDivergentPathWithExtenderClosedFirstDoesNotAllocateDiskSpace
+                    // drives the closed ordering, which is where the fallocate actually
+                    // fires. When the publisher IS still live, skipping the truncate
+                    // also keeps this close from trimming the file under its mapping.
+                    if (liveSize <= keyMem.size()) {
+                        keyMem.setSize(liveSize);
+                        isSized = true;
+                    }
+                } catch (Throwable e) {
+                    // peekRegionLimit is the statement above that throws: it rejects
+                    // an unreadable or inconsistent header, and it raises before the
+                    // sizing step runs, so keyMem stays OPEN. The truncating release
+                    // below then sizes the trim from getAppendOffset(), which no
+                    // publish ever advances (the chain writes the .pk exclusively
+                    // through absolute putLong(offset, v)),
+                    // so it is still the open-time value -- ftruncating away every
+                    // byte published since this instance opened, and on a fresh index
+                    // the entire live region. Releasing WITHOUT truncation is always
+                    // the safe direction: it leaves at most a page of slack at the
+                    // tail, which the next open ignores because the header's
+                    // regionLimit bounds the live region. Swallow so close() keeps its
+                    // non-throwing contract -- freeIndexers() / releaseIndexerWriters()
+                    // free the sibling indexers in unguarded loops, and O3CopyJob's
+                    // finally { Misc.free(indexWriter); } would replace an in-flight
+                    // O3 exception with this one.
+                    // CRITICAL, not ERROR: this catch fires only on an unexpected
+                    // throw -- a rejected chain header, or a failed mapping grow --
+                    // and that is the state the operator has to see. Level aside,
+                    // critical() is the only one of the two that GUARANTEES the
+                    // record: it routes through xCriticalW() -> nextWaiting() ->
+                    // Sequence.nextBully(), which waits for a slot, whereas error()
+                    // routes through Logger.next(), which returns
+                    // NullLogRecord.INSTANCE and DROPS the message when the ring is
+                    // full -- precisely what a saturated log under the ENOSPC / OOM
+                    // pressure this catch exists for looks like.
+                    // The logging sits inside its own swallow: AsyncLogRecord
+                    // .$(Throwable) releases the log ring slot and RETHROWS when
+                    // formatting `e` fails, which an OutOfMemoryError can do in
+                    // exactly the ENOSPC / OOM case this catch exists for -- and
+                    // that throw would otherwise escape close(). $(Object),
+                    // $(Sinkable) and $(Throwable) all self-release; $safe and
+                    // $(CharSequence) do not, so the trailing rec.I$() is what
+                    // returns the slot if one of THOSE throws. I$() no-ops unless
+                    // isLogRecordInProgress, which $() clears on release, so it
+                    // cannot double-release after a self-releasing segment.
+                    try {
+                        LogRecord rec = LOG.critical();
+                        try {
+                            rec.$("could not size posting index key file on close, releasing untruncated [index=")
+                                    .$safe(indexName)
+                                    .$(", e=").$(e);
+                        } catch (Throwable ignore) {
+                        }
+                        rec.I$();
+                    } catch (Throwable ignore) {
+                    }
                 } finally {
-                    if (isTrimSized) {
+                    if (isSized) {
                         Misc.free(keyMem);
                     } else if (keyMem.isOpen()) {
-                        // Misc.free(keyMem) truncates the .pk to keyMem's CURRENT append
-                        // offset, which is this instance's stale cached high-water -- the
-                        // exact trim the sizing above exists to prevent. With the header
-                        // unreadable there is no trusted high-water to trim to, so release
-                        // the mapping WITHOUT truncating and leave the file intact for the
-                        // next open. of() reads the length from the header rather than from
-                        // ff.length(), so a .pk carrying an untrimmed tail reopens fine; a
-                        // .pk cut below its published region does not. of()'s own error
-                        // path already makes this same choice.
+                        // Reached either because the sizing threw, or because the
+                        // published region no longer fits this mapping. Misc.free(keyMem)
+                        // would truncate the .pk to keyMem's CURRENT append offset, which
+                        // is this instance's stale cached high-water -- the exact trim the
+                        // sizing above exists to prevent. There is no trusted high-water to
+                        // trim to here (an unreadable header gives none, and a region past
+                        // this mapping is not ours to cut), so release the mapping WITHOUT
+                        // truncating and leave the file intact for the next open. of()
+                        // reads the length from the header rather than from ff.length(), so
+                        // a .pk carrying an untrimmed tail reopens fine; a .pk cut below its
+                        // published region does not. of()'s own error path already makes
+                        // this same choice.
                         keyMem.close(false);
                     }
                 }
@@ -2402,6 +2461,72 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
+     * Post-condition for a chain publish that EXTENDS an existing head entry: the
+     * one gen-dir slot this call wrote must not be tagged BELOW the slot an
+     * earlier publish left immediately before it. publishToChain writes exactly
+     * one slot -- always the entry's new last one -- so that boundary is the
+     * whole of what this call made visible, and the clamp above is what has to
+     * hold it.
+     * <p>
+     * It deliberately does NOT walk slots {@code [0, overrideGenIndex - 1)}.
+     * Those were published by earlier calls, possibly by an earlier process, so a
+     * regression among them is corruption AT REST -- a .pk truncated below its
+     * published regionLimit by a pre-fix close(), for instance. This publish
+     * neither caused it nor can repair it (trimInFlightTailGens only cuts a tail
+     * tagged ABOVE the current table txn), and failing here would stop ingestion
+     * outright: publishToChain runs under commit(), whose caller ApplyWal2TableJob
+     * suspends the table on any Throwable. The reader owns that damage and reports
+     * it as a typed CairoException naming REINDEX.
+     * <p>
+     * Both values come from a fresh read of the published entry rather than from
+     * the clamp's own load, which is what makes this a post-condition rather than
+     * a restatement of the clamp: the re-read CAN OBSERVE a second writer mutating
+     * the same mapped .pk between the clamp's load and the publish -- the O3 copy
+     * path does open its own instance on the same .pk, though the observation is
+     * racy, so a miss proves nothing -- and it can observe a cover footer that
+     * overflows the entry's reserve onto the gen-dir, but only for
+     * {@code overrideGenIndex == 1}: publishToChain notes that an over-wide footer
+     * lands on gen-dir slot 0, which is outside the two slots this reads once
+     * {@code overrideGenIndex >= 2}. extendHead's own footer
+     * rewrite reaches neither slot -- format 1 puts the footer at the fixed
+     * entry+56, ahead of the gen-dir, and format 0 puts it at gen-dir slot
+     * newGenCount, one past the slot this call wrote (see
+     * PostingIndexChainEntry.resolveCoverFooterOffset).
+     * <p>
+     * Callers invoke this as {@code assert assertGenDirPublished(...)}, so the two
+     * reads are elided when assertions are off. It cannot repair anything in any
+     * case: publishToChain runs it AFTER extendHead has already made the entry and
+     * the chain header visible to readers.
+     *
+     * @return true when the published slot is not below its predecessor, false
+     * (after logging at CRITICAL) when it regresses
+     */
+    private boolean assertGenDirPublished(long entryBase, int writeFormat, int writeCoverCount, int overrideGenIndex, boolean isNewEntry) {
+        // Gen 0 has no predecessor. Neither does any slot of a brand-new entry:
+        // there entryBase is virgin region, so slot overrideGenIndex-1 reads
+        // unwritten .pk bytes rather than an earlier publish's value.
+        if (isNewEntry || overrideGenIndex < 1) {
+            return true;
+        }
+        long prevOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex - 1, writeFormat, writeCoverCount);
+        long offset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex, writeFormat, writeCoverCount);
+        long prevTxnAtSeal = keyMem.getLong(prevOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+        long txnAtSeal = keyMem.getLong(offset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+        if (txnAtSeal < prevTxnAtSeal) {
+            LOG.critical()
+                    .$("posting index published a non-monotonic gen-dir [index=").$safe(indexName)
+                    .$(", entryOffset=").$(entryBase)
+                    .$(", writtenGen=").$(overrideGenIndex)
+                    .$(", txnAtSeal=").$(txnAtSeal)
+                    .$(", prevTxnAtSeal=").$(prevTxnAtSeal)
+                    .$(", sealTxn=").$(sealTxn)
+                    .$(']').$();
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * Refresh {@link #coverEndOffsetsScratch} so it has exactly {@code coverCount}
      * entries and each slot reflects the current append offset of the matching
      * {@code sidecarMems} entry (or 0 when the slot is tombstoned / unopened).
@@ -2449,75 +2574,6 @@ public class PostingIndexWriter implements IndexWriter {
                 endOffset = coverEndOffsetsCache.getQuick(c);
             }
             coverEndOffsetsScratch.setQuick(c, endOffset);
-        }
-    }
-
-    /**
-     * Pre-condition for every chain publish: the gen-dir TXN_AT_SEAL sequence the
-     * publish is about to expose must be non-decreasing across all
-     * {@code newGenCount} slots. publishToChain writes exactly ONE slot per call
-     * and then publishes a GEN_COUNT covering all of them, so it relies on slots
-     * {@code [0, overrideGenIndex)} already being fully published and monotonic.
-     * The clamp in publishToChain cannot repair those: it only constrains the
-     * single slot this call wrote, while the prefix comes off disk and a
-     * pre-9.4.x build can have left a regression there.
-     * <p>
-     * publishToChain calls this AFTER writing its own slot but BEFORE
-     * appendNewEntry / extendHead, for two reasons. The just-written slot sits at
-     * or past the head's published GEN_COUNT, so no reader can reach it and
-     * failing here means none of the publishing publishToChain would do has
-     * happened: the extend aborts with nothing partially published to unwind.
-     * (The format-1 COW migration earlier in publishToChain can already have
-     * moved the head entry and the header sequence, but it copies the entry
-     * verbatim -- same genCount, same gen-dir bytes, so an already-corrupt prefix
-     * stays exactly as corrupt to readers -- and it is idempotent if the publish
-     * runs again.) That does not make the failure transparent in production.
-     * Three TableWriter paths reach an indexer commit and none of them retries:
-     * syncColumns and the switch-partition seal each wrap the commit in
-     * {@code catch (CairoException e) { throwDistressException(e); }}, while
-     * publishPostingIndexesForLastPartitionFastLag does not catch at all --
-     * applyLagToLastPartition sets {@code distressed = true} and rethrows, so on
-     * a WAL table the exception reaches ApplyWal2TableJob.handleWalApplyFailure
-     * and suspends the table. Every route ends at a failed commit over an
-     * already-corrupt prefix, which only REINDEX clears. And every offset the
-     * loop reads is at or below that slot, so keyMem already covers the range.
-     * <p>
-     * It throws for the same reason the cover-set guard in publishToChain does:
-     * deployments run both with and without {@code -ea}, so an assert is a no-op
-     * on some of them and an unhandleable Error on the commit path of the rest.
-     * The cover-footer clobber an equivalent post-publish check would additionally
-     * catch cannot happen: in format 1 the footer precedes the gen-dir, and the
-     * only way it can overflow into slot 0 is the cover-set change publishToChain
-     * already rejects before mutating anything; in format 0 the footer trails the
-     * gen-dir, so it can never reach a slot in {@code [0, newGenCount)}.
-     */
-    private void checkGenDirMonotonic(int newGenCount, long entryBase, int writeFormat, int writeCoverCount, int overrideGenIndex) {
-        long prev = Long.MIN_VALUE;
-        for (int i = 0; i < newGenCount; i++) {
-            long off = PostingIndexChainEntry.resolveGenDirOffset(entryBase, i, writeFormat, writeCoverCount);
-            long txnAtSeal = keyMem.getLong(off + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
-            if (txnAtSeal < prev) {
-                LOG.critical()
-                        .$("posting index refused to publish a non-monotonic gen-dir [index=").$safe(indexName)
-                        .$(", entryOffset=").$(entryBase)
-                        .$(", genCount=").$(newGenCount)
-                        .$(", badGen=").$(i)
-                        .$(", txnAtSeal=").$(txnAtSeal)
-                        .$(", prevTxnAtSeal=").$(prev)
-                        .$(", writtenGen=").$(overrideGenIndex)
-                        .$(", sealTxn=").$(sealTxn)
-                        .$(']').$();
-                throw CairoException.critical(0)
-                        .put("posting index is corrupt")
-                        .put(" [reason=writer refused to publish a non-monotonic gen-dir, index=").put(indexName)
-                        .put(", entryOffset=").put(entryBase)
-                        .put(", genCount=").put(newGenCount)
-                        .put(", badGen=").put(i)
-                        .put(", txnAtSeal=").put(txnAtSeal)
-                        .put(", prevTxnAtSeal=").put(prev)
-                        .put(']');
-            }
-            prev = txnAtSeal;
         }
     }
 
@@ -3374,6 +3430,25 @@ public class PostingIndexWriter implements IndexWriter {
         if (!hasPendingData || pendingCountsAddr == 0 || activeKeyCount == 0) {
             return;
         }
+        // A preceding commit/seal flush can fail to extend the .pv (for example an
+        // I/O fault during the valueMem mremap) and leave valueMem closed while its
+        // pending batch is still queued and valueMemSize still reflects the old
+        // mapped extent. A later flush -- rollbackValues() unwinding that same failed
+        // commit, or a seal() from ADD INDEX, REINDEX or snapshot restore -- would
+        // then jumpTo() the stale valueMemSize. MemoryCMARWImpl.close() zeroes lim and
+        // appendAddress, so checkAndExtend() short-circuits only on a zero address: any
+        // positive valueMemSize routes into extend0(), which trips the size > 0 assert
+        // under -ea and dereferences the nulled FilesFacade in TableUtils.allocateDiskSpace
+        // without it. The guard below covers the remaining zero case as well. There is
+        // nothing to flush into, so raise a domain error naming the writer state and
+        // let the caller's rollback mark the writer distressed; the next open recovers
+        // the on-disk chain.
+        if (!valueMem.isOpen()) {
+            throw CairoException.critical(0)
+                    .put("cannot flush posting index into closed value memory [valueMemSize=")
+                    .put(valueMemSize).put(", genCount=").put(genCount)
+                    .put(", activeKeyCount=").put(activeKeyCount).put(']');
+        }
 
         // Sort active keys for the sparse format (requires ascending keyIds).
         // Skip sort if keys were added in order (common for sequential writes).
@@ -3623,6 +3698,20 @@ public class PostingIndexWriter implements IndexWriter {
     private void flushAllPendingDense() {
         if (!hasPendingData || pendingCountsAddr == 0 || activeKeyCount == 0) {
             return;
+        }
+        // Mirror flushAllPending's guard: a failed .pv extend can leave valueMem
+        // closed with a pending batch queued, and this dense flush would then write
+        // into it. getAppendOffset() is pure arithmetic over the zeroed bounds, so the
+        // first putLong() is what fails -- inside extend0(), on the size > 0 assert
+        // under -ea or on the nulled FilesFacade without it; the addressOf() reads
+        // further down never run. A domain error naming the writer state beats both.
+        // Keep the check below the hasPendingData early-return so a genuine no-op
+        // stays a no-op.
+        if (!valueMem.isOpen()) {
+            throw CairoException.critical(0)
+                    .put("cannot flush posting index into closed value memory [valueMemSize=")
+                    .put(valueMemSize).put(", genCount=").put(genCount)
+                    .put(", activeKeyCount=").put(activeKeyCount).put(']');
         }
 
         boolean isSorted = true;
@@ -4606,7 +4695,21 @@ public class PostingIndexWriter implements IndexWriter {
         // Clamping up to the predecessor is the conservative repair: a later
         // gen must never become visible EARLIER than an earlier one, so the
         // predecessor's txn is the lowest value this slot may legally carry.
-        if (overrideGenIndex > 0) {
+        // A brand-new entry has no predecessor to clamp against: entryBase is
+        // then chain.getRegionLimit(), virgin region that no publish has written,
+        // so slot overrideGenIndex-1 would read unwritten .pk bytes and clamp the
+        // new gen up to whatever they hold. No caller reaches that shape on any
+        // path that completes normally -- only flushAllPending passes
+        // overrideGenIndex > 0, and every path that advances sealTxn past the
+        // head's resets genCount first or poisons the writer, which the
+        // checkNotPoisoned above rejects. A throw in between is what this guard
+        // actually catches: truncate() rotates sealTxn and only zeroes genCount
+        // several statements later (initKeyMemory, keyMem.sync,
+        // recordPostingSealPurge, chain.resetState and chain.openExisting all run
+        // in between, none of them guarded), so a failure there leaves sealTxn
+        // rotated with genCount >= 1 and the next commit() reaches flushAllPending
+        // with newEntry and overrideGenIndex > 0.
+        if (!newEntry && overrideGenIndex > 0) {
             long prevSlotOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex - 1, writeFormat, writeCoverCount);
             long prevSlotTxnAtSeal = keyMem.getLong(prevSlotOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
             if (slotTxnAtSeal < prevSlotTxnAtSeal) {
@@ -4618,6 +4721,36 @@ public class PostingIndexWriter implements IndexWriter {
                         .$(", pendingTxnAtSeal=").$(pendingTxnAtSeal)
                         .$(']').$();
                 slotTxnAtSeal = prevSlotTxnAtSeal;
+            }
+            // MAX_VALUE is the cumulative row-id high-water across the entry's
+            // gen-dir, so it must never decrease from one slot to the next.
+            // PostingGenLookup.snapshotMetadata enforces this on the READ side and
+            // fails the whole read with INDEX_CORRUPT when it is violated, so
+            // persisting a regressing slot here would leave an index that only
+            // REINDEX can recover. Catch it at the source instead.
+            //
+            // This throws rather than asserts because production runs with
+            // assertions off on some deployments, and the failure mode this
+            // prevents is silent at write time and terminal at read time. Failing
+            // the publish leaves the chain untouched -- the previous head stays
+            // readable and the caller can retry -- which is strictly better than
+            // committing a gen-dir the reader is guaranteed to reject.
+            //
+            // Unreachable on every path that completes normally: flushAllPending
+            // only ever raises the writer's maxValue (`if (lastVal > maxValue)`),
+            // and the rollback path routes through reencodeAllGenerations, which
+            // collapses the entry to a single gen. It is a backstop for a future
+            // caller that lowers maxValue via setMaxValue and then extends the head
+            // without re-encoding.
+            long prevSlotMaxValue = keyMem.getLong(prevSlotOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE);
+            if (maxValue < prevSlotMaxValue) {
+                throw CairoException.critical(0)
+                        .put("posting index gen-dir MAX_VALUE regressed [index=").put(indexName)
+                        .put(", gen=").put(overrideGenIndex)
+                        .put(", maxValue=").put(maxValue)
+                        .put(", prevMaxValue=").put(prevSlotMaxValue)
+                        .put(", sealTxn=").put(sealTxn)
+                        .put(']');
             }
         }
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);
@@ -4632,24 +4765,25 @@ public class PostingIndexWriter implements IndexWriter {
         Unsafe.storeFence();
         keyMem.putLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, slotTxnAtSeal);
 
-        // Validate the whole gen-dir the publish below is about to expose, while
-        // the chain still shows the OLD head. The clamp above only constrains the
-        // ONE slot this call wrote; slots [0, overrideGenIndex) come off disk and
-        // a pre-fix build can have left a regressing prefix there. Running this
-        // BEFORE appendNewEntry/extendHead leaves nothing partially published to
-        // unwind: the slot just written sits at or past the head's published
-        // GEN_COUNT, so none of the publishing this method would do has happened
-        // yet, and the one mutation that can already have run, the format-1 COW
-        // migration above, copies the entry verbatim (same genCount, same gen-dir
-        // bytes -- an already-corrupt prefix stays exactly as corrupt to readers).
-        // No production caller turns that into a retry: syncColumns and the
-        // switch-partition seal call throwDistressException on this
-        // CairoException, and the WAL fast-lag path lets it escape into
-        // applyLagToLastPartition, which marks the writer distressed and
-        // rethrows -- suspending the table when it is a WAL one. Every route
-        // fails the commit over an already-corrupt prefix; see
-        // checkGenDirMonotonic.
-        checkGenDirMonotonic(newGenCount, entryBase, writeFormat, writeCoverCount, overrideGenIndex);
+        // DELIBERATELY no writer-side post-condition over slots
+        // [0, overrideGenIndex) here. The clamp above constrains the ONE slot this
+        // call wrote; the prefix comes off disk and a pre-fix build can have left a
+        // regressing slot there -- exactly the at-rest damage the close() fix in
+        // this change stops producing. Rejecting the publish on that prefix would
+        // convert damage an upgraded deployment already carries into an ingestion
+        // stop: no production caller retries, syncColumns and the switch-partition
+        // seal call throwDistressException, and the WAL fast-lag path escapes into
+        // applyLagToLastPartition, which marks the writer distressed and rethrows --
+        // suspending a WAL table. It would buy readers nothing, because extending
+        // the head does not make the prefix any worse: the damaged slot is left
+        // byte-for-byte alone (PostingIndexCriticalIssuesTest
+        // #testPublishExtendsHeadOverPreExistingNonMonotonicGenDir pins the
+        // resulting {1, 0, 3} gen-dir), and every reader already refuses the whole
+        // entry through the TXN_AT_SEAL monotonicity check in
+        // AbstractPostingIndexReader, which names REINDEX as the recovery route.
+        // At-rest corruption is therefore the READER's to report, at query time,
+        // rather than the writer's to turn into an outage -- and the scan this
+        // would add is O(genCount) on every commit, on the hot publish path.
 
         // Snapshot the current append offset of each open sidecar. Tombstoned
         // and not-yet-opened slots publish 0; readers treat them as "no file
@@ -4691,10 +4825,90 @@ public class PostingIndexWriter implements IndexWriter {
             // back to txnAtSeal=0 so the entry is visible to every pinned
             // reader. The recovery walk cannot drop a 0-tagged entry
             // (predicate `0 > committedTxn` never fires), so a partial
-            // publish on this path turns into an undroppable orphan. The
-            // wiring in TableWriter eliminates this for the production
-            // paths that matter; this fallback exists only for legacy
-            // test fixtures and the no-arg of(...) used by O3CopyJob.
+            // publish on this path turns into an undroppable orphan. Five
+            // production routes used to reach this fallback; all now arm
+            // before the call that can publish:
+            //   - ContiguousFileIndexedFrameColumn.append / appendNulls called
+            //     rollbackConditionally BEFORE their conditional
+            //     setNextTxnAtSeal, on a writer their ofRW() has just of()-ed
+            //     (of() runs close(), which resets this field to -1). A
+            //     partition squash drives that through FrameAlgebra.append, so
+            //     evicting the rowids an O3 split stranded in the parent
+            //     republished the re-encoded entry tagged 0 -- no crash
+            //     anywhere in the precondition. Both methods now arm
+            //     upcomingTableTxn (which FrameAlgebra.append hands them before
+            //     the call) ahead of rollbackConditionally. Pinned by
+            //     PostingIndexCriticalIssuesTest#testSquashAppendRollbackPublishesUpcomingTxnAtSeal
+            //     and #testSquashAppendNullsRollbackPublishesUpcomingTxnAtSeal.
+            //   - TableWriter.openPartition reached here the same way --
+            //     configureFollowerAndWriter, whose of() resets this field, then
+            //     rollbackConditionally(rowCount) -- so a partition whose index
+            //     still held rowids at or above the reopened row count
+            //     republished tagged 0. openPartition now arms the setter with
+            //     txWriter.getTxn() (a current-state path: it republishes the
+            //     committed view and no commit follows within the operation), so
+            //     that route no longer emits 0. Pinned by
+            //     PostingIndexCriticalIssuesTest#testOpenPartitionRollbackPublishesCommittedTxnAtSeal.
+            //   - TableWriter.openNewColumnFiles (ALTER ADD COLUMN ... INDEX),
+            //     renameColumn's indexer rebind, and
+            //     restorePostingIndexersToLastPartition all re-of()-ed a live
+            //     writer and armed nothing. None of them publishes itself, and
+            //     none commits through commit00, so the writer reached the next
+            //     data commit still unset -- and commit00 runs updateIndexes()
+            //     BEFORE syncColumns(), the only arm on that path. updateIndexes
+            //     publishes twice over on an unarmed writer: through
+            //     SymbolColumnIndexer.index's leading rollbackConditionally, and
+            //     through the add() loop's mid-stream flush once it crosses
+            //     cairo.posting.index.indexer.spill.bytes.max
+            //     (compactIfOverBudget -> flushAllPending). On a column whose
+            //     chain is still empty that flush appends a NEW entry at gen
+            //     index 0, with no predecessor slot for the monotonicity clamp
+            //     above to lift, so the 0 reached disk. All three now arm
+            //     getTxn()+1 (each is mid-operation with its own commit right
+            //     after, the same convention addIndex uses). Pinned by
+            //     PostingIndexCriticalIssuesTest#testAddColumnIndexMidCommitSpillFlushCarriesArmedTxnAtSeal,
+            //     #testAlterRenameColumnRebindCarriesArmedTxnAtSeal and
+            //     #testSquashRestoreIndexersCarriesArmedTxnAtSeal.
+            // What was searched, so the claim can be re-checked rather than
+            // taken on faith: every site under core/src/main that resets this
+            // field, i.e. every entry point into a path-based
+            // PostingIndexWriter.of() (of() starts with close(), which sets the
+            // field to -1). That is SymbolColumnIndexer.configureFollowerAndWriter
+            // (8 TableWriter sites), SymbolColumnIndexer.configureWriter
+            // (TableWriter x2, IndexBuilder, TableSnapshotRestore),
+            // ContiguousFileIndexedFrameColumn.ofRW, the direct of() calls in
+            // TableSnapshotRestore and O3PartitionJob.updateParquetIndexes, and
+            // O3CopyJob's openFromO3Context. Three of those do NOT arm before
+            // the first call on that writer that can publish, and remain open:
+            //   - TableWriter.changeSymbolCapacity, which is harmless: its
+            //     skipForPosting guard is exactly "indexed AND posting", so only
+            //     a legacy BITMAP index reaches the configureFollowerAndWriter
+            //     branch there, and BitmapIndexWriter inherits IndexWriter's
+            //     no-op setter.
+            //   - the parquet index rebuilds in O3PartitionJob
+            //     .updateParquetIndexes and TableSnapshotRestore
+            //     .rebuildParquetPartitionIndexes. Both run the whole
+            //     indexWriter.add() loop and call setNextTxnAtSeal only after
+            //     it, and add() is publish-capable once the loop crosses the
+            //     indexer spill budget (spillKey -> compactIfOverBudget ->
+            //     flushAllPending -> publishToChain), so those two can still tag
+            //     an entry 0. Behaviour there is unchanged from before this
+            //     work; the arming above narrows the fallback's reach rather
+            //     than eliminating it.
+            // The remaining of() sites -- SymbolMapWriter's and SymbolMapUtil's
+            // -- hold a BitmapIndexWriter, not this class. closeNoTruncate()
+            // presets 0 explicitly, but nothing under core/src/main calls THIS
+            // class's override, and the convenience constructor that presets 0
+            // is @TestOnly. Not searched, and therefore not claimed: whether an
+            // armed value can be STALE by the time a later publish consumes it.
+            // pendingTxnAtSeal is deliberately never reset after a publish, so a
+            // writer that goes untouched across commits carries its last arm
+            // into the next commit's updateIndexes window; that value is always
+            // a real txn at or below the committed one, never -1, but it is not
+            // always the txn the publish belongs to. Note also this narrows the
+            // fallback's reach only: it does not change what a 0 tag MEANS, and
+            // a current-state caller legitimately arms 0 while the table's
+            // committed _txn is still 0.
             long txnAtSeal = pendingTxnAtSeal >= 0 ? pendingTxnAtSeal : 0L;
             chain.appendNewEntry(
                     keyMem,
@@ -4711,6 +4925,7 @@ public class PostingIndexWriter implements IndexWriter {
         } else {
             chain.extendHead(keyMem, newGenCount, keyCount, valueMemSize, maxValue, coverEndOffsetsScratch, headStoredCoveringFormat());
         }
+        assert assertGenDirPublished(entryBase, writeFormat, writeCoverCount, overrideGenIndex, newEntry);
     }
 
     private void rebuildSidecarsByCopy(long newSealTxn) {
@@ -4929,6 +5144,22 @@ public class PostingIndexWriter implements IndexWriter {
      *                       any other value trims per-key values to those <= cutoff (rollback path)
      */
     private void reencodeAllGenerations(long newSealTxn, long maxValue, long maxValueCutoff) {
+        // The third flush/reencode site a closed valueMem reaches: Phase 1 reads
+        // every generation out of valueMem (addressOf below). truncate() closes
+        // valueMem before it opens the replacement .pv, so a failed open leaves the
+        // writer with valueMem closed and genCount > 0; a failed .pv extend leaves
+        // the same state. Both arrive here through sealFull(), or through
+        // rollbackToMaxValue() under rollbackValues() -- the path a failed truncate()
+        // leaves behind. These three guards do not cover every valueMem deref in the
+        // class: sealIncremental() dereferences it unguarded too, byte-identical to
+        // base and not provably reachable with a closed valueMem, so those sites stay
+        // as they are. genCount == 0 never touches valueMem here (empty gen loop
+        // routes to truncate()), so guard only when there is a generation to read.
+        if (genCount > 0 && !valueMem.isOpen()) {
+            throw CairoException.critical(0)
+                    .put("cannot reencode posting index generations over closed value memory [valueMemSize=")
+                    .put(valueMemSize).put(", genCount=").put(genCount).put(']');
+        }
 
         // Phase 1: Count total values per key across all generations
         long totalCountsSize = (long) keyCount * Integer.BYTES;

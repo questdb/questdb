@@ -1220,8 +1220,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commit();
 
         final MapWriter symbolMapWriter = symbolMapWriters.getQuick(columnIndex);
-        if (symbolMapWriter.isCached() != cache) {
+        final boolean isFlagChanging = symbolMapWriter.isCached() != cache;
+        // The second disjunct is a writer that dropped its cache when the cache ran its key
+        // buffer out. That drop keeps the column's flag on, so a CACHE would otherwise match
+        // the flag the column already carries and do nothing - leaving the operator who
+        // issued it no way to ask for the acceleration back short of restarting the writer.
+        // It fires only where there is no cache to discard, so a CACHE over a healthy column
+        // still leaves the warm cache the writer has been filling alone.
+        if (isFlagChanging || (cache && !symbolMapWriter.isCacheAllocated())) {
             symbolMapWriter.updateCacheFlag(cache);
+        }
+        // Keyed on the flag alone, not on the disjunction above. The recovery changes nothing
+        // the table metadata records, and rewriting it swaps _meta through _meta.swp and bumps
+        // the metadata version every reader watches - too much to spend on a statement that
+        // asks for what the column already declares.
+        if (isFlagChanging) {
             TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
             columnMetadata.setSymbolCacheFlag(cache);
             writeMetadataToDisk();
@@ -1470,6 +1483,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         ColumnIndexer indexer = indexers.get(columnIndex);
                         final long columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, columnIndex);
                         assert indexer != null;
+                        // No setNextTxnAtSeal here, unlike the other
+                        // configureFollowerAndWriter sites: skipForPosting above
+                        // is exactly "indexed AND posting", so this branch runs
+                        // only for a legacy BITMAP index, whose
+                        // BitmapIndexWriter inherits IndexWriter's no-op
+                        // setNextTxnAtSeal. A POSTING column never reaches here,
+                        // so an arm would be dead code.
                         indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                         indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, partitionTimestamp, partitionNameTxn);
                         configureCoveringIfNeeded(indexer, columnIndex, partitionTimestamp);
@@ -3368,6 +3388,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         lastOpenPartitionTxnName
                                 );
                                 configureCoveringIfNeeded(indexer, index, lastOpenPartitionTs);
+                                // Must come AFTER configureFollowerAndWriter:
+                                // of() inside it runs close(), which resets
+                                // pendingTxnAtSeal to -1. The rename publishes
+                                // nothing itself, but it commits through
+                                // bumpMetadataAndColumnStructureVersion rather
+                                // than commit00, so syncColumns never re-arms
+                                // the writer. The next data commit then
+                                // publishes on it before anything does:
+                                // commit00 runs updateIndexes() first and
+                                // syncColumns() second, and updateIndexes both
+                                // rolls back through rollbackConditionally and
+                                // flushes mid-stream once the add() loop crosses
+                                // the indexer spill budget. Left unset, either
+                                // publish takes publishToChain's
+                                // pendingTxnAtSeal<0 fallback and lands tagged 0
+                                // -- visible to every pinned reader and
+                                // undroppable by the writer-open recovery walk.
+                                // getTxn()+1, matching addIndex and
+                                // openNewColumnFiles: this is a
+                                // commit-in-progress path, and
+                                // bumpMetadataAndColumnStructureVersion below is
+                                // about to assign that txn. Pinned by
+                                // PostingIndexCriticalIssuesTest#testAlterRenameColumnRebindCarriesArmedTxnAtSeal.
+                                indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
                             }
                         } finally {
                             path.trimTo(pathSize);
@@ -7004,6 +7048,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Drain every live indexer's seal-purge outbox before a
+     * {@link #closeActivePartition(boolean)} frees the indexers.
+     * <p>
+     * {@code freeIndexers()} reaches {@code PostingIndexWriter.close()}, which calls
+     * {@code releasePendingPurges()} -- that returns outbox entries to the pool WITHOUT
+     * publishing them, so any superseded {@code .pv} / {@code .pc} they name is never
+     * handed to {@code PostingSealPurgeJob} and leaks on disk: the writer-open recovery
+     * walk is chain-driven and cannot rediscover a never-published sealTxn.
+     * {@code deferPendingPostingSealPurges} publishes what is already safe for the
+     * committed txn and parks the finite-future entries in the TableWriter-owned
+     * {@code deferredPostingSealPurges} list, which survives the indexer reopen.
+     * <p>
+     * Idempotent no-op on an empty outbox, which is the common case. Mirrors the drain
+     * {@code switchPartition} and the O3 / parquet reseal paths already perform before
+     * they release an indexer.
+     */
+    private void drainPendingPostingSealPurgesBeforeIndexerRelease() {
+        for (int i = 0, n = denseIndexers.size(); i < n; i++) {
+            deferPendingPostingSealPurges(denseIndexers.getQuick(i), txWriter.getTxn());
+        }
+    }
+
     private long dropFuturePostingIndexChainEntriesBeforeLink(
             int srcDirLen,
             CharSequence columnName,
@@ -9516,6 +9583,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                 indexer.configureFollowerAndWriter(path.trimTo(plen), name, columnNameTxn, getPrimaryColumn(columnIndex), txWriter.getTransientRowCount(), partitionTimestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp));
                 configureCoveringIfNeeded(indexer, columnIndex, txWriter.getLastPartitionTimestamp());
+                // Same convention as addIndex above: tag with the txn the
+                // upcoming clearTodoAndCommitMetaStructureVersion will assign.
+                // Must come AFTER configureFollowerAndWriter: of() inside it
+                // runs close(), which resets pendingTxnAtSeal to -1.
+                // ADD COLUMN itself publishes nothing -- the new column has no
+                // rows on this partition -- but addColumn commits through
+                // clearTodoAndCommitMetaStructureVersion, NOT through commit00,
+                // so syncColumns never runs and the writer would leave the ALTER
+                // still unset. The next data commit publishes on it before
+                // anything arms it: commit00 runs updateIndexes() first and
+                // syncColumns() second, and updateIndexes' add() loop flushes
+                // mid-stream once it crosses the indexer spill budget
+                // (compactIfOverBudget -> flushAllPending -> publishToChain).
+                // The column's chain is still empty then, so that flush takes
+                // the newEntry branch at gen index 0 -- no predecessor slot to
+                // clamp against -- and publishToChain's pendingTxnAtSeal<0
+                // fallback would tag it 0: visible to every pinned reader and
+                // undroppable by the writer-open recovery walk. Pinned by
+                // PostingIndexCriticalIssuesTest#testAddColumnIndexMidCommitSpillFlushCarriesArmedTxnAtSeal.
+                indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
             }
 
             // configure append position for variable length columns
@@ -9627,6 +9714,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // orphan rowids when getMaxValue() >= rowCount. Both
                         // are cheap no-ops on a clean reopen.
                         if (IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                            // Tag whatever the merge/rollback below republishes
+                            // with the committed table txn. Must come AFTER
+                            // configureFollowerAndWriter: of() inside it runs
+                            // close(), which resets pendingTxnAtSeal to -1, and
+                            // publishToChain's fallback for that would tag the
+                            // republished entry 0 -- visible to every pinned
+                            // reader and undroppable by the writer-open recovery
+                            // walk, because the predicate (txnAtSeal >
+                            // committedTxn) can never fire on 0.
+                            // getTxn(), NOT getTxn()+1: this is a current-state
+                            // path, the same view setCurrentTableTxn above arms
+                            // recovery with. No commit follows within
+                            // openPartition, so getTxn()+1 would leave an entry
+                            // the very next reopen's recovery walk drops as
+                            // abandoned -- silently losing the partition's index.
+                            indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
                             indexer.mergeTentativeIntoActiveIfAny();
                             indexer.getWriter().rollbackConditionally(rowCount);
                         }
@@ -13567,6 +13670,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         lastOpenPartitionTs, currentNameTxn
                 );
                 configureCoveringIfNeeded(indexer, colIdx, lastOpenPartitionTs);
+                // Must come AFTER configureFollowerAndWriter: of() inside it runs
+                // close(), which resets pendingTxnAtSeal to -1. This method
+                // publishes nothing itself, but the squash caller runs from
+                // housekeep(), i.e. after the current commit's syncColumns, so
+                // nothing re-arms the writer before the NEXT commit -- and
+                // commit00 runs updateIndexes() first and syncColumns() second.
+                // updateIndexes publishes on that writer both through
+                // rollbackConditionally and through the add() loop's mid-stream
+                // spill flush; left unset, either lands on publishToChain's
+                // pendingTxnAtSeal<0 fallback and tags the entry 0 -- visible to
+                // every pinned reader and undroppable by the writer-open
+                // recovery walk. getTxn()+1 for the same reason
+                // sealPostingIndexForPartition uses it: both callers of this
+                // method are mid-operation and commit right after
+                // (finishO3Commit's txWriter.commit, the squash's
+                // commitTxWriterAndPublishPendingPostingSealPurges), so that is
+                // the txn the entry belongs to and the value that lets recovery
+                // drop it if the commit never lands. Pinned by
+                // PostingIndexCriticalIssuesTest#testSquashRestoreIndexersCarriesArmedTxnAtSeal.
+                indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
             }
         } finally {
             path.trimTo(pathSize);
@@ -14368,6 +14491,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         boolean lastPartitionSquashed = false;
+        // Whether the squash target is the partition this writer currently holds
+        // open. Captured before the append: the column append memories we may have
+        // to re-sync afterwards are the ones positioned at this point.
+        final boolean targetIsOpenPartition = lastOpenPartitionTs == targetPartition && !copyTargetFrame;
         int squashCount = Math.min(partitionIndexHi - targetPartitionIndex - 1, partitionIndexHi - partitionIndexLo - optimalPartitionCount);
 
         if (squashCount <= 0) {
@@ -14422,6 +14549,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long partitionRowCount = txWriter.getPartitionRowCountByTimestamp(sourcePartition);
                 lastPartitionSquashed = targetPartitionIndex + 2 == txWriter.getPartitionCount();
                 if (lastPartitionSquashed) {
+                    // closeActivePartition frees the indexers, and PostingIndexWriter.close()
+                    // drops an undrained outbox rather than publishing it.
+                    drainPendingPostingSealPurgesBeforeIndexerRelease();
                     closeActivePartition(false);
                     partitionRowCount = txWriter.getTransientRowCount() + txWriter.getLagRowCount();
                 }
@@ -14479,17 +14609,80 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             other.trimTo(pathSize);
         }
 
-        if (lastPartitionSquashed) {
-            openLastPartition();
+        if (lastPartitionSquashed || targetIsOpenPartition) {
+            // The squash appended through the frame's own file descriptors into a
+            // partition this writer holds open, so the writer's column append
+            // memories describe a SHORTER file than what is on disk.
+            //
+            // Left stale, the next truncating close (doClose -> freeColumns ->
+            // closeAppendMemoryTruncate -> MemoryMA.close(true)) trims every .d
+            // back to ceilPageSize(staleAppendOffset), physically discarding the
+            // bytes the squash just wrote. A later append memory then re-extends
+            // the file zero-filled, so the tail of the last squashed value reads
+            // back as zeros while the aux vector still points past it -- e.g. a
+            // NULL BINARY whose 8-byte -1 marker is cut mid-way, surfacing as
+            // "binary is outside of file boundary".
+            //
+            // lastPartitionSquashed: the squash consumed the last partition, and the
+            // loop above already closed it WITHOUT truncating, so openLastPartition
+            // re-opens the merged partition at its new size.
+            //
+            // targetIsOpenPartition: the target is the partition lastOpenPartitionTs
+            // names, and it is never the last one -- the selection loop only breaks
+            // while targetPartitionIndex < partitionIndexHi - 1, and
+            // lastPartitionSquashed == false means a partition survives after the
+            // target. openLastPartition would therefore re-open the wrong partition,
+            // and it no-ops outright once that last partition is parquet (see
+            // openLastPartitionAndSetAppendPosition), which is exactly how the writer
+            // ends up holding an earlier partition open in the first place. Close
+            // WITHOUT truncating, then re-open the TARGET. openPartition also re-runs
+            // configureFollowerAndWriter / configureCoveringIfNeeded /
+            // populateDenseIndexerList, so the reseal below and the next commit see
+            // live column memories and a dense indexer list that matches indexCount.
+            //
+            // Both branches distress on failure. removeAttachedPartitions,
+            // columnVersionWriter.squashPartition, updatePartitionSizeByTimestamp and
+            // the transient/fixed row-count adjustments above have already run but
+            // neither commit() has fired, so a throw here leaves in-memory state
+            // diverged from _txn. housekeep() absorbs that through
+            // handleHousekeepingException, but squashAllPartitionsIntoOne,
+            // squashPartitions (ALTER TABLE ... SQUASH PARTITIONS) and
+            // squashPartitionForce have no such handler, and setAppendPosition's
+            // non-CairoException paths do not distress on their own.
+            try {
+                if (lastPartitionSquashed) {
+                    openLastPartition();
+                } else {
+                    // Same reason as the lastPartitionSquashed close above: freeIndexers ->
+                    // PostingIndexWriter.close() -> releasePendingPurges() drops the outbox
+                    // instead of publishing it, leaking the superseded .pv/.pc it names.
+                    drainPendingPostingSealPurgesBeforeIndexerRelease();
+                    closeActivePartition(false);
+                    // openPartition re-points partitionTimestampHi at whatever it opens, but the
+                    // target is NOT the last partition here. partitionTimestampHi is the writer's
+                    // append horizon and must keep tracking the last partition -- processWalCommit
+                    // asserts that partitionTimestampHi and txWriter.maxTimestamp resolve to the
+                    // same partition. The squash changes neither, so restore the value it had.
+                    final long lastPartitionTimestampHi = partitionTimestampHi;
+                    final long targetRowCount = txWriter.getPartitionRowCountByTimestamp(targetPartition);
+                    openPartition(targetPartition, targetRowCount);
+                    setAppendPosition(targetRowCount, false);
+                    partitionTimestampHi = lastPartitionTimestampHi;
+                }
+            } catch (Throwable e) {
+                LOG.critical().$("squash succeeded but reopening the active partition failed `").$(e).$('`').$();
+                distressed = true;
+                throw e;
+            }
         }
 
         // The squash grew the target partition's .d files via FrameAlgebra.append.
         // FrameAlgebra's short-lived IndexWriter calls commit() after the per-row
         // add() loop, and that commit() does publish entries to the chain: via
         // extendHead in the non-copy squash (chain already open, head sealTxn
-        // matches) or via appendNewEntry with txnAtSeal=0 in the copy squash
-        // (fresh chain; pendingTxnAtSeal is never set, so the fallback at
-        // PostingIndexWriter#publishToChain fires). The IndexWriter never sees
+        // matches) or via appendNewEntry in the copy squash (fresh chain), both
+        // tagged with the upcomingTableTxn FrameAlgebra.append hands the column.
+        // The IndexWriter never sees
         // configureCovering, however, so coverCount=0 when captureCoverEndOffsets
         // runs and the new gens land with an empty cover footer. For COVERING
         // POSTING indexes this is what drops rows from indexed predicates: the
