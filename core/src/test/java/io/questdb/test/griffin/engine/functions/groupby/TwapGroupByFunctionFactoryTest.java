@@ -548,12 +548,14 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     .returns("ts\ttwap\n2024-01-01T00:00:00.000000Z\t23.333333333333332\n");
             // FILL(linear) reaches the interpolated branch; FILL(null)/FILL(prev) reach the
             // other serial branch. Every fill mode must reject the price-ordered base.
+            // The base sort is by a non-timestamp column, which now honestly reports a non-forward scan
+            // direction, so SAMPLE BY itself rejects the out-of-order base before it can reach TWAP.
             final String reorderedBase = "FROM (SELECT price, ts FROM tbl ORDER BY price ASC LIMIT 10) timestamp(ts) SAMPLE BY 1m ";
             for (String fill : new String[]{"FILL(null)", "FILL(prev)", "FILL(linear)"}) {
                 assertExceptionNoLeakCheck(
                         "SELECT twap(price, ts) " + reorderedBase + fill,
-                        7,
-                        "twap() requires the base query to provide ascending designated timestamp order",
+                        0,
+                        "base query does not provide ASC order over designated TIMESTAMP column",
                         false
                 );
             }
