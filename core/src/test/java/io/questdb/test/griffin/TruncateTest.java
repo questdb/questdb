@@ -671,6 +671,7 @@ public class TruncateTest extends AbstractCairoTest {
 
             execute("INSERT INTO x VALUES ('d', '1970-01-02')");
             assertQuery("SELECT sym FROM x")
+                    .expectSize()
                     .returns("""
                             sym
                             d
