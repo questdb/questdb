@@ -381,6 +381,62 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     }
 
     /**
+     * The rename link matches artifacts by the prefix {@code <col>.pidx.}, and
+     * one indexed column's name can be a prefix of another's. If the match were
+     * on the column name alone, renaming {@code sym} would also capture
+     * {@code sym2}'s artifacts and relink them under the new name -- leaving
+     * {@code sym2}'s token pointing at files that no longer carry its name.
+     * <p>
+     * The {@code .pidx.} infix is what makes the match unambiguous. This pins
+     * it, because the failure would be silent for {@code sym} and only show up
+     * on the other column.
+     */
+    @Test
+    public void testRenamingAnIndexedColumnLeavesAPrefixSharingSiblingAlone() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE " + TABLE_NAME + " (" +
+                    "ts TIMESTAMP, sym SYMBOL, sym2 SYMBOL, price DOUBLE, qty LONG" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO " + TABLE_NAME + " SELECT" +
+                    " dateadd('m', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
+                    " 'a' || (x % 3)," +
+                    " 'b' || (x % 4)," +
+                    " x::DOUBLE," +
+                    " x" +
+                    " FROM long_sequence(300)");
+            drainWalQueue();
+            execute("ALTER TABLE " + TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+            drainWalQueue();
+            execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+            execute("ALTER TABLE " + TABLE_NAME + " ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (qty)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            sink.clear();
+            printSql("select count() from " + TABLE_NAME + " where sym2 = 'b1'");
+            final String siblingBefore = sink.toString();
+
+            execute("ALTER TABLE " + TABLE_NAME + " RENAME COLUMN sym TO sym_renamed");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            // The renamed column must work...
+            sink.clear();
+            printSql("select count() from " + TABLE_NAME + " where sym_renamed = 'a1'");
+            Assert.assertFalse("the renamed column must still answer from its index",
+                    sink.toString().contains("\n0\n"));
+            // ...and the prefix-sharing sibling must be untouched.
+            sink.clear();
+            printSql("select count() from " + TABLE_NAME + " where sym2 = 'b1'");
+            TestUtils.assertEquals(
+                    "renaming sym must not disturb sym2's parquet index artifacts",
+                    siblingBefore,
+                    sink);
+        });
+    }
+
+    /**
      * Final-review I1: RENAME COLUMN must carry the parquet-form index pair.
      * <p>
      * {@code hardLinkAndPurgeColumnFiles} links the native chain
