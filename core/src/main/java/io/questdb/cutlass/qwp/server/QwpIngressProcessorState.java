@@ -247,9 +247,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // FLAG_DEFER_COMMIT -- leaves it false.
     private boolean messageAppendedRows;
     // True while WAL rows appended by FLAG_DEFER_COMMIT frames remain
-    // uncommitted. Recomputed from the TUD cache after every deferred frame
-    // (refreshUncommittedDeferredRows), cleared when commitAll() succeeds (the
-    // group-closing commit frame) or when clear() rolls the rows back, and set
+    // uncommitted. Updated from the force-commit traversal after every deferred
+    // frame, cleared when commitAll() succeeds (the group-closing commit frame)
+    // or when clear() rolls the rows back, and set
     // outright by markUncommittedDeferredRows where the fact is known without a
     // cache to ask. While true, the cumulative-ack watermark must not advance:
     // a cumulative OK ack confirms every sequence up to and including its
@@ -438,7 +438,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public void commitIfMaxUncommittedRowsReached() {
         try {
-            tudCache.commitIfMaxUncommittedRowsReached(committedTxnConsumer);
+            uncommittedDeferredRows = tudCache.commitIfMaxUncommittedRowsReached(committedTxnConsumer);
         } catch (Throwable th) {
             tudCache.setDistressed();
             LOG.error().$('[').$(fd).$("] deferred commit error: ").$(th).$();
@@ -841,7 +841,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * Arms the deferred-rows clamp outright, without asking the TUD cache.
      * <p>
      * No production caller remains: the deferred-frame path derives the clamp
-     * through {@link #refreshUncommittedDeferredRows()}. Kept so tests can put
+     * through {@link #commitIfMaxUncommittedRowsReached()}. Kept so tests can put
      * the clamp into a known state without standing up a cache that holds
      * uncommitted rows. Cleared by {@link #commit()} (successful commitAll) or
      * {@link #clear()} (rollback).
@@ -877,9 +877,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
-     * Recomputes the clamp and answers whether a cumulative OK ack may cover the
-     * FLAG_DEFER_COMMIT frame just processed. This is the whole ack decision for
-     * the deferred path; {@code QwpIngressUpgradeProcessor.handleBinaryMessage}
+     * Answers whether a cumulative OK ack may cover the FLAG_DEFER_COMMIT frame
+     * just processed. The preceding force-commit traversal updates the clamp,
+     * so this decision does not rescan the table cache. This is the whole ack
+     * decision for the deferred path; {@code QwpIngressUpgradeProcessor.handleBinaryMessage}
      * only wires it up.
      * <p>
      * Both terms are load-bearing, and each guards a different failure:
@@ -894,15 +895,13 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * depend on it, and a reconnect would then replay symbol ids nothing
      * registered.</li>
      * </ul>
-     * The refresh runs unconditionally: the clamp describes the connection, so
-     * it must be recomputed even for a frame that appended nothing, or it would
-     * stay stale from an earlier frame.
+     * The force-commit traversal runs even for a frame that appended nothing,
+     * so the clamp cannot stay stale from an earlier frame.
      *
      * @return {@code true} if the ack may cover this frame
      */
     public boolean refreshDeferredAckCoverage() {
-        final boolean nothingUncommitted = !refreshUncommittedDeferredRows();
-        return nothingUncommitted && messageAppendedRows;
+        return !uncommittedDeferredRows && messageAppendedRows;
     }
 
     public long nextMessageSequence() {
@@ -1450,7 +1449,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         // FLAG_DEFER_COMMIT rows sit uncommitted in WAL writers, a cumulative OK
         // ack covering their frames would let the client trim slots the server
         // can still roll back. The upgrade processor's ack path advances over a
-        // deferred frame only once refreshUncommittedDeferredRows reports that
+        // deferred frame only once the force-commit traversal reports that
         // nothing is uncommitted; if the watermark still tries to move while
         // deferred rows ARE uncommitted, that path has regressed.
         // Clamp and scream: the client stalls on acks and replays after the

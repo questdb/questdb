@@ -596,11 +596,12 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
         }
 
         @Override
-        public void commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
+        public boolean commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
             Runnable hook = maxRowsCommitHook;
             if (hook != null) {
                 hook.run();
             }
+            return false;
         }
 
         @Override

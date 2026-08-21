@@ -292,9 +292,15 @@ public class QwpTudCache implements QuietCloseable {
         return false;
     }
 
-    public void commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
+    /**
+     * Force-commits tables at the configured row cap and reports committed txns.
+     *
+     * @return whether any surviving table holds uncommitted rows after this pass
+     */
+    public boolean commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
         ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
         Utf8Sequence discardedTableName = null;
+        boolean hasUncommittedRows = false;
         for (int i = 0; i < keys.size(); ) {
             Utf8Sequence tableName = keys.getQuick(i);
             int keyIndex = tableUpdateDetails.keyIndex(tableName);
@@ -333,6 +339,10 @@ public class QwpTudCache implements QuietCloseable {
                 }
                 Misc.free(tud);
             } else {
+                // Inspect the surviving TUD after its possible commit. Do not
+                // short-circuit: the remaining entries still need commits,
+                // committed-txn reporting, and dropped-entry cleanup.
+                hasUncommittedRows |= !tud.isFirstRow();
                 i++;
             }
         }
@@ -341,6 +351,7 @@ public class QwpTudCache implements QuietCloseable {
                     .put("dropped table discarded buffered rows, cannot acknowledge: ")
                     .put(discardedTableName);
         }
+        return hasUncommittedRows;
     }
 
     /**

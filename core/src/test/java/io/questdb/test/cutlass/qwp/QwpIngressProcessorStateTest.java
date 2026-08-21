@@ -552,6 +552,32 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testDeferredAckCoverageReusesForceCommitTraversalResult() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue(state.isOk());
+                state.refreshDeferredAckCoverage();
+
+                Assert.assertEquals(
+                        "the deferred ACK decision must reuse the force-commit traversal result",
+                        0,
+                        fake.hasUncommittedRowsCallCount
+                );
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
     // Both directions matter: a single dirty table must hold the clamp, and only
     // genuinely full coverage may release it. A stub returning false is the
     // data-loss direction.
@@ -6050,6 +6076,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         private long[] maxRowsCommitSeqTxns;
         private String[] maxRowsCommitTableNames;
         private Throwable maxRowsCommitThrow;
+        private int hasUncommittedRowsCallCount;
         private int maxRowsCommitCallCount;
 
         FakeConsumerTudCache(io.questdb.cairo.CairoEngine engine, LineHttpProcessorConfiguration lineConfig) {
@@ -6074,7 +6101,13 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         }
 
         @Override
-        public void commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
+        public boolean hasUncommittedRows() {
+            hasUncommittedRowsCallCount++;
+            return false;
+        }
+
+        @Override
+        public boolean commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
             maxRowsCommitCallCount++;
             if (consumer != null && maxRowsCommitTableNames != null) {
                 for (int i = 0; i < maxRowsCommitTableNames.length; i++) {
@@ -6089,6 +6122,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 maxRowsCommitThrow = null;
                 throw t;
             }
+            return false;
         }
 
         void queueCommit(String[] tableNames, String[] dirNames, long[] seqTxns) {
