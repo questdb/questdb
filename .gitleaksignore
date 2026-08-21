@@ -14,12 +14,23 @@
 # exists, so the push scan of master reports the same finding again and fails
 # that build.
 #
+# A three-part entry still pins a start line, recorded as of the commit that
+# introduced the finding. If a later commit on the branch inserts or deletes
+# lines above it in the same file, the squash commit carries the finding on a
+# different line and the entry stops matching, giving the same green pull
+# request and red master. Nothing warns you, because the scan reads commit diffs
+# and never re-reads the line. Use an entry here only for a line that is done
+# changing; for a false positive that recurs, add a line-independent
+# [[rules.allowlists]] regex to .gitleaks.toml instead. See CONTRIBUTING.md,
+# "Secret scanning".
+#
 # Note that the scan reads each of the branch's commits separately, not the
 # squashed diff. A secret-shaped line added in one commit and removed in a later
 # one still fails the check, and editing the file does not clear it. The scan
-# skips fork pull requests, which do not receive the license secret, and reads
-# only a pull request's first 30 commits; the push scan of master covers what it
-# missed.
+# skips fork pull requests, which do not receive the license secret; reads only
+# a pull request's first 30 commits; and skips merge commits, so a secret
+# introduced by a conflict resolution is not read on the pull request. The push
+# scan of master covers all three.
 #
 # This file previously carried four-part entries from PR #6800. They named
 # commits that never reached master, both files they pointed at have since moved

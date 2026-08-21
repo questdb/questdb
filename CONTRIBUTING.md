@@ -377,26 +377,49 @@ Before opening a PR, please ensure:
 The `Gitleaks` check scans your branch's own commits for credentials. If it
 fails on a real secret, rotate it before doing anything else.
 
-If it is a false positive, the failing job's summary ends with the exact lines
-to add to `.gitleaksignore`, in the commit-independent three-part
-`<file>:<rule-id>:<start-line>` form. Add them and commit them to your branch.
+If it is a false positive, the failing job's summary carries the exact lines to
+add to `.gitleaksignore`, under the heading "What to do with these findings", in
+the commit-independent three-part `<file>:<rule-id>:<start-line>` form. Add them
+and commit them to your branch.
 
 Do not paste the four-part `Fingerprint:` line that gitleaks prints in the job
 log. PRs here are squash-merged, so the commit it names never reaches `master`:
 the entry silences your PR and then fails the push scan of `master`.
 
+A three-part entry still pins a start line, and the scan records that line as of
+the commit that introduced the finding. If a later commit on your branch inserts
+or deletes lines above it in the same file, the squashed commit carries the
+finding on a different line, the entry stops matching, and the push scan of
+`master` fails on a pull request that was green. Nothing warns you — the scan
+reads commit diffs and never re-reads the line. So paste an ignore entry only
+for a line you are done editing. For a false positive that recurs, or one in a
+file you are still changing, add a line-independent allowlist to
+`.gitleaks.toml` instead:
+
+```toml
+[[rules]]
+id = "generic-api-key"
+  [[rules.allowlists]]
+  description = "why this is not a secret"
+  regexTarget = "line"
+  regexes = ['''Sec-WebSocket-Key''']
+```
+
 The check reads each commit separately rather than the squashed diff, so a
 secret-shaped line added in one commit and removed in a later one still fails
 the check.
 
-Two limits are worth knowing, because in both cases the push scan of `master` is
-the first thing that reads the code:
+Three limits are worth knowing, because in all three the push scan of `master`
+is the first thing that reads the code:
 
 - The scan needs a license secret that GitHub withholds from pull requests
   opened from forks. On a fork PR the job skips the scan and reports success
   without reading anything.
 - The action reads only the first 30 commits of a pull request, so on a longer
   branch it never scans commit 31 onwards.
+- The scan skips merge commits. Content that exists only in a merge commit —
+  a conflict resolution, typically — is never read on the pull request, and the
+  squash-merge folds it into the commit that lands on `master`.
 
 ## Branching
 

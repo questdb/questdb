@@ -43,13 +43,24 @@ jobs:
             echo 'branch history, and removing it in a later commit does not undo that.'
             echo
             echo 'Only for a confirmed false positive: add the matching line below to'
-            echo '`.gitleaksignore` and commit it to this branch.'
+            echo '`.gitleaksignore`.'
             echo
             echo '```'
             echo "$fingerprints"
             echo '```'
             echo
-            echo 'Do NOT paste the four-part `Fingerprint:` line from the job log. It names a'
-            echo 'commit that the squash-merge discards, so it silences this pull request and'
-            echo 'then fails the push scan of `master`.'
+            echo 'Each line pins a start line, recorded as of the commit that introduced the'
+            echo 'finding. If a later commit shifts that line, the entry stops matching. For a'
+            echo 'false positive in a file you are still editing, or one that keeps coming'
+            echo 'back, add a line-independent `[[rules.allowlists]]` regex to `.gitleaks.toml`'
+            echo 'instead. See CONTRIBUTING.md, "Secret scanning".'
+            echo
+            if [ "$GITHUB_EVENT_NAME" = 'pull_request' ]; then
+              echo 'Commit the entry to this branch. Do NOT paste the four-part `Fingerprint:`'
+              echo 'line from the job log: it names a commit that the squash-merge discards, so'
+              echo 'it silences this pull request and then fails the push scan of `master`.'
+            else
+              echo 'This build cannot be cleared retroactively -- a re-run scans the same'
+              echo 'commits. An entry committed now takes effect on later scans.'
+            fi
           } | tee -a "$GITHUB_STEP_SUMMARY"
