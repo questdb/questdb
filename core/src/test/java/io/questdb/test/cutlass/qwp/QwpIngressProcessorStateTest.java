@@ -36,11 +36,13 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.client.cutlass.qwp.client.GlobalSymbolDictionary;
 import io.questdb.client.cutlass.qwp.client.QwpBufferWriter;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
+import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
 import io.questdb.cutlass.line.tcp.TableUpdateDetails;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
@@ -5379,6 +5381,77 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The client-side symbol-dictionary recycle feature closes the connection and
+     * re-registers its delta symbol dictionary from id 0 on the reconnect, so that
+     * the whole feature works against every 10.x server without a version check.
+     * That only holds if the server truly starts each connection with an empty
+     * dictionary: {@code deltaStartId == 0} never trips the {@code deltaStartId >
+     * size()} gap check regardless of what {@code connectionSymbolDict} already
+     * holds (0 is never greater than anything), so a stale dictionary surviving
+     * disconnect would NOT surface as an error -- it would silently leave old
+     * entries at ids the fresh delta never touched, inflating the dictionary size
+     * past the new registration. onDisconnected() must therefore reset
+     * {@code connectionSymbolDict} to genuinely empty, and must clear the
+     * connection symbol cache too (it maps client symbol ids to interned table
+     * symbol ids and would otherwise hand the next connection's writer stale
+     * mappings).
+     */
+    @Test
+    public void testOnDisconnectedResetsSymbolDictAndCache() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE qwp_dict_recycle (val SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // First connection registers a fresh delta dict from id 0 and appends rows
+                // through it, populating both the dictionary and the connection symbol cache.
+                sendSymbolDelta(state, "qwp_dict_recycle", new String[]{"aaa", "bbb"}, -1);
+                Assert.assertTrue(state.isOk());
+                Assert.assertEquals(2, connectionSymbolDict(state).size());
+                Assert.assertEquals(
+                        "a delta-mode symbol append must populate the connection symbol cache",
+                        1, symbolCacheTableCount(state));
+
+                state.onDisconnected();
+
+                Assert.assertEquals(
+                        "connectionSymbolDict must reset to empty on disconnect: the client's "
+                                + "reconnect-with-fresh-dictionary recycle relies on every 10.x server "
+                                + "starting the next connection with an empty dictionary",
+                        0, connectionSymbolDict(state).size());
+                Assert.assertEquals(
+                        "the connection symbol cache must be cleared on disconnect, or a reused "
+                                + "state instance hands the next connection's writer stale "
+                                + "clientSymbolId -> tableSymbolId mappings",
+                        0, symbolCacheTableCount(state));
+
+                // Second connection reuses the same state instance, as HttpConnectionContext
+                // does across reconnects, and registers its own fresh dict from id 0.
+                state.of(2, AllowAllSecurityContext.INSTANCE);
+                sendSymbolDelta(state, "qwp_dict_recycle", new String[]{"ccc"}, -1);
+
+                Assert.assertEquals(
+                        "a post-reconnect deltaStartId==0 registration must be accepted as a pure "
+                                + "append, not rejected as a dictionary gap",
+                        QwpIngressProcessorState.Status.OK, state.getStatus());
+                Assert.assertEquals(
+                        "a pure append from id 0 must leave the dictionary sized to exactly the new "
+                                + "delta -- a larger size would mean stale entries from the first "
+                                + "connection survived the disconnect",
+                        1, connectionSymbolDict(state).size());
+                Assert.assertEquals("ccc", connectionSymbolDict(state).getQuick(0));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
     private static void assertReason(String msg, String expected, CharSequence actual) {
         if (expected == null || expected.isEmpty()) {
             Assert.assertEquals(msg, 0, actual.length());
@@ -5722,6 +5795,58 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     default -> throw new UnsupportedOperationException(method.getName());
                 }
         ));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ObjList<String> connectionSymbolDict(QwpIngressProcessorState state) throws Exception {
+        Field f = QwpIngressProcessorState.class.getDeclaredField("connectionSymbolDict");
+        f.setAccessible(true);
+        return (ObjList<String>) f.get(state);
+    }
+
+    /**
+     * Encodes a delta-mode symbol dictionary registration -- a fresh
+     * {@link GlobalSymbolDictionary}, one row per entry in {@code symbols} -- for
+     * {@code tableName} and drives it through {@code state} exactly as a real client
+     * would. {@code confirmedMaxId} is the last id the server already holds ({@code -1}
+     * for a fresh dictionary), so the wire dict-block ships
+     * {@code deltaStartId == confirmedMaxId + 1}.
+     */
+    private static void sendSymbolDelta(
+            QwpIngressProcessorState state,
+            String tableName,
+            String[] symbols,
+            int confirmedMaxId
+    ) {
+        GlobalSymbolDictionary globalDict = new GlobalSymbolDictionary();
+        try (
+                QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                QwpTableBuffer tableBuffer = new QwpTableBuffer(tableName)
+        ) {
+            QwpTableBuffer.ColumnBuffer valueColumn =
+                    tableBuffer.getOrCreateColumn("val", QwpConstants.TYPE_SYMBOL, false);
+            QwpTableBuffer.ColumnBuffer timestampColumn =
+                    tableBuffer.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
+            long ts = 1_000_000_000_000L;
+            for (String symbol : symbols) {
+                int globalId = globalDict.getOrAddSymbol(symbol);
+                valueColumn.addSymbolWithGlobalId(symbol, globalId);
+                timestampColumn.addLong(ts++);
+                tableBuffer.nextRow();
+            }
+
+            int batchMaxId = globalDict.size() - 1;
+            int messageSize = encoder.encodeWithDeltaDict(tableBuffer, globalDict, confirmedMaxId, batchMaxId);
+            long messageAddress = encoder.getBuffer().getBufferPtr();
+            state.addData(messageAddress, messageAddress + messageSize);
+            state.processMessage();
+        }
+    }
+
+    private static int symbolCacheTableCount(QwpIngressProcessorState state) throws Exception {
+        Field f = QwpIngressProcessorState.class.getDeclaredField("symbolCache");
+        f.setAccessible(true);
+        return ((ConnectionSymbolCache) f.get(state)).getTableCount();
     }
 
     private static byte[] wrapQwpPayload(byte[] payload) {
