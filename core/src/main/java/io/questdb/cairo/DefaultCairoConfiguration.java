@@ -548,7 +548,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled() {
-        return false;
+        return true;
     }
 
     @Override

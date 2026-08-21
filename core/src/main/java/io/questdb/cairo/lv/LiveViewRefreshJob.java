@@ -5265,7 +5265,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <ul>
      *     <li>the switch, because what the route changes is not only the read - a key the
      *     correction did not touch keeps its stored row rather than being recomputed from
-     *     the base, and inside the open segment that is the current day's data;</li>
+     *     the base, and inside the open segment that is the current day's data. It defaults
+     *     to true, so an operator who wants a from-base recompute of the whole range above
+     *     the anchor sets it to false;</li>
      *     <li>the open segment's key domain, collected in full by the decomposition;</li>
      *     <li>the pricing, which says a keyed read of this resume's own interval is the
      *     smaller of the two;</li>

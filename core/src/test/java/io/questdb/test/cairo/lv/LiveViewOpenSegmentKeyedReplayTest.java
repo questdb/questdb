@@ -55,7 +55,6 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         // prefer the whole range whatever the key domain. The verdict this case is about is
         // the row comparison, so the setup term is priced at the scale the fixture has.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, "true");
         assertMemoryLeak(() -> {
             createView(seedFourAccountsOverTwoDays(), true);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -102,7 +101,6 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         // and the view still matches a from-base recompute afterwards.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, "true");
         // The identity the publication upserts on. It is a CREATE-time schema property, so
         // it has to be on before the view exists.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
@@ -150,7 +148,6 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         // the ones it wrote. A restart is what reads all of that back.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, "true");
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
         assertMemoryLeak(() -> {
             createView(seedFourAccountsOverTwoDays(), true);
@@ -179,7 +176,6 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         // carry every stored row above the anchor, which is the whole range and no saving.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, "true");
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "false");
         assertMemoryLeak(() -> {
             createView(seedFourAccountsOverTwoDays(), true);
@@ -228,7 +224,6 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         // pricing: the keyed scan it would take needs the posting index, so there is nothing
         // to price and no reason to pay for the wider walk that collects a domain.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, "true");
         assertMemoryLeak(() -> {
             createView(seedFourAccountsOverTwoDays(), false);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {

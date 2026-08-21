@@ -529,7 +529,9 @@ public interface CairoConfiguration {
      * replacement, so it reaches only a view created under
      * {@link #isLiveViewCheckpointRepairSparsePublicationEnabled()}, and it carries the same
      * property change the closed-segment keyed replay does: a key the correction did not
-     * touch keeps its stored row rather than being recomputed from the base.
+     * touch keeps its stored row rather than being recomputed from the base. Inside the
+     * open segment that is the current day's data, which is what an operator takes back by
+     * setting this to false.
      */
     boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled();
 
