@@ -56,6 +56,8 @@ import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
+import java.io.File;
+
 import org.junit.Before;
 import org.junit.Test;
 
@@ -74,6 +76,81 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 10);
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 2);
+    }
+
+
+    /**
+     * Review finding: RENAME COLUMN hard-links a column's parquet-form index
+     * artifacts under the new name and leaves the old-named ones behind for
+     * readers pinned before the rename. Nothing could then reclaim those: the
+     * orphan sweep resolves a file's column BY NAME, the superseded-token purge
+     * builds names from the CURRENT column name, and ColumnPurgeOperator has no
+     * pidx arm. Because the two names are hard links to the same inodes,
+     * purging the new name frees nothing either -- so one rename pinned the
+     * whole covering index of the partition forever.
+     * <p>
+     * The rename now publishes a scoreboard-gated purge under the OLD name.
+     * This asserts the old-named files actually go away once the job runs, and
+     * that the renamed column still answers from its index afterwards.
+     */
+    @Test
+    public void testRenameSchedulesThePurgeOfTheOldNamedParquetIndexArtifacts() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_ren (ts TIMESTAMP, sym SYMBOL, price DOUBLE)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t_ren SELECT" +
+                    " dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP)," +
+                    " 'k' || (x % 3), x::DOUBLE FROM long_sequence(300)");
+            drainWalQueue();
+            execute("ALTER TABLE t_ren CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE t_ren ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final File partDir = findPartitionDir("t_ren", "2024-01-01");
+            assertTrue("the fixture must seal to the parquet form",
+                    countMatching(partDir, "sym.pidx.") > 0);
+
+            execute("ALTER TABLE t_ren RENAME COLUMN sym TO sym_new");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            assertTrue("the rename must carry the pair under the new name",
+                    countMatching(partDir, "sym_new.pidx.") > 0);
+
+            try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                runPurgeJob(job, 3);
+            }
+
+            assertEquals(
+                    "the old-named artifacts must be reclaimed once no reader can reach them;"
+                            + " nothing else in the system can free them",
+                    0,
+                    countMatching(partDir, "sym.pidx."));
+            assertTrue("the renamed column's artifacts must survive the purge",
+                    countMatching(partDir, "sym_new.pidx.") > 0);
+
+            sink.clear();
+            printSql("select count() from t_ren where sym_new = 'k1'");
+            assertTrue("the renamed column must still answer from its index [" + sink + ']',
+                    !sink.toString().contains("\n0\n"));
+        });
+    }
+
+    private static int countMatching(File dir, String prefix) {
+        final File[] files = dir.listFiles((d, n) -> n.startsWith(prefix));
+        return files == null ? 0 : files.length;
+    }
+
+    private File findPartitionDir(String table, String partition) {
+        final String dbRoot = engine.getConfiguration().getDbRoot();
+        final File tableDir = new File(dbRoot, engine.verifyTableName(table).getDirName());
+        final File[] candidates = tableDir.listFiles((d, n) -> n.startsWith(partition));
+        assertNotNull("no partition directory for " + partition, candidates);
+        assertTrue("no partition directory for " + partition, candidates.length > 0);
+        return candidates[0];
     }
 
     @Test

@@ -7938,7 +7938,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // builds the artifact path from the column's CURRENT name --
                 // without this every indexed read of the partition fails with
                 // "could not read the covering index _im".
-                linkParquetIndexArtifacts(plen, columnName, newName);
+                linkParquetIndexArtifacts(plen, columnName, newName, columnNameTxn, partitionTimestamp, partitionNameTxn);
             } else {
                 // BITMAP: sealTxn is unused, single .v file.
                 linkFile(ff,
@@ -7961,12 +7961,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * an older footer, whose token names an older {@code indexTxn}. Linking only
      * the head would break exactly those readers.
      * <p>
-     * The originals are deliberately left in place. A reader that took its
-     * snapshot before the rename still resolves the old name, and leaving a file
-     * behind is the recoverable direction -- unlinking one a reader still needs
-     * is not.
+     * The originals are not unlinked here, because a reader that took its
+     * snapshot before the rename still resolves the OLD name. They are instead
+     * handed to the scoreboard-gated posting-seal purge under the old name, with
+     * an upper bound of the txn the rename becomes visible at, so they are
+     * reclaimed once no reader can still reach them.
+     * <p>
+     * Publishing the purge is not optional bookkeeping. Nothing else can reclaim
+     * them: the orphan sweep resolves a file's column BY NAME and no longer
+     * finds one, {@code purgeSupersededParquetIndexArtifacts} builds names from
+     * {@code metadata.getColumnName()} which is now the NEW name, and
+     * {@code ColumnPurgeOperator} has no {@code pidx} arm. They are hard links
+     * to the same inodes as the new-named copies, so purging the new name later
+     * frees nothing either -- without this, one RENAME COLUMN would pin the
+     * whole covering index of every parquet partition for the life of the
+     * directory, and DROP INDEX would not release it.
      */
-    private void linkParquetIndexArtifacts(int plen, CharSequence columnName, CharSequence newName) {
+    private void linkParquetIndexArtifacts(
+            int plen,
+            CharSequence columnName,
+            CharSequence newName,
+            long columnNameTxn,
+            long partitionTimestamp,
+            long partitionNameTxn
+    ) {
         final ObjList<String> artifacts = new ObjList<>();
         final StringSink fileName = Misc.getThreadLocalSink();
         final StringSink prefix = new StringSink();
@@ -7982,6 +8000,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 artifacts.add(Chars.toString(fileName));
             }
         });
+        final LongList orphanIndexTxns = new LongList();
         for (int i = 0, n = artifacts.size(); i < n; i++) {
             final CharSequence artifact = artifacts.getQuick(i);
             // Everything after "<col>.pidx." -- the index txn and the suffix.
@@ -7989,9 +8008,52 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(plen).concat(artifact).$();
             other.trimTo(plen).concat(newName).put(ParquetIndexSeal.PIDX_INFIX).put(tail).$();
             linkFile(ff, path.$(), other.$());
+            // Each generation appears twice, as .parquet and as ._im, and one
+            // purge task retires both -- so record the index txn once.
+            final long indexTxn = parseLeadingIndexTxn(tail);
+            if (indexTxn > -1 && orphanIndexTxns.indexOf(indexTxn) < 0) {
+                orphanIndexTxns.add(indexTxn);
+            }
         }
         path.trimTo(plen);
         other.trimTo(plen);
+        if (orphanIndexTxns.size() > 0) {
+            // Bound is the txn the rename becomes visible at, not the current
+            // one: a reader pinned at or below the current txn still resolves
+            // the old name. The publisher keeps the task deferred until that
+            // bound actually commits.
+            publishAbandonedPostingSealPurges(
+                    columnName,
+                    columnNameTxn,
+                    partitionTimestamp,
+                    partitionNameTxn,
+                    PostingSealPurgeTask.ARTIFACT_FORM_PARQUET,
+                    txWriter.getTxn(),
+                    txWriter.getTxn() + 1,
+                    orphanIndexTxns
+            );
+        }
+    }
+
+    /**
+     * Parses the {@code <indexTxn>} that opens {@code <indexTxn>.parquet} or
+     * {@code <indexTxn>._im}. Returns -1 when it does not parse, which makes the
+     * caller skip the purge for that file rather than guess a txn -- leaving a
+     * file behind is the recoverable direction, unlinking the wrong one is not.
+     */
+    private static long parseLeadingIndexTxn(CharSequence tail) {
+        int end = 0;
+        while (end < tail.length() && tail.charAt(end) != '.') {
+            end++;
+        }
+        if (end == 0 || end == tail.length()) {
+            return -1;
+        }
+        try {
+            return Numbers.parseLong(tail, 0, end);
+        } catch (NumericException e) {
+            return -1;
+        }
     }
 
     private void hardLinkAndPurgeSymbolTableFiles(
