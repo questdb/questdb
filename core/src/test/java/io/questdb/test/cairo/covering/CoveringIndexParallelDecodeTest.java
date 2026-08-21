@@ -1628,7 +1628,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                         engine.execute("INSERT INTO ref " + gen, sqlExecutionContext);
                         engine.releaseAllWriters();
 
-                        // Confirm the projection-with-residual runs Async Filter over
+                        // Confirm the projection-with-residual runs Async JIT Filter over
                         // the covering scan (the record fast-path), then equal the
                         // non-indexed twin -- both the projection (record path) and
                         // the aggregate (sum over the same residual).
@@ -1639,8 +1639,8 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                                 sink
                         );
                         final String plan = sink.toString();
-                        assertTrue("residual projection must run Async Filter over CoveringIndex; plan=\n" + plan,
-                                plan.contains("Async Filter") && plan.contains("CoveringIndex on: sym"));
+                        assertTrue("residual projection must run Async JIT Filter over CoveringIndex; plan=\n" + plan,
+                                plan.contains("Async JIT Filter") && plan.contains("CoveringIndex on: sym"));
 
                         for (String sym : new String[]{"S0", "S3", "S7"}) {
                             final String proj = "SELECT price FROM %s WHERE sym = '" + sym + "' AND price > 500 ORDER BY price";

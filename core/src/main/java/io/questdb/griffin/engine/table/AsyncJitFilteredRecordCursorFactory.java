@@ -338,7 +338,14 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
         try {
             final boolean isParquetFrame = task.isParquetFrame();
-            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, isParquetFrame, task.isCountOnly());
+            final boolean isSingleKeyCoveredFrame = task.isSingleKeyCoveredFrame();
+            final boolean isLateMaterializationCandidate = isParquetFrame || isSingleKeyCoveredFrame;
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(
+                    filterId,
+                    isParquetFrame,
+                    isSingleKeyCoveredFrame,
+                    task.isCountOnly()
+            );
 
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {
@@ -370,7 +377,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                         }
                     }
 
-                    if (isParquetFrame) {
+                    if (isLateMaterializationCandidate) {
                         atom.getSelectivityStats(filterId).update(rows.size(), frameRowCount);
                     }
                     if (useLateMaterialization && task.populateRemainingColumns(atom.getLateMaterializationSkipColumnIndexes(), rows, true)) {
@@ -408,7 +415,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 );
 
                 rows.setPos(filteredRowCount);
-                if (isParquetFrame) {
+                if (isLateMaterializationCandidate) {
                     atom.getSelectivityStats(filterId).update(filteredRowCount, frameRowCount);
                 }
                 if (useLateMaterialization && task.populateRemainingColumns(atom.getLateMaterializationSkipColumnIndexes(), rows, true)) {
