@@ -27,7 +27,6 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
-import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -39,11 +38,10 @@ import org.junit.Test;
  * <p>
  * A per-segment repair bounds what a deep correction reads and rewrites, but the bound is
  * the anchor period's own base rows - a whole day of them under {@code ANCHOR DAILY},
- * however few rows the correction carried. Both loops that drive one, the inline
- * per-segment repair and the backfill pass, own a single pinned base snapshot across every
- * segment they take, which is why neither could let a replay park: a parked repair takes
- * the snapshot with it and the rest of the loop would have nothing to run against. So the
- * loop position parks too.
+ * however few rows the correction carried. The loop that drives one owns a single pinned
+ * base snapshot across every segment it takes, which is why it could not let a replay park:
+ * a parked repair takes the snapshot with it and the rest of the loop would have nothing to
+ * run against. So the loop position parks too.
  * <p>
  * Every case here holds two things at once. The from-base recompute oracle says the output
  * converged, and the counters say <em>how</em>: the replay parked at least once, and the
@@ -52,55 +50,13 @@ import org.junit.Test;
  * unconsumed with its segments already repaired, and the next drain would re-classify the
  * range and repair every one of them again, converging on the same rows for twice the work.
  * <p>
- * The view is the reported customer shape the per-segment and backfill cases use: an
+ * The view is the reported customer shape the per-segment cases use: an
  * anchored WINDOW carrying an unbounded cumulative sum and count per account, over a base
  * whose timestamps span several anchor days so closed segments exist at all. The days are
  * seeded several rows deep on purpose - a one-row replay budget only spreads a repair
  * across turns if the segment holds more than one row to replay.
  */
 public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
-
-    @Test
-    public void testAPassSegmentYieldsAndTheResumingTurnDrainsTheRest() throws Exception {
-        // The backfill pass takes its work off a durable set rather than off a queue, so
-        // what parks with a pass segment is the entry in flight - and the resuming turn has
-        // to clear exactly that one, then drain what is behind it in the same turn.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
-        // A pass spread over many turns still charges its own duration budget from the
-        // moment it began, so give the drain room to reach its second segment rather than
-        // measuring the budget instead of the yield.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_BACKFILL_MAX_DURATION, Micros.HOUR_MICROS);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_BACKFILL_DEFERRAL_ENABLED, "true");
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_BACKFILL_INTERVAL, Micros.HOUR_MICROS);
-        assertMemoryLeak(() -> {
-            createView(seedThreeDays());
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveRefreshToQuiescence(job);
-                commit(row(5, 1, "acct-1"), job);
-                // Two closed segments deferred by one turn, so the pass has a backlog to
-                // drain rather than a single entry.
-                commit(row(3, 5, "acct-1") + ", " + row(2, 5, "acct-2"), job);
-                Assert.assertEquals(2, viewInstance().getPendingRepairsSegments());
-                Assert.assertEquals(0, job.backfillPassSegmentCountForTest());
-
-                setCurrentMicros(currentMicros + 2 * Micros.HOUR_MICROS);
-                driveRefreshToQuiescence(job);
-
-                Assert.assertTrue(
-                        "a one-row replay budget must park a pass segment on its turn budget",
-                        job.segmentYieldCountForTest() > 0
-                );
-                Assert.assertEquals(
-                        "the pass must repair each pending segment exactly once across the turns it takes",
-                        2,
-                        job.backfillPassSegmentCountForTest()
-                );
-                Assert.assertEquals(0, viewInstance().getPendingRepairsSegments());
-                assertViewMatchesRecompute();
-            }
-        });
-    }
 
     @Test
     public void testASegmentRepairYieldsOnItsTurnBudgetAndResumes() throws Exception {

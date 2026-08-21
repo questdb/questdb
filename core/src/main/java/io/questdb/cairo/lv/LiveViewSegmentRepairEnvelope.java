@@ -32,24 +32,25 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Whether a live view's SQL admits the two halves of a deferred, coalesced repair of its
- * closed anchor segments, and when it does not, which gate stands in the way.
+ * Whether a live view's SQL admits the two halves of a scoped, keyed repair of its closed
+ * anchor segments, and when it does not, which gate stands in the way.
  *
- * <h2>What this decides, and what it does not</h2>
- * Nothing. Both answers are diagnostics: the refresh path takes the same route it always
- * did, and {@code live_views()} reports these so a view whose latency cliff is still
- * invisible can be told apart from one that would never take the cheaper route anyway.
- * The gates are the ones a deferred repair would have to hold, written down once so the
- * measurement pass and any later executor read the same predicate.
+ * <h2>What this decides</h2>
+ * The segment-scope gate decides: {@code repairChangeSetSegments} reads it, and a view it
+ * turns down keeps the union range. The keyed-scan gate is the static half of a per-segment
+ * verdict the cost model settles per repair. {@code live_views()} reports both, so a view
+ * whose latency cliff is still invisible can be told apart from one that would never take
+ * the cheaper route anyway. Either way the predicate is written down once, so every caller
+ * reads the same rule.
  *
  * <h2>The two gates</h2>
  * <ul>
- *     <li><b>Deferral.</b> A correction landing in a closed anchor segment may be recorded
- *     and repaired later, off the refresh's critical path, only when every stateful
- *     function the view carries is reset at the segment boundary. Then a row in a closed
- *     segment cannot influence the current segment's output, and leaving it unrepaired for
- *     one pass interval leaves the runtime correct. A bounded ROWS or RANGE function
- *     declared beside the anchored one keeps sliding across that boundary and denies it.</li>
+ *     <li><b>Segment scope.</b> A correction landing in a closed anchor segment may be
+ *     repaired over that segment alone only when every stateful function the view carries
+ *     is reset at the segment boundary. Then a row in a closed segment cannot influence any
+ *     other segment's output, so the segments are independent and each can be replaced on
+ *     its own. A bounded ROWS or RANGE function declared beside the anchored one keeps
+ *     sliding across that boundary and denies it.</li>
  *     <li><b>Keyed scan.</b> Inside one such segment, only the keys the late rows carry
  *     have changed output, so the replay should follow those keys' rows rather than every
  *     row of the segment. That needs a base scan an index can localize:
@@ -66,15 +67,15 @@ import org.jetbrains.annotations.Nullable;
  * {@link LiveViewCheckpointRepairPlan}, which answers them against one correction rather
  * than against a definition.
  */
-public final class LiveViewBackfillEnvelope {
+public final class LiveViewSegmentRepairEnvelope {
     /**
      * The view's SQL admits this gate.
      */
     public static final int GATE_AVAILABLE = 0;
     /**
      * A bounded ROWS or RANGE function is declared beside the anchored one. Its frame
-     * slides across the anchor boundary, so a row in a closed segment still changes the
-     * current segment's output and cannot be deferred.
+     * slides across the anchor boundary, so a row in a closed segment still changes a later
+     * segment's output and that segment cannot be repaired on its own.
      */
     public static final int GATE_BOUNDED_FRAME = 3;
     /**
@@ -117,7 +118,7 @@ public final class LiveViewBackfillEnvelope {
      */
     public static final int GATE_MIXED_PARTITION_KEYS = 10;
     /**
-     * The view carries no anchored window, so it has no closed segment to defer.
+     * The view carries no anchored window, so it has no closed segment to scope a repair to.
      */
     public static final int GATE_NO_ANCHOR_PLAN = 2;
     /**
@@ -131,21 +132,21 @@ public final class LiveViewBackfillEnvelope {
      */
     public static final int GATE_UNKNOWN = -1;
 
-    private LiveViewBackfillEnvelope() {
+    private LiveViewSegmentRepairEnvelope() {
     }
 
     /**
-     * Whether a correction landing in a closed anchor segment could be recorded and
-     * repaired off the refresh's critical path, read off the compiled factory alone.
+     * Whether a correction landing in a closed anchor segment could be repaired over that
+     * segment alone, read off the compiled factory alone.
      * <p>
      * The dependency question is asked through
      * {@link LiveViewCheckpointFunctionCompiler#isDependencyComplete} rather than restated,
      * so this cannot drift from the compiler. Note that a stateless function is covered by
      * the RANGE arm at the zero width its empty extent proves, so a view carrying one still
-     * needs a RANGE plan - and still defers, because a frame of zero width does not cross
+     * needs a RANGE plan - and still scopes, because a frame of zero width does not cross
      * the anchor boundary.
      */
-    public static int deferralGate(
+    public static int segmentScopeGate(
             @Nullable ObjList<WindowFunction> windowFunctions,
             boolean hasRangePlan,
             boolean hasRowsPlan,

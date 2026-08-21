@@ -28,27 +28,26 @@ import io.questdb.cairo.lv.LiveViewRefreshJob;
 import org.junit.Test;
 
 /**
- * What {@code live_views().checkpoint_backfill_gate} and
- * {@code checkpoint_backfill_key_gate} report for each shape of view.
+ * What {@code live_views().checkpoint_segment_repair_gate} and
+ * {@code checkpoint_keyed_scan_gate} report for each shape of view.
  * <p>
- * Both columns are static diagnostics: they describe what a view's SQL would admit of a
- * deferred, coalesced repair of its closed anchor segments, and neither changes what any
- * repair does today. The cases below are one per gate, because the point of the columns is
- * that an operator can tell which one stands in the way - "not available" without a reason
- * names nothing to act on.
+ * Both columns describe the view's SQL rather than any repair: what a scoped, keyed repair
+ * of its closed anchor segments would admit. The cases below are one per gate, because the
+ * point of the columns is that an operator can tell which one stands in the way - "not
+ * available" without a reason names nothing to act on.
  * <p>
  * Every case asserts NULL before the view compiles its SELECT as well. "Not known yet" is a
  * different statement about a view than "denied", and the two must not be reported alike:
  * a view that has never refreshed would otherwise read as one whose SQL was rejected.
  */
-public class LiveViewBackfillEnvelopeTest extends AbstractLiveViewTest {
+public class LiveViewSegmentRepairEnvelopeTest extends AbstractLiveViewTest {
 
     @Test
-    public void testABoundedFrameBesideTheAnchorDeniesDeferral() throws Exception {
+    public void testABoundedFrameBesideTheAnchorDeniesTheSegmentScope() throws Exception {
         // The frame of a bounded ROWS window keeps sliding across the anchor boundary, so a
-        // row in a closed segment still changes the current segment's output. Deferring its
-        // repair would leave the runtime wrong, which is why the gate is the same one that
-        // denies a keyed replay.
+        // row in a closed segment still changes a later segment's output. Repairing that
+        // segment on its own would leave the runtime wrong, which is why the gate is the
+        // same one that denies a keyed replay.
         assertMemoryLeak(() -> {
             createBase("symbol index capacity 4");
             execute("create live view lv flush every 100ms start from beginning as "
@@ -64,7 +63,7 @@ public class LiveViewBackfillEnvelopeTest extends AbstractLiveViewTest {
     public void testACompoundKeyDemotesTheKeyedScan() throws Exception {
         // The posting index names one column's values. A second partition column leaves the
         // segment on a whole-segment replay, which costs the same write and only a larger
-        // read - so deferral itself is untouched.
+        // read - so the segment scope itself is untouched.
         assertMemoryLeak(() -> {
             execute("create table tx (created_at timestamp, cod_acct_no symbol index capacity 4, "
                     + "branch symbol, amt_txn double) timestamp(created_at) partition by hour wal");
@@ -111,7 +110,7 @@ public class LiveViewBackfillEnvelopeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testAnUnanchoredViewHasNoSegmentToDefer() throws Exception {
+    public void testAnUnanchoredViewHasNoSegmentToScopeTo() throws Exception {
         // Without an anchored window there is no closed segment, so neither half describes
         // anything. The dependency gate fires first: a bounded ROWS view carries a ROWS plan
         // and no anchor plan, so the anchored arm covers nothing.
@@ -167,11 +166,11 @@ public class LiveViewBackfillEnvelopeTest extends AbstractLiveViewTest {
      * assertion runs first, on the same view, because NULL and a denial are different
      * answers and only the ordering proves the column reports both.
      */
-    private void assertGates(String deferralGate, String keyedScanGate) throws Exception {
-        assertQuery("SELECT checkpoint_backfill_gate, checkpoint_backfill_key_gate FROM live_views()")
+    private void assertGates(String segmentScopeGate, String keyedScanGate) throws Exception {
+        assertQuery("SELECT checkpoint_segment_repair_gate, checkpoint_keyed_scan_gate FROM live_views()")
                 .noLeakCheck()
                 .noRandomAccess()
-                .returns("checkpoint_backfill_gate\tcheckpoint_backfill_key_gate\n" +
+                .returns("checkpoint_segment_repair_gate\tcheckpoint_keyed_scan_gate\n" +
                         "\t\n");
 
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -179,11 +178,11 @@ public class LiveViewBackfillEnvelopeTest extends AbstractLiveViewTest {
             driveRefreshToQuiescence(job);
         }
 
-        assertQuery("SELECT checkpoint_backfill_gate, checkpoint_backfill_key_gate FROM live_views()")
+        assertQuery("SELECT checkpoint_segment_repair_gate, checkpoint_keyed_scan_gate FROM live_views()")
                 .noLeakCheck()
                 .noRandomAccess()
-                .returns("checkpoint_backfill_gate\tcheckpoint_backfill_key_gate\n" +
-                        deferralGate + "\t" + keyedScanGate + "\n");
+                .returns("checkpoint_segment_repair_gate\tcheckpoint_keyed_scan_gate\n" +
+                        segmentScopeGate + "\t" + keyedScanGate + "\n");
     }
 
     private void createAnchoredView() throws Exception {

@@ -368,12 +368,12 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
 
     /**
      * @return where the multi-segment loop that started this repair had got to: the
-     * segments it has not reached, the coordinates they are planned against, and - for the
-     * inline loop - the residual it still owes once they are done. Both loops that drive a
-     * segment repair own one pinned base snapshot across every segment they take, so a
-     * replay that parks parks the rest of the loop with it, and the turn that resumes the
-     * replay is the turn that finishes the loop. {@link LiveViewCheckpointSegmentLoop#KIND_NONE}
-     * for a repair that is not part of one
+     * segments it has not reached, the coordinates they are planned against, and the
+     * residual it still owes once they are done. The loop owns one pinned base snapshot
+     * across every segment it takes, so a replay that parks parks the rest of the loop with
+     * it, and the turn that resumes the replay is the turn that finishes the loop.
+     * {@link LiveViewCheckpointSegmentLoop#isOpen()} is false for a repair that is not part
+     * of one
      */
     public LiveViewCheckpointSegmentLoop getSegmentLoop() {
         return segmentLoop;

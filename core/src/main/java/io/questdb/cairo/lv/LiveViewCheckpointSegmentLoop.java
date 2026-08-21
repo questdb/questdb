@@ -35,24 +35,23 @@ import org.jetbrains.annotations.Nullable;
  * Where a multi-segment out-of-order repair had got to when one of its segments parked on
  * the refresh turn's budget.
  * <p>
- * Two loops repair anchor segments one at a time: the inline per-segment repair, which
- * walks the closed segments a change set decomposed into, and the backfill pass, which
- * drains the durable pending-repair set oldest first. Both own <b>one</b> pinned base
- * snapshot across every segment they take, and the snapshot cannot be reopened - QuestDB
- * exposes no as-of reader - so a segment replay that stops half-way has to hand the
- * snapshot to the repair that continues it, and the rest of the loop has to travel with
- * it. That is what this carries: everything the resuming turn needs to finish the parked
- * segment's successors without re-planning them, re-reading the base range they came from,
- * or repairing the segments the loop already published a second time.
+ * The per-segment repair walks the closed segments a change set decomposed into, one at a
+ * time, and owns <b>one</b> pinned base snapshot across every segment it takes. The
+ * snapshot cannot be reopened - QuestDB exposes no as-of reader - so a segment replay that
+ * stops half-way has to hand the snapshot to the repair that continues it, and the rest of
+ * the loop has to travel with it. That is what this carries: everything the resuming turn
+ * needs to finish the parked segment's successors without re-planning them, re-reading the
+ * base range they came from, or repairing the segments the loop already published a second
+ * time.
  * <p>
  * It holds no resource. The pinned reader, the uncommitted replacement and the staged root
  * versions belong to {@link LiveViewCheckpointRepairSession}, which owns one of these for
  * the same reason it owns those: the loop position is meaningless without the snapshot the
  * remaining segments are planned against.
  *
- * <h2>What each loop puts in it</h2>
- * The change-set loop queues the segments it has not reached, plus the residual bounds it
- * still owes the ordinary plan once they are done - the residual is the correction the
+ * <h2>What the loop puts in it</h2>
+ * The loop queues the segments it has not reached, plus the residual bounds it still owes
+ * the ordinary plan once they are done - the residual is the correction the
  * runtime is still standing in, and a turn that repaired the closed segments and dropped
  * it would leave the change unconsumed and re-repair every one of them on the next drain.
  * <p>
@@ -66,28 +65,8 @@ import org.jetbrains.annotations.Nullable;
  * a keyed replay never parks, so the segments behind a park are the ones most likely to be
  * keyed. {@code Q} is a per-segment coordinate like the bounds beside it, and it travels
  * for the same reason they do.
- * <p>
- * The backfill pass queues nothing: its work list is the durable pending set, which
- * outlives any number of turns. What it records instead is the segment in flight, so the
- * resuming turn clears exactly the entry whose replacement applied and no other, and the
- * moment the pass began, so a pass whose first segment took several turns is still bounded
- * by {@code cairo.live.view.checkpoint.backfill.max.duration} rather than starting its
- * budget over.
  */
 public final class LiveViewCheckpointSegmentLoop {
-    /**
-     * The backfill pass draining the durable pending-repair set.
-     */
-    public static final int KIND_BACKFILL_PASS = 2;
-    /**
-     * The inline loop over the closed anchor segments one change set decomposed into.
-     */
-    public static final int KIND_CHANGE_SET = 1;
-    /**
-     * No loop: a repair that stands on its own, which is every union-range repair and the
-     * residual of a decomposed one.
-     */
-    public static final int KIND_NONE = 0;
     // segmentStart, minTs, maxTs, keySetIndex, hasNullKey per queued entry, oldest first -
     // the order a repair has to take them in, because a later segment's cumulative row
     // positions depend on how many rows the earlier ones added. keySetIndex is -1 for a
@@ -105,8 +84,7 @@ public final class LiveViewCheckpointSegmentLoop {
     private long holdSeqTxn = Numbers.LONG_NULL;
     private int inFlightKeySetIndex = -1;
     private long inFlightSegmentStart = Numbers.LONG_NULL;
-    private int kind = KIND_NONE;
-    private long passStartUs;
+    private boolean isOpen;
     private long residualAdvanceTo = Numbers.LONG_NULL;
     private boolean residualInsertOnly;
     private long residualMaxTs = Numbers.LONG_NULL;
@@ -154,7 +132,7 @@ public final class LiveViewCheckpointSegmentLoop {
         for (int i = 0, n = keySets.size(); i < n; i++) {
             keySets.getQuick(i).clear();
         }
-        kind = KIND_NONE;
+        isOpen = false;
         inFlightKeySetIndex = -1;
         hasInFlightNullKey = false;
         inFlightSegmentStart = Numbers.LONG_NULL;
@@ -167,7 +145,6 @@ public final class LiveViewCheckpointSegmentLoop {
         residualMaxTs = Numbers.LONG_NULL;
         residualAdvanceTo = Numbers.LONG_NULL;
         residualInsertOnly = false;
-        passStartUs = 0;
         segmentsRepaired = 0;
     }
 
@@ -183,7 +160,7 @@ public final class LiveViewCheckpointSegmentLoop {
         for (int i = 0, n = src.keySets.size(); i < n; i++) {
             keySetAt(i).addAll(src.keySets.getQuick(i));
         }
-        kind = src.kind;
+        isOpen = src.isOpen;
         inFlightKeySetIndex = src.inFlightKeySetIndex;
         hasInFlightNullKey = src.hasInFlightNullKey;
         inFlightSegmentStart = src.inFlightSegmentStart;
@@ -196,7 +173,6 @@ public final class LiveViewCheckpointSegmentLoop {
         residualMaxTs = src.residualMaxTs;
         residualAdvanceTo = src.residualAdvanceTo;
         residualInsertOnly = src.residualInsertOnly;
-        passStartUs = src.passStartUs;
         segmentsRepaired = src.segmentsRepaired;
     }
 
@@ -214,7 +190,7 @@ public final class LiveViewCheckpointSegmentLoop {
      * @return the {@code seqTxn} the <b>last</b> queued segment commits at, or
      * {@link Numbers#LONG_NULL} when no segment of this loop may advance the watermark.
      * Only the repair that finishes the whole change set advances it; a loop that still
-     * owes a residual, and every backfill pass, leaves the watermark where it is
+     * owes a residual leaves the watermark where it is
      */
     public long getFinalSeqTxn() {
         return finalSeqTxn;
@@ -240,27 +216,10 @@ public final class LiveViewCheckpointSegmentLoop {
 
     /**
      * @return the inclusive start of the segment whose replay parked, or
-     * {@link Numbers#LONG_NULL} when the loop parked between segments. The backfill pass
-     * reads it to clear exactly the pending entry whose replacement applied
+     * {@link Numbers#LONG_NULL} when the loop parked between segments
      */
     public long getInFlightSegmentStart() {
         return inFlightSegmentStart;
-    }
-
-    /**
-     * @return which loop parked: {@link #KIND_CHANGE_SET}, {@link #KIND_BACKFILL_PASS}, or
-     * {@link #KIND_NONE} for a repair that is not part of one
-     */
-    public int getKind() {
-        return kind;
-    }
-
-    /**
-     * @return the microsecond clock reading the backfill pass started at, so the pass's
-     * duration budget bounds the pass rather than restarting with every turn it takes
-     */
-    public long getPassStartUs() {
-        return passStartUs;
     }
 
     /**
@@ -309,8 +268,7 @@ public final class LiveViewCheckpointSegmentLoop {
 
     /**
      * @return how many segments this loop has already repaired and published across every
-     * turn it has taken. Diagnostic, and what a resumed backfill pass charges its duration
-     * budget against
+     * turn it has taken
      */
     public int getSegmentsRepaired() {
         return segmentsRepaired;
@@ -341,23 +299,12 @@ public final class LiveViewCheckpointSegmentLoop {
     }
 
     /**
-     * Opens the loop for the backfill pass. The pass queues no segment - the durable
-     * pending set is its work list, and it outlives any number of turns.
+     * @return whether this position belongs to a segment loop at all. False for a repair
+     * that stands on its own, which is every union-range repair and the residual of a
+     * decomposed one.
      */
-    public void ofBackfillPass(
-            long viewLowerBoundTimestamp,
-            long commitSeqTxn,
-            long durableOutputMaxTs,
-            long runtimeFrontierTs,
-            long passStartUs
-    ) {
-        clear();
-        this.kind = KIND_BACKFILL_PASS;
-        this.viewLowerBoundTimestamp = viewLowerBoundTimestamp;
-        this.holdSeqTxn = commitSeqTxn;
-        this.durableOutputMaxTs = durableOutputMaxTs;
-        this.runtimeFrontierTs = runtimeFrontierTs;
-        this.passStartUs = passStartUs;
+    public boolean isOpen() {
+        return isOpen;
     }
 
     /**
@@ -378,7 +325,7 @@ public final class LiveViewCheckpointSegmentLoop {
             long residualAdvanceTo
     ) {
         clear();
-        this.kind = KIND_CHANGE_SET;
+        this.isOpen = true;
         this.viewLowerBoundTimestamp = viewLowerBoundTimestamp;
         this.holdSeqTxn = preRepairSeqTxn;
         this.finalSeqTxn = finalSeqTxn;
@@ -411,8 +358,8 @@ public final class LiveViewCheckpointSegmentLoop {
     }
 
     /**
-     * Records that the segment in flight published, which is the moment its pending entry
-     * may be cleared and the loop may move on.
+     * Records that the segment in flight published, which is the moment the loop may move
+     * on to the next one.
      */
     public void segmentRepaired() {
         inFlightSegmentStart = Numbers.LONG_NULL;
@@ -422,19 +369,6 @@ public final class LiveViewCheckpointSegmentLoop {
         }
         hasInFlightNullKey = false;
         segmentsRepaired++;
-    }
-
-    /**
-     * Names the segment the backfill pass is repairing. The pass takes its work off the
-     * durable set rather than off the queue, so it has nothing to remove and only the
-     * in-flight identity to record.
-     */
-    public void segmentStarted(long segmentStart) {
-        inFlightSegmentStart = segmentStart;
-        // The durable pending set carries no key domain, so a pass repairs every segment
-        // whole. Carrying Q into that set is a format bump the pass does not yet own.
-        inFlightKeySetIndex = -1;
-        hasInFlightNullKey = false;
     }
 
     /**

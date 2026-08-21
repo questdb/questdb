@@ -212,10 +212,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // The change set stays on its union range: the caller plans it exactly as it did
     // before the decomposition existed.
     private static final int SEGMENT_REPAIR_NOT_TAKEN = 0;
-    // Every closed segment the change set touched went into the durable pending-repair
-    // set and none of them was repaired, and the change set held nothing above them. The
-    // caller owes the watermark advance the deferred turn otherwise never gets.
-    private static final int SEGMENT_REPAIR_PENDING = 4;
     // The closed segments are repaired; what is left is the residual, which the caller
     // plans from the decomposition's own bounds.
     private static final int SEGMENT_REPAIR_RESIDUAL = 1;
@@ -229,20 +225,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private static final int SEGMENT_STEP_DONE = 0;
     // The plan refused the segment. Whatever the loop has already published stands; the
     // caller neither widens the range to reach this one nor advances anything over it.
-    /**
-     * The pass drained what it could and owes nothing further this turn.
-     */
-    private static final int DRAIN_PASS_COMPLETE = 0;
-    /**
-     * The oldest pending segment could not be planned, and no later pass can plan it
-     * either: the entry names a segment whose repair the plan declines on a structural
-     * ground. See {@link #drainPendingRepairs}.
-     */
-    private static final int DRAIN_PASS_DECLINED = 2;
-    /**
-     * One segment's replay parked on the turn budget and owns the pinned reader.
-     */
-    private static final int DRAIN_PASS_SUSPENDED = 1;
     private static final int SEGMENT_STEP_DECLINED = 1;
     // The replay parked on the refresh turn's budget with the rest of the loop, and owns
     // the pinned reader until a later turn finishes it.
@@ -251,10 +233,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // segment may read coordinates off a table that does not hold it, so the loop stops.
     private static final int SEGMENT_STEP_UNAPPLIED = 3;
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
-    // Path scratch the backfill pass and the pending-repair set build their checkpoint
-    // directory into. Kept separate from `path`, which the watermark advance and the
-    // state persist below both hold across the same calls.
-    private final Path backfillPath = new Path();
     private final AnchorDispatchingCursor anchorDispatchingCursor = new AnchorDispatchingCursor();
     // Reusable {minTs, maxTs} out-pair from computeApplyAheadBounds. Worker-owned;
     // rewritten in full on every call, read out immediately by planO3Repair.
@@ -317,11 +295,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final PageFrameMemoryPool memoryPool;
     private final Path path = new Path();
     private final LiveViewRefreshTask refreshTask = new LiveViewRefreshTask();
-    // Staging copy of one view's pending-repair set. Every mutation is applied here and
-    // written from here, and promoted into the view's own mirror only once the write is
-    // durable, so a failed write leaves the mirror and the file agreeing. Worker-owned:
-    // one view is latched at a time and the set never nests.
-    private final LiveViewCheckpointPendingRepairs pendingRepairsScratch = new LiveViewCheckpointPendingRepairs();
     // Coordinates of the out-of-order repair currently executing: the pinned base
     // snapshot, the correction floor, the retire floor and the chosen executor.
     // One instance per worker, refilled by planO3Repair at the start of each
@@ -357,21 +330,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // range. Kept on the worker rather than the view for the same reason
     // runtimeAnchorReuseCount is: a test reads it to prove which branch ran.
     private long segmentRepairCount;
-    // Test-only observability for the backfill pass. Counts the pending segments this
-    // worker repaired off the refresh's critical path, so a test can prove a correction
-    // was deferred and later drained rather than repaired inline.
-    private long backfillPassSegmentCount;
-    // Test-only observability for deferral. Counts the closed anchor segments this worker
-    // recorded in a pending-repair set instead of repairing inside the turn.
-    private long deferredSegmentCount;
-    // Test-only observability for the pass's escalation. Counts the backfill passes this
-    // worker turned into a full recompute because its oldest pending entry named a segment
-    // no plan would localize.
-    private long backfillPassRecoveryCount;
-    // Test-only observability for the deferral viability probe. Counts the change sets this
-    // worker repaired inline because one of their segments would have been undrainable once
-    // deferred.
-    private long undeferrableChangeSetCount;
     // Test-only observability for the isolated repair runtime. Counts the replay turns this
     // worker ran beside the primary runtime rather than through it, so a test can prove
     // which runtime carried a repair without inferring it from the state that did not move.
@@ -487,13 +445,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // Sticky until cleared; always false in production.
     @TestOnly
     private boolean simulateForwardCommitDedupCollapseForTest;
-    // Test-only: when armed, a backfill pass reports its oldest pending entry as one no
-    // plan will localize, without planning it. Models the verdict changing under an entry
-    // already written - the state deferChangeSetSegments' own probe cannot leave behind,
-    // and the reason the pass owes an escalation rather than trusting that probe. Sticky
-    // until cleared; always false in production.
-    @TestOnly
-    private boolean simulateBackfillPassDeclineForTest;
     // Test-only: when armed, an out-of-order repair skips the inline apply of its
     // own REPLACE_RANGE block, modelling the apply silently no-opping (the LV writer
     // was busy, or its memory-pressure control backed off). Lets a test drive the
@@ -635,7 +586,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(walEventReader);
         Misc.free(walPath);
         Misc.free(path);
-        Misc.free(backfillPath);
         Misc.free(blockFileWriter);
         Misc.free(walFrameCursor);
         Misc.free(walRecordCursor);
@@ -725,46 +675,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public long runtimeAnchorReuseCountForTest() {
         return runtimeAnchorReuseCount;
-    }
-
-    /**
-     * Test-only: number of pending closed anchor segments this worker repaired from a
-     * backfill pass rather than inside the refresh turn that consumed their correction.
-     * See {@link #runCheckpointBackfillPass}.
-     */
-    @TestOnly
-    public long backfillPassSegmentCountForTest() {
-        return backfillPassSegmentCount;
-    }
-
-    /**
-     * Test-only: number of closed anchor segments this worker recorded in a durable
-     * pending-repair set instead of repairing inside the turn. See
-     * {@link #repairChangeSetSegments}.
-     */
-    @TestOnly
-    public long deferredSegmentCountForTest() {
-        return deferredSegmentCount;
-    }
-
-    /**
-     * Test-only: number of backfill passes this worker escalated to a full recompute
-     * because its oldest pending entry named a segment no plan would localize. See
-     * {@link #drainPendingRepairs}.
-     */
-    @TestOnly
-    public long backfillPassRecoveryCountForTest() {
-        return backfillPassRecoveryCount;
-    }
-
-    /**
-     * Test-only: number of change sets this worker repaired inline rather than deferring,
-     * because one of their segments carried a plan a later pass could not have run. See
-     * {@link #deferChangeSetSegments}.
-     */
-    @TestOnly
-    public long undeferrableChangeSetCountForTest() {
-        return undeferrableChangeSetCount;
     }
 
     /**
@@ -1031,16 +941,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setSimulateForwardCommitDedupCollapseForTest(boolean simulate) {
         this.simulateForwardCommitDedupCollapseForTest = simulate;
-    }
-
-    /**
-     * Test-only: makes a backfill pass treat its oldest pending entry as one no plan will
-     * localize, so a test can drive the escalation that entry owes. Production never calls
-     * this.
-     */
-    @TestOnly
-    public void setSimulateBackfillPassDeclineForTest(boolean simulate) {
-        this.simulateBackfillPassDeclineForTest = simulate;
     }
 
     /**
@@ -1320,519 +1220,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
         }
-    }
-
-    /**
-     * Points {@code dst} at this view's {@code _checkpoints} directory.
-     */
-    private Path checkpointsDirOf(LiveViewInstance instance, Path dst) {
-        return dst.of(engine.getConfiguration().getDbRoot())
-                .concat(instance.getLiveViewToken())
-                .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-    }
-
-    /**
-     * Reads this view's durable pending-repair set into its in-memory mirror, once per
-     * instance lifetime. Every later mutation goes through the mirror and writes back, so
-     * this is the only read.
-     * <p>
-     * A set that is present and does not validate is the one outcome that cannot be
-     * shrugged off. Its entries name closed segments whose corrections the view has
-     * already consumed - the base WAL floor moved over them - so dropping the set would
-     * leave the view permanently wrong in segments nothing can name any more. The caller
-     * reads the false and recomputes the whole view from the applied base, which still
-     * holds every one of those rows.
-     *
-     * @return true when the mirror describes the durable set
-     */
-    private boolean ensurePendingRepairsLoaded(LiveViewInstance instance) {
-        if (instance.isPendingRepairsLoaded()) {
-            return true;
-        }
-        final int status;
-        try {
-            checkpointsDirOf(instance, backfillPath);
-            status = LiveViewCheckpointPendingRepairs.read(
-                    engine.getConfiguration(),
-                    backfillPath,
-                    instance.getLiveViewToken().getTableId(),
-                    instance.getPendingRepairs()
-            );
-        } catch (Throwable t) {
-            LOG.critical().$("could not read the live view pending repair set [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", error=").$(t).I$();
-            return false;
-        }
-        if (status == LiveViewCheckpointPendingRepairs.READ_CORRUPT) {
-            LOG.critical().$("live view pending repair set did not validate [view=")
-                    .$(instance.getDefinition().getViewName()).I$();
-            return false;
-        }
-        instance.setPendingRepairsLoaded();
-        instance.refreshPendingRepairsSummary();
-        if (instance.getBackfillPassLastUs() == Numbers.LONG_NULL) {
-            // Start the coalescing window here rather than at the first pass. Without this
-            // the first pass after a start ignores the interval outright - it would find
-            // "no pass has ever run" and drain immediately, which on a view that defers a
-            // correction and drains it in the same turn is not deferral at all.
-            instance.setBackfillPassLastUs(engine.getConfiguration().getMicrosecondClock().getTicks());
-        }
-        return true;
-    }
-
-    /**
-     * Records the change set's closed anchor segments in the durable pending-repair set
-     * instead of repairing them inside the turn, which is what takes the deep tail off
-     * the refresh's critical path.
-     * <p>
-     * The staging is deliberate: the adds land in a scratch copy, the scratch is what is
-     * written, and only a durable write promotes it to the view's own mirror. A write
-     * that throws therefore leaves the mirror and the file agreeing on the pre-deferral
-     * set, and the caller repairs the change set inline exactly as it did before deferral
-     * existed.
-     * <p>
-     * The write is ordered ahead of every watermark this turn advances, so a crash in
-     * between re-drains the same base range, re-classifies it, and re-records the same
-     * segments - which {@link LiveViewCheckpointPendingRepairs#add} merges rather than
-     * duplicates.
-     *
-     * @return true when every closed segment is durably pending and none of them needs
-     * repairing in this turn
-     */
-    private boolean deferChangeSetSegments(
-            LiveViewInstance instance,
-            int segmentCount,
-            LiveViewCheckpointAnchorPlan anchorPlan,
-            long viewLowerBoundTimestamp,
-            long pinnedSeqTxn,
-            long durableOutputMaxTs,
-            long runtimeFrontierTs
-    ) throws SqlException {
-        final LiveViewCheckpointPendingRepairs pending = instance.getPendingRepairs();
-        int freshSegments = 0;
-        for (int i = 0; i < segmentCount; i++) {
-            if (!pending.contains(segmentChangeSet.getSegmentStart(i))) {
-                freshSegments++;
-            }
-        }
-        if (pending.size() + freshSegments > LiveViewCheckpointPendingRepairs.MAX_SEGMENTS) {
-            // The view already owes more unrepaired segments than the set may name. Every
-            // one of them still gets repaired by a pass; this correction just does not
-            // join them, and takes the inline route the whole change set took before
-            // deferral existed.
-            LOG.info().$("live view pending repair set is full, repairing the correction inline [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", pending=").$(pending.size())
-                    .$(", segments=").$(segmentCount).I$();
-            return false;
-        }
-        // Only segments a pass can actually repair may be deferred. An entry the plan
-        // declines is not a slow repair, it is one that never happens: the pass has no
-        // change set to widen and no union range to fall back on, so the entry stays
-        // pending, the view stays wrong in that segment, and nothing above notices. The
-        // inline route the whole change set then takes is exactly what it took before
-        // deferral existed, and its own fallback covers the segment.
-        //
-        // The probe is the plan itself rather than a restatement of its floor arithmetic:
-        // a copy of that rule here would drift from the one the pass applies, which is the
-        // only rule that decides anything. It costs one derivation per segment, which for
-        // a deferrable view - anchored only, by the gate above - is timestamp arithmetic
-        // and no scan. The plan is re-derived per segment by the inline loop and by the
-        // pass, so overwriting it here is free.
-        for (int i = 0; i < segmentCount; i++) {
-            if (!repairPlan.ofSegment(
-                    segmentChangeSet.getSegmentMinTs(i),
-                    segmentChangeSet.getSegmentMaxTs(i),
-                    viewLowerBoundTimestamp,
-                    pinnedSeqTxn,
-                    instance.getLastProcessedSeqTxn(),
-                    anchorPlan,
-                    durableOutputMaxTs,
-                    runtimeFrontierTs
-            )) {
-                LOG.info().$("live view segment cannot be deferred, repairing the correction inline [view=")
-                        .$(instance.getDefinition().getViewName())
-                        .$(", segmentStart=").$ts(segmentChangeSet.getSegmentStart(i))
-                        .$(", denial=").$(LiveViewCheckpointRepairPlan.denialReasonName(repairPlan.getDenialReason()))
-                        .I$();
-                undeferrableChangeSetCount++;
-                return false;
-            }
-        }
-        pendingRepairsScratch.copyFrom(pending);
-        for (int i = 0; i < segmentCount; i++) {
-            pendingRepairsScratch.add(
-                    segmentChangeSet.getSegmentStart(i),
-                    segmentChangeSet.getSegmentEndExclusive(i),
-                    segmentChangeSet.getSegmentMinTs(i),
-                    segmentChangeSet.getSegmentMaxTs(i),
-                    segmentChangeSet.getSegmentRowCount(i)
-            );
-        }
-        if (!persistPendingRepairs(instance, pendingRepairsScratch)) {
-            return false;
-        }
-        pending.copyFrom(pendingRepairsScratch);
-        instance.refreshPendingRepairsSummary();
-        deferredSegmentCount += segmentCount;
-        return true;
-    }
-
-    /**
-     * Makes {@code set} durable under this view's checkpoint directory.
-     *
-     * @return true when the file on disk is the set. False leaves the previous set in
-     * place, which is what makes the staging above safe.
-     */
-    private boolean persistPendingRepairs(LiveViewInstance instance, LiveViewCheckpointPendingRepairs set) {
-        try {
-            checkpointsDirOf(instance, backfillPath);
-            LiveViewCheckpointPendingRepairs.write(
-                    engine.getConfiguration(),
-                    backfillPath,
-                    instance.getLiveViewToken().getTableId(),
-                    set
-            );
-            return true;
-        } catch (Throwable t) {
-            LOG.error().$("could not write the live view pending repair set [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", segments=").$(set.size())
-                    .$(", error=").$(t).I$();
-            return false;
-        }
-    }
-
-    /**
-     * Whether this turn should run one backfill pass over the view's pending-repair set.
-     * <p>
-     * The interval is a coalescing window rather than a rate limit on the repair: a
-     * segment corrected forty times inside it is repaired once, which is the whole
-     * saving deferral adds on top of per-segment scoping. Zero drains the set on the next
-     * turn that finds it non-empty.
-     */
-    private boolean isCheckpointBackfillPassDue(LiveViewInstance instance, long nowUs) {
-        // Deliberately not gated on the deferral switch. The switch decides whether new
-        // corrections may be deferred; it cannot decide whether ones already deferred get
-        // repaired, or turning it off would strand every pending segment in a view that is
-        // then permanently and silently wrong in them.
-        if (instance.getPendingRepairsSegments() == 0) {
-            return false;
-        }
-        final long lastPassUs = instance.getBackfillPassLastUs();
-        // LONG_NULL means the set has not been read yet, which is not a pass being due:
-        // ensurePendingRepairsLoaded starts the window as it reads the set.
-        return lastPassUs != Numbers.LONG_NULL
-                && nowUs - lastPassUs >= engine.getConfiguration().getLiveViewCheckpointBackfillInterval();
-    }
-
-    /**
-     * Repairs the pending closed anchor segments, oldest first, off the refresh's
-     * critical path.
-     * <p>
-     * Each segment is the same whole-segment replay and the same {@code REPLACE_RANGE}
-     * over its own range that an inline per-segment repair runs, driven from the pending
-     * entry rather than from a change set - so what the pass adds is the deferral and the
-     * ordering, not the executor. The segments are independent under a pure fixed anchor,
-     * so publishing them one at a time shows a reader monotone convergence rather than a
-     * torn state; there is no all-or-nothing to preserve, because the view is already
-     * knowingly unrepaired in every pending segment.
-     * <p>
-     * <b>Watermarks do not move.</b> The pass commits every segment at the view's current
-     * {@code lastProcessedSeqTxn}: the corrections it repairs were consumed by the turn
-     * that deferred them, and nothing here consumes anything new. A replay that
-     * incorporates a base commit the view has not consumed yet - apply running ahead of
-     * the drain - is not a problem for the same reason a crash is not: the drain reaches
-     * that commit later, classifies it into this same segment, and a later pass
-     * recomputes the segment identically.
-     * <p>
-     * <b>An entry is cleared after its replacement applies</b>, so a crash in between
-     * leaves the segment pending and costs one repeated whole-segment recompute rather
-     * than a lost correction.
-     * <p>
-     * <b>A segment's replay can park.</b> The pass's own duration budget bounds how many
-     * whole-segment replays one turn chains, checked between segments; it says nothing
-     * about how long one takes, and one whole-segment replay of a daily anchor is up to a
-     * day of base rows. So the replay stops on the refresh turn's budget instead, taking
-     * the pinned snapshot with it, and the drain position travels with it in
-     * {@link LiveViewCheckpointSegmentLoop} - the turn that resumes the replay clears the
-     * entry it finishes and drains what is left.
-     *
-     * @return true when the pass repaired at least one segment, or parked one and spent
-     * the turn on it
-     */
-    private boolean runCheckpointBackfillPass(LiveViewInstance instance) throws SqlException {
-        if (!ensurePendingRepairsLoaded(instance)) {
-            return false;
-        }
-        final LiveViewCheckpointPendingRepairs pending = instance.getPendingRepairs();
-        if (pending.isEmpty()) {
-            instance.refreshPendingRepairsSummary();
-            return false;
-        }
-        final String viewName = instance.getDefinition().getViewName();
-        final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
-        instance.setBackfillPassLastUs(nowUs);
-        final WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
-        if (!instance.isSnapshotCapabilityComputed()) {
-            instance.setSnapshotCapability(computeSnapshotCapability(instance, windowFactory));
-        }
-        final LiveViewWindow anchorWindow = instance.getAnchorWindow();
-        final LiveViewCheckpointAnchorPlan anchorPlan = anchorWindow == null
-                ? null
-                : anchorWindow.getCheckpointAnchorPlan();
-        if (!instance.isSnapshotCapability() || anchorPlan == null) {
-            return false;
-        }
-        if (LiveViewBackfillEnvelope.deferralGate(
-                windowFactory.getWindowFunctions(),
-                windowFactory.getCheckpointRangePlan() != null,
-                windowFactory.getCheckpointRowsPlan() != null,
-                true
-        ) != LiveViewBackfillEnvelope.GATE_AVAILABLE) {
-            // The view's SQL stopped admitting an independent segment repair - a
-            // recompiled factory carrying a bounded ROWS or RANGE function beside the
-            // anchored one. The entries stay pending and visible rather than being
-            // repaired under a rule that no longer holds.
-            LOG.error().$("live view backfill pass declined, the deferral gate closed [view=").$(viewName)
-                    .$(", pending=").$(pending.size()).I$();
-            return false;
-        }
-        final long runtimeFrontierTs = instance.getLatestSeenTs();
-        if (runtimeFrontierTs == Numbers.LONG_NULL) {
-            return false;
-        }
-        if (instance.getRefreshedUpToSeqTxn() > instance.getLastProcessedSeqTxn() || instance.getLeadRowCount() > 0) {
-            // A lead-eligible view mid-lead: the tier holds output the disk does not, and
-            // a segment repair rewrites that disk under it. Nothing here is urgent, so
-            // wait for the flush that makes the two agree rather than reason about the
-            // overlap. The interval has been spent, so this costs one pass, not a stall.
-            return false;
-        }
-        final long durableOutputMaxTs = readDurableOutputMaxTs(instance);
-        if (durableOutputMaxTs == Numbers.LONG_NULL || durableOutputMaxTs < runtimeFrontierTs) {
-            // Output the runtime holds but has not made durable sits above every pending
-            // segment, and a replacement stopping below it would neither re-emit it nor
-            // leave it stored. The same guard an inline repair applies.
-            return false;
-        }
-        final long commitSeqTxn = instance.getLastProcessedSeqTxn();
-        final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
-        final TableToken baseToken = instance.getDefinition().getBaseTableToken();
-        final TableReader reader = waitForApply(baseToken, commitSeqTxn);
-        // True when one segment's replay parked on the turn budget: it owns the pinned
-        // reader from there on, and the turn that resumes it drains the rest of the set.
-        boolean suspended = false;
-        int drain = DRAIN_PASS_COMPLETE;
-        try {
-            // The pass queues no segment of its own - the durable set is its work list, and
-            // it outlives any number of turns. What the loop position carries is the
-            // coordinates every segment is planned against, the segment in flight, and the
-            // moment the pass began, so a pass spread over several turns is still bounded
-            // by its own duration budget rather than starting it over on each of them.
-            segmentLoopScratch.ofBackfillPass(
-                    viewLowerBoundTimestamp,
-                    commitSeqTxn,
-                    durableOutputMaxTs,
-                    runtimeFrontierTs,
-                    nowUs
-            );
-            drain = drainPendingRepairs(instance, windowFactory, reader, anchorPlan, segmentLoopScratch);
-            suspended = drain == DRAIN_PASS_SUSPENDED;
-        } finally {
-            if (!suspended) {
-                reader.close();
-            }
-        }
-        if (drain == DRAIN_PASS_DECLINED) {
-            // A pending entry no pass can act on. The recompute reads the applied base and
-            // republishes the whole view range, so it repairs that segment along with every
-            // other one the set named, and drops the set - which is the same answer, for the
-            // same reason, as a set that fails to validate: the entries name work that has to
-            // happen and nothing smaller can still name it.
-            //
-            // Run with the pinned reader already closed. The rebuild opens its own against
-            // the applied base, and holding this one across it would pin a snapshot the
-            // rebuild is not reading from.
-            backfillPassRecoveryCount++;
-            recoverFromCorruptPendingRepairs(instance);
-            return true;
-        }
-        if (suspended) {
-            // Nothing durable moved, so there is no rewritten tier to rebuild from. The turn
-            // is spent either way, which is the work this reports.
-            return true;
-        }
-        final int repaired = segmentLoopScratch.getSegmentsRepaired();
-        if (repaired > 0) {
-            // The replacements rewrote the on-disk tier, so rebuild the in-memory one from
-            // it. A pending segment sits below the tier's own window in the common case and
-            // the rebuild changes nothing, but a view whose whole history fits the tier is
-            // not that case.
-            rebuildInMemoryTier(instance);
-            instance.setLeadRowCount(0);
-            LOG.info().$("live view backfill pass completed [view=").$(viewName)
-                    .$(", repaired=").$(repaired)
-                    .$(", pending=").$(pending.size()).I$();
-        }
-        return repaired > 0;
-    }
-
-    /**
-     * Drains the pending-repair set, oldest first, one whole-segment replay at a time.
-     * <p>
-     * Oldest first is the order the set is kept in and the order a repair must take: a
-     * later segment's cumulative row positions depend on how many rows the earlier ones
-     * added. Each entry is cleared only after its replacement applies, so a crash anywhere
-     * in the drain costs one repeated recompute rather than a lost correction.
-     * <p>
-     * Two budgets bound it, and they bound different things. The pass's own duration budget
-     * is checked <b>between</b> segments and protects the head of the backlog - the rest
-     * waits for the next pass rather than this turn disappearing into it. The refresh
-     * turn's budget is checked inside one segment's replay and parks it, which is what
-     * stops a whole-segment replay of a daily anchor holding a worker for a day of base
-     * rows; the loop position travels with the parked repair so the turn that resumes it
-     * drains what is left.
-     *
-     * @return one of {@link #DRAIN_PASS_COMPLETE}, {@link #DRAIN_PASS_SUSPENDED} - a
-     * segment parked on the turn budget and owns the pinned reader - or
-     * {@link #DRAIN_PASS_DECLINED}, which the caller escalates
-     */
-    private int drainPendingRepairs(
-            LiveViewInstance instance,
-            WindowRecordCursorFactory windowFactory,
-            TableReader reader,
-            LiveViewCheckpointAnchorPlan anchorPlan,
-            LiveViewCheckpointSegmentLoop loop
-    ) throws SqlException {
-        final String viewName = instance.getDefinition().getViewName();
-        final LiveViewCheckpointPendingRepairs pending = instance.getPendingRepairs();
-        final long budgetUs = engine.getConfiguration().getLiveViewCheckpointBackfillMaxDuration();
-        final long pinnedSeqTxn = reader.getSeqTxn();
-        while (!pending.isEmpty()) {
-            if (loop.getSegmentsRepaired() > 0
-                    && engine.getConfiguration().getMicrosecondClock().getTicks() - loop.getPassStartUs() >= budgetUs) {
-                LOG.info().$("live view backfill pass spent its budget [view=").$(viewName)
-                        .$(", repaired=").$(loop.getSegmentsRepaired())
-                        .$(", pending=").$(pending.size()).I$();
-                break;
-            }
-            final long segmentStart = pending.getSegmentStart(0);
-            if (simulateBackfillPassDeclineForTest) { // @TestOnly no-op in production
-                LOG.error().$("live view backfill pass cannot repair its oldest pending segment [view=")
-                        .$(viewName)
-                        .$(", segmentStart=").$ts(segmentStart)
-                        .$(", pending=").$(pending.size()).I$();
-                return DRAIN_PASS_DECLINED;
-            }
-            // The pass takes its work off the durable set rather than off the queue, so it
-            // has nothing to remove and only the in-flight identity to record - which is
-            // what a resuming turn clears the entry by.
-            loop.segmentStarted(segmentStart);
-            final int step = repairOneSegment(
-                    instance,
-                    windowFactory,
-                    reader,
-                    anchorPlan,
-                    loop,
-                    segmentStart,
-                    pending.getMinTs(0),
-                    pending.getMaxTs(0),
-                    pinnedSeqTxn,
-                    loop.getHoldSeqTxn()
-            );
-            if (step == SEGMENT_STEP_SUSPENDED) {
-                return DRAIN_PASS_SUSPENDED;
-            }
-            if (step == SEGMENT_STEP_DECLINED) {
-                // The oldest entry names a segment the plan will not localize. Unlike the
-                // inline loop, which hands a declined segment back to the whole-change-set
-                // plan, a pass has nothing to widen: the change set that named the segment
-                // was consumed turns ago and the entry carries only its bounds. Leaving it
-                // pending is what the two cases below can afford and this one cannot - the
-                // grounds a per-segment plan declines on are properties of the view and the
-                // segment, not of the moment, so the next pass declines it again and the
-                // view stays wrong in that segment for as long as it exists.
-                //
-                // deferChangeSetSegments refuses to record such a segment in the first
-                // place, so reaching here means the verdict changed under an entry already
-                // written - the view's boundary or its durable frontier moved after the
-                // deferral. The caller escalates to the recompute a set that cannot be
-                // acted on has always taken.
-                LOG.error().$("live view backfill pass cannot repair its oldest pending segment [view=")
-                        .$(viewName)
-                        .$(", segmentStart=").$ts(segmentStart)
-                        .$(", pending=").$(pending.size()).I$();
-                return DRAIN_PASS_DECLINED;
-            }
-            if (step != SEGMENT_STEP_DONE) {
-                // The replacement has not applied, or the entry could not be cleared.
-                // Both are properties of this turn rather than of the segment, so leave it
-                // - and everything behind it - pending and visible rather than repairing
-                // the rest over a set that cannot record what has been done.
-                break;
-            }
-        }
-        return DRAIN_PASS_COMPLETE;
-    }
-
-    /**
-     * Drops the pending-repair set after a repair that recomputed the whole view.
-     * <p>
-     * Best effort in both directions: a set that cannot be read is not this path's problem
-     * to solve, and a set that cannot be removed costs one recompute of a segment that is
-     * already correct. Neither can lose a correction, because the rebuild that got here has
-     * already made every one of them durable.
-     */
-    private void clearPendingRepairsAfterFullRebuild(LiveViewInstance instance) {
-        if (instance.isPendingRepairsLoaded() && instance.getPendingRepairs().isEmpty()) {
-            return;
-        }
-        try {
-            checkpointsDirOf(instance, backfillPath);
-            LiveViewCheckpointPendingRepairs.remove(engine.getConfiguration().getFilesFacade(), backfillPath);
-            instance.getPendingRepairs().clear();
-            instance.setPendingRepairsLoaded();
-            instance.refreshPendingRepairsSummary();
-        } catch (Throwable t) {
-            LOG.error().$("could not drop the live view pending repair set after a full rebuild [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", error=").$(t).I$();
-        }
-    }
-
-    /**
-     * Recomputes the whole view from the applied base after its pending-repair set failed
-     * to validate, then drops the set.
-     * <p>
-     * The set named closed segments the view had consumed a correction for and not yet
-     * repaired. With the set unreadable those segments cannot be named any more, and the
-     * base WAL floor has moved over the commits that carried them, so the only thing that
-     * still holds those rows is the applied base table - which is what this reads. The
-     * rebuild's {@code REPLACE_RANGE} covers the whole view range, so it repairs every
-     * segment the set could have named and the set is void afterwards.
-     */
-    private void recoverFromCorruptPendingRepairs(LiveViewInstance instance) throws SqlException {
-        final String viewName = instance.getDefinition().getViewName();
-        final TableToken baseToken = instance.getDefinition().getBaseTableToken();
-        final long baseAppliedSeqTxn = Math.max(
-                instance.getLastProcessedSeqTxn(),
-                engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn()
-        );
-        instance.setLeadRowCount(0);
-        o3HeadMissReplay(instance, getWindowFactory(instance), Numbers.LONG_NULL, baseToken, baseAppliedSeqTxn, true);
-        rebuildInMemoryTier(instance);
-        instance.setLeadRowCount(0);
-        instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
-        checkpointsDirOf(instance, backfillPath);
-        LiveViewCheckpointPendingRepairs.remove(engine.getConfiguration().getFilesFacade(), backfillPath);
-        instance.getPendingRepairs().clear();
-        instance.setPendingRepairsLoaded();
-        instance.refreshPendingRepairsSummary();
-        LOG.critical().$("live view recomputed from the applied base after an unreadable pending repair set [view=")
-                .$(viewName)
-                .$(", head=").$(baseAppliedSeqTxn).I$();
     }
 
     /**
@@ -2132,7 +1519,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // answers are diagnostics - nothing below reads them - and both settle here
                 // for the same reason the mask above does, so live_views() can report them
                 // for a view no late row has reached.
-                recordBackfillGates(instance, plan);
+                recordSegmentRepairGates(instance, plan);
                 instance.setCompiledFactory(factory, plan);
                 committed = true;
             } finally {
@@ -2454,28 +1841,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Records which halves of a deferred, coalesced repair the compiled SELECT admits, as
-     * the two {@code LiveViewBackfillEnvelope.GATE_*} codes {@code live_views()} surfaces.
+     * Records which halves of a scoped, keyed repair the compiled SELECT admits, as the
+     * two {@code LiveViewSegmentRepairEnvelope.GATE_*} codes {@code live_views()}
+     * surfaces.
      * <p>
-     * Neither gate changes what a repair does. They answer, off the SQL alone, whether a
-     * correction landing in a closed anchor segment could be repaired off the refresh's
-     * critical path, and whether that repair's replay could follow the affected keys'
-     * rows rather than every row of the segment - the two questions the deep out-of-order
-     * tail is priced against, and the ones an operator can act on before a late row
-     * arrives.
+     * They answer, off the SQL alone, whether a correction landing in a closed anchor
+     * segment can be repaired over that segment alone, and whether that repair's replay
+     * could follow the affected keys' rows rather than every row of the segment - the two
+     * questions the deep out-of-order tail is priced against, and the ones an operator can
+     * act on before a late row arrives.
      */
-    private static void recordBackfillGates(LiveViewInstance instance, LiveViewCompiledPlan plan) {
+    private static void recordSegmentRepairGates(LiveViewInstance instance, LiveViewCompiledPlan plan) {
         final WindowRecordCursorFactory windowFactory = plan.getWindowFactory();
         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
         final LiveViewDefinition.LvAnchorSpec spec = instance.getDefinition().getAnchorSpec();
-        instance.setBackfillGates(
-                LiveViewBackfillEnvelope.deferralGate(
+        instance.setSegmentRepairGates(
+                LiveViewSegmentRepairEnvelope.segmentScopeGate(
                         windowFactory.getWindowFunctions(),
                         windowFactory.getCheckpointRangePlan() != null,
                         windowFactory.getCheckpointRowsPlan() != null,
                         anchorWindow != null && anchorWindow.getCheckpointAnchorPlan() != null
                 ),
-                LiveViewBackfillEnvelope.keyedScanGate(
+                LiveViewSegmentRepairEnvelope.keyedScanGate(
                         plan,
                         anchorWindow == null || spec == null ? null : spec.partitionColumnNames,
                         windowFactory.getWindowFunctions()
@@ -5045,14 +4432,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * when this view admits no keyed replay.
      * <p>
      * One question asked in two vocabularies, and both have to answer yes.
-     * {@link LiveViewBackfillEnvelope#keyedScanGate} answers it off the view's SQL, which
+     * {@link LiveViewSegmentRepairEnvelope#keyedScanGate} answers it off the view's SQL, which
      * is what {@code live_views()} reports and what an operator can act on before a late
      * row arrives; the compiled key projector and the page-frame factory answer it as the
      * objects a repair would actually use. Reading only the gate would trust a verdict
      * recorded at compile time against a factory that has since been recompiled.
      */
     private static int keyedScanColumnIndex(LiveViewInstance instance, LiveViewCompiledPlan compiledPlan) {
-        if (instance.getBackfillKeyedScanGate() != LiveViewBackfillEnvelope.GATE_AVAILABLE) {
+        if (instance.getKeyedScanGate() != LiveViewSegmentRepairEnvelope.GATE_AVAILABLE) {
             return -1;
         }
         final LiveViewCheckpointKeyProjector projector = compiledPlan.getWindowFactory().getCheckpointKeyProjector();
@@ -5324,8 +4711,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * is a property of the correction. Under a pure fixed-anchor plan the anchor resets
      * every stateful function at the segment boundary, so a row in a closed segment reaches
      * that segment's output and nothing else - which is exactly what
-     * {@link LiveViewBackfillEnvelope#deferralGate} proves, and why this path is gated on
-     * it rather than on a predicate of its own.
+     * {@link LiveViewSegmentRepairEnvelope#segmentScopeGate} proves, and why this path is
+     * gated on it rather than on a predicate of its own.
      * <p>
      * The segments run oldest first, because a later segment's cumulative row positions
      * depend on how many rows the earlier ones added, and each publishes its own
@@ -5358,8 +4745,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * @return {@link #SEGMENT_REPAIR_COMPLETE} when the segments were the whole change set
      * and the watermark has advanced over it, {@link #SEGMENT_REPAIR_DEFERRED} when a
      * segment's replacement did not apply and the turn must stop,
-     * {@link #SEGMENT_REPAIR_PENDING} when the segments were the whole change set and went
-     * into the pending-repair set unrepaired, so the caller owes the watermark advance,
      * {@link #SEGMENT_REPAIR_SUSPENDED} when a segment's replay parked with the rest of the
      * loop and now owns the pinned reader, {@link #SEGMENT_REPAIR_RESIDUAL} when the caller
      * must still repair the residual from {@link #segmentChangeSet}'s bounds, and
@@ -5396,12 +4781,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (anchorPlan == null) {
             return SEGMENT_REPAIR_NOT_TAKEN;
         }
-        if (LiveViewBackfillEnvelope.deferralGate(
+        if (LiveViewSegmentRepairEnvelope.segmentScopeGate(
                 windowFactory.getWindowFunctions(),
                 windowFactory.getCheckpointRangePlan() != null,
                 windowFactory.getCheckpointRowsPlan() != null,
                 true
-        ) != LiveViewBackfillEnvelope.GATE_AVAILABLE) {
+        ) != LiveViewSegmentRepairEnvelope.GATE_AVAILABLE) {
             // A bounded ROWS or RANGE function declared beside the anchored one keeps
             // sliding across the segment boundary, so the segments are not independent and
             // one of them cannot be repaired on its own.
@@ -5467,34 +4852,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // correction reaching below the view's boundary from denying the repair.
             return isResidualEmpty ? SEGMENT_REPAIR_NOT_TAKEN : SEGMENT_REPAIR_RESIDUAL;
         }
-        if (engine.getConfiguration().isLiveViewCheckpointBackfillDeferralEnabled()
-                && fromSeqTxn <= instance.getLastProcessedSeqTxn()
-                && ensurePendingRepairsLoaded(instance)
-                && deferChangeSetSegments(
-                instance,
-                segmentCount,
-                anchorPlan,
-                viewLowerBoundTimestamp,
-                pinnedSeqTxn,
-                durableOutputMaxTs,
-                runtimeFrontierTs
-        )) {
-            // The deep tail leaves the critical path here. The turn keeps the residual -
-            // the correction the runtime is still standing in, which Fix 2 bounds to one
-            // cadence - and hands the closed segments to a later pass.
-            //
-            // The fromSeqTxn test is what makes the watermark advance below safe. It
-            // proves the classified range starts where the view's own consumption
-            // stopped, so nothing under it is output the view still owes to disk; a
-            // lead-eligible view mid-lead fails it and repairs inline, as does every
-            // shape the durableOutputMaxTs guard above already turned away.
-            LOG.info().$("live view O3 closed segments deferred to the backfill pass [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", segments=").$(segmentCount)
-                    .$(", pending=").$(instance.getPendingRepairsSegments())
-                    .$(", residual=").$(!isResidualEmpty).I$();
-            return isResidualEmpty ? SEGMENT_REPAIR_PENDING : SEGMENT_REPAIR_RESIDUAL;
-        }
         // The loop position, so a segment whose replay parks on the turn budget can hand the
         // segments behind it - and the residual behind those - to the turn that resumes it.
         // Only the final repair of the loop advances the watermark, and it is a repair of
@@ -5555,8 +4912,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * @param loop         the loop position as it stands <b>after</b> this segment was taken
      *                     off it, which is what a resuming turn continues from, and which
      *                     carries the segment's own key domain when its repair may follow one
-     * @param segmentStart the segment's own inclusive start, for the log and - for a pass -
-     *                     the pending entry the caller clears once the replacement applies
+     * @param segmentStart the segment's own inclusive start, for the log
      * @param commitSeqTxn the base {@code seqTxn} this segment's replacement commits at
      */
     private int repairOneSegment(
@@ -5572,7 +4928,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long commitSeqTxn
     ) throws SqlException {
         final String viewName = instance.getDefinition().getViewName();
-        final boolean pass = loop.getKind() == LiveViewCheckpointSegmentLoop.KIND_BACKFILL_PASS;
         if (!repairPlan.ofSegment(
                 segmentMinTs,
                 segmentMaxTs,
@@ -5584,7 +4939,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 loop.getRuntimeFrontierTs()
         )) {
             LOG.info().$("live view segment repair declined [view=").$(viewName)
-                    .$(", pass=").$(pass)
                     .$(", segmentStart=").$ts(segmentStart)
                     .$(", queued=").$(loop.size())
                     .$(", denial=").$(LiveViewCheckpointRepairPlan.denialReasonName(repairPlan.getDenialReason()))
@@ -5593,7 +4947,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         instance.recordCheckpointRepairOutcome(repairPlan.getDisposition(), repairPlan.getDenialReason());
         LOG.info().$("live view segment repair [view=").$(viewName)
-                .$(", pass=").$(pass)
                 .$(", segmentStart=").$ts(segmentStart)
                 .$(", queued=").$(loop.size())
                 .$(", repaired=").$(loop.getSegmentsRepaired())
@@ -5667,7 +5020,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (segmentKeys == null) {
             // Either the segment was not priced - no key domain, no index, a key the
             // reader does not hold - or the whole-segment read is the cheaper of the two.
-            // A backfill pass is here too: the durable pending set carries no key domain.
             return false;
         }
         final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
@@ -5825,7 +5177,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * The partition key's index in the view's OWN schema, which is what a stored row
      * carries it under.
      * <p>
-     * {@code LiveViewBackfillEnvelope.keyedScanGate} has already proved the key survives
+     * {@code LiveViewSegmentRepairEnvelope.keyedScanGate} has already proved the key survives
      * the projection, so this resolves rather than decides; -1 is a schema that has moved
      * under the compiled plan, and reads the segment whole.
      */
@@ -5881,76 +5233,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     /**
      * Books one segment repair that has just published, and reports whether the loop may
      * move on to the next one.
-     * <p>
-     * The two loops count their segments apart - a pass repairs off the refresh's critical
-     * path and an inline loop repairs on it - and the pass owns one more step: its work
-     * list is durable, so the entry it drained is cleared here, after the replacement
-     * applied and never before. A crash in between therefore costs one repeated
-     * whole-segment recompute rather than a lost correction.
      */
     private int settleRepairedSegment(
             LiveViewInstance instance,
             LiveViewCheckpointSegmentLoop loop,
             long segmentStart
     ) {
-        final boolean pass = loop.getKind() == LiveViewCheckpointSegmentLoop.KIND_BACKFILL_PASS;
         if (instance.getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL) {
             // The segment's replacement is in the live view's WAL and not in its table. No
             // later repair may read coordinates off a table that does not hold it, and the
-            // watermark has not moved, so the loop stops here. A pass leaves its entry
-            // pending - clearing it would drop a correction whose output is not stored -
-            // and the next turn re-drives the apply before anything else.
+            // watermark has not moved, so the loop stops here; the next turn re-drives the
+            // apply before anything else.
             LOG.info().$("live view segment repair stopped on an unapplied replacement [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", pass=").$(pass)
                     .$(", segmentStart=").$ts(segmentStart)
                     .$(", queued=").$(loop.size()).I$();
             return SEGMENT_STEP_UNAPPLIED;
         }
-        if (pass) {
-            backfillPassSegmentCount++;
-        } else {
-            segmentRepairCount++;
-        }
+        segmentRepairCount++;
         loop.segmentRepaired();
-        if (pass && !clearRepairedPendingSegment(instance, segmentStart)) {
-            // The segment is repaired and the entry is not cleared, so the next pass
-            // recomputes it identically. Stop rather than repair the rest over a set that
-            // cannot record what has been done.
-            return SEGMENT_STEP_DECLINED;
-        }
         return SEGMENT_STEP_DONE;
-    }
-
-    /**
-     * Clears the pending-repair entry of a segment a backfill pass has just published.
-     * <p>
-     * Named rather than positional: a parked pass hands its in-flight segment to a later
-     * turn, and an entry cleared by position there would clear whatever the set's head had
-     * become instead. The set is ordered oldest first and the pass drains it in that
-     * order, so the head is the entry unless something moved it - which is the case this
-     * refuses rather than guesses at.
-     *
-     * @return false when the entry could not be cleared, leaving it pending for the next
-     * pass to recompute identically
-     */
-    private boolean clearRepairedPendingSegment(LiveViewInstance instance, long segmentStart) {
-        final LiveViewCheckpointPendingRepairs pending = instance.getPendingRepairs();
-        if (pending.isEmpty() || pending.getSegmentStart(0) != segmentStart) {
-            LOG.error().$("live view backfill pass repaired a segment its pending set no longer heads [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", segmentStart=").$ts(segmentStart)
-                    .$(", pending=").$(pending.size()).I$();
-            return false;
-        }
-        pendingRepairsScratch.copyFrom(pending);
-        pendingRepairsScratch.removeAt(0);
-        if (!persistPendingRepairs(instance, pendingRepairsScratch)) {
-            return false;
-        }
-        pending.removeAt(0);
-        instance.refreshPendingRepairsSummary();
-        return true;
     }
 
     /**
@@ -5966,7 +5268,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         session.getSegmentLoop().copyFrom(loop);
         LOG.info().$("live view segment loop parked with its repair [view=")
                 .$(instance.getDefinition().getViewName())
-                .$(", kind=").$(loop.getKind())
                 .$(", inFlightSegmentStart=").$ts(loop.getInFlightSegmentStart())
                 .$(", queued=").$(loop.size())
                 .$(", repaired=").$(loop.getSegmentsRepaired()).I$();
@@ -6078,8 +5379,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Finishes the segment loop a resumed repair belongs to: the segment whose replay just
-     * published is booked, and the ones behind it - and, for the inline loop, the residual
-     * behind those - are repaired against the same pinned snapshot.
+     * published is booked, and the ones behind it - and the residual behind those - are
+     * repaired against the same pinned snapshot.
      * <p>
      * The loop position is the resuming turn's, read out of the session before the executor
      * could free it, and it is what makes the yield available at all rather than merely
@@ -6089,18 +5390,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * segment, parks in the same place and stops again. The repair converges only if the
      * turn that resumes it also finishes what it belonged to.
      *
-     * @return one of {@link #DRAIN_PASS_COMPLETE}, {@link #DRAIN_PASS_SUSPENDED} - a later
-     * segment parked in turn and owns the pinned reader - or {@link #DRAIN_PASS_DECLINED},
-     * which only a pass loop can report and which the caller escalates
+     * @return true when a later segment - or the residual behind them - parked in turn and
+     * owns the pinned reader
      */
-    private int continueSegmentLoop(
+    private boolean continueSegmentLoop(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
             TableReader reader,
             LiveViewCheckpointSegmentLoop loop
     ) throws SqlException {
         if (settleRepairedSegment(instance, loop, loop.getInFlightSegmentStart()) != SEGMENT_STEP_DONE) {
-            return DRAIN_PASS_COMPLETE;
+            return false;
         }
         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
         final LiveViewCheckpointAnchorPlan anchorPlan = anchorWindow == null
@@ -6110,14 +5410,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // The view's anchor went away under a parked repair - a recompile that left it
             // unanchored. Nothing further may be planned against a segmentation that no
             // longer exists; the watermark has not moved, so the next drain replans what is
-            // left and a pass leaves its remaining entries pending and visible.
+            // left.
             LOG.error().$("live view lost its anchor plan under a parked segment loop [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", queued=").$(loop.size()).I$();
-            return DRAIN_PASS_COMPLETE;
-        }
-        if (loop.getKind() == LiveViewCheckpointSegmentLoop.KIND_BACKFILL_PASS) {
-            return drainPendingRepairs(instance, windowFactory, reader, anchorPlan, loop);
+            return false;
         }
         // The segments behind the parked one may still be repaired by key: the loop carries
         // each one's key domain, so the change set the turn that parked this loop collected
@@ -6126,16 +5423,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // priced at, which is the reader this turn was handed.
         final int step = driveChangeSetSegments(instance, windowFactory, reader, anchorPlan, loop);
         if (step == SEGMENT_STEP_SUSPENDED) {
-            return DRAIN_PASS_SUSPENDED;
+            return true;
         }
         if (step != SEGMENT_STEP_DONE || loop.getResidualMinTs() == Numbers.LONG_NULL) {
             // Either the loop stopped short - what it published stands, the watermark has
             // not moved and the next drain replans the rest - or the closed segments were
             // the whole change set and the last of them advanced the watermark over it.
-            return DRAIN_PASS_COMPLETE;
+            return false;
         }
-        // The residual reports suspension alone - it plans no pending entry, so it has no
-        // decline of its own to report.
         return repairChangeSetResidual(
                 instance,
                 windowFactory,
@@ -6147,46 +5442,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 loop.getResidualAdvanceTo(),
                 true,
                 loop.getSegmentsRepaired()
-        ) ? DRAIN_PASS_SUSPENDED : DRAIN_PASS_COMPLETE;
-    }
-
-    /**
-     * Walks the live-view watermarks over a change set every segment of which went into
-     * the pending-repair set unrepaired.
-     * <p>
-     * This is the one repair disposition that writes no rows, so it is the one that has
-     * to advance the watermarks itself. It is sound for a narrow reason worth stating:
-     * the drain rolls its own draft back on out-of-order detection but leaves every row
-     * it had already folded in the window state, so a turn that walks its watermark
-     * forward without re-emitting those rows loses them. The verdict this serves cannot
-     * be reached in that state - the change set holds nothing at or above the active
-     * segment's start, which is where every row the drain folded this turn sits, and
-     * every row below it belongs to a closed segment the pending set now names. So there
-     * is nothing to re-emit, and the change is consumed exactly once.
-     * <p>
-     * <b>The base-WAL retention floor deliberately stays where it is.</b> Every other
-     * watermark advance here publishes {@code lvConsumedSeqTxn} too, and can, because it
-     * committed a live-view block carrying the base {@code seqTxn} it consumed - which is
-     * what a restart reads the floor back from
-     * ({@link #reconcileAppliedFloorAfterRestart} clamps onto the last applied block's
-     * in-band {@code maxBaseSeqTxn}). This turn commits no block, so a published floor
-     * would outrun anything a restart can recover: the restart would clamp
-     * {@code lastProcessedSeqTxn} back below the deferred change and then need base WAL
-     * segments the purge job was already free to remove, taking the view into a whole
-     * re-derive from the applied base on every restart that follows a deferral. Leaving
-     * the floor makes the same restart cheap and exactly idempotent instead - it re-drains
-     * the change, re-classifies it, and re-records the segments the set already names,
-     * which {@link LiveViewCheckpointPendingRepairs#add} merges. The floor is held only
-     * until the next turn that commits rows, which on any view still ingesting is the very
-     * next one.
-     */
-    private void advanceWatermarkOverDeferredChange(LiveViewInstance instance, long advanceTo) {
-        if (advanceTo <= instance.getLastProcessedSeqTxn()) {
-            return;
-        }
-        instance.setLastProcessedSeqTxn(advanceTo);
-        instance.setAppliedWatermark(advanceTo);
-        persistState(instance);
+        );
     }
 
     /**
@@ -6369,21 +5625,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 suspended = true;
                 return;
             }
-            if (segmentRepair == SEGMENT_REPAIR_PENDING) {
-                // Every closed segment went into the pending-repair set and the change set
-                // held nothing above them, so this turn repaired nothing and rewrote
-                // nothing. What it still owes is the watermark: the change is consumed -
-                // durably recorded as owed - and a turn that left the watermark where it
-                // was would re-drain, re-classify and re-record it forever.
-                //
-                // Nothing durable moved, so the tier rebuild in the tail has nothing to
-                // rebuild from and this returns rather than falling through to it.
-                advanceWatermarkOverDeferredChange(instance, advanceTo);
-                LOG.info().$("live view O3 change set deferred in full [view=").$(viewName)
-                        .$(", segments=").$(segmentChangeSet.getClosedSegmentCount())
-                        .$(", advanceTo=").$(advanceTo).I$();
-                return;
-            }
             if (segmentRepair == SEGMENT_REPAIR_COMPLETE || segmentRepair == SEGMENT_REPAIR_DEFERRED) {
                 // The closed segments were the whole change set: the last of them committed
                 // at the pinned snapshot and advanced the watermarks over it, so there is
@@ -6512,17 +5753,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final TableReader reader = session.takeBaseReader();
         instance.recordCheckpointRepairResume();
         boolean suspended = false;
-        // Only a resumed pass loop can report this, and only for its oldest pending entry.
-        int continued = DRAIN_PASS_COMPLETE;
         try {
             suspended = o3HeadMissReplay(instance, windowFactory, session.getPlan(), reader, false, session, true);
-            if (!suspended && segmentLoopScratch.getKind() != LiveViewCheckpointSegmentLoop.KIND_NONE) {
+            if (!suspended && segmentLoopScratch.isOpen()) {
                 // The parked segment published. Book it and take the rest of its loop
                 // against the same pinned snapshot, which is what stops the loop being paid
                 // for twice: the change is still unconsumed, so a turn that stopped here
                 // would have the next drain re-classify it and repair every segment again.
-                continued = continueSegmentLoop(instance, windowFactory, reader, segmentLoopScratch);
-                suspended = continued == DRAIN_PASS_SUSPENDED;
+                suspended = continueSegmentLoop(instance, windowFactory, reader, segmentLoopScratch);
             }
         } finally {
             if (!suspended) {
@@ -6546,14 +5784,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // them a second time. The rebuild above has already made the tier a pure disk
         // subset with no lead, so the two coordinates belong together.
         instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
-        if (continued == DRAIN_PASS_DECLINED) {
-            // A pass loop this turn resumed found an entry no plan will localize. Escalated
-            // here rather than inside the loop so the bookkeeping above - which belongs to
-            // the segment that did publish - completes first; the recompute that follows
-            // republishes the whole view range over the top of it either way.
-            backfillPassRecoveryCount++;
-            recoverFromCorruptPendingRepairs(instance);
-        }
     }
 
     /**
@@ -8560,15 +7790,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     persistState(instance);
                 }
                 repairPublication.watermarkAdvanced();
-                if (!localized) {
-                    // The replacement covered [viewLowerBoundTimestamp, +inf), so it
-                    // recomputed every closed segment the pending set could name. Dropping
-                    // the set is an optimisation rather than a correctness step - a pass
-                    // over an already-correct segment recomputes it identically - but it is
-                    // the difference between a restart-time rebuild leaving a backlog of
-                    // no-op passes behind it and leaving nothing.
-                    clearPendingRepairsAfterFullRebuild(instance);
-                }
                 if (lvConsumedPersisted && (appendedRows > 0 || repairPublication.isKeepPrimaryRuntime())) {
                     // Post-replay head: retireCheckpointStateOnO3 cleared the head metadata
                     // above, so force seals a fresh boundary reflecting the post-replay state
@@ -11823,16 +11044,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // covers existing history, not future commits.
             final boolean needsSeeding = instance.getStateReader().getSeedState()
                     == LiveViewState.SEED_STATE_SEEDING;
-            // A view carrying deferred closed-segment corrections owes a backfill pass
-            // whether or not the base has moved - a base that stops committing is exactly
-            // when an unrepaired segment would otherwise sit unrepaired forever. The
-            // not-yet-loaded arm covers the turn after a restart, where the set is on disk
-            // and the count still reads zero because nothing has read it. Neither arm reads
-            // the deferral switch: a set written while it was on drains after it goes off.
-            final boolean needsBackfill = !instance.isPendingRepairsLoaded()
-                    || instance.getPendingRepairsSegments() > 0;
             final long processedTo = instance.getLastProcessedSeqTxn();
-            if (head > processedTo || needsRestore || needsSeeding || needsBackfill) {
+            if (head > processedTo || needsRestore || needsSeeding) {
                 // Only count a turn that actually refreshed. refreshInstance returns false
                 // when it lost the refresh latch to another worker (or backed off), so the
                 // losing workers fall through to the idle backoff instead of rescanning the
@@ -12561,28 +11774,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         break refreshBody;
                     }
                     windowStateDirty = instance.isWindowStateDirty();
-                }
-                // Closed anchor segments this view consumed a correction for and has not
-                // repaired. The set is read once per instance, here, before anything can
-                // add to it or read it, so a set that does not validate is caught before
-                // a turn derives anything from it. Read whether or not deferral is on: a
-                // set written while it was on has to drain after it goes off.
-                if (!ensurePendingRepairsLoaded(instance)) {
-                    attempted = true;
-                    recoverFromCorruptPendingRepairs(instance);
-                    instance.recordRefreshSuccess();
-                    return attempted;
-                }
-                // One backfill pass over the pending set, off the drain's path. It runs
-                // instead of this turn's drain rather than beside it: a pass chains whole
-                // -segment replays, and running the drain behind one would put the very
-                // latency deferral exists to remove back into the same turn. The interval
-                // bounds how often a turn is spent this way.
-                if (isCheckpointBackfillPassDue(instance, engine.getConfiguration().getMicrosecondClock().getTicks())
-                        && runCheckpointBackfillPass(instance)) {
-                    attempted = true;
-                    instance.recordRefreshSuccess();
-                    return attempted;
                 }
                 // Decide the cadence. A lead-eligible LV decouples refresh (drain
                 // into the in-mem tier as the un-flushed lead, every tick with new

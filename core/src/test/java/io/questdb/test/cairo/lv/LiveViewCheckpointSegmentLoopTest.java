@@ -46,25 +46,6 @@ import org.junit.Test;
 public class LiveViewCheckpointSegmentLoopTest {
 
     @Test
-    public void testAPassCarriesNoKeyDomain() {
-        // The durable pending set carries no keys, so a pass names only the segment in
-        // flight. A pass that reported a stale domain would arm a keyed replay against the
-        // keys of whichever change set last ran on this worker.
-        final LiveViewCheckpointSegmentLoop loop = new LiveViewCheckpointSegmentLoop();
-        loop.ofChangeSet(0, 1, 2, 100, 200, Numbers.LONG_NULL, Numbers.LONG_NULL, true, 2);
-        loop.addSegment(10, 11, 12, keys("acct-1"), true);
-        loop.removeFirstSegment();
-        Assert.assertNotNull(loop.getInFlightKeys());
-
-        loop.ofBackfillPass(0, 1, 100, 200, 7);
-        loop.segmentStarted(10);
-
-        Assert.assertEquals(10, loop.getInFlightSegmentStart());
-        Assert.assertNull(loop.getInFlightKeys());
-        Assert.assertFalse(loop.hasInFlightNullKey());
-    }
-
-    @Test
     public void testASegmentWithNoKeyDomainCarriesNone() {
         // The cost model turned this segment down, so the loop holds no keys for it and
         // the repair reads it whole. The null-key flag has to go with them: a segment with

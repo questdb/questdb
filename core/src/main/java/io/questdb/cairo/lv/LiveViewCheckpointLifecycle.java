@@ -519,14 +519,12 @@ public final class LiveViewCheckpointLifecycle {
                 }
                 name.clear();
                 // The marker prefix covers both _repairing and a crash-orphaned
-                // _repairing.tmp; nothing else this build writes starts with it. The
-                // pending-repair set is prefixed for the same reason.
+                // _repairing.tmp; nothing else this build writes starts with it.
                 if (!Utf8s.utf8ToUtf16Z(namePtr, name)
                         || Chars.equals(name, ".")
                         || Chars.equals(name, "..")
                         || Chars.equals(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
                         || Chars.startsWith(name, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)
-                        || Chars.startsWith(name, LiveViewCheckpointPendingRepairs.PENDING_FILE_NAME)
                         || Chars.equals(name, LiveViewCheckpointLayout.META_DIR_NAME)
                         || Chars.equals(name, LiveViewCheckpointLayout.DATA_DIR_NAME)
                         || Chars.equals(name, LiveViewCheckpointLayout.REPAIR_DIR_NAME)) {

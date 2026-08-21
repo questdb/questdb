@@ -44,7 +44,7 @@ import org.jetbrains.annotations.Nullable;
  * against the window's input metadata and read by everything that has to name a key.
  * <p>
  * A live view whose functions disagree on their PARTITION BY has no such identity and
- * gets no projector; {@link LiveViewBackfillEnvelope#GATE_MIXED_PARTITION_KEYS} is the
+ * gets no projector; {@link LiveViewSegmentRepairEnvelope#GATE_MIXED_PARTITION_KEYS} is the
  * static form of the same question. Where one identity does exist it is the only key
  * schema the view has - the anchor window, the checkpoint roots and every repair speak
  * it - so deriving it twice would be two chances to disagree.
@@ -163,7 +163,8 @@ public final class LiveViewCheckpointKeyProjector implements QuietCloseable {
      * <p>
      * -1 is not a denial. It says only that a repair of this view cannot follow one key's
      * rows through a posting index and must read the whole range instead, which costs the
-     * same write and a larger read. {@link LiveViewBackfillEnvelope#keyedScanGate} answers
+     * same write and a larger read.
+     * {@link LiveViewSegmentRepairEnvelope#keyedScanGate} answers
      * the same question in the vocabulary {@code live_views()} reports it in, and adds the
      * two the projector cannot see: whether the base scan admits the substitution at all,
      * and whether the view's own output still carries the key.

@@ -916,10 +916,7 @@ public class PropServerConfigurationTest {
         // ignored key or a getter wired to the wrong field would go unnoticed there.
         CairoConfiguration cairo = newPropServerConfiguration(new Properties()).getCairoConfiguration();
 
-        Assert.assertFalse(cairo.isLiveViewCheckpointBackfillDeferralEnabled());
         Assert.assertTrue(cairo.isLiveViewCheckpointRepairIsolatedRuntimeEnabled());
-        Assert.assertEquals(60 * Micros.MINUTE_MICROS, cairo.getLiveViewCheckpointBackfillInterval());
-        Assert.assertEquals(10 * Micros.SECOND_MICROS, cairo.getLiveViewCheckpointBackfillMaxDuration());
         Assert.assertEquals(5 * Micros.MINUTE_MICROS, cairo.getLiveViewCheckpointMaxDurationMicros());
         Assert.assertEquals(1_000_000L, cairo.getLiveViewCheckpointRows());
         Assert.assertTrue(cairo.isLiveViewEnabled());

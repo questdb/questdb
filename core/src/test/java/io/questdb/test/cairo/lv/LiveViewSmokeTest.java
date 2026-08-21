@@ -14845,11 +14845,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // block ends on the three that describe a repair's shape rather than one
         // repair's progress: checkpoint_repair_plan for what the view's SQL
         // admits, then the last repair's effective disposition and denial. The
-        // two checkpoint_backfill_* gates and the three checkpoint_pending_*
-        // columns follow: they describe the SQL as well, and how far the view is
-        // knowingly unrepaired. checkpoint_row_count_mismatches closes the set -
-        // the one column that says the view's own bookkeeping stopped describing
-        // its output.
+        // checkpoint_segment_repair_gate and checkpoint_keyed_scan_gate follow:
+        // they describe the SQL as well.
+        // checkpoint_row_count_mismatches closes the set - the one column that
+        // says the view's own bookkeeping stopped describing its output.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
@@ -14876,9 +14875,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "checkpoint_repair_resumes\tcheckpoint_repair_failures\t"
                         + "checkpoint_repair_plan\tcheckpoint_repair_last_disposition\t"
                         + "checkpoint_repair_last_denial\tcheckpoint_seal_failures\t"
-                        + "checkpoint_backfill_gate\tcheckpoint_backfill_key_gate\t"
-                        + "checkpoint_pending_segments\tcheckpoint_pending_rows\t"
-                        + "checkpoint_pending_oldest_timestamp\tcheckpoint_row_count_mismatches\n");
+                        + "checkpoint_segment_repair_gate\tcheckpoint_keyed_scan_gate\t"
+                        + "checkpoint_row_count_mismatches\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }

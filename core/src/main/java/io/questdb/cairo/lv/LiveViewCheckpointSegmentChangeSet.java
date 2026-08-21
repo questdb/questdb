@@ -47,8 +47,8 @@ import org.jetbrains.annotations.Nullable;
  * boundary, so a row in one segment cannot influence the output of any other. That is what
  * makes the decomposition usable: each closed segment below the runtime's own segment can
  * be repaired and published on its own, over its own range, and the segments between them
- * are left untouched. {@link LiveViewBackfillEnvelope#deferralGate} is the predicate that
- * proves it; a view outside that gate keeps the union range.
+ * are left untouched. {@link LiveViewSegmentRepairEnvelope#segmentScopeGate} is the
+ * predicate that proves it; a view outside that gate keeps the union range.
  * <p>
  * The residual - everything at or above the active segment's start - is not decomposed.
  * It is the correction the runtime is still standing in, and it takes the ordinary resume
@@ -83,9 +83,9 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * 1.68 and its maximum 35.
      */
     public static final int MAX_CLOSED_SEGMENTS = 64;
-    // segmentStart, segmentEndExclusive, minTs, maxTs, rowCount, keySetIndex,
+    // segmentStart, segmentEndExclusive, minTs, maxTs, keySetIndex,
     // isKeyDomainOverflowed, hasNullKey per entry, ordered by segmentStart ascending.
-    private static final int STRIDE = 8;
+    private static final int STRIDE = 7;
     // The affected keys of each segment, in the order the segments were opened rather than
     // in segment order: an entry names its set by index, so a segment inserted ahead of
     // another does not have to move anyone's keys. Retained across repairs and cleared
@@ -147,7 +147,6 @@ public final class LiveViewCheckpointSegmentChangeSet {
             final int base = index * STRIDE;
             segments.setQuick(base + 2, Math.min(segments.getQuick(base + 2), ts));
             segments.setQuick(base + 3, Math.max(segments.getQuick(base + 3), ts));
-            segments.setQuick(base + 4, segments.getQuick(base + 4) + 1);
             addKey(base, key);
             return true;
         }
@@ -196,9 +195,9 @@ public final class LiveViewCheckpointSegmentChangeSet {
 
     /**
      * @return the exclusive end of closed segment {@code index}. Carried alongside the
-     * start because a deferred repair is planned from the entry rather than from this
-     * scratch, and re-deriving the end there would need the anchor plan the segment was
-     * placed against.
+     * start because the keyed scan's cost model prices a segment off this entry, and
+     * re-deriving the end there would need the anchor plan the segment was placed
+     * against.
      */
     public long getSegmentEndExclusive(int index) {
         return segments.getQuick(index * STRIDE + 1);
@@ -221,15 +220,6 @@ public final class LiveViewCheckpointSegmentChangeSet {
     }
 
     /**
-     * @return how many qualifying base rows the change set placed inside closed segment
-     * {@code index}. Diagnostic: what a repair over the segment reads and rewrites is the
-     * whole segment, not these rows.
-     */
-    public long getSegmentRowCount(int index) {
-        return segments.getQuick(index * STRIDE + 4);
-    }
-
-    /**
      * @return the affected keys of closed segment {@code index} - the resolved logical
      * values the corrections carried, which a keyed replay would follow through the base's
      * posting index. Empty when the caller collected none, and meaningless unless
@@ -240,7 +230,7 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * it is what lets a caller walk the set by index without testing for one.
      */
     public @NotNull CharSequenceHashSet getSegmentKeys(int index) {
-        return keySets.getQuick((int) segments.getQuick(index * STRIDE + 5));
+        return keySets.getQuick((int) segments.getQuick(index * STRIDE + 4));
     }
 
     /**
@@ -248,7 +238,7 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * null partition key
      */
     public boolean hasSegmentNullKey(int index) {
-        return segments.getQuick(index * STRIDE + 7) != 0;
+        return segments.getQuick(index * STRIDE + 6) != 0;
     }
 
     /**
@@ -258,7 +248,7 @@ public final class LiveViewCheckpointSegmentChangeSet {
      * costs the same write and only a larger read.
      */
     public boolean isSegmentKeyDomainComplete(int index) {
-        return maxKeysPerSegment > 0 && segments.getQuick(index * STRIDE + 6) == 0;
+        return maxKeysPerSegment > 0 && segments.getQuick(index * STRIDE + 5) == 0;
     }
 
     /**
@@ -344,16 +334,16 @@ public final class LiveViewCheckpointSegmentChangeSet {
             // and no slot - and, more to the point, so a caller walking the set by index
             // never has to test its entries for null. A duplicate null in a keyed scan's
             // key list yields the null key's rows twice.
-            segments.setQuick(base + 7, 1);
+            segments.setQuick(base + 6, 1);
             return;
         }
-        final CharSequenceHashSet keys = keySets.getQuick((int) segments.getQuick(base + 5));
+        final CharSequenceHashSet keys = keySets.getQuick((int) segments.getQuick(base + 4));
         final int keyIndex = keys.keyIndex(key);
         if (keyIndex < 0) {
             return;
         }
         if (keys.size() >= maxKeysPerSegment) {
-            segments.setQuick(base + 6, 1);
+            segments.setQuick(base + 5, 1);
             return;
         }
         // addAt copies the sequence, which the WAL's own symbol table hands out as a
@@ -372,13 +362,12 @@ public final class LiveViewCheckpointSegmentChangeSet {
             keySets.extendAndSet(keySetIndex, new CharSequenceHashSet());
         }
         // Inserted in reverse so each add() lands ahead of the ones before it, leaving
-        // (segmentStart, segmentEndExclusive, minTs, maxTs, rowCount, keySetIndex,
+        // (segmentStart, segmentEndExclusive, minTs, maxTs, keySetIndex,
         // isKeyDomainOverflowed, hasNullKey) in order at the entry's own base offset.
         final int base = index * STRIDE;
         segments.add(base, 0);
         segments.add(base, 0);
         segments.add(base, keySetIndex);
-        segments.add(base, 1);
         segments.add(base, ts);
         segments.add(base, ts);
         segments.add(base, segmentEndExclusive);

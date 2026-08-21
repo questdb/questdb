@@ -344,28 +344,6 @@ public interface CairoConfiguration {
     CharSequence getLegacyCheckpointRoot(); // same as root/../snapshot
 
     /**
-     * How long the refresh worker lets closed-segment corrections coalesce before it
-     * runs one backfill pass over the pending-repair set. The interval is the
-     * coalescing window, not a rate limit on the repair: a segment corrected forty
-     * times inside it is repaired once. Zero drains the set on the next turn that
-     * finds it non-empty, which is what a test wants and what an operator who does
-     * not want the view knowingly stale sets. Governs the pass whether or not
-     * {@link #isLiveViewCheckpointBackfillDeferralEnabled()} is true: segments deferred
-     * while it was on still have to drain after it goes off.
-     */
-    long getLiveViewCheckpointBackfillInterval();
-
-    /**
-     * Budget on how long one backfill pass may spend repairing pending segments before
-     * it leaves the rest for the next pass. Checked between segments, not inside one:
-     * a whole-segment replay runs to completion whatever the budget says, so this
-     * bounds how many of them a turn chains rather than how long a turn takes. What it
-     * protects is the head - a view with a large pending backlog keeps draining base
-     * WAL between passes instead of disappearing into the backlog.
-     */
-    long getLiveViewCheckpointBackfillMaxDuration();
-
-    /**
      * Cadence, in live-view checkpoint seals, at which the refresh worker attempts
      * one physical compaction pass over the live view's checkpoint timeline.
      * Compaction repacks the still-live state pages of sparse data segments into a
@@ -434,27 +412,6 @@ public interface CairoConfiguration {
     int getLiveViewCheckpointRepairMaxChainedBoundaries();
 
     /**
-     * Whether a correction landing in a <b>closed</b> anchor segment is recorded in the
-     * durable pending-repair set and repaired by a later backfill pass, rather than
-     * repaired inside the refresh turn that consumed it.
-     * <p>
-     * This is the half of the deferral design that takes the deep tail off the refresh's
-     * critical path: the turn classifies its change set, feeds the forward rows through
-     * the runtime, resumes over the active segment's own correction, and defers
-     * everything below it. It is also a semantic change - the view is knowingly stale in
-     * a pending segment for up to one
-     * {@link #getLiveViewCheckpointBackfillInterval()} - which is why it is off by
-     * default. False repairs every closed segment inline, which is what
-     * {@link #isLiveViewCheckpointRepairPerSegmentEnabled()} already bounds to the
-     * segments the correction touches.
-     * <p>
-     * It decides what a turn may defer, not what a pass may repair. Segments already in
-     * the pending set drain either way, so turning it off leaves no view stranded in a
-     * segment nothing will ever come back for.
-     */
-    boolean isLiveViewCheckpointBackfillDeferralEnabled();
-
-    /**
      * Whether an out-of-order repair that converges below the runtime frontier replays
      * through a second compiled runtime of the view's own SELECT, instead of through the
      * primary one the forward drain stands in.
@@ -493,17 +450,17 @@ public interface CairoConfiguration {
      * <p>
      * A segment repair reads and re-emits the whole segment, so its cost is the anchor
      * period's own base rows - up to a day of them for {@code ANCHOR DAILY} - however few
-     * rows the correction that triggered it carried. Both loops that drive one, the
-     * inline per-segment repair and the backfill pass, own one pinned base snapshot
-     * across every segment they take, so a replay that parks has to park the rest of the
-     * loop with it; {@link io.questdb.cairo.lv.LiveViewCheckpointRepairSession} carries
-     * that loop position, and the resuming turn finishes the parked segment and then the
-     * ones behind it. Nothing durable moves in between - the replacement is uncommitted
-     * and no generation names the staged roots - so a reader sees the pre-repair view
-     * until the loop publishes.
+     * rows the correction that triggered it carried. The loop that drives one owns a
+     * single pinned base snapshot across every segment it takes, so a replay that parks
+     * has to park the rest of the loop with it;
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointRepairSession} carries that loop
+     * position, and the resuming turn finishes the parked segment and then the ones
+     * behind it. Nothing durable moves in between - the replacement is uncommitted and no
+     * generation names the staged roots - so a reader sees the pre-repair view until the
+     * loop publishes.
      * <p>
-     * False keeps a segment replay inside one turn, which is what both loops did before
-     * the yield existed - an escape hatch, and the control column a measurement runs
+     * False keeps a segment replay inside one turn, which is what the loop did before the
+     * yield existed - an escape hatch, and the control column a measurement runs
      * against. The turn budgets themselves are unchanged either way; see
      * {@link #getLiveViewCheckpointRepairReplayMaxRows()} and
      * {@link #getLiveViewRefreshTurnMaxDurationMicros()} for what a turn is allowed to
@@ -556,7 +513,7 @@ public interface CairoConfiguration {
      * corrected. That is why this defaults to false.
      * <p>
      * A segment takes the keyed route only where every gate
-     * {@code LiveViewBackfillEnvelope.keyedScanGate} reports holds, the correction's key
+     * {@code LiveViewSegmentRepairEnvelope.keyedScanGate} reports holds, the correction's key
      * domain was collected in full, and {@code LiveViewCheckpointKeyedScanCost} prices
      * the keyed read below the whole-segment one. Everything else reads whole, which is
      * what every repair did before this existed.

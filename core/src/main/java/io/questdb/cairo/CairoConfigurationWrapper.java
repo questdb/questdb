@@ -490,16 +490,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getLiveViewCheckpointBackfillInterval() {
-        return getDelegate().getLiveViewCheckpointBackfillInterval();
-    }
-
-    @Override
-    public long getLiveViewCheckpointBackfillMaxDuration() {
-        return getDelegate().getLiveViewCheckpointBackfillMaxDuration();
-    }
-
-    @Override
     public long getLiveViewCheckpointMaxDurationMicros() {
         return getDelegate().getLiveViewCheckpointMaxDurationMicros();
     }
@@ -512,11 +502,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getLiveViewCheckpointRepairMaxChainedBoundaries() {
         return getDelegate().getLiveViewCheckpointRepairMaxChainedBoundaries();
-    }
-
-    @Override
-    public boolean isLiveViewCheckpointBackfillDeferralEnabled() {
-        return getDelegate().isLiveViewCheckpointBackfillDeferralEnabled();
     }
 
     @Override
