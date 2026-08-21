@@ -67,6 +67,7 @@ import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -1265,6 +1266,7 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     };
     private static final Rnd rnd = TestUtils.generateRandom(null);
+    private boolean savedFsCacheEnabled;
     private TimestampDriver timestampDriver;
     private int timestampType;
 
@@ -1278,6 +1280,22 @@ public class TableReaderTest extends AbstractCairoTest {
     public void setUp2() {
         timestampType = rnd.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;
         this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+    }
+
+    // Some of the mmap-cache tests below assert that separate readers converge on the
+    // same mapping, which requires Files.FS_CACHE_ENABLED to be true. Other test classes
+    // sharing this JVM fork (e.g. FilesCacheFuzzTest) can leave that static flag false
+    // after they finish, so force and restore it here to keep this class hermetic
+    // regardless of run order.
+    @Before
+    public void setUpFsCache() {
+        savedFsCacheEnabled = Files.FS_CACHE_ENABLED;
+        Files.FS_CACHE_ENABLED = true;
+    }
+
+    @After
+    public void tearDownFsCache() {
+        Files.FS_CACHE_ENABLED = savedFsCacheEnabled;
     }
 
     @Test
