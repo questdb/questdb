@@ -1095,9 +1095,6 @@ public class SqlParser {
         subLexer.of(syntheticSql);
 
         final IQueryModel subQuery = parseAsSubQuery(subLexer, null, false, sqlParserCallback, model.getDecls(), true);
-        if (flip) {
-            subQuery.setWhereClause(simplifyKeepFilter(subQuery.getWhereClause(), designatedTimestampColumn));
-        }
         model.setNestedModel(subQuery);
         model.setNestedModelIsSubQuery(true);
         if (model.getAlias() == null) {
@@ -1257,10 +1254,10 @@ public class SqlParser {
      * the predicate is FALSE or NULL.
      * <ul>
      *     <li>{@code flip} (a designated-timestamp ordering comparison, see
-     *     {@link #isTimestampFlippablePredicate}): {@code NOT (predicate)}, which the caller then rewrites
-     *     in-place to the flipped bare comparison (e.g. {@code ts >= now()}) via {@link #simplifyKeepFilter}
-     *     so {@link WhereClauseParser} can extract a timestamp interval and prune partitions. Safe because
-     *     the timestamp is never NULL.</li>
+     *     {@link #isTimestampFlippablePredicate}): {@code NOT (predicate)}. {@code SqlOptimiser} then turns
+     *     that into the flipped bare comparison (e.g. {@code NOT(ts < now())} -> {@code ts >= now()}) in
+     *     {@code optimiseBooleanNot}, which is what lets {@link WhereClauseParser} extract a timestamp
+     *     interval and prune partitions. Safe because the timestamp is never NULL.</li>
      *     <li>otherwise: {@code CASE WHEN (predicate) THEN false ELSE true END}, which keeps FALSE and NULL
      *     rows for EVERY predicate shape. A plain {@code NOT(predicate)} is unsafe here:
      *     {@code SqlOptimiser.optimiseBooleanNot} rewrites {@code NOT(a < b)} into the inverted bare
@@ -1302,26 +1299,6 @@ public class SqlParser {
     }
 
     /**
-     * Rewrites a {@code NOT(<ordering comparison>)} keep-filter into the equivalent flipped comparison
-     * (e.g. {@code NOT(ts < now())} -> {@code ts >= now()}) so {@link WhereClauseParser} can extract a
-     * timestamp interval and prune partitions. Only applied when the caller has already established (via
-     * {@link #isTimestampFlippablePredicate}) that the comparison is on the never-NULL designated timestamp.
-     */
-    private static ExpressionNode simplifyKeepFilter(ExpressionNode keepFilter, CharSequence designatedTimestampColumn) {
-        if (keepFilter != null && keepFilter.paramCount == 1 && keepFilter.rhs != null
-                && Chars.equalsIgnoreCase(keepFilter.token, "not")) {
-            final ExpressionNode inner = keepFilter.rhs;
-            final CharSequence inverted = invertOrderingOperator(inner.token);
-            if (inverted != null && inner.type == ExpressionNode.OPERATION && inner.paramCount == 2
-                    && isNullSafeOrderingFlip(inner.lhs, inner.rhs, designatedTimestampColumn)) {
-                inner.token = inverted;
-                return inner;
-            }
-        }
-        return keepFilter;
-    }
-
-    /**
      * Whether {@code NOT(a <op> b)} can be safely rewritten to the flipped bare comparison {@code a <inv> b}.
      * QuestDB comparisons are two-valued: a NULL operand makes BOTH {@code a < b} and {@code a >= b} false, so
      * {@code NOT(a < b)} (which is true when an operand is NULL) is NOT equivalent to {@code a >= b} (false)
@@ -1330,8 +1307,8 @@ public class SqlParser {
      * {@link #isOperandProvablyNonNull} (a non-null literal, a wall-clock function such as now(), or
      * null-preserving timestamp arithmetic over non-null operands) — exactly the {@code ts < now()} shape the
      * partition-pruning optimisation targets. Every other shape (including a column-free but possibly-NULL
-     * constant like {@code cast(null as timestamp)}) keeps the {@code NOT(...)}/CASE wrap, which is always
-     * correct (it just does not prune). Without this guard, a policy like {@code EXPIRE ROWS WHEN v < 2.0} on
+     * constant like {@code cast(null as timestamp)}) keeps the CASE wrap, which is always correct (it
+     * just does not prune). Without this guard, a policy like {@code EXPIRE ROWS WHEN v < 2.0} on
      * a nullable column would hide (and the cleanup job would delete) rows whose {@code v} is NULL even though
      * they never expired.
      */
