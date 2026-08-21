@@ -1261,9 +1261,13 @@ public interface CairoConfiguration {
 
     boolean isParallelIndexingEnabled();
 
+    boolean isParquetExportFailOnInvalidUtf16();
+
     boolean isParquetExportRawArrayEncoding();
 
     boolean isParquetExportStatisticsEnabled();
+
+    boolean isPartitionEncoderParquetFailOnInvalidUtf16();
 
     boolean isPartitionEncoderParquetRawArrayEncoding();
 
