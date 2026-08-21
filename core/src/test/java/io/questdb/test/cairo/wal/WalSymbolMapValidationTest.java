@@ -70,6 +70,8 @@ public class WalSymbolMapValidationTest extends AbstractCairoTest {
             assertInvalidSymbolDiffError(tableToken, 3, walId);
             assertQuery("SELECT count() FROM x")
                     .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
                     .returns("count\n2\n");
         });
     }
@@ -98,6 +100,8 @@ public class WalSymbolMapValidationTest extends AbstractCairoTest {
             assertInvalidSymbolDiffError(tableToken, 1, walId);
             assertQuery("SELECT count() FROM x")
                     .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
                     .returns("count\n0\n");
         });
     }
