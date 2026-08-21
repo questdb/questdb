@@ -75,6 +75,15 @@ import org.junit.Test;
  * reach: the apply deduplicates a block against the stored partition as well as against
  * itself, so the second commit's row is the one that would overwrite the first.
  * <p>
+ * Keeping every row is one half of the enabling gate; the other half is that nothing else
+ * moved. Three <b>differential</b> cases put a second view over the same base with the switch
+ * off at its CREATE and drive one workload through both: an anchor resume, a closed-segment
+ * replacement and the ordinary forward path. Each asserts the two arms hold the same rows,
+ * read the same number of base rows, take the same route and reach it in the same number of
+ * transactions. A from-base oracle cannot say that on its own - two arms that lost the same
+ * row match neither, and one that lost it on neither matches both - so the control is what
+ * attributes a divergence to the dedup keys rather than to the workload.
+ * <p>
  * A stamp is a thing that can be forgotten, so the seal no longer takes it on trust: it holds
  * every checkpoint root to the rows the view's table actually holds, because a root carries
  * the rows the view <i>emitted</i> as its cumulative position and a collapse would put a
@@ -821,6 +830,200 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         });
     }
 
+    @Test
+    public void testTheDedupKeysLeaveAnInlineResumeExactlyAsThePlainViewHasIt() throws Exception {
+        // The enabling gate's other half, and the route the cases above never reach. A
+        // correction inside the view's own active segment resumes from the anchor below it
+        // and republishes (anchorMaxTs, +inf) with REPLACE_RANGE - replayFromAnchor's own
+        // commit site, not the segment repair's - and it is what 94% of the measured
+        // workload's corrections take.
+        //
+        // What makes this a differential rather than a third recompute check is the second
+        // view. Both read the same base through the same SELECT at the same cadence; the
+        // only thing that separates them is the dedup keys one of them carries, so a
+        // divergence has exactly one possible cause. The from-base oracle cannot say that:
+        // a repair that lost a row on both arms matches neither, and one that lost it on
+        // neither matches both.
+        //
+        // The repeated pair sits inside the resumed range, which is what gives the case
+        // teeth: it is the row a publication that consulted the table's dedup keys would
+        // collapse. Quoted against a resume that commits with commitLiveViewWithUpsert
+        // instead of the replacement - the wrong publication on the right route, and a
+        // mistake only reachable now that the sparse publisher exists - the arms come apart
+        // in both directions at once: the keyed one collapses the pair to a single row and
+        // the plain one, whose table has no keys to upsert on, keeps three.
+        assertMemoryLeak(() -> {
+            createBothArms(seedAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance keyed = instanceOf("lv");
+                final LiveViewInstance plain = instanceOf("lv_plain");
+                Assert.assertTrue("the keyed arm must carry the identity", keyed.isDedupKeyed());
+                Assert.assertFalse("the control arm must not", plain.isDedupKeyed());
+                // One forward turn above the seed. Its seal is the anchor the correction
+                // resumes from: an anchor covers rows up to and including its own maxTs, so
+                // only a root a forward turn already sealed can sit below a later
+                // correction, and the sweep that seeds a view seals none.
+                commit(row(4, 1, 0, 20, "acct-1"), job);
+                // The repeated pair, two turns above that anchor and inside the range the
+                // resume republishes.
+                commit(row(4, 1, 0, 30, "acct-1"), job);
+                commit(row(4, 1, 0, 30, "acct-1"), job);
+                Assert.assertEquals(
+                        "both rows of the pair must be in the keyed arm before the repair reads it",
+                        2,
+                        rowsAt("lv", "2026-01-04T01:00:30.000000Z", "acct-1")
+                );
+                final long resumeRowsBefore = keyed.getO3ResumeReplayRows();
+
+                // Above the anchor and below the pair, so the turn resumes from that anchor
+                // and the range it republishes holds both rows of the pair.
+                commit(row(4, 1, 0, 25, "acct-2"), job);
+
+                Assert.assertTrue(
+                        "the correction must take the resume disposition; nothing else exercises"
+                                + " replayFromAnchor's replacement",
+                        keyed.getO3ResumeReplayRows() > resumeRowsBefore
+                );
+                Assert.assertEquals(
+                        "the identity may not move the repair onto another route",
+                        plain.getO3ResumeReplayRows(),
+                        keyed.getO3ResumeReplayRows()
+                );
+                Assert.assertEquals(
+                        "nor may it change what the replay reads",
+                        plain.getO3ReplayScanRows(),
+                        keyed.getO3ReplayScanRows()
+                );
+                Assert.assertEquals(
+                        "the identity alone leaves nothing sparse to publish - there is no smaller"
+                                + " set without the keyed read",
+                        0,
+                        job.sparsePublicationCountForTest()
+                );
+                Assert.assertEquals(
+                        "the replacement carries both rows of the pair on the keyed arm",
+                        2,
+                        rowsAt("lv", "2026-01-04T01:00:30.000000Z", "acct-1")
+                );
+                assertArmsAgree();
+            }
+        });
+    }
+
+    @Test
+    public void testTheDedupKeysLeaveAClosedSegmentReplacementExactlyAsThePlainViewHasIt() throws Exception {
+        // The same differential over the second replacement site: a correction in a closed
+        // segment, repaired per segment and published with REPLACE_RANGE over that segment
+        // alone. testASegmentRepairOnADedupKeyedViewStillPublishesItsWholeRange proves the
+        // keyed arm keeps its pair and matches a from-base recompute; what this adds is the
+        // control that says the keys changed nothing - the same rows, the same reads and the
+        // same number of repairs as a view without them.
+        //
+        // This is the arm that dies on TableWriter.isCommitDedupMode() extended to admit
+        // WAL_DEDUP_MODE_REPLACE_RANGE, at expected:<2> but was:<1>: the replacement
+        // collapses the pair it carries. The resume case above survives that same mutation,
+        // and the two replacements differ in where they land - this one rewrites a partition
+        // two days below the frontier, the resume's only the last one - so whichever apply
+        // path the mutation reaches, the two cases are not one case written twice.
+        assertMemoryLeak(() -> {
+            createBothArms(seedAccountsOverThreeDays() + ", " + repeatOfTheFirstRow(2, 1));
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance keyed = instanceOf("lv");
+                final LiveViewInstance plain = instanceOf("lv_plain");
+                final long repairsBefore = job.segmentRepairCountForTest();
+
+                // 2026-01-02, with two later days above it: a closed segment on both arms.
+                commit(correction("acct-2"), job);
+
+                Assert.assertEquals(
+                        "both arms must repair the closed segment; a route that skipped one would"
+                                + " leave the arms agreeing about nothing",
+                        repairsBefore + 2,
+                        job.segmentRepairCountForTest()
+                );
+                Assert.assertEquals(
+                        "the identity may not change what a segment repair reads",
+                        plain.getO3ReplayScanRows(),
+                        keyed.getO3ReplayScanRows()
+                );
+                Assert.assertEquals(0, job.sparsePublicationCountForTest());
+                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(
+                        "the replacement carries both rows of the pair on the keyed arm",
+                        2,
+                        rowsAt("lv", "2026-01-02T01:00:01.000000Z", "acct-1")
+                );
+                assertArmsAgree();
+            }
+        });
+    }
+
+    @Test
+    public void testTheDedupKeysLeaveTheOrdinaryForwardPathExactlyAsThePlainViewHasIt() throws Exception {
+        // The forward half of the gate. The cases above prove a dedup-keyed view keeps
+        // both rows of a repeated pair; this one proves it keeps everything else the same
+        // way a view without the keys does - the same rows, and the same number of
+        // transactions to put them there.
+        //
+        // The transaction count is the assertion worth having, because the mode is the one
+        // thing the identity does change on this path. A NO_DEDUP stamp makes WalTxnDetails
+        // write FORCE_FULL_COMMIT for the transaction, which disables lag retention and
+        // caps block coalescing - the tax the design priced this decision on. If it applied
+        // to a live view, the arms would need a different number of applies to write the
+        // same rows. They do not, because the view's table declares maxUncommittedRows = 0
+        // and both budgets are already clamped to it.
+        //
+        // On a forward commit forced back to the default dedup mode - the pre-item-2 path,
+        // restored through setSimulateForwardCommitDedupCollapseForTest - this fails at
+        // expected:<2> but was:<1> on the keyed arm, while the plain arm keeps both rows and
+        // the keyed arm's next seal counts the drift. That asymmetry is the reason the
+        // control is a control: the same workload, the same mutation, and only the arm
+        // carrying the keys loses anything.
+        assertMemoryLeak(() -> {
+            createBothArms(seedAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance keyed = instanceOf("lv");
+                final LiveViewInstance plain = instanceOf("lv_plain");
+                final long replayRowsBefore = keyed.getO3ReplayScanRows();
+
+                // Three forward turns above everything either view holds, the middle one
+                // carrying two rows of one account at one instant.
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+                commit(row(5, 1, 0, 1, "acct-1") + ", " + row(5, 1, 0, 1, "acct-1"), job);
+                commit(row(5, 1, 0, 2, "acct-2"), job);
+
+                Assert.assertEquals(
+                        "forward rows only: an equal timestamp is not an out-of-order one",
+                        replayRowsBefore,
+                        keyed.getO3ReplayScanRows()
+                );
+                Assert.assertEquals(
+                        "the pair reached the keyed arm's table whole",
+                        2,
+                        rowsAt("lv", "2026-01-05T01:00:01.000000Z", "acct-1")
+                );
+                Assert.assertEquals(
+                        "the identity costs the forward path no extra transaction, and saves it"
+                                + " none either",
+                        liveViewWriterTxn("lv_plain"),
+                        liveViewWriterTxn("lv")
+                );
+                Assert.assertEquals(0, keyed.getCheckpointRowCountMismatches());
+                Assert.assertEquals(0, plain.getCheckpointRowCountMismatches());
+                Assert.assertEquals(
+                        "every seal in the run stamped a position its own table can account for",
+                        durableRows("lv"),
+                        keyed.getLvRowsTotal()
+                );
+                Assert.assertEquals(durableRows("lv_plain"), plain.getLvRowsTotal());
+                assertArmsAgree();
+            }
+        });
+    }
+
     /**
      * One row of the view's own output, as the repair's copier writes it: the designated
      * timestamp, the projected key and the window's value.
@@ -852,7 +1055,25 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED, "true");
     }
 
+    /**
+     * The differential the item 7 cases stand on: the two arms hold the same output, and
+     * each holds the output its base says it should. The second half is not redundant - two
+     * arms that lost the same row agree with each other and with nothing else - and the
+     * first is what the from-base oracle cannot say, which is that a divergence came from
+     * the dedup keys rather than from the workload.
+     */
+    private void assertArmsAgree() throws Exception {
+        TestUtils.assertEquals(dumpView("lv_plain"), dumpView("lv"));
+        Assert.assertEquals(durableRows("lv_plain"), durableRows("lv"));
+        assertViewMatchesRecompute("lv");
+        assertViewMatchesRecompute("lv_plain");
+    }
+
     private void assertViewMatchesRecompute() throws Exception {
+        assertViewMatchesRecompute("lv");
+    }
+
+    private void assertViewMatchesRecompute(String viewName) throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
         final String recompute = "select created_at, cod_acct_no, "
                 + "sum(amt_txn) over (partition by cod_acct_no, bucket order by created_at "
@@ -862,11 +1083,11 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 engine,
                 sqlExecutionContext,
                 "(" + recompute + ") order by 2, 1, 3",
-                "(lv) order by 2, 1, 3",
+                "(" + viewName + ") order by 2, 1, 3",
                 LOG,
                 true
         );
-        assertNoRefreshFaults("lv");
+        assertNoRefreshFaults(viewName);
     }
 
     private void commit(String values, LiveViewRefreshJob job) throws Exception {
@@ -911,6 +1132,22 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     /**
+     * The base and both arms of an item 7 differential: {@code lv_plain} created with the
+     * identity switched off and {@code lv} with it on, over one base, through one SELECT, at
+     * one cadence. The switch is read once per CREATE, so toggling it between the two is what
+     * puts the dedup keys on one table and not the other; nothing else about the two views
+     * differs, which is what makes a divergence between them attributable.
+     */
+    private void createBothArms(String seedRows) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        createBase(seedRows);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "false");
+        createViewOverBase("lv_plain", "100ms");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        createViewOverBase("lv", "100ms");
+    }
+
+    /**
      * The same view over a base that deduplicates on {@code (created_at, cod_acct_no, amt_txn)}.
      * The third key is what lets the base keep two rows at one instant for one account, which is
      * the pair the view's own output then repeats; keying on the first two alone would collapse
@@ -952,7 +1189,11 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
      * delayed flush case needs.
      */
     private void createViewOverBase(String flushEvery) throws Exception {
-        execute("create live view lv flush every " + flushEvery + " start from beginning as "
+        createViewOverBase("lv", flushEvery);
+    }
+
+    private void createViewOverBase(String viewName, String flushEvery) throws Exception {
+        execute("create live view " + viewName + " flush every " + flushEvery + " start from beginning as "
                 + "select created_at, cod_acct_no, sum(amt_txn) over w as cumulative_sum "
                 + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
     }
@@ -983,9 +1224,27 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
      * invariant compares against is the durable output alone.
      */
     private long durableRows() {
-        try (TableReader reader = engine.getReader(engine.verifyTableName("lv"))) {
+        return durableRows("lv");
+    }
+
+    private long durableRows(String viewName) {
+        try (TableReader reader = engine.getReader(engine.verifyTableName(viewName))) {
             return reader.size();
         }
+    }
+
+    /**
+     * The named view's output as text, in a total order - the two arms of a differential
+     * hold the same rows or they do not. Read through the view rather than off its table so
+     * an un-flushed lead row counts as one the view holds.
+     */
+    private String dumpView(String viewName) throws Exception {
+        return TestUtils.printSqlToString(
+                engine,
+                sqlExecutionContext,
+                "select created_at, cod_acct_no, cumulative_sum from " + viewName + " order by 1, 2, 3",
+                new StringSink()
+        );
     }
 
     /**
@@ -1001,14 +1260,24 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         );
     }
 
+    private LiveViewInstance instanceOf(String viewName) {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+        Assert.assertNotNull("live view '" + viewName + "' is not registered", instance);
+        return instance;
+    }
+
     /**
      * The live view table's own writer transaction. Two forward rows that went out in separate
      * commits leave it further along than two that shared a block, which is what separates a
      * pair split across turns from one an apply saw whole.
      */
     private long liveViewWriterTxn() {
+        return liveViewWriterTxn("lv");
+    }
+
+    private long liveViewWriterTxn(String viewName) {
         return engine.getTableSequencerAPI()
-                .getTxnTracker(engine.verifyTableName("lv"))
+                .getTxnTracker(engine.verifyTableName(viewName))
                 .getWriterTxn();
     }
 
@@ -1037,7 +1306,11 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
      * so an un-flushed lead row counts as one the view holds.
      */
     private long rowsAt(String timestamp, String account) throws Exception {
-        return count("select count() from lv where cod_acct_no = '" + account + "'"
+        return rowsAt("lv", timestamp, account);
+    }
+
+    private long rowsAt(String viewName, String timestamp, String account) throws Exception {
+        return count("select count() from " + viewName + " where cod_acct_no = '" + account + "'"
                 + " and created_at = '" + timestamp + "'::timestamp");
     }
 
