@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.sql.RecordCursor;
@@ -63,6 +64,17 @@ import org.junit.Test;
  * is stamped {@code WAL_DEDUP_MODE_NO_DEDUP} - a view may legitimately emit two rows sharing
  * the pair, and a default-mode commit on a dedup-keyed table would collapse them.
  * <p>
+ * That stamp is decided in one place, {@code commitLiveViewBlock}, and reached from four
+ * forward sites: the lead flush, the emergency flush a stalled tier publish falls back to,
+ * the coupled drain a DEDUP base routes the view through, and the seed sweep. Four cases
+ * drive a repeated pair through them - split across two flushes, held in the lead and
+ * carried by one delayed flush, written beside its stored twin by an emergency flush, and
+ * split across two coupled commits - because a site that forgot the stamp loses a row
+ * nothing downstream can detect. The seed sweep is covered by the seeded repeat the repair
+ * cases start from. A pair split across two commits is the shape an in-block repeat cannot
+ * reach: the apply deduplicates a block against the stored partition as well as against
+ * itself, so the second commit's row is the one that would overwrite the first.
+ * <p>
  * A stamp is a thing that can be forgotten, so the seal no longer takes it on trust: it holds
  * every checkpoint root to the rows the view's table actually holds, because a root carries
  * the rows the view <i>emitted</i> as its cumulative position and a collapse would put a
@@ -94,8 +106,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the repeated pair must be in the view before the repair reads it",
                         2,
-                        count("select count() from lv where cod_acct_no = 'acct-1'"
-                                + " and created_at = '2026-01-02T01:00:01.000000Z'::timestamp")
+                        rowsAt("2026-01-02T01:00:01.000000Z", "acct-1")
                 );
 
                 commit(correction("acct-2"), job);
@@ -109,8 +120,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the replacement carries both rows of the pair and deletes neither",
                         2,
-                        count("select count() from lv where cod_acct_no = 'acct-1'"
-                                + " and created_at = '2026-01-02T01:00:01.000000Z'::timestamp")
+                        rowsAt("2026-01-02T01:00:01.000000Z", "acct-1")
                 );
                 assertViewMatchesRecompute();
             }
@@ -202,8 +212,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the replacement carries both rows of the pair and deletes neither",
                         2,
-                        count("select count() from lv where cod_acct_no = 'acct-1'"
-                                + " and created_at = '2026-01-02T01:00:01.000000Z'::timestamp")
+                        rowsAt("2026-01-02T01:00:01.000000Z", "acct-1")
                 );
                 TestUtils.assertEquals(untouchedBefore, dumpRowsOf("acct-3"));
                 assertViewMatchesRecompute();
@@ -381,9 +390,256 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals(rowsBefore + 2, count("select count() from lv"));
                 Assert.assertEquals(
                         2,
-                        count("select count() from lv where cod_acct_no = 'acct-1'"
-                                + " and created_at = '2026-01-05T01:00:00.000000Z'::timestamp")
+                        rowsAt("2026-01-05T01:00:00.000000Z", "acct-1")
                 );
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testARepeatedPairSplitAcrossTwoFlushesKeepsBothRowsAndItsLadder() throws Exception {
+        // The half of the identity an in-block repeat cannot reach. Here the two rows of
+        // the pair are emitted by two different refresh turns, so the second one's block
+        // meets its twin already on the view's own partition - and an apply at the default
+        // dedup mode deduplicates a block against the stored rows as well as against
+        // itself. The stamped NO_DEDUP mode is what keeps the first row where it stands.
+        //
+        // A cadence seal runs between the two, because the checkpoint interval is one row:
+        // the pair therefore straddles a checkpoint as well as a commit, and the seal that
+        // follows the second row is held to a table that must hold both. On a forward commit
+        // forced back to the default mode this fails at expected:<50> but was:<49>.
+        armSparsePublication();
+        assertMemoryLeak(() -> {
+            createView(seedAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                final long durableBefore = durableRows();
+                final long o3ReplayRowsBefore = instance.getO3ReplayScanRows();
+                final long viewTxnBefore = liveViewWriterTxn();
+
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+
+                final long viewTxnBetween = liveViewWriterTxn();
+                Assert.assertTrue(
+                        "the first row of the pair must be durable before the second is emitted",
+                        viewTxnBetween > viewTxnBefore
+                );
+                Assert.assertEquals(durableBefore + 1, durableRows());
+
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+
+                Assert.assertTrue(
+                        "the second row goes out in a commit of its own, against a table already"
+                                + " holding its pair",
+                        liveViewWriterTxn() > viewTxnBetween
+                );
+                Assert.assertEquals(
+                        "the second commit's apply leaves the stored twin alone",
+                        durableBefore + 2,
+                        durableRows()
+                );
+                Assert.assertEquals(2, rowsAt("2026-01-05T01:00:00.000000Z", "acct-1"));
+                Assert.assertEquals(
+                        "both rows are forward rows at the frontier - an equal timestamp is not"
+                                + " an out-of-order one, so no replay republished the pair",
+                        o3ReplayRowsBefore,
+                        instance.getO3ReplayScanRows()
+                );
+                Assert.assertEquals(0, instance.getCheckpointRowCountMismatches());
+                Assert.assertEquals(durableRows(), instance.getLvRowsTotal());
+                Assert.assertTrue(
+                        "the seal across the pair stamped a root rather than refusing one",
+                        instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL
+                );
+                assertViewMatchesRecompute();
+
+                // The publication half. A correction below the pair replays the range that
+                // holds it and republishes the lot with REPLACE_RANGE, which deletes the
+                // interval and carries every row of it - the publication a repeated pair
+                // always takes, and the one that has to bring both rows back.
+                commit(row(5, 0, 30, 0, "acct-2"), job);
+
+                Assert.assertTrue(
+                        "the correction must replay the range the pair sits in",
+                        instance.getO3ReplayScanRows() > o3ReplayRowsBefore
+                );
+                Assert.assertEquals(2, rowsAt("2026-01-05T01:00:00.000000Z", "acct-1"));
+                Assert.assertEquals(0, instance.getCheckpointRowCountMismatches());
+                Assert.assertEquals(durableRows(), instance.getLvRowsTotal());
+                assertViewMatchesRecompute();
+            }
+
+            // The checkpoint half. Nothing reads the positions a seal stamped until a restart
+            // rebuilds the runtime off the roots that carry them, so this is where a ladder
+            // that credited the split pair with one row rather than two would surface.
+            final long rowsBeforeRestart = durableRows();
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+
+                Assert.assertEquals(rowsBeforeRestart, durableRows());
+                Assert.assertEquals(
+                        "the restored ladder credits the view with both rows of the split pair",
+                        rowsBeforeRestart,
+                        engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal()
+                );
+                Assert.assertEquals(2, rowsAt("2026-01-05T01:00:00.000000Z", "acct-1"));
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testARepeatedPairHeldInTheLeadReachesDiskThroughOneDelayedFlush() throws Exception {
+        // The delayed flush: a FLUSH EVERY longer than the drive loop's own clock step, so
+        // the drained rows sit in the in-memory tier as an un-flushed lead and reach disk
+        // only when the cadence comes round. Both rows of the pair are drained in separate
+        // turns and land in one block, which is a third way for the apply to see them -
+        // neither the same drain nor the same commit, but the same flush.
+        //
+        // The lead is also what the view serves while the rows are off disk, so the case
+        // pins that the pair is complete in the view before the flush and complete on disk
+        // after it. A seal only follows the flush, which is why the invariant is asserted
+        // there rather than over the lead. On a forward commit forced back to the default
+        // mode this fails at expected:<51> but was:<50>.
+        armSparsePublication();
+        assertMemoryLeak(() -> {
+            createBase(seedAccountsOverThreeDays());
+            createViewOverBase("10s");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                // One forward row to arm the cadence. The seed reaches disk through the sweep,
+                // which leaves the flush clock unset - so without this the first lead flush is
+                // due immediately and the pair is split before the case can hold it.
+                commit(row(5, 0, 0, 0, "acct-2"), job);
+                final long durableBefore = durableRows();
+
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+
+                Assert.assertEquals(
+                        "the cadence has not come round, so neither row is on disk yet",
+                        durableBefore,
+                        durableRows()
+                );
+                Assert.assertEquals("both rows are held as the un-flushed lead", 2, instance.getLeadRowCount());
+                Assert.assertEquals(
+                        "the view serves the pair out of the tier while it waits for the flush",
+                        2,
+                        rowsAt("2026-01-05T01:00:00.000000Z", "acct-1")
+                );
+
+                // Cross the FLUSH EVERY deadline: one delayed flush carries the whole lead.
+                setCurrentMicros(currentMicros + 11_000_000L);
+                driveRefreshToQuiescence(job);
+
+                Assert.assertEquals(
+                        "the delayed flush wrote both rows of the pair",
+                        durableBefore + 2,
+                        durableRows()
+                );
+                Assert.assertEquals(2, rowsAt("2026-01-05T01:00:00.000000Z", "acct-1"));
+                Assert.assertEquals(0, instance.getCheckpointRowCountMismatches());
+                Assert.assertEquals(durableRows(), instance.getLvRowsTotal());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testARepeatedPairAnEmergencyFlushWroteKeepsBothRows() throws Exception {
+        // The emergency flush: the tier publish fails mid-swap, so finishLeadRefresh writes
+        // the staging rows straight to disk rather than re-draining them. The row it writes
+        // that way is the second of a pair whose first row is already stored, so the route
+        // has to reach the same stamped commit the ordinary flush does. It does, because
+        // commitLiveViewBlock is the one place that decides the mode - which is exactly the
+        // claim this case exists to hold, since an emergency flush is the forward site
+        // easiest to forget.
+        //
+        // The injection only fires on the publish slow path, so the growth budget is zeroed
+        // to force it. On a forward commit forced back to the default mode this fails at
+        // expected:<50> but was:<49>.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
+        armSparsePublication();
+        assertMemoryLeak(() -> {
+            createView(seedAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                final long durableBefore = durableRows();
+
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+                Assert.assertEquals(durableBefore + 1, durableRows());
+
+                final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull("the view must hold a tier for its publish to be failed", tier);
+                final int publishedBeforeFailure = tier.getPublishedIdx();
+                tier.setFailNextPublishSwap(new RuntimeException("test: simulated mid-swap failure"));
+
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+
+                Assert.assertEquals(
+                        "the publish must have failed for the emergency flush to be the route",
+                        publishedBeforeFailure,
+                        tier.getPublishedIdx()
+                );
+                Assert.assertEquals(
+                        "the emergency flush recovers the cycle rather than retrying it",
+                        0,
+                        instance.getFlushRetryCount()
+                );
+                Assert.assertEquals(
+                        "the row the emergency flush wrote did not collapse its stored twin",
+                        durableBefore + 2,
+                        durableRows()
+                );
+                Assert.assertEquals(2, rowsAt("2026-01-05T01:00:00.000000Z", "acct-1"));
+                Assert.assertEquals(0, instance.getCheckpointRowCountMismatches());
+                Assert.assertEquals(durableRows(), instance.getLvRowsTotal());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testARepeatedPairSplitAcrossTwoCoupledCommitsKeepsBothRows() throws Exception {
+        // The fourth forward site: the coupled drain, which commits and applies every cycle
+        // with no in-memory lead at all. A DEDUP base is what routes a view there - the
+        // refresh reads the applied, post-dedup base rather than the raw WAL - so the rows
+        // reach the view's table through a different drain from the three cases above.
+        //
+        // The base keeps both rows of the pair because its own dedup keys carry the amount;
+        // what repeats in the view's output is (created_at, cod_acct_no), which is the pair
+        // the view's table deduplicates on and the one at risk. On a forward commit forced
+        // back to the default mode this fails at expected:<50> but was:<49>.
+        armSparsePublication();
+        assertMemoryLeak(() -> {
+            createDedupBaseView(seedAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                final long durableBefore = durableRows();
+
+                commit(row(5, 1, 0, 0, "acct-1", 1.0), job);
+                commit(row(5, 1, 0, 0, "acct-1", 2.0), job);
+
+                Assert.assertEquals(
+                        "a DEDUP base takes the coupled cadence, which holds no un-flushed lead",
+                        0,
+                        instance.getLeadRowCount()
+                );
+                Assert.assertEquals(
+                        "the base kept both rows, so the view emitted both",
+                        durableBefore + 2,
+                        durableRows()
+                );
+                Assert.assertEquals(2, rowsAt("2026-01-05T01:00:00.000000Z", "acct-1"));
+                Assert.assertEquals(0, instance.getCheckpointRowCountMismatches());
+                Assert.assertEquals(durableRows(), instance.getLvRowsTotal());
                 assertViewMatchesRecompute();
             }
         });
@@ -638,10 +894,31 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     private void createBase(String seedRows) throws Exception {
+        createBase(seedRows, "");
+    }
+
+    /**
+     * The base table, optionally with a dedup clause of its own. A DEDUP base is how a case
+     * reaches the <b>coupled</b> refresh cadence: {@code isDedupBase} makes the view read the
+     * applied base and commit every cycle, so its rows never pass through the in-memory tier's
+     * un-flushed lead.
+     */
+    private void createBase(String seedRows, String dedupClause) throws Exception {
         execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 8, "
-                + "amt_txn double) timestamp(created_at) partition by hour wal");
+                + "amt_txn double) timestamp(created_at) partition by hour wal" + dedupClause);
         execute("insert into tx values " + seedRows);
         drainWalQueue();
+    }
+
+    /**
+     * The same view over a base that deduplicates on {@code (created_at, cod_acct_no, amt_txn)}.
+     * The third key is what lets the base keep two rows at one instant for one account, which is
+     * the pair the view's own output then repeats; keying on the first two alone would collapse
+     * the case's input before the view ever saw it.
+     */
+    private void createDedupBaseView(String seedRows) throws Exception {
+        createBase(seedRows, " dedup upsert keys(created_at, cod_acct_no, amt_txn)");
+        createViewOverBase("100ms");
     }
 
     /**
@@ -666,7 +943,16 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
 
     private void createView(String seedRows) throws Exception {
         createBase(seedRows);
-        execute("create live view lv flush every 100ms start from beginning as "
+        createViewOverBase("100ms");
+    }
+
+    /**
+     * The view, at the given FLUSH EVERY cadence. An interval longer than the drive loop's own
+     * clock step leaves the drained rows in the tier as an un-flushed lead, which is what a
+     * delayed flush case needs.
+     */
+    private void createViewOverBase(String flushEvery) throws Exception {
+        execute("create live view lv flush every " + flushEvery + " start from beginning as "
                 + "select created_at, cod_acct_no, sum(amt_txn) over w as cumulative_sum "
                 + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
     }
@@ -692,10 +978,6 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     /**
-     * The view's stored rows for one account, as text - the image a publication that does
-     * not name that account must leave exactly where it found it.
-     */
-    /**
      * The rows the view's own table holds, read straight off it rather than through the
      * view: a live-view SELECT merges the un-flushed in-memory tier, and what the seal's
      * invariant compares against is the durable output alone.
@@ -706,6 +988,10 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         }
     }
 
+    /**
+     * The view's stored rows for one account, as text - the image a publication that does
+     * not name that account must leave exactly where it found it.
+     */
     private String dumpRowsOf(String account) throws Exception {
         return TestUtils.printSqlToString(
                 engine,
@@ -713,6 +999,17 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 "select * from lv where cod_acct_no = '" + account + "' order by 1, 3",
                 new StringSink()
         );
+    }
+
+    /**
+     * The live view table's own writer transaction. Two forward rows that went out in separate
+     * commits leave it further along than two that shared a block, which is what separates a
+     * pair split across turns from one an apply saw whole.
+     */
+    private long liveViewWriterTxn() {
+        return engine.getTableSequencerAPI()
+                .getTxnTracker(engine.verifyTableName("lv"))
+                .getWriterTxn();
     }
 
     /**
@@ -726,9 +1023,22 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     private String row(int day, int hour, int minute, int second, String account) {
+        return row(day, hour, minute, second, account, 1.0);
+    }
+
+    private String row(int day, int hour, int minute, int second, String account, double amount) {
         return "('2026-01-" + String.format("%02d", day) + "T" + String.format("%02d", hour)
                 + ":" + String.format("%02d", minute) + ":" + String.format("%02d", second)
-                + ".000000Z', '" + account + "', 1.0)";
+                + ".000000Z', '" + account + "', " + amount + ")";
+    }
+
+    /**
+     * The view's rows carrying one {@code (created_at, cod_acct_no)} pair, read through the view
+     * so an un-flushed lead row counts as one the view holds.
+     */
+    private long rowsAt(String timestamp, String account) throws Exception {
+        return count("select count() from lv where cod_acct_no = '" + account + "'"
+                + " and created_at = '" + timestamp + "'::timestamp");
     }
 
     /**
