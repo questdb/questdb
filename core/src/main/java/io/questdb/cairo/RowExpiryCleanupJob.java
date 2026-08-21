@@ -605,10 +605,16 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 // returns false and WalWriter.close() runs doClose(), whose sequencer notification and file
                 // I/O can throw CairoException; Misc.free only catches IOException, so a throw here must not
                 // strand the memory-tracker release in the inner finally below.
-                selectFactory = Misc.free(selectFactory);
-                countFactory = Misc.free(countFactory);
-                cleanupCompiler = Misc.free(cleanupCompiler);
-                walWriter = Misc.free(walWriter);
+                //
+                // The sequence is best-effort for the same reason. A CairoException out of any one close()
+                // must not skip the closes below it: the pooled SqlCompiler in particular would lose its
+                // slot for the life of the process. The first failure becomes the primary, later ones attach
+                // to it as suppressed, and the caller still sees it once nothing is left open.
+                Throwable cleanupFailure = Misc.freeBestEffort(null, selectFactory);
+                cleanupFailure = Misc.freeBestEffort(cleanupFailure, countFactory);
+                cleanupFailure = Misc.freeBestEffort(cleanupFailure, cleanupCompiler);
+                cleanupFailure = Misc.freeBestEffort(cleanupFailure, walWriter);
+                CairoException.rethrowCleanupFailure(cleanupFailure);
             } finally {
                 // Always release the sweep's memory tracker: clear the context slot, then recycle the
                 // tracker to the provider pool so its used-bytes counter resets before the next sweep binds
