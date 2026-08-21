@@ -57,11 +57,10 @@ import org.junit.Test;
  * space in place, gated on the same {@link io.questdb.cairo.TxnScoreboard} reader check REWRITE never
  * needs (it only ever appends). TRIM-FILES (also step 4, the file-shortening half of the reference's
  * in-place reclaim) is not implemented: a MAKE-PLAIN'd partition's files stay at their old, now-oversized
- * length until a later REWRITE copies it into a fresh, right-sized directory. The one test that asserts
- * MAKE-PLAIN's reader wait ({@code testMakePlainWaitsForAReaderHoldingThePreMoveTailTransaction}) is
- * expected to fail: its fixture's stride sits below MOVE-TAIL's front-share threshold, so REWRITE runs
- * instead of MAKE-PLAIN, and REWRITE is not reader-gated - see the state doc for the exact failure
- * recorded.
+ * length until a later REWRITE copies it into a fresh, right-sized directory. REWRITE itself needs no
+ * reader gate at all: it copies into a brand-new directory and leaves the old one for the ordinary purge
+ * to remove once no reader still needs it, so a pinned reader's data stays correct with nothing to wait
+ * for - see {@link #testRewriteLeavesAPinnedReadersDataIntact}.
  */
 public class O3PartitionCompactionTest extends AbstractCairoTest {
 
@@ -243,13 +242,14 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
 
     /**
      * MAKE-PLAIN must wait for a reader still pinning the transaction its pre-MAKE-PLAIN geometry record
-     * came from, the same way REWRITE and MOVE-TAIL wait for theirs - an older reader resolving that
-     * record would otherwise misread the reclaimed dead space as belonging to a piece that is no longer
-     * there. Unlike {@link #testMakePlainWaitsForAReaderHoldingThePreMoveTailTransaction}, this fixture's
-     * stride is pre-split into its own piece and MOVE-TAIL runs first, so the front actually reaches
-     * MAKE-PLAIN's eligible shape instead of being reclaimed by REWRITE before a pinned reader is even in
-     * the picture. The reader opens BEFORE MOVE-TAIL runs, so it pins the pre-MOVE-TAIL transaction, not
-     * a later one that already sees the MAKE-PLAIN-eligible shape and would have nothing to wait for.
+     * came from - unlike REWRITE and MOVE-TAIL, which never need this (see
+     * {@link #testRewriteLeavesAPinnedReadersDataIntact}), MAKE-PLAIN reuses that record in place, so an
+     * older reader resolving it would otherwise misread the reclaimed dead space as belonging to a piece
+     * that is no longer there. This fixture's stride is pre-split into its own piece and MOVE-TAIL runs
+     * first, so the front actually reaches MAKE-PLAIN's eligible shape instead of being reclaimed by
+     * REWRITE before a pinned reader is even in the picture. The reader opens BEFORE MOVE-TAIL runs, so
+     * it pins the pre-MOVE-TAIL transaction, not a later one that already sees the MAKE-PLAIN-eligible
+     * shape and would have nothing to wait for.
      */
     @Test
     public void testMakePlainWaitsForAPinnedReaderThenReclaimsOnceItGoes() throws Exception {
@@ -320,66 +320,6 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             );
             Assert.assertEquals(0, deadRowsOfDay("x", "2024-01-01"));
             Assert.assertEquals("MAKE-PLAIN changed the data", before, fingerprintOfDay("x", "2024-01-01"));
-        });
-    }
-
-    /**
-     * MAKE-PLAIN lowers {@code E} so the partition stops being composite, waiting for readers to move
-     * on first - see {@link #testMakePlainWaitsForAPinnedReaderThenReclaimsOnceItGoes} for a fixture that
-     * actually reaches it. This fixture's stride sits mid-partition (~25% front), below MOVE-TAIL's
-     * default {@code prefix.min.percent} (50%), so REWRITE is what runs instead - regardless of a pinned
-     * reader, since it never writes below {@code E} - so this is expected to fail on the "still composite
-     * while a reader is pinned" assertion. See PARTITION_COMPACTION_state.md.
-     */
-    @Test
-    public void testMakePlainWaitsForAReaderHoldingThePreMoveTailTransaction() throws Exception {
-        assertMemoryLeak(() -> {
-            enableMergeAppend();
-            enableCompaction();
-            // A full-partition rewrite naturally crosses the table-wide dead-percent default (50%)
-            // partway through the buildup below; keep the table-pressure rule out of the way so only
-            // the waste-ratio rule (set after the buildup) is what fires.
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_PERCENT, "99");
-
-            createDayTable("x", "2024-01-01", 20_000);
-            // Three rewrites: each merge-append here rewrites the WHOLE partition (no pre-split cuts
-            // it), so two rounds leave dead just under the live count - three pushes past the ratio.
-            // The tight ratio is set only now, after the buildup - see testWasteRatioTriggerReclaimsDeadRows.
-            backdate("x", "2024-01-01T06:00:00", 200);
-            backdate("x", "2024-01-01T06:00:00", 200);
-            backdate("x", "2024-01-01T06:00:00", 200);
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
-
-            final TableToken tt = engine.verifyTableName("x");
-            final String before = fingerprintOfDay("x", "2024-01-01");
-
-            try (TableReader pinned = engine.getReader(tt)) {
-                Assert.assertNotNull(pinned);
-                runCompactionPasses("x");
-
-                // The pinned reader must still see exactly what it saw when it opened.
-                Assert.assertEquals(
-                        "the rows of the compacted day changed under compaction",
-                        before,
-                        fingerprintOfDay("x", "2024-01-01")
-                );
-                Assert.assertTrue(
-                        "the partition was made non-composite while a reader still held the" +
-                                " pre-compaction transaction - its geometry record still lists the" +
-                                " removed pieces",
-                        isComposite("x", "2024-01-01")
-                );
-            }
-
-            // Reader gone: the partition must now be a plain, non-composite one (REWRITE already did
-            // this on the first pass in this port; the assert only confirms it stayed that way).
-            runCompactionPasses("x");
-            Assert.assertFalse(
-                    "the partition is still composite after the last reader went away;" +
-                            " dead rows: " + deadRows("x"),
-                    isComposite("x", "2024-01-01")
-            );
         });
     }
 
@@ -500,6 +440,52 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                             " [limit=4, pieces=" + pieceCountOfDay("x", "2024-01-01") + ']',
                     pieceCountOfDay("x", "2024-01-01") <= 4
             );
+        });
+    }
+
+    /**
+     * REWRITE copies live rows into a brand-new directory and leaves the old one for the ordinary purge
+     * to remove once no reader still needs it (see {@code processPartitionRemoveCandidates0}'s scoreboard
+     * check) - so a reader pinned to the pre-compaction transaction keeps seeing correct data, even
+     * though the CURRENT state moves on to non-composite immediately, with nothing to wait for. Unlike
+     * MAKE-PLAIN, REWRITE never reuses a pinned reader's already-resolved geometry record, so there is no
+     * analogous reader-wait stage for it to go through.
+     */
+    @Test
+    public void testRewriteLeavesAPinnedReadersDataIntact() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            // A full-partition rewrite naturally crosses the table-wide dead-percent default (50%)
+            // partway through the buildup below; keep the table-pressure rule out of the way so only
+            // the waste-ratio rule (set after the buildup) is what fires.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_PERCENT, "99");
+
+            createDayTable("x", "2024-01-01", 20_000);
+            // Three rewrites: each merge-append here rewrites the WHOLE partition (no pre-split cuts
+            // it), so two rounds leave dead just under the live count - three pushes past the ratio.
+            // The tight ratio is set only now, after the buildup - see testWasteRatioTriggerReclaimsDeadRows.
+            backdate("x", "2024-01-01T06:00:00", 200);
+            backdate("x", "2024-01-01T06:00:00", 200);
+            backdate("x", "2024-01-01T06:00:00", 200);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
+
+            final TableToken tt = engine.verifyTableName("x");
+            final String before = fingerprintOfDay("x", "2024-01-01");
+
+            try (TableReader pinned = engine.getReader(tt)) {
+                Assert.assertNotNull(pinned);
+                runCompactionPasses("x");
+
+                // The pinned reader must still see exactly what it saw when it opened, even though
+                // REWRITE has already run underneath it and retired the directory it was reading from.
+                Assert.assertEquals(
+                        "the rows of the compacted day changed under compaction",
+                        before,
+                        fingerprintOfDay("x", "2024-01-01")
+                );
+            }
         });
     }
 
