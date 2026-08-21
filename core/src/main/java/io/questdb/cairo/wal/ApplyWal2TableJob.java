@@ -774,17 +774,28 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 long totalPhysicalRowCount = writer.getPhysicallyWrittenRowsSinceLastCommit();
                 long lastCommittedSeqTxn = writer.getAppliedSeqTxn();
                 lastCommittedRows = 0;
+                // Rows of this batch that the pending counter actually holds. A batch can span
+                // the table's pending-row floor - typically the first batch after startup, which
+                // block-applies a pre-existing backlog together with freshly committed txns - and
+                // only the pre-floor part is missing from the counter. Subtracting the whole batch
+                // would take the pending count negative by the size of that backlog.
+                long pendingRowsApplied = 0;
+                final long pendingFloor = engine.getRecentWriteTracker()
+                        .seedAndGetWalPendingFloor(writer.getTableToken(), lastCommittedSeqTxn);
                 for (long s = seqTxn; s <= lastCommittedSeqTxn; s++) {
                     long walRowCount = txnDetails.getSegmentRowHi(s) - txnDetails.getSegmentRowLo(s);
                     long commitPhRowCount = s == lastCommittedSeqTxn ? totalPhysicalRowCount : 0;
                     metrics.addApplyRowsWritten(walRowCount, commitPhRowCount, latency);
                     walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, s, walRowCount, commitPhRowCount, latency, txnDetails.getMinTimestamp(s), txnDetails.getMaxTimestamp(s));
                     lastCommittedRows += walRowCount;
+                    if (s > pendingFloor) {
+                        pendingRowsApplied += walRowCount;
+                    }
                 }
 
                 // Decrement pending WAL row count and track dedup after successful processing
                 final long dedupRowsRemoved = writer.getDedupRowsRemovedSinceLastCommit();
-                engine.getRecentWriteTracker().recordWalProcessed(writer.getTableToken(), lastCommittedSeqTxn, lastCommittedRows, dedupRowsRemoved);
+                engine.getRecentWriteTracker().recordWalProcessed(writer.getTableToken(), pendingRowsApplied, dedupRowsRemoved);
                 // Dedup-base signal: a DATA batch matches its raw WAL stream only if it skipped
                 // nothing (a skipped DATA commit's rows never materialise), deduped nothing
                 // (a dedup replaced/removed a row the raw append would keep) and expired nothing
