@@ -82,12 +82,18 @@ gh run view {run_id} --json jobs --jq '.jobs[] | select(.conclusion == "failure"
 Report these as Category E (non-test failures) in the final output. Common cases:
 - **Danger** — PR convention issues (title format, description, labels). Show the comment: `gh pr view $PR --comments --jq '.comments[-1].body'`
 - **build** — compilation failure. The job log contains the error.
-- **gitleaks** — secret detected in diff. The failing job's summary ends with
-  ready-to-paste `.gitleaksignore` lines in the commit-independent three-part
-  `<file>:<rule-id>:<start-line>` form. If the finding is a false positive, add
-  those lines and commit them. Never paste the four-part `Fingerprint:` line
-  from the job log — it names a commit the squash-merge discards, so it silences
-  the PR and then fails the push scan of `master`.
+- **gitleaks** — a credential-shaped string was found in one of the branch's
+  commits. Report it, do not act on it: like every Category E failure, the
+  decision is the user's (Step 5). The Actions API exposes no job summary, but
+  the job tees the same lines to its log, so fetch them with
+  `gh run view {run_id} --log | grep -F 'What to do with these findings' -A 20 | cut -f3- | cut -d' ' -f2-`.
+  Present the `<file>:<rule-id>:<start-line>` lines and let the user decide: a
+  real credential has to be rotated first, and only a confirmed false positive
+  gets suppressed by committing those lines to `.gitleaksignore`. The scan runs
+  with `--redact`, so neither the log nor the SARIF carries the value and you
+  cannot make that call yourself. Never propose the four-part `Fingerprint:`
+  line from the log — it names a commit the squash-merge discards, so it
+  silences the PR and then fails the push scan of `master`.
 
 ### 1e. Triage
 

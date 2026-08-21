@@ -5,7 +5,7 @@
 #     <file>:<rule-id>:<start-line>
 #
 # A failing Gitleaks job appends ready-to-paste lines in this form to its job
-# summary, under "Suppressing a false positive".
+# summary, under "What to do with these findings".
 #
 # Do NOT use the four-part <commit>:<file>:<rule-id>:<start-line> form that
 # gitleaks labels "Fingerprint:" in the job log. PRs here are squash-merged, so
@@ -14,9 +14,12 @@
 # exists, so the push scan of master reports the same finding again and fails
 # that build.
 #
-# Note that the pull request scan covers every commit on the branch, not the
+# Note that the scan reads each of the branch's commits separately, not the
 # squashed diff. A secret-shaped line added in one commit and removed in a later
-# one still fails the check, and editing the file does not clear it.
+# one still fails the check, and editing the file does not clear it. The scan
+# skips fork pull requests, which do not receive the license secret, and reads
+# only a pull request's first 30 commits; the push scan of master covers what it
+# missed.
 #
 # This file previously carried four-part entries from PR #6800. They named
 # commits that never reached master, both files they pointed at have since moved

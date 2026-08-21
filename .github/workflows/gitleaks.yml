@@ -37,9 +37,13 @@ jobs:
           fingerprints=$(jq -r '.runs[]?.results[]? | "\(.locations[0].physicalLocation.artifactLocation.uri):\(.ruleId):\(.locations[0].physicalLocation.region.startLine)"' results.sarif 2>/dev/null | sort -u) || true
           [ -n "$fingerprints" ] || exit 0
           {
-            echo '### Suppressing a false positive'
+            echo '### What to do with these findings'
             echo
-            echo 'Add the matching line to `.gitleaksignore` and commit it to this branch:'
+            echo 'If any of these is a real credential, rotate it now. It is already in this'
+            echo 'branch history, and removing it in a later commit does not undo that.'
+            echo
+            echo 'Only for a confirmed false positive: add the matching line below to'
+            echo '`.gitleaksignore` and commit it to this branch.'
             echo
             echo '```'
             echo "$fingerprints"
