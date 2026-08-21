@@ -252,10 +252,10 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             return true;
         }
         final long reservationEpoch = fiber.getReservationEpoch();
-        final PageFrameFiberTask fiberTask = tryAcquireTask(fiber, reservationEpoch);
-        if (fiberTask == null) {
+        if (!tryLeaseTask(fiber, reservationEpoch)) {
             return true;
         }
+        PageFrameFiberTask fiberTask = null;
         boolean hasLaunchOwnership = true;
         try {
             do {
@@ -263,6 +263,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                 if (cursor > -1) {
                     final PageFrameReduceTask reduceTask = queue.get(cursor);
                     final PageFrameSequence<?> frameSequence = reduceTask.getFrameSequence();
+                    fiberTask = taskPool.acquireLeased();
                     fiberTask.ofOrdered(
                             workerId,
                             queue,
@@ -283,7 +284,11 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         } finally {
             try {
                 if (hasLaunchOwnership) {
-                    taskPool.release(fiberTask);
+                    if (fiberTask != null) {
+                        taskPool.release(fiberTask);
+                    } else {
+                        taskPool.releaseLease();
+                    }
                 }
             } finally {
                 runtime.releaseReservedFiber(fiber, reservationEpoch);
@@ -305,10 +310,10 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             return true;
         }
         final long reservationEpoch = fiber.getReservationEpoch();
-        final PageFrameFiberTask fiberTask = tryAcquireTask(fiber, reservationEpoch);
-        if (fiberTask == null) {
+        if (!tryLeaseTask(fiber, reservationEpoch)) {
             return true;
         }
+        PageFrameFiberTask fiberTask = null;
         boolean hasLaunchOwnership = true;
         try {
             do {
@@ -328,6 +333,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                                 .I$();
                         return false;
                     }
+                    fiberTask = taskPool.acquireLeased();
                     fiberTask.ofUnordered(workerId, queue, subSeq, frameIndex, frameSequence);
                     hasLaunchOwnership = false;
                     launch(fiber, reservationEpoch, fiberTask, workerId > -1);
@@ -341,7 +347,11 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         } finally {
             try {
                 if (hasLaunchOwnership) {
-                    taskPool.release(fiberTask);
+                    if (fiberTask != null) {
+                        taskPool.release(fiberTask);
+                    } else {
+                        taskPool.releaseLease();
+                    }
                 }
             } finally {
                 runtime.releaseReservedFiber(fiber, reservationEpoch);
@@ -676,19 +686,12 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         }
     }
 
-    private @Nullable PageFrameFiberTask tryAcquireTask(Fiber fiber, long reservationEpoch) {
-        boolean hasFiberReservation = true;
-        try {
-            final PageFrameFiberTask task = taskPool.tryAcquire();
-            if (task != null) {
-                hasFiberReservation = false;
-            }
-            return task;
-        } finally {
-            if (hasFiberReservation) {
-                runtime.releaseReservedFiber(fiber, reservationEpoch);
-            }
+    private boolean tryLeaseTask(Fiber fiber, long reservationEpoch) {
+        final boolean isLeased = taskPool.tryLease();
+        if (!isLeased) {
+            runtime.releaseReservedFiber(fiber, reservationEpoch);
         }
+        return isLeased;
     }
 
     boolean isProgressWaitTerminated(

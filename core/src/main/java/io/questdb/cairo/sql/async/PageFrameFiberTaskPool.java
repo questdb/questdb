@@ -31,14 +31,20 @@ import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 final class PageFrameFiberTaskPool implements QuietCloseable {
-    private int capacity;
+    private volatile int capacity;
     private int createdCount;
     private final PageFrameReduceDispatcher dispatcher;
     private final CairoEngine engine;
     private int freeCount;
     private PageFrameFiberTask freeTasks;
-    private boolean isClosed;
+    private volatile boolean isClosed;
+    // Leases gate capacity without the pool monitor, so a worker that loses the queue claim never
+    // serializes on it. An outstanding lease also keeps the pool from closing, which is what lets
+    // acquireLeased() mint or pop unconditionally.
+    private final AtomicInteger leasedCount = new AtomicInteger();
     private int maxRetainedCount;
 
     PageFrameFiberTaskPool(
@@ -70,11 +76,12 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
                 return;
             }
             isClosed = true;
-            initialFailure = freeCount == createdCount
+            initialFailure = leasedCount.get() == 0
                     ? null
                     : new IllegalStateException(
-                    "page frame fiber task pool closed with leased tasks [created="
-                    + createdCount
+                    "page frame fiber task pool closed with leased tasks [leased="
+                    + leasedCount.get()
+                    + ", created=" + createdCount
                     + ", free=" + freeCount
                     + ']'
             );
@@ -108,30 +115,53 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
         return maxRetainedCount;
     }
 
-    synchronized boolean hasLeasedTasks() {
-        return createdCount != freeCount;
+    boolean hasLeasedTasks() {
+        return leasedCount.get() != 0;
     }
 
     void release(PageFrameFiberTask task) {
         boolean isFree = false;
-        synchronized (this) {
-            if (task.isPooled || createdCount <= freeCount) {
-                throw new IllegalStateException("page frame fiber task pool overflow");
+        try {
+            synchronized (this) {
+                if (task.isPooled || createdCount <= freeCount) {
+                    throw new IllegalStateException("page frame fiber task pool overflow");
+                }
+                if (isClosed
+                        || freeCount >= maxRetainedCount
+                        || task.getScheduleState() != FiberTask.STATE_IDLE) {
+                    createdCount--;
+                    isFree = true;
+                } else {
+                    task.isPooled = true;
+                    task.nextFree = freeTasks;
+                    freeTasks = task;
+                    freeCount++;
+                }
             }
-            if (isClosed
-                    || freeCount >= maxRetainedCount
-                    || task.getScheduleState() != FiberTask.STATE_IDLE) {
-                createdCount--;
-                isFree = true;
-            } else {
-                task.isPooled = true;
-                task.nextFree = freeTasks;
-                freeTasks = task;
-                freeCount++;
-            }
+        } finally {
+            leasedCount.decrementAndGet();
         }
         if (isFree) {
             Misc.free(task);
+        }
+    }
+
+    void releaseLease() {
+        leasedCount.decrementAndGet();
+    }
+
+    boolean tryLease() {
+        if (isClosed) {
+            return false;
+        }
+        while (true) {
+            final int current = leasedCount.get();
+            if (current >= capacity) {
+                return false;
+            }
+            if (leasedCount.compareAndSet(current, current + 1)) {
+                return true;
+            }
         }
     }
 
@@ -143,10 +173,7 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
         freeTasks.setScheduleStateForTesting(expectedState, targetState);
     }
 
-    synchronized PageFrameFiberTask tryAcquire() {
-        if (isClosed) {
-            return null;
-        }
+    synchronized PageFrameFiberTask acquireLeased() {
         if (freeTasks != null) {
             final PageFrameFiberTask task = freeTasks;
             freeTasks = task.nextFree;
@@ -154,9 +181,6 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
             task.nextFree = null;
             freeCount--;
             return task;
-        }
-        if (createdCount >= capacity) {
-            return null;
         }
         PageFrameFiberTask task = null;
         try {

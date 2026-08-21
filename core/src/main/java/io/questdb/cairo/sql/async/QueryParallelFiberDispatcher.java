@@ -237,16 +237,17 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             return true;
         }
         final long reservationEpoch = fiber.getReservationEpoch();
-        final LatestByFiberTask fiberTask = tryAcquireTask(fiber, reservationEpoch, latestByTaskPool);
-        if (fiberTask == null) {
+        if (!tryLeaseTask(fiber, reservationEpoch, latestByTaskPool)) {
             return true;
         }
+        LatestByFiberTask fiberTask = null;
         boolean launchOwnership = true;
         try {
             final long cursor = nextCursor(subSeq);
             if (cursor < 0) {
                 return true;
             }
+            fiberTask = latestByTaskPool.acquireLeased();
             fiberTask.of(messageBus.getLatestByQueue().get(cursor), subSeq, cursor);
             launchOwnership = false;
             launch(fiber, reservationEpoch, fiberTask, workerId > -1);
@@ -254,7 +255,11 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         } finally {
             try {
                 if (launchOwnership) {
-                    abortOrRelease(fiberTask, latestByTaskPool);
+                    if (fiberTask != null) {
+                        abortOrRelease(fiberTask, latestByTaskPool);
+                    } else {
+                        latestByTaskPool.releaseLease();
+                    }
                 }
             } finally {
                 runtime.releaseReservedFiber(fiber, reservationEpoch);
@@ -272,16 +277,17 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             return true;
         }
         final long reservationEpoch = fiber.getReservationEpoch();
-        final GroupByLongTopKFiberTask fiberTask = tryAcquireTask(fiber, reservationEpoch, longTopKTaskPool);
-        if (fiberTask == null) {
+        if (!tryLeaseTask(fiber, reservationEpoch, longTopKTaskPool)) {
             return true;
         }
+        GroupByLongTopKFiberTask fiberTask = null;
         boolean launchOwnership = true;
         try {
             final long cursor = nextCursor(subSeq);
             if (cursor < 0) {
                 return true;
             }
+            fiberTask = longTopKTaskPool.acquireLeased();
             fiberTask.of(workerId, messageBus.getGroupByLongTopKQueue().get(cursor), subSeq, cursor);
             launchOwnership = false;
             launch(fiber, reservationEpoch, fiberTask, workerId > -1);
@@ -289,7 +295,11 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         } finally {
             try {
                 if (launchOwnership) {
-                    abortOrRelease(fiberTask, longTopKTaskPool);
+                    if (fiberTask != null) {
+                        abortOrRelease(fiberTask, longTopKTaskPool);
+                    } else {
+                        longTopKTaskPool.releaseLease();
+                    }
                 }
             } finally {
                 runtime.releaseReservedFiber(fiber, reservationEpoch);
@@ -307,16 +317,17 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             return true;
         }
         final long reservationEpoch = fiber.getReservationEpoch();
-        final GroupByMergeShardFiberTask fiberTask = tryAcquireTask(fiber, reservationEpoch, mergeShardTaskPool);
-        if (fiberTask == null) {
+        if (!tryLeaseTask(fiber, reservationEpoch, mergeShardTaskPool)) {
             return true;
         }
+        GroupByMergeShardFiberTask fiberTask = null;
         boolean launchOwnership = true;
         try {
             final long cursor = nextCursor(subSeq);
             if (cursor < 0) {
                 return true;
             }
+            fiberTask = mergeShardTaskPool.acquireLeased();
             fiberTask.of(workerId, messageBus.getGroupByMergeShardQueue().get(cursor), subSeq, cursor);
             launchOwnership = false;
             launch(fiber, reservationEpoch, fiberTask, workerId > -1);
@@ -324,7 +335,11 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         } finally {
             try {
                 if (launchOwnership) {
-                    abortOrRelease(fiberTask, mergeShardTaskPool);
+                    if (fiberTask != null) {
+                        abortOrRelease(fiberTask, mergeShardTaskPool);
+                    } else {
+                        mergeShardTaskPool.releaseLease();
+                    }
                 }
             } finally {
                 runtime.releaseReservedFiber(fiber, reservationEpoch);
@@ -342,16 +357,17 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             return true;
         }
         final long reservationEpoch = fiber.getReservationEpoch();
-        final VectorAggregateFiberTask fiberTask = tryAcquireTask(fiber, reservationEpoch, vectorAggregateTaskPool);
-        if (fiberTask == null) {
+        if (!tryLeaseTask(fiber, reservationEpoch, vectorAggregateTaskPool)) {
             return true;
         }
+        VectorAggregateFiberTask fiberTask = null;
         boolean launchOwnership = true;
         try {
             final long cursor = nextCursor(subSeq);
             if (cursor < 0) {
                 return true;
             }
+            fiberTask = vectorAggregateTaskPool.acquireLeased();
             fiberTask.of(workerId, messageBus.getVectorAggregateQueue().get(cursor), subSeq, cursor);
             launchOwnership = false;
             launch(fiber, reservationEpoch, fiberTask, workerId > -1);
@@ -359,7 +375,11 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         } finally {
             try {
                 if (launchOwnership) {
-                    abortOrRelease(fiberTask, vectorAggregateTaskPool);
+                    if (fiberTask != null) {
+                        abortOrRelease(fiberTask, vectorAggregateTaskPool);
+                    } else {
+                        vectorAggregateTaskPool.releaseLease();
+                    }
                 }
             } finally {
                 runtime.releaseReservedFiber(fiber, reservationEpoch);
@@ -650,23 +670,16 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         }
     }
 
-    private <T extends AbstractQueryParallelFiberTask> @Nullable T tryAcquireTask(
+    private <T extends AbstractQueryParallelFiberTask> boolean tryLeaseTask(
             Fiber fiber,
             long reservationEpoch,
             QueryParallelFiberTaskPool<T> taskPool
     ) {
-        boolean hasFiberReservation = true;
-        try {
-            final T task = taskPool.tryAcquire();
-            if (task != null) {
-                hasFiberReservation = false;
-            }
-            return task;
-        } finally {
-            if (hasFiberReservation) {
-                runtime.releaseReservedFiber(fiber, reservationEpoch);
-            }
+        final boolean isLeased = taskPool.tryLease();
+        if (!isLeased) {
+            runtime.releaseReservedFiber(fiber, reservationEpoch);
         }
+        return isLeased;
     }
 
     void signalProgress() {

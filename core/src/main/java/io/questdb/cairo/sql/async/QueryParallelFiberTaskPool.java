@@ -27,16 +27,22 @@ package io.questdb.cairo.sql.async;
 import io.questdb.cairo.CairoException;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.std.Misc;
+
+import java.util.concurrent.atomic.AtomicInteger;
 import io.questdb.std.QuietCloseable;
 
 final class QueryParallelFiberTaskPool<T extends AbstractQueryParallelFiberTask> implements QuietCloseable {
     private Runnable beforeNewTaskForTesting;
-    private int capacity;
+    private volatile int capacity;
     private int createdCount;
     private final Factory<T> factory;
     private int freeCount;
     private T freeTasks;
-    private boolean closed;
+    private volatile boolean closed;
+    // Leases gate capacity without the pool monitor, so a worker that loses the queue claim never
+    // serializes on it. An outstanding lease also keeps the pool from closing, which is what lets
+    // acquireLeased() mint or pop unconditionally.
+    private final AtomicInteger leasedCount = new AtomicInteger();
     private int maxRetainedCount;
 
     QueryParallelFiberTaskPool(
@@ -66,10 +72,12 @@ final class QueryParallelFiberTaskPool<T extends AbstractQueryParallelFiberTask>
                 return;
             }
             closed = true;
-            initialFailure = freeCount == createdCount
+            initialFailure = leasedCount.get() == 0
                     ? null
                     : new IllegalStateException(
-                    "query parallel fiber task pool closed with leased tasks [created="
+                    "query parallel fiber task pool closed with leased tasks [leased="
+                    + leasedCount.get()
+                    + ", created="
                     + createdCount
                     + ", free="
                     + freeCount
@@ -91,19 +99,34 @@ final class QueryParallelFiberTaskPool<T extends AbstractQueryParallelFiberTask>
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    synchronized boolean hasNoLeasedTasks() {
-        return createdCount == freeCount;
+    boolean hasNoLeasedTasks() {
+        return leasedCount.get() == 0;
+    }
+
+    void releaseLease() {
+        leasedCount.decrementAndGet();
+    }
+
+    boolean tryLease() {
+        if (closed) {
+            return false;
+        }
+        while (true) {
+            final int current = leasedCount.get();
+            if (current >= capacity) {
+                return false;
+            }
+            if (leasedCount.compareAndSet(current, current + 1)) {
+                return true;
+            }
+        }
     }
 
     synchronized int getCreatedCount() {
         return createdCount;
     }
 
-    synchronized T tryAcquire() {
-        if (closed) {
-            return null;
-        }
-
+    synchronized T acquireLeased() {
         if (freeTasks != null) {
             final T task = freeTasks;
             @SuppressWarnings("unchecked") final T next = (T) task.nextFree;
@@ -112,10 +135,6 @@ final class QueryParallelFiberTaskPool<T extends AbstractQueryParallelFiberTask>
             task.nextFree = null;
             freeCount--;
             return task;
-        }
-
-        if (createdCount >= capacity) {
-            return null;
         }
 
         T task = null;
@@ -168,22 +187,26 @@ final class QueryParallelFiberTaskPool<T extends AbstractQueryParallelFiberTask>
 
     void release(AbstractQueryParallelFiberTask task) {
         boolean free = false;
-        synchronized (this) {
-            if (task.pooled || createdCount <= freeCount) {
-                throw new IllegalStateException("query parallel fiber task pool overflow");
+        try {
+            synchronized (this) {
+                if (task.pooled || createdCount <= freeCount) {
+                    throw new IllegalStateException("query parallel fiber task pool overflow");
+                }
+                if (closed
+                        || freeCount >= maxRetainedCount
+                        || task.getScheduleState() != FiberTask.STATE_IDLE) {
+                    createdCount--;
+                    free = true;
+                } else {
+                    @SuppressWarnings("unchecked") final T typedTask = (T) task;
+                    typedTask.pooled = true;
+                    typedTask.nextFree = freeTasks;
+                    freeTasks = typedTask;
+                    freeCount++;
+                }
             }
-            if (closed
-                    || freeCount >= maxRetainedCount
-                    || task.getScheduleState() != FiberTask.STATE_IDLE) {
-                createdCount--;
-                free = true;
-            } else {
-                @SuppressWarnings("unchecked") final T typedTask = (T) task;
-                typedTask.pooled = true;
-                typedTask.nextFree = freeTasks;
-                freeTasks = typedTask;
-                freeCount++;
-            }
+        } finally {
+            leasedCount.decrementAndGet();
         }
         if (free) {
             Misc.free(task);
