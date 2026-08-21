@@ -11341,11 +11341,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (whereClause != null || executionContext.isOverriddenIntrinsics(reader.getTableToken()) || pushedIntervalModel != null) {
             final IntrinsicModel intrinsicModel;
             if (whereClause != null) {
+                // A latest-by key that cannot double as the intrinsic key column - a composite key, or
+                // a single key of a non-SYMBOL type - lands on a factory that reads intrinsicModel.filter
+                // and ignores intrinsicModel.keyColumn. The parser must therefore leave a predicate on an
+                // indexed symbol column in the filter; extracting it into the key column drops it from
+                // the query and returns rows the filter excludes.
+                boolean preventKeyColumnExtraction = latestByColumnCount > 1;
                 CharSequence preferredKeyColumn = null;
                 if (latestByColumnCount == 1) {
                     final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
                     if (isSymbol(queryMeta.getColumnType(latestByIndex))) {
                         preferredKeyColumn = latestBy.getQuick(0).token;
+                    } else {
+                        preventKeyColumnExtraction = true;
                     }
                 }
 
@@ -11358,7 +11366,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         functionParser,
                         queryMeta,
                         executionContext,
-                        latestByColumnCount > 1,
+                        preventKeyColumnExtraction,
                         reader,
                         SqlHints.hasNoIndexHint(model)
                 );

@@ -116,6 +116,10 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
             // composite and non-SYMBOL partition keys
             "SELECT * FROM (SELECT * FROM t) LATEST ON ts PARTITION BY sym, v",
             "SELECT * FROM (SELECT * FROM t) LATEST ON ts PARTITION BY v",
+            // an indexed-symbol filter under a non-SYMBOL partition key: the direct read has no
+            // symbol key to seek, so the predicate has to stay in the filter
+            "SELECT * FROM (SELECT * FROM t WHERE sym = 'BB') LATEST ON ts PARTITION BY v",
+            "SELECT * FROM (SELECT * FROM t WHERE sym = 'ZZ') LATEST ON ts PARTITION BY v",
             // the dropped layer decides column order, so the table's storage order must not surface
             "SELECT * FROM (SELECT sym, v, ts, ts2 FROM t) LATEST ON ts PARTITION BY sym",
             "SELECT ts, sym, v FROM (SELECT v, sym, ts, ts2 FROM t) LATEST ON ts PARTITION BY sym",
