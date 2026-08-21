@@ -1062,39 +1062,55 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRefreshFiltersPoliciedViewJoinedAfterCreation() throws Exception {
-        // A view can gain a policy AFTER another view was created referencing it as a JOIN table
-        // (the dependency graph tracks base edges only, so ALTER SET EXPIRE cannot see the join
-        // edge). The refresh then reads the policied view FILTERED - exactly as any query reads it -
-        // instead of silently materializing its expired rows.
+    public void testSetExpireOnViewJoinedByAnotherViewRejected() throws Exception {
+        // CREATE MATERIALIZED VIEW refuses to build a view whose query reads a policied view, a JOIN
+        // included. ALTER has to refuse the mirror image, or the same two views are legal when they are
+        // created in one order and illegal in the other: a view that another view's query reads must not
+        // gain a policy afterwards. It would change what that other view materializes - its refresh reads
+        // the policied view through the read filter - without anything marking the other view as stale.
+        //
+        // The dependent-view graph files m2 under its own base b, so the join edge from m2 to v does not
+        // show up there and the check has to walk m2's defining query to find it.
         assertMemoryLeak(() -> {
-            execute("create table b (sym symbol, bv double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("create table base2 (sym symbol, vv double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("CREATE TABLE b (sym SYMBOL, bv DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base2 (sym SYMBOL, vv DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalAndMatViewQueues();
-            execute("create materialized view v as (select * from base2)");
+            execute("CREATE MATERIALIZED VIEW v AS (SELECT * FROM base2)");
+            // nobody reads this one, so it is the control for the rejection below
+            execute("CREATE MATERIALIZED VIEW unreferenced AS (SELECT * FROM base2)");
             drainWalAndMatViewQueues();
             execute("""
-                    create materialized view m2 with base b as
-                    (select b.ts, b.sym, first(v.vv) vv from b join v on (sym) sample by 1d)""");
+                    CREATE MATERIALIZED VIEW m2 WITH BASE b AS
+                    (SELECT b.ts, b.sym, first(v.vv) vv FROM b JOIN v ON (sym) SAMPLE BY 1d)""");
             drainWalAndMatViewQueues();
 
-            execute("alter materialized view v set expire rows when vv < 2.0");
-            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW v SET EXPIRE ROWS WHEN vv < 2.0",
+                    24,
+                    "cannot set an EXPIRE ROWS policy on 'v': materialized view 'm2' references it"
+            );
+            Assert.assertNull("policy must not have been set on v", expiryPredicate("v"));
 
+            // the same statement on a view no other view reads is accepted, so the rejection above can only
+            // come from the join edge
+            execute("ALTER MATERIALIZED VIEW unreferenced SET EXPIRE ROWS WHEN vv < 2.0");
+            drainWalAndMatViewQueues();
+            Assert.assertNotNull("control view must carry the policy", expiryPredicate("unreferenced"));
+
+            // v stayed policy-free, so m2 materializes every joined row
             execute("""
-                    insert into base2 values
+                    INSERT INTO base2 VALUES
                     ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
                     ('B', 5.0, '2024-01-01T00:00:00.000000Z')""");
             drainWalAndMatViewQueues();
             execute("""
-                    insert into b values
+                    INSERT INTO b VALUES
                     ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
                     ('B', 20.0, '2024-01-01T00:00:00.000000Z')""");
             drainWalAndMatViewQueues();
 
-            // A's v-row (vv=1.0) is expired, so the refresh join drops A; only B materializes.
-            assertQuery("select sym, vv from m2 order by sym")
-                    .expectSize().noLeakCheck().returns("sym\tvv\nB\t5.0\n");
+            assertQuery("SELECT sym, vv FROM m2 ORDER BY sym")
+                    .expectSize().noLeakCheck().returns("sym\tvv\nA\t1.0\nB\t5.0\n");
         });
     }
 

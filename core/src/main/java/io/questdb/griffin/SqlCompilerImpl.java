@@ -6560,6 +6560,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     .put(" view(s), including '").put(dependents.getQuick(0).getTableName())
                     .put("', which would copy expired rows on refresh");
         }
+        // The graph above is keyed by base table name, so it only answers "which views declare this one as
+        // their base". A materialized view that reads this one some other way - a join in its defining query
+        // - is filed under its own base and stays invisible there, yet this policy still changes what it
+        // materializes: its refresh reads this view through the read filter, so a deterministic predicate
+        // silently drops rows from it, and a now()-based predicate makes the refresh fail with
+        //
+        //   non-deterministic function cannot be used in materialized view: now
+        //
+        // naming a function that appears nowhere in that view's own definition. CREATE MATERIALIZED VIEW
+        // already refuses this topology - it walks every table the new view's query references and rejects a
+        // policied one - so leaving it out here means the same two views are refused at CREATE and accepted
+        // at ALTER. This rejection is WAL-recoverable for the same reason the one above is.
+        final TableToken referencingView = findMatViewReferencing(tableToken);
+        if (referencingView != null) {
+            throw SqlException.walRecoverable(tableNamePosition).put("cannot set an EXPIRE ROWS policy on '")
+                    .put(tableToken.getTableName())
+                    .put("': materialized view '").put(referencingView.getTableName())
+                    .put("' references it, and its refresh would then read this view's rows filtered by the policy");
+        }
         final ExpiryValidationResult validationResult;
         if (RowExpiryUtil.isKeepLatest(clause.predicate) || RowExpiryUtil.isKeepBy(clause.predicate) || RowExpiryUtil.isWindow(clause.predicate)) {
             validationResult = validateAlterRelativePolicy(executionContext, tableToken, tableMetadata, clause.predicate, clause.predicatePos);
@@ -6575,6 +6594,68 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 clause.cleanupIntervalMicros
         );
         compiledQuery.ofAlter(setExpire.build());
+    }
+
+    /**
+     * Returns the first materialized view whose defining query reads {@code referencedToken}, or null when
+     * no view does. The view's own token is skipped, and so is a view whose definition disappeared while the
+     * walk ran.
+     * <p>
+     * {@link io.questdb.cairo.mv.DependentViewGraph} answers the base-table question only, so this re-parses
+     * each view's stored SQL with a pooled compiler and collects the table names of the resulting model -
+     * the same reference set CREATE MATERIALIZED VIEW builds from its own query before accepting the
+     * statement, and it covers the same shapes: the base, the join models, the union arms and the nested
+     * models. Optimising the SQL (rather than only parsing it) inlines any plain view in the way, so a
+     * materialized view that reaches {@code referencedToken} through one is found too.
+     * <p>
+     * The parse runs under {@link #compileViewContext}, whose read-only security context stands in for the
+     * ALTER's caller: the caller is asking about its own view and need not hold SELECT on tables it never
+     * named. A view whose SQL no longer compiles is logged and skipped - it cannot refresh, so this policy
+     * cannot change what it materializes, and failing the ALTER over an unrelated broken view would help
+     * nobody.
+     */
+    private @Nullable TableToken findMatViewReferencing(TableToken referencedToken) {
+        final ObjList<TableToken> views = new ObjList<>();
+        engine.getDependentViewGraph().getViews(views);
+        if (views.size() == 0) {
+            return null;
+        }
+        final ObjList<CharSequence> referencedNames = new ObjList<>();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            for (int i = 0, n = views.size(); i < n; i++) {
+                final TableToken viewToken = views.getQuick(i);
+                if (viewToken.equals(referencedToken)) {
+                    continue;
+                }
+                final MatViewDefinition definition = engine.getDependentViewGraph().getViewDefinition(viewToken);
+                if (definition == null) {
+                    continue;
+                }
+                ExecutionModel model = null;
+                try {
+                    model = compiler.generateExecutionModel(definition.getMatViewSql(), compileViewContext);
+                    final IQueryModel queryModel = model.getQueryModel();
+                    if (queryModel == null) {
+                        continue;
+                    }
+                    referencedNames.clear();
+                    SqlUtil.collectAllTableAndViewNames(queryModel, referencedNames, false);
+                    for (int j = 0, m = referencedNames.size(); j < m; j++) {
+                        if (Chars.equalsIgnoreCase(referencedNames.getQuick(j), referencedToken.getTableName())) {
+                            return viewToken;
+                        }
+                    }
+                } catch (SqlException | CairoException e) {
+                    LOG.info().$("skipping a materialized view that no longer compiles while looking for EXPIRE ROWS references [view=")
+                            .$safe(viewToken.getTableName())
+                            .$(", error=").$safe(e.getFlyweightMessage())
+                            .I$();
+                } finally {
+                    freeTableNameFunctions(model);
+                }
+            }
+        }
+        return null;
     }
 
     /**
