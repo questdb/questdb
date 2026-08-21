@@ -512,6 +512,35 @@ public interface CairoConfiguration {
     boolean isLiveViewCheckpointRepairSegmentYieldEnabled();
 
     /**
+     * Whether a live view CREATEd under this configuration marks its designated timestamp
+     * and its projected partition key as dedup keys, so a later repair can publish only
+     * the rows it recomputed.
+     * <p>
+     * A repair publishes with {@code WAL_DEDUP_MODE_REPLACE_RANGE}, which deletes the
+     * replaced interval wholesale and so has to carry every row of it - including, for a
+     * keyed repair, the rows the merge copies forward untouched. Publishing only the
+     * affected keys' rows instead needs {@code WAL_DEDUP_MODE_UPSERT_NEW}, which needs the
+     * view's own table to carry the dedup keys the upsert collapses on. This is what puts
+     * them there.
+     * <p>
+     * It is a <b>CREATE-time schema decision</b>, not a route: a view created with this on
+     * carries the keys for its lifetime, and turning it off afterwards does not take them
+     * away. It also costs the view's ordinary forward path, which stops coalescing its
+     * commits into blocks and stops holding rows in the WAL lag - every commit on a
+     * dedup-keyed table carries a non-default dedup mode, and
+     * {@code WalTxnDetails} forces a full commit for each of those. That is why it
+     * defaults to false, and it is the reason the ordinary commit is stamped
+     * {@code WAL_DEDUP_MODE_NO_DEDUP} rather than left at the default: the view's output
+     * may legitimately hold two rows sharing a {@code (timestamp, key)} pair, and a
+     * default-mode commit on a dedup-keyed table would collapse them.
+     * <p>
+     * A view whose output carries no key the pair can be named through - a compound or
+     * expression PARTITION BY, a key of another type, a key the SELECT drops - gets no
+     * dedup keys whatever this says, because there would be no identity to publish on.
+     */
+    boolean isLiveViewCheckpointRepairSparsePublicationEnabled();
+
+    /**
      * Whether a per-segment out-of-order repair may follow only the keys a correction
      * touched through the base's posting index, instead of reading every row of the
      * segment it landed in.

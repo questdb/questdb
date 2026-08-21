@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Mutable;
@@ -259,5 +261,52 @@ public final class LiveViewCheckpointOutputUniqueness implements Mutable {
             firstDuplicateKey = key;
         }
         return false;
+    }
+
+    /**
+     * The projected partition key's column index in the record a replay emits, which is the
+     * half of {@code (designated timestamp, projected partition key)} that is not the
+     * timestamp.
+     * <p>
+     * One resolution serves two callers, and they have to agree: CREATE marks this column
+     * and the designated timestamp as the view table's dedup keys, and a repair names the
+     * same column when it checks whether its output could be published on that pair. A view
+     * whose dedup keys and whose checked pair named different columns would prove one
+     * identity and publish on another.
+     * <p>
+     * Deliberately NOT the keyed scan's column, which answers a different question with the
+     * same vocabulary. That one asks whether a repair can <b>read</b> one key's rows through
+     * a posting index, so it turns on the index; this one asks whether a repair's output can
+     * be <b>named</b> by its key, which an index has nothing to do with. A view whose key
+     * column carries no index still publishes rows that carry the key, and its duplicate
+     * rate is exactly as interesting.
+     * <p>
+     * {@link #NO_KEY_COLUMN} for anything a symbol integer cannot name: a compound or
+     * expression PARTITION BY, a key of another type, or a key the view's SELECT does not
+     * carry into its output. A repair of such a view is counted unchecked rather than
+     * denied, and its table carries no dedup keys - there would be no identity to publish
+     * on.
+     */
+    public static int outputKeyColumnIndex(@NotNull LiveViewCompiledPlan compiledPlan) {
+        final LiveViewCheckpointKeyProjector projector =
+                compiledPlan.getWindowFactory().getCheckpointKeyProjector();
+        if (projector == null || projector.getPartitionByColumnCount() != 1) {
+            return NO_KEY_COLUMN;
+        }
+        final int scanColumnIndex =
+                compiledPlan.traceWindowInputColumnToBaseScan(projector.getPartitionByColumnIndex(0));
+        if (scanColumnIndex < 0) {
+            return NO_KEY_COLUMN;
+        }
+        final RecordMetadata outputMetadata = compiledPlan.getOutputMetadata();
+        for (int i = 0, n = outputMetadata.getColumnCount(); i < n; i++) {
+            // The trace is exact rather than a name match, for the reason
+            // traceOutputColumnToBaseScan gives: an alias would defeat the name.
+            if (compiledPlan.traceOutputColumnToBaseScan(i) == scanColumnIndex
+                    && ColumnType.isSymbol(outputMetadata.getColumnType(i))) {
+                return i;
+            }
+        }
+        return NO_KEY_COLUMN;
     }
 }

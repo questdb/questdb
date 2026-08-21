@@ -673,6 +673,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.live.view.checkpoint.repair.scan.max.keys\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.repair.scan.max.rows\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.repair.segment.yield.enabled\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SEGMENT_YIELD_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.checkpoint.repair.sparse.publication.enabled\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.rows\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.enabled\tQDB_CAIRO_LIVE_VIEW_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.flush.retry.max\tQDB_CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX\t5\tdefault\tfalse\tfalse\n" +

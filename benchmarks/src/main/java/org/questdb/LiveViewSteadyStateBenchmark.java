@@ -101,7 +101,12 @@ import java.util.Locale;
  * share of the rows repeat the row below them in both timestamp and key, which is the
  * {@code (timestamp, key)} group a physical row identity would have to number.
  * {@code --base-dedup} puts dedup keys on the base as the stand-in for what such an
- * identity would put on the live view's own table. {@code --repair-per-segment=false}
+ * identity would put on the live view's own table, and {@code --lv-dedup=true} puts them
+ * where they actually belong: on the view's own table, as a CREATE-time property. Nothing
+ * publishes sparsely on them yet, so what that arm measures is what the identity costs the
+ * path that does not use it - every live-view commit then carries a non-default dedup mode,
+ * which forces a full commit instead of a lag-retaining or block-coalesced one. The columns
+ * are {@code lv_apply_ms} and {@code base_apply_ms}. {@code --repair-per-segment=false}
  * restores the union range a repair took before the change set was decomposed into the
  * anchor segments it touches, which is the control column that half of the write side is
  * measured against. {@code --backfill-deferral=true} takes the closed segments off the
@@ -199,6 +204,14 @@ public class LiveViewSteadyStateBenchmark {
         // construction unless --equal-ts-percent says otherwise, so nothing is deduped
         // away and the reading is the dedup path's own cost.
         boolean isBaseDeduped = false;
+        // Dedup keys on the live view's OWN table - (designated timestamp, projected
+        // partition key), the identity a sparse repair publication would upsert on. What it
+        // measures is the price of carrying that identity on the path that does not use it:
+        // every live-view commit then stamps a non-default dedup mode, which forces a full
+        // commit rather than a lag-retaining or block-coalesced one. Read lv_apply_ms and
+        // base_apply_ms against a run without it. --base-dedup is the older stand-in for the
+        // same question, put on the base because a live-view table could not carry the keys.
+        boolean isLvDeduped = false;
         // -1 = leave the configuration default alone. 0 declines the chain outright, which
         // is how a run reproduces what a repair cost before it kept its ladder.
         int repairMaxChainedBoundaries = -1;
@@ -261,6 +274,8 @@ public class LiveViewSteadyStateBenchmark {
                 equalTsPercent = Double.parseDouble(arg.substring(19));
             } else if (arg.startsWith("--base-dedup=")) {
                 isBaseDeduped = Boolean.parseBoolean(arg.substring(13));
+            } else if (arg.startsWith("--lv-dedup=")) {
+                isLvDeduped = Boolean.parseBoolean(arg.substring(11));
             } else if (arg.startsWith("--ts-step-us=")) {
                 tsStepMicros = Long.parseLong(arg.substring(13));
             } else if (arg.startsWith("--repair-max-chained-boundaries=")) {
@@ -368,6 +383,7 @@ public class LiveViewSteadyStateBenchmark {
         final boolean finalRepairPerSegment = isRepairPerSegment;
         final boolean finalRepairSegmentYield = isRepairSegmentYield;
         final boolean finalRepairKeyedReplay = isRepairKeyedReplay;
+        final boolean finalLvDedup = isLvDeduped;
         final boolean finalBackfillDeferral = isBackfillDeferral;
         final long finalBackfillInterval = backfillIntervalMicros;
         try {
@@ -439,6 +455,11 @@ public class LiveViewSteadyStateBenchmark {
                 public boolean isLiveViewCheckpointRepairKeyedReplayEnabled() {
                     return finalRepairKeyedReplay;
                 }
+
+                @Override
+                public boolean isLiveViewCheckpointRepairSparsePublicationEnabled() {
+                    return finalLvDedup;
+                }
             };
             System.out.printf(
                     Locale.ROOT,
@@ -447,7 +468,7 @@ public class LiveViewSteadyStateBenchmark {
                             + "compactStalePercent=%d shape=%s keyType=%s nullPercent=%d sumColumns=%d "
                             + "commitsPerBatch=%d commitRows=%d o3EveryN=%d o3Lag=%s o3LagRows=%d o3FromBatch=%d "
                             + "o3SpreadSteps=%d o3MaxLagRows=%d hotKeyEveryN=%d equalTsEveryN=%d tsStepUs=%d "
-                            + "spanHours=%.2f baseDedup=%s repairMaxChainedBoundaries=%d repairPerSegment=%s "
+                            + "spanHours=%.2f baseDedup=%s lvDedup=%s repairMaxChainedBoundaries=%d repairPerSegment=%s "
                             + "repairIsolatedRuntime=%s repairSegmentYield=%s repairKeyedReplay=%s "
                             + "backfillDeferral=%s backfillIntervalUs=%d%n",
                     seedRows, batchRows, batches, checkpointRows, isSymbolPreSized, isIndexed, recycleAccounts,
@@ -458,6 +479,7 @@ public class LiveViewSteadyStateBenchmark {
                     commitsPerBatch, commitRows, o3EveryN, o3EveryN > 0 ? o3Lag : "none", o3LagMicros / tsStepMicros,
                     o3FromBatch, o3SpreadSteps, o3MaxLagMicros / tsStepMicros, hotKeyEveryN, equalTsEveryN,
                     tsStepMicros, (double) totalRows * tsStepMicros / Micros.HOUR_MICROS, isBaseDeduped,
+                    configuration.isLiveViewCheckpointRepairSparsePublicationEnabled(),
                     configuration.getLiveViewCheckpointRepairMaxChainedBoundaries(),
                     configuration.isLiveViewCheckpointRepairPerSegmentEnabled(),
                     configuration.isLiveViewCheckpointRepairIsolatedRuntimeEnabled(),

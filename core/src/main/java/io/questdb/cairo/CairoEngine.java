@@ -34,6 +34,7 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
+import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness;
 import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -905,7 +906,19 @@ public class CairoEngine implements Closeable, WriterSource {
                                     baseTableToken,
                                     metadata
                             );
-                            LiveViewInstance instance = new LiveViewInstance(definition, tableToken);
+                            // The dedup flags live in the table's own _meta, and the copy
+                            // above carries them column for column, so the identity a repair
+                            // could publish on is known before the view refreshes once.
+                            // Deliberately not derived from the configuration: a view
+                            // CREATEd with the identity keeps it however the switch moves
+                            // afterwards, and a forward commit that read the switch instead
+                            // of the schema would deduplicate a view it was never meant to.
+                            LiveViewInstance instance = new LiveViewInstance(
+                                    definition,
+                                    tableToken,
+                                    metadata.getTimestampIndex() > -1
+                                            && metadata.isDedupKey(metadata.getTimestampIndex())
+                            );
                             // _lv is written before _txn and _lv.s after it, so a definition with no
                             // state is the shape a CREATE that crashed mid-way leaves behind (and,
                             // equally, an _lv.s lost out of band). Either way there is no resume
@@ -1435,6 +1448,11 @@ public class CairoEngine implements Closeable, WriterSource {
         // emits a plain FilteredRecordCursorFactory shape that the incremental refresh
         // path can handle.
         GenericRecordMetadata metadata;
+        // The output column a sparse repair publication would upsert on, beside the
+        // designated timestamp, or NO_KEY_COLUMN where the view carries no such key or the
+        // configuration declines the identity. Resolved here because it is a CREATE-time
+        // schema decision: the flags land in the view table's own _meta and stay there.
+        int sparsePublicationKeyColumnIndex = LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
         // Base-column names the SELECT's filter + window inputs + designated ts
         // depend on. ApplyWal2TableJob's schema-change hook narrows invalidation
         // using this set: only changes that touch one of these columns mark the
@@ -1472,6 +1490,16 @@ public class CairoEngine implements Closeable, WriterSource {
                 final LiveViewCompiledPlan plan = validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
                 metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
                 validateLiveViewTimestamp(metadata, baseTimestampName, op.getViewNamePosition());
+
+                // The identity a repair could publish sparsely on. Resolved through the
+                // same helper the repair's own uniqueness check reads, so the pair the
+                // table deduplicates on and the pair a repair proves unique are the same
+                // pair; a view whose output carries no such key gets no dedup keys, and
+                // the repair counts itself unchecked for the same reason.
+                if (configuration.isLiveViewCheckpointRepairSparsePublicationEnabled()) {
+                    sparsePublicationKeyColumnIndex =
+                            LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex(plan);
+                }
 
                 // Capture each base-column name the SELECT projects. Resolving
                 // against the base table here also catches the rare case of an LV
@@ -1666,8 +1694,15 @@ public class CairoEngine implements Closeable, WriterSource {
                 partitionBy,
                 metadata,
                 definition,
-                outputSymbolCacheFlags
+                outputSymbolCacheFlags,
+                sparsePublicationKeyColumnIndex
         );
+        if (sparsePublicationKeyColumnIndex != LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN) {
+            LOG.info().$("live view carries sparse publication dedup keys [view=").$(op.getViewName())
+                    .$(", timestamp=").$(metadata.getColumnName(metadata.getTimestampIndex()))
+                    .$(", key=").$(metadata.getColumnName(sparsePublicationKeyColumnIndex))
+                    .I$();
+        }
         try (
                 MemoryMARW mem = Vm.getCMARWInstance();
                 BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
@@ -1748,7 +1783,11 @@ public class CairoEngine implements Closeable, WriterSource {
                 );
 
                 // _lv is written by TableUtils.createTable, before _txn - see the note there.
-                LiveViewInstance instance = new LiveViewInstance(definition, liveViewToken);
+                LiveViewInstance instance = new LiveViewInstance(
+                        definition,
+                        liveViewToken,
+                        sparsePublicationKeyColumnIndex != LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN
+                );
                 instance.setSubscribeFromSeqTxn(subscribeFromSeqTxn);
                 instance.setLastProcessedSeqTxn(subscribeFromSeqTxn - 1);
                 instance.setAppliedWatermark(-1L);

@@ -567,6 +567,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isLiveViewCheckpointRepairSparsePublicationEnabled() {
+        return false;
+    }
+
+    @Override
     public long getLiveViewCheckpointRepairKeyedScanIndexOpenRows() {
         return 256;
     }

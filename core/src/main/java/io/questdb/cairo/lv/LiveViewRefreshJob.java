@@ -2735,7 +2735,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // inline apply below makes the rows durable in the LV's on-disk
                 // table; only then do we advance lvConsumedSeqTxn so base WAL
                 // retention releases.
-                fencedLiveViewCommit(instance, () -> walWriter.commitLiveView(drainResult.advanceTo));
+                commitLiveViewBlock(instance, walWriter, drainResult.advanceTo);
             }
         }
 
@@ -3177,7 +3177,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             }
                         }
                         if (appendedRows > 0) {
-                            fencedLiveViewCommit(instance, () -> walWriter.commitLiveView(effectiveSeqTxn));
+                            commitLiveViewBlock(instance, walWriter, effectiveSeqTxn);
                         }
                     }
                 }
@@ -3764,6 +3764,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return Math.max(deleteLo, Numbers.LONG_NULL + 1);
     }
 
+    /**
+     * Commits one forward live-view block - the in-order drain's, the flush's and the seed
+     * sweep's alike - through the one place that decides its dedup mode.
+     * <p>
+     * A view whose own table carries the sparse-publication dedup keys must not commit at
+     * the default mode: the apply would collapse two output rows sharing a
+     * {@code (timestamp, key)} pair, which a view may legitimately emit, into the last one
+     * written. Every other view commits exactly what it always did. The decision sits here
+     * rather than at each call site because forgetting it at one of them loses rows nothing
+     * downstream can detect.
+     */
+    private void commitLiveViewBlock(LiveViewInstance instance, WalWriter walWriter, long maxBaseSeqTxnInBlock) {
+        fencedLiveViewCommit(instance, instance.isDedupKeyed()
+                ? () -> walWriter.commitLiveViewWithoutDedup(maxBaseSeqTxnInBlock)
+                : () -> walWriter.commitLiveView(maxBaseSeqTxnInBlock));
+    }
+
     // Under symmetric local refresh the live-view table is
     // node-local derived data: every node -- primary AND replica -- refreshes and flushes its own LV
     // table locally, and LV WAL is never uploaded or downloaded. So the read-only fence this method once
@@ -3989,7 +4006,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 row.append();
                 flushedMaxTs = ts;
             }
-            fencedLiveViewCommit(instance, () -> walWriter.commitLiveView(advanceTo));
+            commitLiveViewBlock(instance, walWriter, advanceTo);
         } finally {
             // The overlays reference symbolReader, now closed; drop them so a later
             // flush of a non-SYMBOL view cannot reuse a stale resolver.
@@ -4790,46 +4807,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return -1;
         }
         return baseColumnWriterIndex(baseToken, compiledPlan.getBaseScanMetadata().getColumnName(scanColumnIndex));
-    }
-
-    /**
-     * The projected partition key's column index in the record a replay emits, which is
-     * the half of {@code (designated timestamp, projected partition key)} that is not the
-     * timestamp.
-     * <p>
-     * Deliberately NOT {@link #keyedScanColumnIndex}, which answers a different question
-     * with the same vocabulary. That one asks whether a repair can <b>read</b> one key's
-     * rows through a posting index, so it turns on the index; this one asks whether a
-     * repair's output can be <b>named</b> by its key, which an index has nothing to do
-     * with. A view whose key column carries no index still publishes rows that carry the
-     * key, and its duplicate rate is exactly as interesting.
-     * <p>
-     * -1 for anything a symbol integer cannot name: a compound or expression PARTITION BY,
-     * a key of another type, or a key the view's SELECT does not carry into its output. A
-     * repair of such a view is counted unchecked rather than denied - nothing reads the
-     * verdict yet, and what it would decide is a publication route rather than a repair.
-     */
-    private static int outputKeyColumnIndex(LiveViewCompiledPlan compiledPlan) {
-        final LiveViewCheckpointKeyProjector projector =
-                compiledPlan.getWindowFactory().getCheckpointKeyProjector();
-        if (projector == null || projector.getPartitionByColumnCount() != 1) {
-            return LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
-        }
-        final int scanColumnIndex =
-                compiledPlan.traceWindowInputColumnToBaseScan(projector.getPartitionByColumnIndex(0));
-        if (scanColumnIndex < 0) {
-            return LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
-        }
-        final RecordMetadata outputMetadata = compiledPlan.getOutputMetadata();
-        for (int i = 0, n = outputMetadata.getColumnCount(); i < n; i++) {
-            // The trace is exact rather than a name match, for the reason
-            // traceOutputColumnToBaseScan gives: an alias would defeat the name.
-            if (compiledPlan.traceOutputColumnToBaseScan(i) == scanColumnIndex
-                    && ColumnType.isSymbol(outputMetadata.getColumnType(i))) {
-                return i;
-            }
-        }
-        return LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
     }
 
     /**
@@ -7547,7 +7524,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 outputUniqueness.copyFrom(resumed.getOutputUniqueness());
             } else {
                 outputUniqueness.of(localized && finiteHighBound
-                        ? outputKeyColumnIndex(compiledPlan)
+                        ? LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex(compiledPlan)
                         : LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN);
             }
 
@@ -8858,7 +8835,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         dataOffset += (filter != null ? filteringCursor.getBaseRowsConsumed() : processedThisTurn);
                     }
                     if (appendedThisTurn > 0) {
-                        fencedLiveViewCommit(instance, () -> walWriter.commitLiveView(sweepSeqTxn));
+                        commitLiveViewBlock(instance, walWriter, sweepSeqTxn);
                     }
                 }
             }

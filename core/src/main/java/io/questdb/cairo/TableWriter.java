@@ -4626,6 +4626,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // The whole block applies as one O3 operation that stamps every touched partition with one
         // seqTxn, so use the block's last (the committed seqTxn).
         walApplySeqTxn = startSeqTxn + blockTransactionCount - 1;
+        // One block applies under one dedup mode, and this path leaves it at the default.
+        // WalTxnDetails is what keeps a non-default one out - it stamps FORCE_FULL_COMMIT
+        // on such a transaction AND on the one before it, so calculateInsertTransactionBlock
+        // ends the block below it - and this asserts what that buys rather than trusting it:
+        // a NO_DEDUP transaction applied here would be deduplicated against the table's keys
+        // after asking not to be, and an UPSERT_NEW one would be inserted beside the rows it
+        // means to replace.
+        assert blockCarriesNoDedupMode(startSeqTxn, blockTransactionCount);
         segmentCopyInfo.clear();
         walTxnDetails.prepareCopySegments(startSeqTxn, blockTransactionCount, segmentCopyInfo, denseSymbolMapWriters.size() > 0);
         if (isLastPartitionClosed()) {
@@ -5285,6 +5293,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 partitionPath.trimTo(rootLen);
             }
         }
+    }
+
+    private boolean blockCarriesNoDedupMode(long startSeqTxn, int blockTransactionCount) {
+        for (long seqTxn = startSeqTxn, n = startSeqTxn + blockTransactionCount; seqTxn < n; seqTxn++) {
+            if (walTxnDetails.getDedupMode(seqTxn) != WalUtils.WAL_DEDUP_MODE_DEFAULT) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void bumpColumnStructureVersion() {
@@ -10865,20 +10882,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             return true;
         } else {
-            return processWalCommit(
-                    walPath,
-                    inOrder,
-                    rowLo,
-                    rowHi,
-                    txnMinTs,
-                    txnMaxTs,
-                    mapDiffCursor,
-                    commitToTimestamp,
-                    walIdSegmentId,
-                    isLastSegmentUsage,
-                    pressureControl,
-                    wallClockMicros
-            );
+            // Carry the commit's own mode into the apply. It matters for exactly one of
+            // them - WAL_DEDUP_MODE_NO_DEDUP, which a producer stamps to keep its rows off
+            // the table's dedup keys - and isCommitDedupMode() is what reads it. Left at
+            // the default, a NO_DEDUP commit on a dedup-keyed table would collapse the
+            // very rows it asked to keep.
+            //
+            // A commit carrying any non-default mode is stamped FORCE_FULL_COMMIT by
+            // WalTxnDetails, which is what keeps this sound rather than merely expensive:
+            // it applies alone rather than inside a block, and its rows are never left in
+            // the WAL lag for a later commit - under another mode - to flush.
+            this.dedupMode = dedupMode;
+            try {
+                return processWalCommit(
+                        walPath,
+                        inOrder,
+                        rowLo,
+                        rowHi,
+                        txnMinTs,
+                        txnMaxTs,
+                        mapDiffCursor,
+                        commitToTimestamp,
+                        walIdSegmentId,
+                        isLastSegmentUsage,
+                        pressureControl,
+                        wallClockMicros
+                );
+            } finally {
+                this.dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
+            }
         }
     }
 

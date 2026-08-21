@@ -106,6 +106,14 @@ public class LiveViewInstance implements QuietCloseable {
     };
     private static final long[] EMPTY_HEAD_CHECKPOINT = {Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL};
     private final LiveViewDefinition definition;
+    // Whether this view's own table carries dedup keys - (designated timestamp, projected
+    // partition key), the identity a sparse repair publication upserts on. Resolved where
+    // the instance is built, off the table's own metadata, because that is where the flags
+    // live: the sequencer metadata a WalWriter reads does not carry them, and the current
+    // configuration cannot answer it either - a view CREATEd with the identity keeps it
+    // however the switch moves afterwards. False for every view created without it, which
+    // is every view today.
+    private final boolean isDedupKeyed;
     // Cancellation flag the refresh worker binds into its execution context's circuit
     // breaker for the duration of a cycle over this view. DROP and invalidation set it,
     // so a scan already inside the compiled cursor unwinds instead of running to
@@ -686,9 +694,10 @@ public class LiveViewInstance implements QuietCloseable {
     // live_views().writer_stall_micros for operator visibility.
     private volatile long writerStallStartUs = Numbers.LONG_NULL;
 
-    public LiveViewInstance(LiveViewDefinition definition, TableToken liveViewToken) {
+    public LiveViewInstance(LiveViewDefinition definition, TableToken liveViewToken, boolean isDedupKeyed) {
         this.definition = definition;
         this.liveViewToken = liveViewToken;
+        this.isDedupKeyed = isDedupKeyed;
         this.stubState = null;
     }
 
@@ -704,6 +713,7 @@ public class LiveViewInstance implements QuietCloseable {
     public LiveViewInstance(TableToken liveViewToken, LiveViewLifecycleState stubState) {
         this.definition = null;
         this.liveViewToken = liveViewToken;
+        this.isDedupKeyed = false;
         this.stubState = stubState;
     }
 
@@ -1524,6 +1534,18 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long incrementAndGetSealsSincePurge() {
         return ++sealsSincePurge;
+    }
+
+    /**
+     * Whether this view's own table carries the {@code (designated timestamp, projected
+     * partition key)} dedup keys a sparse repair publication upserts on.
+     * <p>
+     * The forward path reads it to keep its own commits off those keys - see
+     * {@code WalWriter.commitLiveViewWithoutDedup} - which is what lets a view whose output
+     * legitimately repeats a pair carry the identity a repair would publish on.
+     */
+    public boolean isDedupKeyed() {
+        return isDedupKeyed;
     }
 
     public boolean isDropped() {
