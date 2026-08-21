@@ -191,6 +191,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Null in production; firing it is one volatile read and a null check.
     @TestOnly
     private static volatile Runnable expiryMetaSwapBarrier;
+    // Test hook: pauses an EXPIRE ROWS metadata rewrite after the _meta swap, where the new policy is already
+    // reader-visible, but before the _txn/_todo commit that can still fail. Lets a test drive the
+    // after-publication failure path. Null in production; firing it is one volatile read and a null check.
+    @TestOnly
+    private static volatile Runnable expiryMetaCommitBarrier;
     // Test hook: pauses an EXPIRE ROWS metadata rewrite after the _meta/_txn swap but before the policy epoch
     // counter ticks the second time, so a compiler on another thread can open a reader at the new metadata
     // version while the counter still holds its old value. Null in production; firing it is one volatile read
@@ -681,6 +686,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @TestOnly
     public static void setExpiryMetaSwapBarrier(@Nullable Runnable barrier) {
         expiryMetaSwapBarrier = barrier;
+    }
+
+    /**
+     * Installs a one-shot test barrier that fires between the _meta swap and the _txn/_todo commit. Pass null
+     * to uninstall.
+     */
+    @TestOnly
+    public static void setExpiryMetaCommitBarrier(@Nullable Runnable barrier) {
+        expiryMetaCommitBarrier = barrier;
     }
 
     @TestOnly
@@ -4171,6 +4185,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final Runnable barrier = expiryMetaSwapBarrier;
         if (barrier != null) {
             expiryMetaSwapBarrier = null;
+            barrier.run();
+        }
+    }
+
+    private static void fireExpiryMetaCommitBarrier() {
+        final Runnable barrier = expiryMetaCommitBarrier;
+        if (barrier != null) {
+            expiryMetaCommitBarrier = null;
             barrier.run();
         }
     }
@@ -15398,14 +15420,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long expiryPolicyUpdateVersion,
             long previousPendingExpiryVersion
     ) {
-        boolean isMetadataVersionPublished = false;
+        // rewriteAndSwapMetadata renames _meta.swp over _meta, so from that point on every reader that opens
+        // the table's metadata sees the new policy. That, not the _txn/_todo commit that follows, is what
+        // publishes the change, and the commit can still fail after it.
+        boolean isMetadataPublished = false;
         try {
             if (isExpiryPolicyUpdate) {
                 fireExpiryMetaSwapBarrier();
             }
             rewriteAndSwapMetadata(metadata);
+            isMetadataPublished = true;
+            if (isExpiryPolicyUpdate) {
+                fireExpiryMetaCommitBarrier();
+            }
             clearTodoAndCommitMeta();
-            isMetadataVersionPublished = true;
             if (isExpiryPolicyUpdate) {
                 fireExpiryPolicyPublishBarrier();
                 // Publish the policy epoch in the same writer thread immediately after the authoritative metadata
@@ -15417,7 +15445,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 metadataRW.hydrateTable(metadata);
             }
         } catch (Throwable th) {
-            if (isExpiryPolicyUpdate && !isMetadataVersionPublished) {
+            if (isExpiryPolicyUpdate && !isMetadataPublished) {
                 // The cache still describes the authoritative version. Remove only this failed transition's mark.
                 engine.getMetadataCache().cancelExpiryPolicyUpdate(
                         getTableToken().getTableId(),

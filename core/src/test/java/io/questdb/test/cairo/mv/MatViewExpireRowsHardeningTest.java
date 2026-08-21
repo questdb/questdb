@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.RowExpiryUtil;
@@ -186,6 +187,48 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
             // The read filter still hides the expired row (v = 1 < 2 -> A gone; B kept).
             assertQuery("SELECT sym, v FROM mv ORDER BY sym").noLeakCheck().returns("sym\tv\nB\t2.0\n");
+        });
+    }
+
+    @Test
+    public void testExpiryPolicyMarkSurvivesCommitFailureAfterMetaSwap() throws Exception {
+        // rewriteAndSwapMetadata renames the new _meta into place, and every reader that opens the table's
+        // metadata from then on sees the new policy. The _txn/_todo commit that follows can still fail (a
+        // full disk, say). On that failure the pending mark has to stay: it is what makes a compile read the
+        // authoritative metadata instead of the cache entry, which still holds the previous policy. Dropping
+        // the mark would leave reads on the old policy with nothing to signal the mismatch.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values ('A', 1.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
+            drainWalAndMatViewQueues();
+
+            final TableToken token = engine.verifyTableName("mv");
+            Assert.assertFalse(
+                    "precondition: the first policy must be fully published",
+                    engine.getMetadataCache().isExpiryPolicyUpdatePending(token)
+            );
+
+            // Fail the commit that runs right after the swap, on this attempt and on every retry, so the
+            // policy stays published-but-uncommitted for the rest of the test.
+            final Runnable[] failCommit = new Runnable[1];
+            failCommit[0] = () -> {
+                TableWriter.setExpiryMetaCommitBarrier(failCommit[0]);
+                throw CairoException.critical(0).put("commit failed after the meta swap");
+            };
+            try {
+                TableWriter.setExpiryMetaCommitBarrier(failCommit[0]);
+                execute("alter materialized view mv set expire rows when v < 3.0");
+                drainWalAndMatViewQueues();
+
+                Assert.assertTrue(
+                        "the pending mark must survive a failure after the policy is published",
+                        engine.getMetadataCache().isExpiryPolicyUpdatePending(token)
+                );
+            } finally {
+                TableWriter.setExpiryMetaCommitBarrier(null);
+            }
         });
     }
 
