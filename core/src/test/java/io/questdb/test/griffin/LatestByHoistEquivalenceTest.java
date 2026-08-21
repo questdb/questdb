@@ -302,7 +302,9 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
         execute("INSERT INTO j VALUES ('BB', 20.0), ('CC', 40.0)");
     }
 
-    /** The column named by the query's first {@code LATEST ON}. */
+    /**
+     * The column named by the query's first {@code LATEST ON}.
+     */
     private static String latestOnColumn(String sql) {
         final int lo = sql.indexOf("LATEST ON ") + "LATEST ON ".length();
         Assert.assertTrue("no LATEST ON in: " + sql, lo > "LATEST ON ".length() - 1);
