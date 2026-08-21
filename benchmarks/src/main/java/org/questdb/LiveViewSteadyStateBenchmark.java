@@ -591,9 +591,11 @@ public class LiveViewSteadyStateBenchmark {
                 final long o3ResumeRowsAtStart = o3ResumeRowsBefore;
                 final long o3BoundaryRowsAtStart = o3BoundaryRowsBefore;
                 long o3ScanRowsTotal = 0;
-                // How many eligible commits have been emitted, which is what walks the
-                // depth ladder. It spans batches, so a ladder rung's share is exact over
-                // the run rather than restarted every batch.
+                // How many commits have carried late rows, which the closing line reports
+                // and a ladder walks its rungs by. Counted on every eligible commit rather
+                // than only on a ladder's, so the figure means the same thing on a
+                // single-depth run; it spans batches, so a rung's share is exact over the
+                // run rather than restarted every batch.
                 long o3CommitOrdinal = 0;
                 // The write side of a refresh, accumulated over the run: what the batches
                 // emitted, what the apply physically wrote for it, and how long that took.
@@ -624,8 +626,11 @@ public class LiveViewSteadyStateBenchmark {
                         // and leave the ladder's upper rungs unreachable. All of a commit's
                         // late rows then share one depth, so a commit corrects one segment,
                         // which is what the production logs show 162 of 193 deep commits do.
+                        if (isCommitO3) {
+                            o3CommitOrdinal++;
+                        }
                         final long commitLagMicros = isCommitO3 && o3DepthLadder != null
-                                ? o3DepthLadder.depthMicrosFor(o3CommitOrdinal++)
+                                ? o3DepthLadder.depthMicrosFor(o3CommitOrdinal - 1)
                                 : o3LagMicros;
                         engine.execute(
                                 insertSql(rowShape, commitFirstRow, rows, isCommitO3 ? batchO3EveryN : 0,
