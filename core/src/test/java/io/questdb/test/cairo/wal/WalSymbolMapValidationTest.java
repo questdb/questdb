@@ -24,73 +24,98 @@
 
 package io.questdb.test.cairo.wal;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Chars;
-import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
-
 public class WalSymbolMapValidationTest extends AbstractCairoTest {
+    // Reports "rithmic" at key 1 while the symbol map holds no symbols, which
+    // makes the WAL writer emit a sparse symbol diff.
+    private static final SymbolMapReader STALE_READER = new EmptySymbolMapReader() {
+        @Override
+        public int keyOf(CharSequence value) {
+            return value != null && Chars.equals(value, "rithmic") ? 1 : super.keyOf(value);
+        }
+    };
 
     @Test
-    public void testSparseSymbolDiffSuspendsTableWithDiagnostic() throws Exception {
-        setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 8);
-        setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
-        setProperty(PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 1);
-
+    public void testSparseSymbolDiffAppliesHealthyPrefixBeforeSuspend() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (source SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
 
-            final Field symbolMapReadersField = WalWriter.class.getDeclaredField("symbolMapReaders");
-            symbolMapReadersField.setAccessible(true);
-            final SymbolMapReader staleReader = new EmptySymbolMapReader() {
-                @Override
-                public int getSymbolCount() {
-                    return 0;
-                }
-
-                @Override
-                public int keyOf(CharSequence value) {
-                    return Chars.equals(value, "rithmic") ? 1 : SymbolTable.VALUE_NOT_FOUND;
-                }
-            };
-
             final TableToken tableToken = engine.verifyTableName("x");
+            final int walId;
             try (WalWriter writer = engine.getWalWriter(tableToken)) {
-                @SuppressWarnings("unchecked") final ObjList<SymbolMapReader> readers = (ObjList<SymbolMapReader>) symbolMapReadersField.get(writer);
-                final SymbolMapReader originalReader = readers.getQuick(0);
-                readers.setQuick(0, staleReader);
+                walId = writer.getWalId();
+                commitRithmicRows(writer, 3_600_000_000L, 2);
+                final SymbolMapReader originalReader = writer.getSymbolMapReader(0);
+                writer.setSymbolMapReader(0, STALE_READER);
                 try {
-                    for (int i = 0; i < 4; i++) {
-                        final TableWriter.Row row = writer.newRow(3_600_000_000L + i);
-                        row.putSym(0, "rithmic");
-                        row.append();
-                        writer.commit();
-                    }
+                    commitRithmicRows(writer, 3_600_000_002L, 2);
                 } finally {
-                    readers.setQuick(0, originalReader);
+                    writer.setSymbolMapReader(0, originalReader);
                 }
             }
 
             drainWalQueue();
 
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
-            final String errorMessage = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
-            TestUtils.assertContains(errorMessage, "invalid WAL symbol diff key");
-            TestUtils.assertContains(errorMessage, "columnIndex=0");
-            TestUtils.assertContains(errorMessage, "cleanSymbolCount=0");
-            TestUtils.assertContains(errorMessage, "expectedKey=0");
-            TestUtils.assertContains(errorMessage, "actualKey=1");
+            assertInvalidSymbolDiffError(tableToken, 3, walId);
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .returns("count\n2\n");
         });
+    }
+
+    @Test
+    public void testSparseSymbolDiffSuspendsTableWithDiagnostic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (source SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+
+            final TableToken tableToken = engine.verifyTableName("x");
+            final int walId;
+            try (WalWriter writer = engine.getWalWriter(tableToken)) {
+                walId = writer.getWalId();
+                final SymbolMapReader originalReader = writer.getSymbolMapReader(0);
+                writer.setSymbolMapReader(0, STALE_READER);
+                try {
+                    commitRithmicRows(writer, 3_600_000_000L, 2);
+                } finally {
+                    writer.setSymbolMapReader(0, originalReader);
+                }
+            }
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertInvalidSymbolDiffError(tableToken, 1, walId);
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .returns("count\n0\n");
+        });
+    }
+
+    private static void assertInvalidSymbolDiffError(TableToken tableToken, long seqTxn, int walId) {
+        final String errorMessage = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
+        TestUtils.assertContains(errorMessage, "invalid WAL symbol diff key");
+        TestUtils.assertContains(errorMessage, "seqTxn=" + seqTxn);
+        TestUtils.assertContains(errorMessage, "walId=" + walId);
+        TestUtils.assertContains(errorMessage, "segmentId=0");
+    }
+
+    private static void commitRithmicRows(WalWriter writer, long fromTs, int count) {
+        for (int i = 0; i < count; i++) {
+            final TableWriter.Row row = writer.newRow(fromTs + i);
+            row.putSym(0, "rithmic");
+            row.append();
+            writer.commit();
+        }
     }
 }

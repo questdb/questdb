@@ -14946,6 +14946,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (size() == 0) {
+            if (!keepSymbolTables) {
+                txWriter.resetTimestamp();
+                columnVersionWriter.truncate();
+                txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+            }
             return;
         }
 

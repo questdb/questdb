@@ -1257,8 +1257,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                 }
 
                 try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 2)) {
-                    Assert.assertEquals("first", reader.valueOf(0));
-                    Assert.assertEquals("second", reader.valueOf(1));
+                    TestUtils.assertEquals("first", reader.valueOf(0));
+                    TestUtils.assertEquals("second", reader.valueOf(1));
                     Assert.assertEquals(2, reader.getCacheSize());
 
                     reader.updateSymbolCount(1);
