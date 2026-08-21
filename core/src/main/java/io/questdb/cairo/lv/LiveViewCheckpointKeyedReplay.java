@@ -81,7 +81,10 @@ import org.jetbrains.annotations.Nullable;
  * from-base recompute of its range and corrects any divergence it finds there; a keyed
  * one preserves the stored row for every key outside {@code Q}. That is a property change
  * rather than an optimization, which is why
- * {@code cairo.live.view.checkpoint.repair.keyed.replay.enabled} defaults to false.
+ * {@code cairo.live.view.checkpoint.repair.keyed.replay.enabled} exists at all. It defaults
+ * to true, so an operator who wants a from-base recompute of the whole range sets it to
+ * false; the route reaches only views whose key column is an indexed SYMBOL, so an
+ * unindexed view keeps exactly what it had either way.
  *
  * <h2>Ordering</h2>
  * The merged rows are appended in timestamp order against the replay's own, because the
