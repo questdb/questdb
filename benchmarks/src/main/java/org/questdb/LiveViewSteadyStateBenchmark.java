@@ -224,6 +224,11 @@ public class LiveViewSteadyStateBenchmark {
         boolean isRepairIsolatedRuntime = true;
         boolean isRepairSegmentYield = true;
         boolean isRepairKeyedReplay = false;
+        // The open anchor segment's own keyed resume - the route the reported workload's
+        // corrections actually take, since a daily anchor leaves 99% of them inside the
+        // segment the runtime still stands in. Left at the configuration default, so a run
+        // that names nothing measures what ships.
+        boolean isOpenSegmentKeyedReplay = true;
         boolean isRepairPerSegment = true;
         for (String arg : args) {
             if (arg.startsWith("--restart=")) {
@@ -296,6 +301,8 @@ public class LiveViewSteadyStateBenchmark {
                 isRepairSegmentYield = Boolean.parseBoolean(arg.substring(23));
             } else if (arg.startsWith("--repair-keyed-replay=")) {
                 isRepairKeyedReplay = Boolean.parseBoolean(arg.substring(22));
+            } else if (arg.startsWith("--open-segment-keyed-replay=")) {
+                isOpenSegmentKeyedReplay = Boolean.parseBoolean(arg.substring(28));
             } else {
                 throw new IllegalArgumentException("unknown argument: " + arg);
             }
@@ -395,6 +402,7 @@ public class LiveViewSteadyStateBenchmark {
         final boolean finalRepairPerSegment = isRepairPerSegment;
         final boolean finalRepairSegmentYield = isRepairSegmentYield;
         final boolean finalRepairKeyedReplay = isRepairKeyedReplay;
+        final boolean finalOpenSegmentKeyedReplay = isOpenSegmentKeyedReplay;
         final boolean finalLvDedup = isLvDeduped;
         try {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(dbRoot.toString()) {
@@ -455,6 +463,11 @@ public class LiveViewSteadyStateBenchmark {
                 }
 
                 @Override
+                public boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled() {
+                    return finalOpenSegmentKeyedReplay;
+                }
+
+                @Override
                 public boolean isLiveViewCheckpointRepairSparsePublicationEnabled() {
                     return finalLvDedup;
                 }
@@ -468,7 +481,8 @@ public class LiveViewSteadyStateBenchmark {
                             + "o3SpreadSteps=%d o3MaxLagRows=%d o3Depths=%s o3CommitPercent=%d "
                             + "hotKeyEveryN=%d equalTsEveryN=%d tsStepUs=%d "
                             + "spanHours=%.2f baseDedup=%s lvDedup=%s repairMaxChainedBoundaries=%d repairPerSegment=%s "
-                            + "repairIsolatedRuntime=%s repairSegmentYield=%s repairKeyedReplay=%s%n",
+                            + "repairIsolatedRuntime=%s repairSegmentYield=%s repairKeyedReplay=%s "
+                            + "openSegmentKeyedReplay=%s%n",
                     seedRows, batchRows, batches, checkpointRows, isSymbolPreSized, isIndexed, recycleAccounts,
                     anchorPeriod, accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
                     configuration.getLiveViewPartitionCompactThreshold(),
@@ -483,7 +497,8 @@ public class LiveViewSteadyStateBenchmark {
                     configuration.isLiveViewCheckpointRepairPerSegmentEnabled(),
                     configuration.isLiveViewCheckpointRepairIsolatedRuntimeEnabled(),
                     configuration.isLiveViewCheckpointRepairSegmentYieldEnabled(),
-                    configuration.isLiveViewCheckpointRepairKeyedReplayEnabled()
+                    configuration.isLiveViewCheckpointRepairKeyedReplayEnabled(),
+                    configuration.isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled()
             );
 
             engine = new CairoEngine(configuration);
