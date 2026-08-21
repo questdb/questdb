@@ -8816,6 +8816,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             );
             messageBus.getO3PartitionPubSeq().done(cursor);
         } else {
+            // Could not hand this partition to the shared pool, so process it here. This is a silent
+            // fallback -- it logs nothing, and serialises work that would otherwise run in parallel --
+            // so count it, split by whether the queue was full (-1) or the publish CAS was lost (-2).
+            metrics.tableWriterMetrics().incrementO3PartitionsInline(cursor);
             O3PartitionJob.processPartition(
                     path,
                     partitionBy,
