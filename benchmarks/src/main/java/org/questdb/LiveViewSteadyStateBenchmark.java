@@ -195,6 +195,15 @@ public class LiveViewSteadyStateBenchmark {
         String o3Lag = "1m";
         int o3FromBatch = 0; // batches below this one stay strictly forward
         String o3Spread = null; // unset = every late row equally late, so one commit touches one segment
+        // A weighted ladder of correction depths, "<dur>:<weight>,..." - the shape a real
+        // stream has, where a minority of commits is a second late, a smaller minority an
+        // hour and a handful a day. Unset leaves the single --o3-lag depth in place.
+        String o3Depths = null;
+        // The share of COMMITS carrying late rows. The refresh classifies out-of-order per
+        // commit, so a stream where half the commits are clean and half carry a few late
+        // rows is a different workload from one where every commit carries them, at the same
+        // late-row share. --o3-percent is then the share within an eligible commit.
+        int o3CommitPercent = 100;
         double hotKeyPercent = 0; // 0 = no key is hotter than any other
         double equalTsPercent = 0; // 0 = no two rows share a (timestamp, key) pair
         long tsStepMicros = DEFAULT_TS_STEP_MICROS;
@@ -271,6 +280,10 @@ public class LiveViewSteadyStateBenchmark {
                 o3FromBatch = Integer.parseInt(arg.substring(16));
             } else if (arg.startsWith("--o3-spread=")) {
                 o3Spread = arg.substring(12);
+            } else if (arg.startsWith("--o3-depths=")) {
+                o3Depths = arg.substring(12);
+            } else if (arg.startsWith("--o3-commit-percent=")) {
+                o3CommitPercent = Integer.parseInt(arg.substring(20));
             } else if (arg.startsWith("--hot-key-percent=")) {
                 hotKeyPercent = Double.parseDouble(arg.substring(18));
             } else if (arg.startsWith("--equal-ts-percent=")) {
@@ -319,6 +332,9 @@ public class LiveViewSteadyStateBenchmark {
         if (o3FromBatch < 0) {
             throw new IllegalArgumentException("--o3-from-batch must not be negative: " + o3FromBatch);
         }
+        if (o3CommitPercent < 1 || o3CommitPercent > 100) {
+            throw new IllegalArgumentException("--o3-commit-percent must be within [1, 100]: " + o3CommitPercent);
+        }
         if (hotKeyPercent < 0 || hotKeyPercent > 100) {
             throw new IllegalArgumentException("--hot-key-percent must be within [0, 100]: " + hotKeyPercent);
         }
@@ -361,6 +377,11 @@ public class LiveViewSteadyStateBenchmark {
         // START_TS: a row shifted below the view's own start produces no output at all
         // and would be counted as a rejection rather than as a correction.
         final long o3MaxLagMicros = o3LagMicros + (long) (o3SpreadSteps - 1) * anchorPeriodMicros;
+        // The depth ladder, when one is given. It replaces --o3-lag and --o3-spread outright:
+        // a late row picks its depth from the ladder by its own ordinal, and a depth that
+        // would put the row below START_TS leaves that row where it was rather than
+        // suppressing every late row in the run, which is what the single-depth guard does.
+        final O3Depths o3DepthLadder = o3EveryN > 0 && o3Depths != null ? O3Depths.of(o3Depths) : null;
         // Every hotKeyEveryN-th row carries the same key, so one posting list holds
         // hotKeyPercent of the base. Fix 3B prices a keyed scan from posting counts
         // precisely because that distribution decides it, and a run where every key is
@@ -470,7 +491,8 @@ public class LiveViewSteadyStateBenchmark {
                             + "anchorPeriod=%s accountWindow=%d rowsPerBucket=%d buckets=%d compactThreshold=%d "
                             + "compactStalePercent=%d shape=%s keyType=%s nullPercent=%d sumColumns=%d "
                             + "commitsPerBatch=%d commitRows=%d o3EveryN=%d o3Lag=%s o3LagRows=%d o3FromBatch=%d "
-                            + "o3SpreadSteps=%d o3MaxLagRows=%d hotKeyEveryN=%d equalTsEveryN=%d tsStepUs=%d "
+                            + "o3SpreadSteps=%d o3MaxLagRows=%d o3Depths=%s o3CommitPercent=%d "
+                            + "hotKeyEveryN=%d equalTsEveryN=%d tsStepUs=%d "
                             + "spanHours=%.2f baseDedup=%s lvDedup=%s repairMaxChainedBoundaries=%d repairPerSegment=%s "
                             + "repairIsolatedRuntime=%s repairSegmentYield=%s repairKeyedReplay=%s "
                             + "backfillDeferral=%s backfillIntervalUs=%d%n",
@@ -480,8 +502,9 @@ public class LiveViewSteadyStateBenchmark {
                     configuration.getLiveViewPartitionCompactStalePercent(),
                     selectShape.name, partitionKeyType.name, nullPercent, sumColumns,
                     commitsPerBatch, commitRows, o3EveryN, o3EveryN > 0 ? o3Lag : "none", o3LagMicros / tsStepMicros,
-                    o3FromBatch, o3SpreadSteps, o3MaxLagMicros / tsStepMicros, hotKeyEveryN, equalTsEveryN,
-                    tsStepMicros, (double) totalRows * tsStepMicros / Micros.HOUR_MICROS, isBaseDeduped,
+                    o3FromBatch, o3SpreadSteps, o3MaxLagMicros / tsStepMicros,
+                    o3DepthLadder == null ? "none" : o3DepthLadder.describe(), o3CommitPercent,
+                    hotKeyEveryN, equalTsEveryN, tsStepMicros, (double) totalRows * tsStepMicros / Micros.HOUR_MICROS, isBaseDeduped,
                     configuration.isLiveViewCheckpointRepairSparsePublicationEnabled(),
                     configuration.getLiveViewCheckpointRepairMaxChainedBoundaries(),
                     configuration.isLiveViewCheckpointRepairPerSegmentEnabled(),
@@ -515,7 +538,7 @@ public class LiveViewSteadyStateBenchmark {
                             + (isBaseDeduped ? " dedup upsert keys(created_at, cod_acct_no)" : ""),
                     sqlCtx
             );
-            engine.execute(insertSql(rowShape, 1, seedRows, 0, 0, 1), sqlCtx);
+            engine.execute(insertSql(rowShape, 1, seedRows, 0, 0, 1, false), sqlCtx);
             drainWal(engine);
 
             engine.execute(
@@ -568,6 +591,10 @@ public class LiveViewSteadyStateBenchmark {
                 final long o3ResumeRowsAtStart = o3ResumeRowsBefore;
                 final long o3BoundaryRowsAtStart = o3BoundaryRowsBefore;
                 long o3ScanRowsTotal = 0;
+                // How many eligible commits have been emitted, which is what walks the
+                // depth ladder. It spans batches, so a ladder rung's share is exact over
+                // the run rather than restarted every batch.
+                long o3CommitOrdinal = 0;
                 // The write side of a refresh, accumulated over the run: what the batches
                 // emitted, what the apply physically wrote for it, and how long that took.
                 long lvRowsTotal = 0;
@@ -585,8 +612,25 @@ public class LiveViewSteadyStateBenchmark {
                     for (int c = 0; c < commitsPerBatch; c++) {
                         final long commitFirstRow = firstRow + (long) c * commitRows;
                         final int rows = c == commitsPerBatch - 1 ? batchRows - c * commitRows : commitRows;
+                        // Out-of-order is classified per commit, so which commits are
+                        // eligible is a knob of its own: a run where every commit carries a
+                        // late row triggers a repair on every commit, whatever the late-row
+                        // share is. The eligible ones are spread evenly over each hundred.
+                        final long commitIndex = (long) b * commitsPerBatch + c;
+                        final boolean isCommitO3 = batchO3EveryN > 0 && commitIndex % 100 < o3CommitPercent;
+                        // A commit's correction depth is one rung of the ladder, walked by
+                        // the eligible commit's own ordinal rather than by the raw commit
+                        // index - which would correlate the rung with the eligibility test
+                        // and leave the ladder's upper rungs unreachable. All of a commit's
+                        // late rows then share one depth, so a commit corrects one segment,
+                        // which is what the production logs show 162 of 193 deep commits do.
+                        final long commitLagMicros = isCommitO3 && o3DepthLadder != null
+                                ? o3DepthLadder.depthMicrosFor(o3CommitOrdinal++)
+                                : o3LagMicros;
                         engine.execute(
-                                insertSql(rowShape, commitFirstRow, rows, batchO3EveryN, o3LagMicros, o3SpreadSteps),
+                                insertSql(rowShape, commitFirstRow, rows, isCommitO3 ? batchO3EveryN : 0,
+                                        commitLagMicros, o3DepthLadder != null ? 1 : o3SpreadSteps,
+                                        o3DepthLadder != null),
                                 sqlCtx
                         );
                     }
@@ -729,11 +773,13 @@ public class LiveViewSteadyStateBenchmark {
                     final long ingested = (long) batchRows * Math.max(1, batches - o3FromBatch);
                     System.out.printf(
                             Locale.ROOT,
-                            "# o3 ingested=%d scan_rows=%d amplification=%.1fx resume_rows=%d boundary_rows=%d "
+                            "# o3 ingested=%d late_commits=%d scan_rows=%d amplification=%.1fx resume_rows=%d "
+                                    + "boundary_rows=%d "
                                     + "rejected=%d repair=%s isolated_replays=%d segment_yields=%d "
                                     + "deferred_segments=%d passed_segments=%d pending_segments=%d "
                                     + "pending_rows=%d%n",
                             ingested,
+                            o3CommitOrdinal,
                             o3ScanRowsTotal,
                             (double) o3ScanRowsTotal / ingested,
                             instance.getO3ResumeReplayRows() - o3ResumeRowsAtStart,
@@ -836,7 +882,7 @@ public class LiveViewSteadyStateBenchmark {
                     final long stateRows = firstRow - 1;
                     engine.getLiveViewRegistry().clear();
                     engine.buildViewGraphs();
-                    engine.execute(insertSql(rowShape, firstRow, RESTART_PROBE_ROWS, 0, 0, 1), sqlCtx);
+                    engine.execute(insertSql(rowShape, firstRow, RESTART_PROBE_ROWS, 0, 0, 1, false), sqlCtx);
                     drainWal(engine);
                     final LiveViewInstance restarted = engine.getLiveViewRegistry().getViewInstance(VIEW_NAME);
                     try (LiveViewRefreshJob restartJob = new LiveViewRefreshJob(0, engine, 1)) {
@@ -1335,6 +1381,11 @@ public class LiveViewSteadyStateBenchmark {
      * through the steps, so one commit corrects several segments at once. That is the
      * shape the production logs show and the one a per-segment repair is priced against;
      * a single step leaves every late row in the same segment.
+     * <p>
+     * A {@code ladder} replaces both: a late row then takes its depth from the weighted
+     * set of depths {@code --o3-depths} names, so one run carries the seconds-late
+     * majority, the minutes-late minority and the day-deep tail a real stream mixes,
+     * rather than one depth at a time.
      */
     private static String insertSql(
             RowShape shape,
@@ -1342,7 +1393,8 @@ public class LiveViewSteadyStateBenchmark {
             long rows,
             long o3EveryN,
             long o3LagMicros,
-            int o3SpreadSteps
+            int o3SpreadSteps,
+            boolean isLadderDepth
     ) {
         // The row's ordinal in the whole generated stream. Every other expression is a
         // function of it, so a row that repeats an earlier one repeats it here and comes
@@ -1365,13 +1417,24 @@ public class LiveViewSteadyStateBenchmark {
                 : amount;
         final String position = "(" + START_TS + " + " + twinIndex + " * " + shape.tsStepMicros + ")";
         final long maxLagMicros = o3LagMicros + (long) (o3SpreadSteps - 1) * shape.anchorPeriodMicros;
-        final String lag = o3SpreadSteps > 1
-                ? "(" + o3LagMicros + " + (" + rowIndex + " / " + o3EveryN + ") % " + o3SpreadSteps
-                  + " * " + shape.anchorPeriodMicros + ")"
-                : Long.toString(o3LagMicros);
+        final String lag;
+        if (o3SpreadSteps > 1) {
+            lag = "(" + o3LagMicros + " + (" + rowIndex + " / " + o3EveryN + ") % " + o3SpreadSteps
+                    + " * " + shape.anchorPeriodMicros + ")";
+        } else {
+            lag = Long.toString(o3LagMicros);
+        }
+        // The single-depth form guards the whole run by its one depth: no row moves until
+        // the stream is deeper than that. A ladder cannot, because its deepest rung would
+        // then hold back the shallow corrections that make up most of the workload, so it
+        // guards per row instead and leaves a row that would land below START_TS where it
+        // was. Either way nothing lands below the view's own lower bound.
+        final String lateGate = isLadderDepth
+                ? position + " - " + lag + " >= " + START_TS
+                : twinIndex + " > " + maxLagMicros / shape.tsStepMicros;
         final String timestamp = o3EveryN > 0
-                ? "case when " + rowIndex + " % " + o3EveryN + " = 0 and " + twinIndex + " > "
-                  + maxLagMicros / shape.tsStepMicros + " then " + position + " - " + lag + " else " + position + " end"
+                ? "case when " + rowIndex + " % " + o3EveryN + " = 0 and " + lateGate
+                  + " then " + position + " - " + lag + " else " + position + " end"
                 : position;
         final StringBuilder sql = new StringBuilder("insert into mm_transaction_live_created_at ")
                 .append("select (").append(timestamp).append(")::timestamp, ")
@@ -1518,6 +1581,79 @@ public class LiveViewSteadyStateBenchmark {
                 }
             });
             return out;
+        }
+    }
+
+    /**
+     * A weighted ladder of out-of-order correction depths, as
+     * {@code --o3-depths=<duration>:<weight>,...} names them - for instance
+     * {@code 1s:40,5s:47,3m:5,3h:1,36h:1}. A late row picks its rung from its own ordinal
+     * in the stream, so the mix is exact and reproducible rather than sampled.
+     * <p>
+     * It exists because a real out-of-order stream is not one depth. The reported
+     * workload is roughly half in-order commits, half within ten seconds, and a tail of a
+     * few per cent reaching minutes, hours and days back - and those three cost entirely
+     * different things: a seconds-deep correction resumes from the anchor inside the open
+     * segment, an hours-deep one may cross into a closed segment, and a day-deep one
+     * repairs a segment the view has long since sealed. A run carrying one depth at a time
+     * prices one of those and says nothing about how they compose.
+     * <p>
+     * Weights are relative and need not sum to a hundred.
+     */
+    private static final class O3Depths {
+        private final int[] cumulativeWeights;
+        private final long[] depthMicros;
+        private final String spec;
+        private final int totalWeight;
+
+        private O3Depths(String spec, long[] depthMicros, int[] cumulativeWeights, int totalWeight) {
+            this.spec = spec;
+            this.depthMicros = depthMicros;
+            this.cumulativeWeights = cumulativeWeights;
+            this.totalWeight = totalWeight;
+        }
+
+        /**
+         * What the header line reports the run used.
+         */
+        String describe() {
+            return spec;
+        }
+
+        /**
+         * The depth one eligible commit's late rows carry, picked by that commit's ordinal
+         * among the eligible ones. Walking the rungs in weight order rather than sampling
+         * them makes the mix exact over any run long enough to cover the ladder once.
+         */
+        long depthMicrosFor(long commitOrdinal) {
+            final long rung = Math.floorMod(commitOrdinal, totalWeight);
+            for (int i = 0, n = depthMicros.length; i < n; i++) {
+                if (rung < cumulativeWeights[i]) {
+                    return depthMicros[i];
+                }
+            }
+            return depthMicros[depthMicros.length - 1];
+        }
+
+        static O3Depths of(String spec) {
+            final String[] rungs = spec.split(",");
+            final long[] depths = new long[rungs.length];
+            final int[] cumulative = new int[rungs.length];
+            int total = 0;
+            for (int i = 0; i < rungs.length; i++) {
+                final int colon = rungs[i].indexOf(':');
+                if (colon < 1) {
+                    throw new IllegalArgumentException("--o3-depths rung must be <duration>:<weight>: " + rungs[i]);
+                }
+                final int weight = Integer.parseInt(rungs[i].substring(colon + 1).trim());
+                if (weight < 1) {
+                    throw new IllegalArgumentException("--o3-depths weight must be positive: " + rungs[i]);
+                }
+                depths[i] = anchorPeriodMicros(rungs[i].substring(0, colon).trim());
+                total += weight;
+                cumulative[i] = total;
+            }
+            return new O3Depths(spec, depths, cumulative, total);
         }
     }
 
