@@ -82,7 +82,8 @@ import org.junit.Test;
  * matching list and is compared against the un-rewritten plan from then on.
  * <p>
  * Mutation-checked: deleting any one of the joins, LIMIT, ORDER BY, UNION and alias-prefix guards, of
- * the two timestamp conditions, of the identity-projection condition, or of the latest-by handover to
+ * the three timestamp conditions (the two in {@code isHoistValid} and the explicit-timestamp flag on the
+ * LATEST ON model itself), of the identity-projection condition, or of the latest-by handover to
  * the empty factory in {@code SqlCodeGenerator} makes this test fail. The remaining guards in
  * {@code findHoistableTableModel} - joins, latest-by, group-by, sample-by, select-model-type and an
  * intervening WHERE on a layer above the table - are redundant: the identity-projection condition
@@ -158,6 +159,11 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
             // a sub-query timestamp override, in both arrangements
             "SELECT * FROM (SELECT * FROM t TIMESTAMP(ts2)) LATEST ON ts PARTITION BY sym",
             "SELECT * FROM (SELECT * FROM t TIMESTAMP(ts2)) LATEST ON ts2 PARTITION BY sym",
+            // the override written on the LATEST ON model itself, in both arrangements. LATEST ON
+            // overwrites the model's timestamp token, so only the explicit-timestamp flag still records
+            // that the query declared ts2.
+            "SELECT * FROM (SELECT * FROM t) x TIMESTAMP(ts2) LATEST ON ts PARTITION BY sym",
+            "SELECT * FROM ((SELECT * FROM t) x TIMESTAMP(ts2) LATEST ON ts PARTITION BY sym)",
             // clauses on the dropped layer that decide which rows reach the LATEST ON
             "SELECT * FROM (SELECT * FROM t LIMIT 3) LATEST ON ts PARTITION BY sym",
             "SELECT * FROM (SELECT * FROM t ORDER BY v) LATEST ON ts PARTITION BY sym",
@@ -205,6 +211,25 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
                     }
                 };
         AbstractCairoTest.setUpStatic();
+    }
+
+    @Test
+    public void testOuterTimestampOverrideCompilesTheSameWithAndWithoutTheHoist() throws Exception {
+        // A timestamp(...) on the LATEST ON model does not reach the sub-query form's factory, so a
+        // SAMPLE BY above it has no timestamp to run on and the query does not compile. The hoist must
+        // not turn that into a compiling query: the direct read publishes the table's designated
+        // timestamp, so SAMPLE BY would silently run on ts instead of the declared ts2. The shape
+        // compiles under neither setting, so it fits none of the lists above.
+        assertMemoryLeak(() -> {
+            createFixture();
+            final String sql = "SELECT ts, count() FROM ((SELECT * FROM t) x TIMESTAMP(ts2) "
+                    + "LATEST ON ts PARTITION BY sym) SAMPLE BY 1d";
+            final Outcome hoisted = run(sql, true);
+            final Outcome plain = run(sql, false);
+            Assert.assertNotNull("the hoist made this shape compile: " + sql, hoisted.error);
+            Assert.assertEquals("the hoist changed how this shape is rejected: " + sql,
+                    plain.error, hoisted.error);
+        });
     }
 
     @Test

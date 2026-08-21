@@ -2472,6 +2472,8 @@ public class SqlOptimiser implements Mutable {
     //     join produces more than one row per key;
     //   - the model nests a plain `SELECT * FROM t [WHERE ...]` and nothing else (no projection/rename,
     //     join, aggregation, distinct, window, sampleBy, union, order by, limit, or its own LATEST ON);
+    //   - neither the LATEST ON model nor any layer under it declares its own timestamp(...): the direct
+    //     read publishes the table's designated timestamp, so a declared one would be dropped;
     //   - LATEST ON is on the table's designated timestamp: the direct read always uses
     //     metadata.getTimestampIndex(), so any other timestamp would give wrong results;
     //   - every PARTITION BY column resolves to a column of the table.
@@ -2494,6 +2496,15 @@ public class SqlOptimiser implements Mutable {
                     // sub-query that defined `x`, so the prefix no longer resolves and the query fails to
                     // compile. (The LATEST ON model's own WHERE keeps its aliases, so it needs no such check.)
                     && !hasDottedLiteral(tableWhere)
+                    // Skip a timestamp(...) the user wrote on the LATEST ON model itself, e.g.
+                    // `(SELECT * FROM t) x timestamp(ts2) LATEST ON ts PARTITION BY sym`. parseLatestByNew
+                    // overwrites the model's timestamp with the LATEST ON column, so the token here is the
+                    // designated one and condition (2) in isHoistValid - which walks the layers below this
+                    // model - never sees the override; only this flag still records it. The direct read
+                    // publishes the table's designated timestamp, so hoisting would let a SAMPLE BY or a
+                    // timestamp join above run on that column while the query asked for ts2. This is the
+                    // same shape condition (2) rejects one layer down.
+                    && !model.isExplicitTimestamp()
                     && isHoistValid(model.getNestedModel(), table, onTs, model.getLatestBy(), executionContext)) {
                 // Move the table read into this model and drop the pass-through SELECT * layer(s) in
                 // between: LATEST ON now reads the table directly, keeping the table's designated
