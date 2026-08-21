@@ -114,6 +114,11 @@ public class LiveViewInstance implements QuietCloseable {
     // however the switch moves afterwards. False for every view created without it, which
     // is every view today.
     private final boolean isDedupKeyed;
+    // The non-timestamp half of that identity: the output column the table deduplicates
+    // on, or LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN. A sparse publication has to
+    // upsert on the same pair a repair proves unique, and "the table deduplicates" alone
+    // does not name the column it deduplicates by.
+    private final int dedupKeyColumnIndex;
     // Cancellation flag the refresh worker binds into its execution context's circuit
     // breaker for the duration of a cycle over this view. DROP and invalidation set it,
     // so a scan already inside the compiled cursor unwinds instead of running to
@@ -694,10 +699,16 @@ public class LiveViewInstance implements QuietCloseable {
     // live_views().writer_stall_micros for operator visibility.
     private volatile long writerStallStartUs = Numbers.LONG_NULL;
 
-    public LiveViewInstance(LiveViewDefinition definition, TableToken liveViewToken, boolean isDedupKeyed) {
+    public LiveViewInstance(
+            LiveViewDefinition definition,
+            TableToken liveViewToken,
+            boolean isDedupKeyed,
+            int dedupKeyColumnIndex
+    ) {
         this.definition = definition;
         this.liveViewToken = liveViewToken;
         this.isDedupKeyed = isDedupKeyed;
+        this.dedupKeyColumnIndex = dedupKeyColumnIndex;
         this.stubState = null;
     }
 
@@ -714,6 +725,7 @@ public class LiveViewInstance implements QuietCloseable {
         this.definition = null;
         this.liveViewToken = liveViewToken;
         this.isDedupKeyed = false;
+        this.dedupKeyColumnIndex = LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
         this.stubState = stubState;
     }
 
@@ -981,6 +993,20 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public LiveViewCompiledPlan getCompiledPlan() {
         return compiledPlan;
+    }
+
+    /**
+     * The output column beside the designated timestamp that this view's own table
+     * deduplicates on, or {@link LiveViewCheckpointOutputUniqueness#NO_KEY_COLUMN}.
+     * <p>
+     * A repair publishing sparsely upserts on {@code (designated timestamp, this column)}
+     * and proves that pair unique first, so the two have to be the same column: a repair
+     * that proved one identity and published on another would collapse rows nothing
+     * checked. Resolved off the table's own metadata where the instance is built, for the
+     * reason {@link #isDedupKeyed()} gives.
+     */
+    public int getDedupKeyColumnIndex() {
+        return dedupKeyColumnIndex;
     }
 
     public long getDedupRawWalCleanCycles() {

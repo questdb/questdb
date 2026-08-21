@@ -386,14 +386,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // rows those repairs copied forward from the view's own output instead of recomputing.
     private long keyedReplayMergedRows;
     private long keyedReplaySegmentCount;
+    // The keyed publication, and what it left alone: segments published as an upsert onto
+    // the view's own dedup keys, the stored rows those publications did not have to
+    // rewrite, and the attempts abandoned because the output repeated a pair the upsert
+    // would have collapsed.
+    private long sparsePublicationCount;
+    private long sparsePublicationFallbackCount;
+    private long sparsePublicationRowsKept;
     // Whether a repair's qualifying output carries each (timestamp, projected key) pair
     // once, which is the identity a sparse keyed publication would stand on. Armed per
     // repair and carried across a park by the repair session.
     private final LiveViewCheckpointOutputUniqueness outputUniqueness = new LiveViewCheckpointOutputUniqueness();
-    // What the Stage 3 publication is decided on: how many segment repairs had their
-    // output checked, how many of those carried no duplicate pair, and the rows behind
-    // both. Diagnostic only - every repair still publishes its whole replaced range with
-    // REPLACE_RANGE, which needs no such identity.
+    // What the keyed publication is decided on, per repair: how many segment repairs had
+    // their output checked, how many of those carried no duplicate pair, and the rows
+    // behind both. A repair of a dedup-keyed view acts on the verdict - unique publishes
+    // sparsely, a repeat falls back to the whole-segment replacement - and every other
+    // repair reports it and publishes its whole replaced range either way.
     private long outputUniquenessCheckedRepairs;
     private long outputUniquenessCheckedRows;
     private long outputUniquenessDuplicateRows;
@@ -728,6 +736,37 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public long keyedReplaySegmentCountForTest() {
         return keyedReplaySegmentCount;
+    }
+
+    /**
+     * Test-only: number of segment repairs this worker published as an upsert onto the
+     * view's own {@code (designated timestamp, projected key)} dedup keys, carrying only
+     * the rows it recomputed. See {@link LiveViewCheckpointKeyedReplay}.
+     */
+    @TestOnly
+    public long sparsePublicationCountForTest() {
+        return sparsePublicationCount;
+    }
+
+    /**
+     * Test-only: number of sparse publications this worker abandoned before commit,
+     * because the repair's output repeated a pair the upsert would have collapsed or
+     * because it recomputed no row at all. Each one published its whole range with
+     * {@code REPLACE_RANGE} instead.
+     */
+    @TestOnly
+    public long sparsePublicationFallbackCountForTest() {
+        return sparsePublicationFallbackCount;
+    }
+
+    /**
+     * Test-only: stored rows a sparse publication left exactly where they stood, summed
+     * over every segment this worker published sparsely. A replacement would have had to
+     * rewrite every one of them.
+     */
+    @TestOnly
+    public long sparsePublicationRowsKeptForTest() {
+        return sparsePublicationRowsKept;
     }
 
     /**
@@ -4813,11 +4852,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Folds one finished segment repair's uniqueness verdict into the run's counters and
      * reports it.
      * <p>
-     * Called before the replacement commits, which is where the check has to finish: the
-     * stage that acts on the verdict publishes sparsely on the pair, and a duplicate
-     * admitted to such a commit is collapsed silently. Today it only records - every
-     * repair publishes its whole replaced range either way - so what this produces is the
-     * fallback rate a sparse publication would run at.
+     * Called before the publication commits, which is where the check has to finish: a
+     * repair of a dedup-keyed view publishes sparsely on the pair when it comes out
+     * unique, and a duplicate admitted to such a commit is collapsed silently. For every
+     * other view it only records, and what it produces there is the fallback rate a sparse
+     * publication would run at.
      *
      * @param isSegmentCandidate whether this repair is the bounded, converging kind a
      *                           sparse publication could ever serve. An unlocalized
@@ -7649,15 +7688,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         if (storedRowFactory != null
                                 && storedRowFactory.getMetadata().getColumnCount() == walWriter.getMetadata().getColumnCount()
                                 && pageFrameFactory.isIndexedForwardTimestampRangeSupported(keyedReplay.getBaseKeyColumnIndex())) {
+                            // Whether to attempt publishing this segment sparsely: only
+                            // the keys the correction touched, upserted onto the view's
+                            // own (designated timestamp, projected key) dedup keys,
+                            // instead of a replacement carrying the segment's whole row
+                            // set. Three things have to hold and this is where all three
+                            // are known - the view's table carries the identity, the read
+                            // is keyed so there is a smaller row set to publish at all,
+                            // and the pair the detector is checking is the pair the table
+                            // deduplicates on. The last is not a formality: a repair that
+                            // proved one identity and upserted on another would collapse
+                            // rows nothing checked. The verdict itself is not known until
+                            // the replay ends, which is what makes it an attempt.
+                            final boolean sparseAttempt = instance.isDedupKeyed()
+                                    && outputUniqueness.isArmed()
+                                    && instance.getDedupKeyColumnIndex() == outputUniqueness.getKeyColumnIndex();
                             keyedReplay.bindOutput(
                                     storedRowCopier(instance, walWriter, storedRowFactory.getMetadata()),
                                     walWriter,
                                     executionContext,
-                                    instance
+                                    instance,
+                                    sparseAttempt
                             );
                             keyedReplaySegmentCount++;
                             LOG.info().$("live view segment repaired by key [view=").$(viewName)
                                     .$(", keys=").$(keyedReplay.getBaseSymbolKeys().size())
+                                    .$(", sparseAttempt=").$(sparseAttempt)
                                     .$(", outputLowTs=").$ts(emitLowTs)
                                     .$(", highTsExclusive=").$ts(plan.getHighTsExclusive()).I$();
                         } else {
@@ -7941,15 +7997,48 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     ? plan.getHighTsExclusive()
                                     : Long.MAX_VALUE;
                             // Before the commit, which is where the check has to finish:
-                            // the stage that acts on the verdict publishes sparsely on the
-                            // pair, and a duplicate admitted to such a commit is collapsed
-                            // silently. This one only records it.
+                            // the publication chosen below stands on the pair, and a
+                            // duplicate admitted to a sparse commit is collapsed silently.
                             reportOutputUniqueness(viewName, localized && finiteHighBound, keyedRoute);
-                            fencedLiveViewCommit(instance, () -> walWriter.commitLiveViewWithReplaceRange(
-                                    effectiveSeqTxn,
-                                    replaceLowTs,
-                                    replaceHighTs
-                            ));
+                            // The verdict, acted on. A sparse attempt publishes only the
+                            // rows the replay recomputed, upserted onto the view's dedup
+                            // keys, and leaves every other stored row where it stands -
+                            // but only when the pair it upserts on names each of those
+                            // rows once. A repeat, or a replay that recomputed nothing at
+                            // all, abandons the attempt: the merge writes the rows it had
+                            // only counted and the repair publishes its whole range with
+                            // the replacement, which collapses nothing.
+                            final boolean sparse = keyedReplay.isSparse()
+                                    && appendedRows > 0
+                                    && outputUniqueness.isUnique();
+                            if (!sparse && keyedReplay.materializeMerge()) {
+                                sparsePublicationFallbackCount++;
+                                LOG.info().$("live view segment repair abandoned its sparse publication [view=")
+                                        .$(viewName)
+                                        .$(", replayedRows=").$(appendedRows)
+                                        .$(", mergedRows=").$(keyedReplay.getMergedRows())
+                                        .$(", duplicateRows=").$(outputUniqueness.getDuplicateRows())
+                                        .$(", firstDuplicateTs=").$ts(outputUniqueness.getFirstDuplicateTs())
+                                        .I$();
+                            }
+                            if (sparse) {
+                                sparsePublicationCount++;
+                                sparsePublicationRowsKept += keyedReplay.getMergedRows();
+                                LOG.info().$("live view segment repaired sparsely [view=").$(viewName)
+                                        .$(", replayedRows=").$(appendedRows)
+                                        .$(", supersededRows=").$(keyedReplay.getSupersededRows())
+                                        .$(", rowsKept=").$(keyedReplay.getMergedRows())
+                                        .$(", outputLowTs=").$ts(emitLowTs)
+                                        .$(", highTsExclusive=").$ts(plan.getHighTsExclusive()).I$();
+                                fencedLiveViewCommit(instance,
+                                        () -> walWriter.commitLiveViewWithUpsert(effectiveSeqTxn));
+                            } else {
+                                fencedLiveViewCommit(instance, () -> walWriter.commitLiveViewWithReplaceRange(
+                                        effectiveSeqTxn,
+                                        replaceLowTs,
+                                        replaceHighTs
+                                ));
+                            }
                             repairPublication.replacementCommitted(walWriter.getLastSeqTxn());
                         }
                     }
@@ -8017,7 +8106,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // The view's own rows the merge read, and the writer it appended them
             // through. The counts survive - the publication above reads them - and the
             // caller disarms the key domain once the repair it armed returns.
-            keyedReplayMergedRows += keyedReplay.getMergedRows();
+            //
+            // Attributed to whichever publication the repair reached: a replacement
+            // rewrote every row the merge accounted for and this counts them, while a
+            // sparse upsert wrote none of them and the commit site above counted what it
+            // kept. Rolling the two together would report a copy-forward cost the sparse
+            // route does not pay.
+            if (!keyedReplay.isSparse()) {
+                keyedReplayMergedRows += keyedReplay.getMergedRows();
+            }
             keyedReplay.releaseMergeState();
             Misc.free(storedRowCursor);
             if (isolated && !yielded) {

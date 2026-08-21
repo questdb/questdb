@@ -917,7 +917,8 @@ public class CairoEngine implements Closeable, WriterSource {
                                     definition,
                                     tableToken,
                                     metadata.getTimestampIndex() > -1
-                                            && metadata.isDedupKey(metadata.getTimestampIndex())
+                                            && metadata.isDedupKey(metadata.getTimestampIndex()),
+                                    dedupKeyColumnIndexOf(metadata)
                             );
                             // _lv is written before _txn and _lv.s after it, so a definition with no
                             // state is the shape a CREATE that crashed mid-way leaves behind (and,
@@ -1786,7 +1787,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 LiveViewInstance instance = new LiveViewInstance(
                         definition,
                         liveViewToken,
-                        sparsePublicationKeyColumnIndex != LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN
+                        sparsePublicationKeyColumnIndex != LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN,
+                        sparsePublicationKeyColumnIndex
                 );
                 instance.setSubscribeFromSeqTxn(subscribeFromSeqTxn);
                 instance.setLastProcessedSeqTxn(subscribeFromSeqTxn - 1);
@@ -3784,6 +3786,33 @@ public class CairoEngine implements Closeable, WriterSource {
         if (vd.getSeqTxn() != expectedTxn) {
             throw TableReferenceOutOfDateException.ofOutdatedView(tableToken, expectedTxn, vd.getSeqTxn());
         }
+    }
+
+    /**
+     * The non-timestamp dedup key of a live view's own table, or
+     * {@link LiveViewCheckpointOutputUniqueness#NO_KEY_COLUMN} when it carries none.
+     * <p>
+     * The catalogue load a restart runs has to rediscover the identity a repair publishes
+     * sparsely on, and the table's {@code _meta} is the only place it lives: the current
+     * configuration cannot answer it, because a view CREATEd with the identity keeps it
+     * however the switch moves. CREATE resolves the same column through
+     * {@code LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex}, and a table that
+     * carries more than one such flag is refused a key rather than given the first one -
+     * a repair upserting on a pair that is not the table's whole key would collapse rows
+     * it never checked.
+     */
+    private static int dedupKeyColumnIndexOf(RecordMetadata metadata) {
+        int keyColumnIndex = LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (i == metadata.getTimestampIndex() || !metadata.isDedupKey(i)) {
+                continue;
+            }
+            if (keyColumnIndex != LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN) {
+                return LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
+            }
+            keyColumnIndex = i;
+        }
+        return keyColumnIndex;
     }
 
     private static TableReader checkReaderVersion(TableToken tableToken, long metadataVersion, TableReader reader) {

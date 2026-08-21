@@ -50,11 +50,16 @@ import org.junit.Test;
  * {@code cairo.live.view.checkpoint.repair.sparse.publication.enabled}, and what proves the
  * publisher does what such a repair would need.
  * <p>
- * It runs <b>dark</b>: no repair takes the route, and the case below pins that a segment
- * repair of a dedup-keyed view still publishes its whole range. What the switch does change
- * is the view's <b>ordinary</b> path, which is the reason the ordinary commit is stamped
- * {@code WAL_DEDUP_MODE_NO_DEDUP} - a view may legitimately emit two rows sharing the pair,
- * and a default-mode commit on a dedup-keyed table would collapse them.
+ * A <b>keyed</b> repair of such a view acts on it: when its output names each pair once it
+ * commits only the rows it recomputed, and when the output repeats a pair it abandons the
+ * attempt before committing anything and publishes its whole range with
+ * {@code REPLACE_RANGE}, which collapses nothing. A repair that reads its segment whole has
+ * no smaller set to publish and takes the replacement either way, which the case below
+ * pins.
+ * <p>
+ * The switch also changes the view's <b>ordinary</b> path, which is why the ordinary commit
+ * is stamped {@code WAL_DEDUP_MODE_NO_DEDUP} - a view may legitimately emit two rows sharing
+ * the pair, and a default-mode commit on a dedup-keyed table would collapse them.
  * <p>
  * The view is the reported customer shape the keyed-replay, per-segment and uniqueness
  * cases use: an anchored WINDOW carrying an unbounded cumulative sum per account, over a
@@ -99,6 +104,180 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                         count("select count() from lv where cod_acct_no = 'acct-1'"
                                 + " and created_at = '2026-01-02T01:00:01.000000Z'::timestamp")
                 );
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAUniqueSegmentRepairPublishesOnlyTheKeysItRecomputed() throws Exception {
+        // The route this stage exists for. A keyed repair of a dedup-keyed view whose
+        // output names each pair once commits the rows it recomputed and nothing else,
+        // upserted onto (created_at, cod_acct_no): every other account's stored row stays
+        // exactly where it stands rather than being rewritten as itself, which is what a
+        // REPLACE_RANGE over the same interval has to do.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createView(seedAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+                final long rowsBefore = count("select count() from lv");
+                final String untouchedBefore = dumpRowsOf("acct-3");
+
+                commit(correction("acct-2"), job);
+
+                Assert.assertEquals(
+                        "the correction must be repaired by key for there to be a smaller set to publish",
+                        1,
+                        job.keyedReplaySegmentCountForTest()
+                );
+                Assert.assertEquals(1, job.sparsePublicationCountForTest());
+                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(
+                        "the three accounts the correction did not touch keep every row of the day",
+                        (ACCOUNTS - 1) * ROWS_PER_ACCOUNT_PER_DAY,
+                        job.sparsePublicationRowsKeptForTest()
+                );
+                Assert.assertEquals(
+                        "a sparse publication writes none of the rows it kept",
+                        0,
+                        job.keyedReplayMergedRowsForTest()
+                );
+                Assert.assertEquals(rowsBefore + 1, count("select count() from lv"));
+                TestUtils.assertEquals(untouchedBefore, dumpRowsOf("acct-3"));
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testARepeatedPairAbandonsTheSparseAttemptAndPublishesTheWholeRange() throws Exception {
+        // The fallback, and the case that carries it. The repeated pair belongs to the
+        // account the correction touches, so it is in the set a sparse commit would have
+        // carried - and an upsert on (created_at, cod_acct_no) would collapse it to one
+        // row. The repair abandons the attempt before it commits anything: the merge
+        // writes the rows it had only counted and the whole range goes out as a
+        // REPLACE_RANGE, which collapses nothing.
+        //
+        // What makes this a fallback rather than a rollback is where the abandoning
+        // happens. A sparse attempt reads the view's stored rows to count them and writes
+        // none of them, so by the time the duplicate is known the rows a replacement needs
+        // have already been walked past; rows_kept below is what the merge then re-reads
+        // and writes.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createView(seedAccountsOverThreeDays() + ", " + repeatOfTheFirstRow(2, 1));
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+                final long rowsBefore = count("select count() from lv");
+                final String untouchedBefore = dumpRowsOf("acct-3");
+
+                commit(correction("acct-1"), job);
+
+                Assert.assertEquals(1, job.keyedReplaySegmentCountForTest());
+                Assert.assertEquals(
+                        "the repeat is in the set a sparse commit would have carried",
+                        1,
+                        job.outputUniquenessDuplicateRowsForTest()
+                );
+                Assert.assertEquals(0, job.sparsePublicationCountForTest());
+                Assert.assertEquals(1, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(
+                        "the abandoned attempt writes the rows it had only counted",
+                        (ACCOUNTS - 1) * ROWS_PER_ACCOUNT_PER_DAY,
+                        job.keyedReplayMergedRowsForTest()
+                );
+                Assert.assertEquals(0, job.sparsePublicationRowsKeptForTest());
+                Assert.assertEquals(rowsBefore + 1, count("select count() from lv"));
+                Assert.assertEquals(
+                        "the replacement carries both rows of the pair and deletes neither",
+                        2,
+                        count("select count() from lv where cod_acct_no = 'acct-1'"
+                                + " and created_at = '2026-01-02T01:00:01.000000Z'::timestamp")
+                );
+                TestUtils.assertEquals(untouchedBefore, dumpRowsOf("acct-3"));
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testASparselyPublishedSegmentSurvivesARestartAndAFurtherRepair() throws Exception {
+        // The ladder a sparse publication leaves behind, end to end. Its cadence
+        // boundaries carry cumulative live-view row positions, and a sparse commit
+        // rewrites none of the rows below them - so the merge has to go on counting the
+        // rows it no longer writes. Nothing reads those positions back until a restart
+        // rebuilds the runtime from the roots that carry them, which is what this drives,
+        // and a second correction on top is what makes the rebuilt state produce output
+        // again.
+        //
+        // A merge that stopped counting does not reach this case, and the reason is worth
+        // recording: the repair proves its own row arithmetic against the durable
+        // row-count change before it publishes the splice, so a short count refuses the
+        // publication rather than writing a ladder no reader could detect. What that
+        // leaves this case pinning is the other half - that a published ladder describes
+        // the rows on disk, including the ones the publication left alone.
+        armSparseRepair();
+        assertMemoryLeak(() -> {
+            createView(seedAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+                commit(correction("acct-2"), job);
+                Assert.assertEquals(1, job.sparsePublicationCountForTest());
+            }
+            final long rowsBeforeRestart = count("select count() from lv");
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(rowsBeforeRestart, count("select count() from lv"));
+                Assert.assertEquals(
+                        "the restored ladder credits the view with every row on disk, including"
+                                + " the ones the sparse publication left alone",
+                        rowsBeforeRestart,
+                        engine.getLiveViewRegistry().getViewInstance("lv").getLvRowsTotal()
+                );
+                assertViewMatchesRecompute();
+
+                commit(correction("acct-3"), job);
+
+                Assert.assertEquals(rowsBeforeRestart + 1, count("select count() from lv"));
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAViewWithoutTheDedupKeysNeverPublishesSparsely() throws Exception {
+        // The default, and the reason the route needs no switch of its own: the identity
+        // is a CREATE-time schema property, so a view that does not carry it has no pair
+        // to upsert on however the keyed read is configured. The keyed repair below runs
+        // and publishes its whole range, exactly as it did before this stage existed.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, 0, 0, "acct-1"), job);
+                final long rowsBefore = count("select count() from lv");
+
+                commit(correction("acct-2"), job);
+
+                Assert.assertEquals(1, job.keyedReplaySegmentCountForTest());
+                Assert.assertEquals(0, job.sparsePublicationCountForTest());
+                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(
+                        "the replacement carries every other account's row for the day",
+                        (ACCOUNTS - 1) * ROWS_PER_ACCOUNT_PER_DAY,
+                        job.keyedReplayMergedRowsForTest()
+                );
+                Assert.assertEquals(rowsBefore + 1, count("select count() from lv"));
                 assertViewMatchesRecompute();
             }
         });
@@ -294,6 +473,17 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     private void armSparsePublication() {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+    }
+
+    /**
+     * Turns the CREATE-time identity on and puts the keyed read behind it, which is the
+     * pair a sparse publication needs: the identity gives it a pair to upsert on, and the
+     * keyed read is what leaves a smaller set of rows to publish.
+     */
+    private void armSparseRepair() {
+        armSparsePublication();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED, "true");
     }
 
     private void assertViewMatchesRecompute() throws Exception {

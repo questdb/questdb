@@ -65,14 +65,16 @@ import org.jetbrains.annotations.Nullable;
  * {@code WalWriter.commitLiveViewWithReplaceRange}, which deletes {@code [lowTs, hiTs)}
  * wholesale, so a commit carrying only the affected keys' rows would delete every
  * unaffected key's stored row inside the segment. The block therefore has to carry the
- * segment's full row set either way, and this supplies the half the keyed replay did not
- * compute: it reads the view's own durable rows over that range, drops the ones whose key
- * the replay is recomputing, and appends the rest into the same commit in timestamp
- * order.
+ * segment's full row set - unless the view's own table carries the dedup keys a sparse
+ * publication upserts on, which is what the section below is about - and this supplies
+ * the half the keyed replay did not compute: it reads the view's own durable rows over
+ * that range, drops the ones whose key the replay is recomputing, and appends the rest
+ * into the same commit in timestamp order.
  * <p>
- * So a keyed repair writes exactly what a whole-segment repair writes. What it saves is
- * the window evaluation and the base column reads for the keys the correction did not
- * touch; what it costs is one sequential read of the view's own output for the segment.
+ * So a keyed repair publishing a replacement writes exactly what a whole-segment repair
+ * writes. What it saves is the window evaluation and the base column reads for the keys
+ * the correction did not touch; what it costs is one sequential read of the view's own
+ * output for the segment.
  *
  * <h2>What it changes about a repair</h2>
  * A copied-forward row is no longer recomputed from the base. A whole-segment repair is a
@@ -88,6 +90,26 @@ import org.jetbrains.annotations.Nullable;
  * boundary before freezing it, and up to each replayed row before appending that row, so
  * at every freeze the emitted set is exactly the rows at or below the boundary. See
  * {@link #drainUpTo}.
+ *
+ * <h2>The sparse attempt, and what the merge does instead of writing</h2>
+ * A view whose own table carries the {@code (designated timestamp, projected partition
+ * key)} dedup keys can publish the repair as an <b>upsert</b> on that pair rather than as
+ * a replacement of the interval, and then the block carries only the rows the replay
+ * recomputed - every other key's stored row stays where it stands rather than being
+ * rewritten as itself. {@link #bindOutput} takes that decision, and what it changes here
+ * is one thing: the merge still walks every stored row and still <b>accounts</b> for it,
+ * it just does not write it. The accounting is what the boundary positions are made of -
+ * a cadence boundary records the count of live-view rows at or below it, and a row this
+ * merge leaves alone is still a row below that boundary - so a sparse publication's
+ * ladder is the merged publication's ladder, to the row.
+ * <p>
+ * That is also why the fallback is not a rollback. A repair whose output turns out to
+ * repeat a pair cannot be published sparsely at all - the upsert would collapse the
+ * repeat - and the whole-segment replacement it falls back to needs the rows this merge
+ * accounted for and skipped. {@link #materializeMerge} is what supplies them: it rewinds
+ * the stored cursor and writes the same row set it counted, which it then proves it
+ * re-read to the row. The rows come out after the replay's own rather than interleaved
+ * with them, which the WAL carries as any other out-of-order block.
  *
  * <h2>Why the two key spaces</h2>
  * The base table and the view keep separate symbol maps over the same strings, so
@@ -121,6 +143,14 @@ public final class LiveViewCheckpointKeyedReplay implements QuietCloseable {
     private long mergedMinTs = Numbers.LONG_NULL;
     private long mergedRows;
     private long pendingRowTs = Numbers.LONG_NULL;
+    // Whether this repair is attempting a sparse publication, which is what decides
+    // whether the merge writes the rows it accounts for. Retracted by materializeMerge,
+    // which is the abandoning half of the fallback.
+    private boolean sparse;
+    // Stored rows in the range whose key the replay recomputes. A replacement deletes
+    // them outright; a sparse upsert replaces each with the block row carrying its pair,
+    // which is why they are the rows the publication's row arithmetic turns on.
+    private long supersededRows;
     private int storedKeyColumnIndex = -1;
     private Record storedRecord;
     private RecordCursor storedRowCursor;
@@ -221,18 +251,25 @@ public final class LiveViewCheckpointKeyedReplay implements QuietCloseable {
      * @param executionContext the copier's context, which only a DECIMAL column reads
      * @param instance         the view being repaired, whose batch-minimum window every
      *                         emitted row moves - a merged row is one a whole-segment
-     *                         replay would have emitted itself, so it has to move it too
+     *                         replay would have emitted itself, so it has to move it too,
+     *                         sparse publication or not: the seal that follows must not be
+     *                         able to tell the two publications apart
+     * @param sparse           whether this repair is attempting a sparse publication, in
+     *                         which case the merge accounts for every stored row it walks
+     *                         and writes none of them
      */
     public void bindOutput(
             @NotNull RecordToRowCopier copier,
             @NotNull WalWriter walWriter,
             @NotNull SqlExecutionContext executionContext,
-            @NotNull LiveViewInstance instance
+            @NotNull LiveViewInstance instance,
+            boolean sparse
     ) {
         this.copier = copier;
         this.walWriter = walWriter;
         this.executionContext = executionContext;
         this.instance = instance;
+        this.sparse = sparse;
     }
 
     /**
@@ -283,6 +320,7 @@ public final class LiveViewCheckpointKeyedReplay implements QuietCloseable {
         this.mergedRows = 0;
         this.mergedMinTs = Numbers.LONG_NULL;
         this.mergedMaxTs = Numbers.LONG_NULL;
+        this.supersededRows = 0;
         return true;
     }
 
@@ -298,6 +336,8 @@ public final class LiveViewCheckpointKeyedReplay implements QuietCloseable {
         mergedRows = 0;
         mergedMinTs = Numbers.LONG_NULL;
         mergedMaxTs = Numbers.LONG_NULL;
+        supersededRows = 0;
+        sparse = false;
     }
 
     @Override
@@ -307,26 +347,28 @@ public final class LiveViewCheckpointKeyedReplay implements QuietCloseable {
     }
 
     /**
-     * Appends every stored row this merge still owes, whatever its timestamp. The replay
-     * calls it once its own scan is exhausted and before it commits: the rows above the
-     * last replayed one are still inside the range the replacement deletes.
+     * Accounts for every stored row this merge still owes, whatever its timestamp. The
+     * replay calls it once its own scan is exhausted and before it commits: the rows above
+     * the last replayed one are still inside the range the replacement deletes.
      *
-     * @return how many rows it appended
+     * @return how many rows it accounted for
      */
     public long drainRemaining() {
         return drainUpTo(Long.MAX_VALUE);
     }
 
     /**
-     * Appends every stored row this merge still owes at or below {@code tsInclusive}.
+     * Accounts for every stored row this merge still owes at or below
+     * {@code tsInclusive}, and writes it too unless this repair is attempting a sparse
+     * publication.
      * <p>
-     * Called from two places, and the pair is what keeps the emitted set exactly the rows
-     * at or below whatever it is measured against: from the boundary freeze, with the
+     * Called from two places, and the pair is what keeps the accounted set exactly the
+     * rows at or below whatever it is measured against: from the boundary freeze, with the
      * boundary's own timestamp, so the cumulative row position that boundary records
      * counts them; and from the replay's row loop, with the timestamp of the row about to
      * be appended, so the block's rows come out in timestamp order.
      *
-     * @return how many rows it appended
+     * @return how many rows it accounted for
      */
     public long drainUpTo(long tsInclusive) {
         if (storedRowCursor == null || walWriter == null) {
@@ -352,21 +394,27 @@ public final class LiveViewCheckpointKeyedReplay implements QuietCloseable {
     }
 
     /**
-     * @return the highest timestamp this merge appended, or {@link Numbers#LONG_NULL} when
-     * it appended nothing
+     * @return the highest timestamp this merge accounted for, or
+     * {@link Numbers#LONG_NULL} when it accounted for nothing
      */
     public long getMergedMaxTs() {
         return mergedMaxTs;
     }
 
     /**
-     * @return the lowest timestamp this merge appended, or {@link Numbers#LONG_NULL} when
-     * it appended nothing
+     * @return the lowest timestamp this merge accounted for, or
+     * {@link Numbers#LONG_NULL} when it accounted for nothing
      */
     public long getMergedMinTs() {
         return mergedMinTs;
     }
 
+    /**
+     * @return stored rows this merge accounted for - written into the block by a repair
+     * publishing a replacement, and left exactly where they stand by one publishing
+     * sparsely. Either way they are rows of the repaired range, which is what the
+     * boundary positions and the publication's row arithmetic count them as.
+     */
     public long getMergedRows() {
         return mergedRows;
     }
@@ -375,12 +423,76 @@ public final class LiveViewCheckpointKeyedReplay implements QuietCloseable {
         return outputKeys;
     }
 
+    /**
+     * @return stored rows in the repaired range whose key the replay recomputes. A
+     * replacement deletes them; a sparse upsert replaces each with the block row carrying
+     * its pair.
+     */
+    public long getSupersededRows() {
+        return supersededRows;
+    }
+
     public boolean isArmed() {
         return armed;
     }
 
     public boolean isMerging() {
         return storedRowCursor != null;
+    }
+
+    /**
+     * @return whether this repair is still attempting a sparse publication, which is what
+     * makes {@link #getMergedRows()} a count of rows nothing wrote
+     */
+    public boolean isSparse() {
+        return sparse;
+    }
+
+    /**
+     * Abandons a sparse publication and writes the rows the merge had only accounted for,
+     * so the repair can publish its whole range with a replacement instead.
+     * <p>
+     * Not a rollback: a sparse attempt reads the view's stored rows to count them and
+     * writes none, so what a replacement needs is precisely what this repair has already
+     * walked past. The cursor is rewound and the same row set written out - proved to be
+     * the same by counting it again, because a re-read that produced a different set would
+     * put a block into the WAL that the frozen boundary positions do not describe, and no
+     * reader detects that.
+     * <p>
+     * The rows come out above the replay's own rather than interleaved with them. That is
+     * a WAL block whose rows are not in timestamp order, which the apply sorts like any
+     * other out-of-order commit; the boundary positions are unaffected, because they count
+     * the rows the merge accounted for and it accounted for exactly these.
+     *
+     * @return false when there was no sparse attempt to abandon
+     */
+    public boolean materializeMerge() {
+        if (!sparse) {
+            return false;
+        }
+        if (storedRowCursor == null || walWriter == null) {
+            throw CairoException.critical(0)
+                    .put("live view sparse publication abandoned without the merge it has to fall back on");
+        }
+        final long accountedRows = mergedRows;
+        final long accountedSupersededRows = supersededRows;
+        storedRowCursor.toTop();
+        sparse = false;
+        hasPendingRow = false;
+        pendingRowTs = Numbers.LONG_NULL;
+        mergedRows = 0;
+        mergedMinTs = Numbers.LONG_NULL;
+        mergedMaxTs = Numbers.LONG_NULL;
+        supersededRows = 0;
+        drainRemaining();
+        if (mergedRows != accountedRows || supersededRows != accountedSupersededRows) {
+            throw CairoException.critical(0)
+                    .put("live view sparse publication fallback re-read a different row set [accountedRows=")
+                    .put(accountedRows).put(", mergedRows=").put(mergedRows)
+                    .put(", accountedSupersededRows=").put(accountedSupersededRows)
+                    .put(", supersededRows=").put(supersededRows).put(']');
+        }
+        return true;
     }
 
     /**
@@ -428,7 +540,10 @@ public final class LiveViewCheckpointKeyedReplay implements QuietCloseable {
         while (storedRowCursor.hasNext()) {
             if (storedSymbolKeys.contains(storedRecord.getInt(storedKeyColumnIndex))) {
                 // A key the replay recomputes. Its stored row is deleted by the
-                // replacement and replaced by the one the replay emits.
+                // replacement and replaced by the one the replay emits - or, under a
+                // sparse publication, upserted over by exactly the block row carrying its
+                // pair, which is what makes the count the publication's row arithmetic.
+                supersededRows++;
                 continue;
             }
             pendingRowTs = storedRecord.getTimestamp(storedTimestampIndex);
@@ -442,11 +557,15 @@ public final class LiveViewCheckpointKeyedReplay implements QuietCloseable {
     private void append() {
         // The same stamp the replay's own row loop makes: a merged row is one a
         // whole-segment replay would have emitted here, and the batch-minimum window the
-        // next seal measures must not be able to tell the two routes apart.
+        // next seal measures must not be able to tell the two routes apart. A sparse
+        // publication leaves the row where it stands rather than rewriting it, which is a
+        // difference in what the block carries and not in what the segment then holds.
         instance.setLatestSeenTs(pendingRowTs);
-        final TableWriter.Row row = walWriter.newRow(pendingRowTs);
-        copier.copy(executionContext, storedRecord, row);
-        row.append();
+        if (!sparse) {
+            final TableWriter.Row row = walWriter.newRow(pendingRowTs);
+            copier.copy(executionContext, storedRecord, row);
+            row.append();
+        }
         if (mergedMinTs == Numbers.LONG_NULL) {
             mergedMinTs = pendingRowTs;
         }

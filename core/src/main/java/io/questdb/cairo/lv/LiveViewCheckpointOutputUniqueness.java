@@ -53,13 +53,14 @@ import org.jetbrains.annotations.NotNull;
  * stored one it supersedes, and a corrected group of one cannot conceal a stored group of
  * two.
  *
- * <h2>It runs dark</h2>
- * Nothing reads the verdict yet. Every repair publishes the whole replaced range with
- * {@code REPLACE_RANGE} exactly as it did before this existed, and what the detector
- * produces is the rate at which a sparse publication would have to fall back to that -
- * which is the measurement the keyed-publication stage is decided on, and the one Stage 0
- * could not take without a running view. Gating the publication on
- * {@link #isUnique()} is that stage's own item.
+ * <h2>Who reads the verdict</h2>
+ * A keyed repair of a view whose own table carries the dedup keys - and only such a
+ * repair - acts on it: {@link #isUnique()} decides between the sparse upsert and the
+ * whole-segment {@code REPLACE_RANGE} the repair falls back to, and it decides it before
+ * anything is committed. Every other repair publishes the whole replaced range exactly as
+ * it did before this existed, and what the detector produces there is the rate at which a
+ * sparse publication would have to fall back - the measurement the keyed-publication
+ * stage is decided on, and the one that needs a running view to take.
  *
  * <h2>Why a set rather than an adjacency test</h2>
  * A replay emits rows in ascending designated-timestamp order, so all the rows of one

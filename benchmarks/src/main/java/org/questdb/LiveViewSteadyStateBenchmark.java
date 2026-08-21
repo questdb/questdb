@@ -102,11 +102,14 @@ import java.util.Locale;
  * {@code (timestamp, key)} group a physical row identity would have to number.
  * {@code --base-dedup} puts dedup keys on the base as the stand-in for what such an
  * identity would put on the live view's own table, and {@code --lv-dedup=true} puts them
- * where they actually belong: on the view's own table, as a CREATE-time property. Nothing
- * publishes sparsely on them yet, so what that arm measures is what the identity costs the
- * path that does not use it - every live-view commit then carries a non-default dedup mode,
- * which forces a full commit instead of a lag-retaining or block-coalesced one. The columns
- * are {@code lv_apply_ms} and {@code base_apply_ms}. {@code --repair-per-segment=false}
+ * where they actually belong: on the view's own table, as a CREATE-time property. With
+ * {@code --repair-keyed-replay=true} beside it a keyed segment repair publishes on them -
+ * only the rows it recomputed, upserted onto the pair, with every other stored row left
+ * where it stands - which the {@code # sparse} line reports and which
+ * {@code lv_phys_rows} and {@code lv_write_amp} are the write-side columns for. Alone, the
+ * identity costs the path that does not use it: every live-view commit then carries a
+ * non-default dedup mode, which forces a full commit instead of a lag-retaining or
+ * block-coalesced one. The columns are {@code lv_apply_ms} and {@code base_apply_ms}. {@code --repair-per-segment=false}
  * restores the union range a repair took before the change set was decomposed into the
  * anchor segments it touches, which is the control column that half of the write side is
  * measured against. {@code --backfill-deferral=true} takes the closed segments off the
@@ -790,6 +793,24 @@ public class LiveViewSteadyStateBenchmark {
                             job.outputUniquenessDuplicateRowsForTest(),
                             job.outputUniquenessMaxGroupRowsForTest(),
                             job.outputUniquenessUncheckedRepairsForTest()
+                    );
+                    // What acting on that verdict actually did. published counts the
+                    // segment repairs that committed only the rows they recomputed,
+                    // upserted onto the view's own dedup keys; rows_kept is the stored
+                    // rows those publications left exactly where they stood and a
+                    // replacement would have had to rewrite - so it is the write saving,
+                    // where merged_rows above is the read one. fallback counts the
+                    // attempts abandoned before commit, which published their whole range
+                    // with REPLACE_RANGE instead. All three are zero unless the view was
+                    // CREATEd with --lv-dedup=true and --repair-keyed-replay=true is on:
+                    // the identity is a schema property and only a keyed repair has a
+                    // smaller row set to publish.
+                    System.out.printf(
+                            Locale.ROOT,
+                            "# sparse published=%d fallback=%d rows_kept=%d%n",
+                            job.sparsePublicationCountForTest(),
+                            job.sparsePublicationFallbackCountForTest(),
+                            job.sparsePublicationRowsKeptForTest()
                     );
                 }
                 // The write side of the run, which is the term fix 3 turns on. A strictly

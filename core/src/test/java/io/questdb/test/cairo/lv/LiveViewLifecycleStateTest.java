@@ -95,7 +95,7 @@ public class LiveViewLifecycleStateTest {
 
     @Test
     public void testInvalidationPayloadIsPublishedBeforeInvalidState() throws Exception {
-        final LiveViewInstance instance = new LiveViewInstance((LiveViewDefinition) null, (TableToken) null, false);
+        final LiveViewInstance instance = new LiveViewInstance((LiveViewDefinition) null, (TableToken) null, false, -1);
         final CountDownLatch reasonCopyStarted = new CountDownLatch(1);
         final CountDownLatch releaseReasonCopy = new CountDownLatch(1);
         final AtomicReference<Throwable> writerError = new AtomicReference<>();
