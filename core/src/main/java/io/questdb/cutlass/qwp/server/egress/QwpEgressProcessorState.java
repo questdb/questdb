@@ -124,8 +124,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private boolean handshakeFlushPending;
     // Effective per-batch row cap for this connection: the minimum of the
     // server's hard cap ({@code QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH})
-    // and any client-requested limit sent via {@code X-QWP-Max-Batch-Rows} at
-    // handshake time. Defaults to the server's cap when no header is sent.
+    // and any client-requested limit sent via {@code X-QWP-Max-Batch-Rows} or
+    // browser URL negotiation at handshake time. Defaults to the server's cap.
     // Set once per handshake from {@link #setMaxBatchRows}; read on every
     // iteration of the streamResults emit loop.
     private int maxBatchRows;
@@ -929,8 +929,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     /**
      * Called from {@code onHeadersReady} with the client's parsed
-     * {@code X-QWP-Max-Batch-Rows} preference, already clamped to the server's
-     * hard cap. See {@link #getMaxBatchRows}.
+     * {@code X-QWP-Max-Batch-Rows} or browser URL preference, already clamped
+     * to the server's hard cap. See {@link #getMaxBatchRows}.
      */
     public void setMaxBatchRows(int rows) {
         this.maxBatchRows = rows;

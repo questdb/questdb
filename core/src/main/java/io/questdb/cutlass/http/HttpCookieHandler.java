@@ -27,6 +27,17 @@ package io.questdb.cutlass.http;
 import io.questdb.cairo.SecurityContext;
 
 public interface HttpCookieHandler {
+    /**
+     * Formats the value of the session cookie, including its attributes.
+     *
+     * <p>The returned sequence may be backed by thread-local scratch and is
+     * valid only until the next cookie-handler call on the current thread.
+     * Callers that defer writing it must copy it first.</p>
+     */
+    default CharSequence getSessionCookieValue(CharSequence sessionId) {
+        return null;
+    }
+
     default boolean parseCookies(HttpConnectionContext context) {
         return true;
     }

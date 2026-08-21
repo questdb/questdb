@@ -24,11 +24,17 @@
 
 package io.questdb.test.cutlass.websocket;
 
+import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
+import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
+import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.std.str.Utf8String;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -192,6 +198,19 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
+    public void testContainsWebSocketProtocol() {
+        Utf8String durableAck = QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK;
+        Assert.assertTrue(QwpIngressHttpProcessor.containsWebSocketProtocol(
+                new Utf8String("questdb.qwp.durable-ack.v1"), durableAck));
+        Assert.assertTrue(QwpIngressHttpProcessor.containsWebSocketProtocol(
+                new Utf8String("application.v1, questdb.qwp.durable-ack.v1\t"), durableAck));
+        Assert.assertFalse(QwpIngressHttpProcessor.containsWebSocketProtocol(
+                new Utf8String("application.v1,questdb.qwp.durable-ack.v10"), durableAck));
+        Assert.assertFalse(QwpIngressHttpProcessor.containsWebSocketProtocol(
+                new Utf8String("QUESTDB.QWP.DURABLE-ACK.V1"), durableAck));
+    }
+
+    @Test
     public void testKeyWithAllBase64Characters() {
         // Test key containing varied base64 characters
         // Use a valid 24-char base64 string with varied characters including +/
@@ -239,6 +258,108 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
                 String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
                 Assert.assertTrue("expected X-QWP-Max-Batch-Size header, got: " + response,
                         response.contains("X-QWP-Max-Batch-Size: " + maxBatchSize + "\r\n"));
+                Assert.assertTrue(response.endsWith("\r\n\r\n"));
+            } finally {
+                freeBuffer(buf, 512);
+            }
+        });
+    }
+
+    @Test
+    public void testResponseWithDurableAckWebSocketProtocol() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
+            int expectedSize = QwpIngressHttpProcessor.responseSize(
+                    acceptKey, 1, null, true, null, null, null, true);
+
+            long buf = allocateBuffer(512);
+            try {
+                int written = QwpIngressHttpProcessor.writeResponse(
+                        buf, acceptKey, 1, null, true, null, null, null, true);
+                Assert.assertEquals(expectedSize, written);
+
+                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                Assert.assertTrue(response.contains("X-QWP-Durable-Ack: enabled\r\n"));
+                Assert.assertTrue(response.contains(
+                        "Sec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n"));
+            } finally {
+                freeBuffer(buf, 512);
+            }
+        });
+    }
+
+    @Test
+    public void testBrowserIngressServerInfoFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            long buf = allocateBuffer(16);
+            try {
+                int written = QwpIngressUpgradeProcessor.writeBrowserServerInfoFrame(
+                        buf,
+                        1_048_576
+                );
+                Assert.assertEquals(7, written);
+                byte[] frame = readBytes(buf, written);
+                Assert.assertEquals((byte) 0x82, frame[0]);
+                Assert.assertEquals(5, frame[1]);
+                Assert.assertEquals(1, frame[2]);
+                Assert.assertEquals(0, frame[3]);
+                Assert.assertEquals(0, frame[4]);
+                Assert.assertEquals(16, frame[5]);
+                Assert.assertEquals(0, frame[6]);
+            } finally {
+                freeBuffer(buf, 16);
+            }
+        });
+    }
+
+    @Test
+    public void testBrowserEgressServerInfoCompressionTrailer() throws Exception {
+        assertMemoryLeak(() -> {
+            long buf = allocateBuffer(256);
+            try {
+                int written = QwpEgressUpgradeProcessor.writeServerInfoFrame(
+                        buf,
+                        256,
+                        (byte) 1,
+                        DefaultQwpServerInfoProvider.INSTANCE,
+                        0,
+                        true,
+                        (byte) 1,
+                        (byte) 3
+                );
+                byte[] frame = readBytes(buf, written);
+                Assert.assertEquals((byte) 0x82, frame[0]);
+                int capabilities = ByteBuffer.wrap(frame)
+                        .order(ByteOrder.LITTLE_ENDIAN)
+                        .getInt(24);
+                Assert.assertNotEquals(0, capabilities & QwpEgressMsgKind.CAP_COMPRESSION);
+                Assert.assertEquals(1, frame[written - 2]);
+                Assert.assertEquals(3, frame[written - 1]);
+            } finally {
+                freeBuffer(buf, 256);
+            }
+        });
+    }
+
+    @Test
+    public void testResponseWithRotatedSessionCookie() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
+            byte[] cookieValue = "qs1_rotated; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000"
+                    .getBytes(StandardCharsets.US_ASCII);
+            int expectedSize = QwpIngressHttpProcessor.responseSize(
+                    acceptKey, 1, null, false, null, null, cookieValue);
+
+            long buf = allocateBuffer(512);
+            try {
+                int written = QwpIngressHttpProcessor.writeResponse(
+                        buf, acceptKey, 1, null, false, null, null, cookieValue);
+                Assert.assertEquals(expectedSize, written);
+
+                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                Assert.assertTrue(response.contains(
+                        "Set-Cookie: qdb_session=qs1_rotated; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000\r\n"
+                ));
                 Assert.assertTrue(response.endsWith("\r\n\r\n"));
             } finally {
                 freeBuffer(buf, 512);
