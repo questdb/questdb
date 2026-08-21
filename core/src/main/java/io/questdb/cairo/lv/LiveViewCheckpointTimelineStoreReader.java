@@ -250,6 +250,102 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     }
 
     /**
+     * Restores <b>only</b> {@code keys}' entries of the exact composite timeline key into
+     * the supplied runtime, which the caller has already emptied.
+     * <p>
+     * This is what an open-segment keyed resume rewinds through. The ordinary restore
+     * rebuilds every key the root holds, which is the view's whole live domain - at the
+     * target scale of 20M keys per anchor day, an O(domain) walk to prepare a replay that
+     * reads a few thousand keys. A keyed resume needs the state of its own key domain and
+     * nothing else: every key outside it keeps the state the primary runtime already
+     * holds, which is correct exactly because the correction did not touch it.
+     * <p>
+     * Three things follow from reading part of a root rather than all of it, and each is a
+     * deliberate difference from {@link #restore}:
+     * <ul>
+     *     <li><b>Only the fused root shape is served.</b> A legacy anchor root spreads a
+     *     key's state across one anchor entry and one root per function, and a function's
+     *     own root is restored whole or not at all. This refuses rather than restoring
+     *     half a key.</li>
+     *     <li><b>Every checkpoint-capable function must be part of the group.</b> A
+     *     residual function - one holding a partition map of its own - has no per-key
+     *     restore, for the same reason.</li>
+     *     <li><b>Validation covers the root's shape, not its entries.</b> The ordinary
+     *     restore walks every entry to prove the whole root decodes before it writes any
+     *     of it; walking here would be the very cost this avoids. The header checks are
+     *     all made, and each entry this does read is decoded under the same bounds, so a
+     *     corrupt entry outside {@code keys} is left for whatever restore reads it.</li>
+     * </ul>
+     * The runtime is left on the post-restore full scan with no incremental baseline,
+     * which is what an isolated replay wants: its map holds this key domain alone, so a
+     * complete freeze of it is bounded by the domain rather than by the view.
+     *
+     * @param keys the key domain to restore, in the encoding a checkpoint partition map
+     *             keys an entry by
+     * @return the restored root's coordinates, or null when the root's shape is one this
+     * cannot serve key by key, which leaves the caller to restore it whole
+     */
+    public @Nullable Result restoreKeys(
+            long maxTimestamp,
+            long checkpointId,
+            long expectedDefinitionTxn,
+            @NotNull ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow,
+            @NotNull LiveViewCheckpointOutputKeyDomain keys
+    ) {
+        ensureOpen();
+        if (anchorWindow == null) {
+            return null;
+        }
+        try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
+            final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
+            if (!timelineReader.findExact(pin.getTimelineRootRef(), maxTimestamp, checkpointId, entry)) {
+                throw invalid("logical root not found [maxTimestamp=").put(maxTimestamp)
+                        .put(", checkpointId=").put(checkpointId).put(']');
+            }
+            final int lookupDepth = timelineReader.getLastLookupDepth();
+            root.of(checkpointsDir, entry.rootRef);
+            if (root.getCheckpointId() != checkpointId
+                    || root.getMaxTimestamp() != maxTimestamp
+                    || root.getDefinitionTxn() != expectedDefinitionTxn) {
+                throw invalid("logical entry and checkpoint root identity mismatch");
+            }
+            final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
+            root.getFunctionDirectoryRef(functionDirectoryRef);
+            functionDirectory.of(checkpointsDir, functionDirectoryRef);
+            segmentDirectory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
+
+            final LiveViewCheckpointPageRef stateRootRef = new LiveViewCheckpointPageRef();
+            root.getStateRootRef(stateRootRef);
+            isFusedStateRoot = !stateRootRef.isNull() && windowRoot.ofIfWindowRoot(checkpointsDir, stateRootRef);
+            if (!isFusedStateRoot) {
+                return null;
+            }
+            validateWindowStateShape(anchorWindow);
+            validateFunctions(functions, anchorWindow);
+            if (!isEveryFunctionGrouped(functions, anchorWindow)) {
+                return null;
+            }
+            anchorWindow.beginCheckpointRestore();
+            restoreWindowStateKeys(anchorWindow, keys);
+            restoreGroupedFunctionKeys(functions, anchorWindow, keys);
+            return new Result(
+                    pin.getGeneration(),
+                    pin.getNormalizedBaseSeqTxn(),
+                    pin.getCoveredLvSeqTxn(),
+                    entry.createdLvSeqTxn,
+                    entry.maxTimestamp,
+                    entry.checkpointId,
+                    deltaReader.effectivePosition(pin.getRowPositionDeltaRootRef(), entry),
+                    entry.logicalStateBytes,
+                    metaStore.getSuperblock().seedCursorOffset,
+                    lookupDepth,
+                    Numbers.LONG_NULL
+            );
+        }
+    }
+
+    /**
      * Restores the newest logical root the current generation holds, with no
      * durable-materialization compatibility check.
      * <p>
@@ -960,6 +1056,28 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
      * a predecessor or rebuilds from the base.
      */
     private void validateWindowState(@NotNull LiveViewWindow anchorWindow) {
+        validateWindowStateShape(anchorWindow);
+        final int totalInlineStateBytes = windowRoot.getTotalInlineStateBytes();
+        final LiveViewCheckpointPageRef windowMapRootRef = new LiveViewCheckpointPageRef();
+        windowRoot.getPartitionMapRootRef(windowMapRootRef);
+        partitionReader.iterateAll(windowMapRootRef, entry -> {
+            LiveViewCheckpointWindowRoot.readWindowState(entry, totalInlineStateBytes);
+            anchorWindow.validateCheckpointEntry(openKeyPage(entry.getKey()));
+        });
+    }
+
+    /**
+     * The header half of {@link #validateWindowState}: everything that decides whether this
+     * runtime can read this root at all, and nothing that walks an entry.
+     * <p>
+     * The manifest is the check that carries the argument, and it is the reason a shape
+     * check is worth making on its own. A fused entry has no component tags of its own, so
+     * a manifest that is not byte-identical to the compiled one would not fail to decode -
+     * it would decode the wrong fields at the right total length. Every entry a caller then
+     * reads is bounded and decoded exactly as the full walk would decode it; what a shape
+     * check does not do is prove the entries it never reads.
+     */
+    private void validateWindowStateShape(@NotNull LiveViewWindow anchorWindow) {
         final LiveViewWindowStatePlan plan = anchorWindow.getCheckpointWindowStatePlan();
         if (plan == null) {
             throw invalid("window state root has no compiled window-state plan to restore into");
@@ -983,13 +1101,106 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             throw invalid("window state inline payload width does not match the compiled runtime, bytes=")
                     .put(windowRoot.getTotalInlineStateBytes());
         }
+    }
+
+    /**
+     * Whether every checkpoint-capable function's state lives inside the fused group, which
+     * is what makes a key's whole state reachable one key at a time.
+     * <p>
+     * A residual function keeps a partition map of its own, and its root is restored by a
+     * walk of the whole map rather than by a lookup. Restoring the group's half of a key
+     * and leaving the residual's would leave the runtime holding a state that never
+     * existed, so a view carrying one is refused rather than half served.
+     */
+    private boolean isEveryFunctionGrouped(
+            @NotNull ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow
+    ) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final WindowFunction function = functions.getQuick(i);
+            if (!function.supportsCheckpointState() || function.isCheckpointStateless()) {
+                // A stateless function holds the last row it read and nothing else, so the
+                // replay's first row for a key is already its whole state.
+                continue;
+            }
+            if (isDurableGroupedProjection(anchorWindow, function)) {
+                continue;
+            }
+            if (memberProjectionIndex(anchorWindow, function, false) >= 0) {
+                continue;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Rehydrates {@code keys}' entries of the fused window root, one point lookup each.
+     * <p>
+     * A key the root does not hold is not an error and is not restored: it held no state at
+     * that boundary, and an absent entry is exactly the identity the replay's first row for
+     * that key resets it to. That is what a correction introducing a key looks like.
+     */
+    private void restoreWindowStateKeys(
+            @NotNull LiveViewWindow anchorWindow,
+            @NotNull LiveViewCheckpointOutputKeyDomain keys
+    ) {
         final int totalInlineStateBytes = windowRoot.getTotalInlineStateBytes();
         final LiveViewCheckpointPageRef windowMapRootRef = new LiveViewCheckpointPageRef();
         windowRoot.getPartitionMapRootRef(windowMapRootRef);
-        partitionReader.iterateAll(windowMapRootRef, entry -> {
-            LiveViewCheckpointWindowRoot.readWindowState(entry, totalInlineStateBytes);
-            anchorWindow.validateCheckpointEntry(openKeyPage(entry.getKey()));
+        final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
+        restoredLogicalStateBytes = 0;
+        keys.forEach(key -> {
+            if (!partitionReader.find(windowMapRootRef, key, entry)) {
+                return;
+            }
+            final byte[] scalarState = LiveViewCheckpointWindowRoot.readWindowState(entry, totalInlineStateBytes);
+            anchorWindow.restoreCheckpointWindowEntry(openKeyPage(entry.getKey()), scalarState);
+            restoredLogicalStateBytes += entry.getKey().length + scalarState.length;
         });
+    }
+
+    /**
+     * Rehydrates {@code keys}' slice of every runtime-only member's own root, after
+     * {@link #restoreWindowStateKeys} has created the entries they write into.
+     * <p>
+     * Each member is left on the post-restore full scan, exactly as
+     * {@link #restoreGroupedFunction} leaves it: nothing here publishes a root, so nothing
+     * here may hand a function a baseline to freeze incrementally against.
+     */
+    private void restoreGroupedFunctionKeys(
+            @NotNull ObjList<WindowFunction> functions,
+            @NotNull LiveViewWindow anchorWindow,
+            @NotNull LiveViewCheckpointOutputKeyDomain keys
+    ) {
+        final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
+        final LiveViewCheckpointPageRef partitionRootRef = new LiveViewCheckpointPageRef();
+        final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final WindowFunction function = functions.getQuick(i);
+            if (!function.supportsCheckpointState() || isDurableGroupedProjection(anchorWindow, function)) {
+                continue;
+            }
+            final int projectionIndex = memberProjectionIndex(anchorWindow, function, false);
+            if (projectionIndex < 0) {
+                // isEveryFunctionGrouped has already refused a view holding one of these.
+                continue;
+            }
+            functionDirectory.find(function.checkpointFunctionIdentity().getEncoded(), functionRootRef);
+            functionRoot.of(checkpointsDir, functionRootRef);
+            function.onCheckpointRestoreBegin();
+            functionRoot.getPartitionMapRootRef(partitionRootRef);
+            keys.forEach(key -> {
+                if (!partitionReader.find(partitionRootRef, key, entry)) {
+                    return;
+                }
+                final byte[] scalarState = entry.getScalarState();
+                if (scalarState.length == 0) {
+                    throw invalid("grouped member root entry carries no inline state");
+                }
+                anchorWindow.restoreCheckpointMemberEntry(projectionIndex, openKeyPage(key), scalarState);
+            });
+        }
     }
 
     private void validateAnchor(@NotNull LiveViewWindow anchorWindow, LiveViewCheckpointPageRef anchorRootRef) {
