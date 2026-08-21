@@ -558,7 +558,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isLiveViewCheckpointRepairKeyedReplayEnabled() {
-        return false;
+        return true;
     }
 
     @Override
@@ -568,7 +568,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isLiveViewCheckpointRepairSparsePublicationEnabled() {
-        return false;
+        return true;
     }
 
     @Override

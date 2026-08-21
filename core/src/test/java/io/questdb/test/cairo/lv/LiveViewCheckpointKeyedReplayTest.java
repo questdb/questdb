@@ -341,12 +341,14 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testTheKeyedRouteIsOffByDefault() throws Exception {
-        // The pricing says the keyed read is the smaller one and nothing takes it, because
-        // what the route changes is not only the read: a copied-forward row is no longer
-        // recomputed from the base. Turning it on is the decision rather than shipping it.
+    public void testTheKeyedRouteCanBeDeclined() throws Exception {
+        // The switch, in the direction that is now the non-default one. The pricing says the
+        // keyed read is the smaller one, and declining the route leaves the segment reading
+        // whole anyway - which is what an operator turns off when a copied-forward row not
+        // being recomputed from the base is not a trade they want.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED, "false");
         assertMemoryLeak(() -> {
             createView(seedEightAccountsOverThreeDays());
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -361,7 +363,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                         job.keyedScanCheaperCountForTest()
                 );
                 Assert.assertEquals(
-                        "and nothing takes it, because the switch is off",
+                        "and nothing takes it, because the switch declines it",
                         0,
                         job.keyedReplaySegmentCountForTest()
                 );
@@ -410,6 +412,13 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED, "true");
+        // The merged publication, which is what this class covers: the replay recomputes the
+        // affected keys and copies every other key's stored row forward into the same
+        // REPLACE_RANGE. A view carrying the sparse identity takes the other publication -
+        // it commits only the recomputed rows and copies none - so the rows this class counts
+        // would be reported as kept rather than merged. LiveViewSparsePublicationTest owns
+        // that route.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "false");
     }
 
     private void assertViewMatchesRecompute() throws Exception {

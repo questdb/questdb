@@ -279,10 +279,11 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
 
     @Test
     public void testAViewWithoutTheDedupKeysNeverPublishesSparsely() throws Exception {
-        // The default, and the reason the route needs no switch of its own: the identity
-        // is a CREATE-time schema property, so a view that does not carry it has no pair
-        // to upsert on however the keyed read is configured. The keyed repair below runs
-        // and publishes its whole range, exactly as it did before this stage existed.
+        // The reason the route needs no switch of its own: the identity is a CREATE-time
+        // schema property, so a view that does not carry it has no pair to upsert on
+        // however the keyed read is configured. The keyed repair below runs and publishes
+        // its whole range, exactly as it did before this stage existed.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "false");
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED, "true");
@@ -325,11 +326,12 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testAViewCreatedWithoutTheSwitchCarriesNoDedupKeys() throws Exception {
-        // The default, and what every live view that exists today carries. Pinned here
-        // because the flags are a schema property: a view that gained them by accident
-        // would keep them, and its ordinary path would pay for an identity nothing asked
-        // for.
+    public void testAViewCreatedWithTheSwitchDeclinedCarriesNoDedupKeys() throws Exception {
+        // The switch in the direction that is now the non-default one, and what every live
+        // view created before this identity existed carries. Pinned here because the flags
+        // are a schema property: a view that gained them by accident would keep them, and
+        // its ordinary path would pay for an identity nothing asked for.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "false");
         assertMemoryLeak(() -> {
             createView(seedAccountsOverThreeDays());
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {

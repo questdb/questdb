@@ -665,7 +665,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.live.view.checkpoint.max.duration.micros\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS\t300000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.purge.interval\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL\t1\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.repair.isolated.runtime.enabled\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_ISOLATED_RUNTIME_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
-                                    "cairo.live.view.checkpoint.repair.keyed.replay.enabled\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.checkpoint.repair.keyed.replay.enabled\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.repair.keyed.scan.index.open.rows\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS\t256\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.repair.max.chained.boundaries\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES\t256\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.repair.per.segment.enabled\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
@@ -673,7 +673,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.live.view.checkpoint.repair.scan.max.keys\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.repair.scan.max.rows\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.repair.segment.yield.enabled\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SEGMENT_YIELD_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
-                                    "cairo.live.view.checkpoint.repair.sparse.publication.enabled\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.checkpoint.repair.sparse.publication.enabled\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.rows\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.enabled\tQDB_CAIRO_LIVE_VIEW_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.flush.retry.max\tQDB_CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX\t5\tdefault\tfalse\tfalse\n" +

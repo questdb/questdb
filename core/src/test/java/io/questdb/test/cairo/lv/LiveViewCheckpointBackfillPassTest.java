@@ -320,6 +320,104 @@ public class LiveViewCheckpointBackfillPassTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testASegmentNoPassCouldRepairIsNeverDeferred() throws Exception {
+        // The defect deferral shipped with, and the guard that closes it. A per-segment plan
+        // declines when its output floor lands back on the view's START FROM boundary, which
+        // happens when a corrected row sits exactly on that boundary: the decomposition keeps
+        // rows at or above it, so the segment's own minimum is the boundary itself.
+        //
+        // Inline that decline costs nothing - the caller hands the segment back to the
+        // whole-change-set plan, which repairs it. Deferred it was permanent: the pass has no
+        // change set to widen and no union range to fall back on, so the entry stayed pending,
+        // the view stayed wrong in that segment, and nothing above noticed. A fuzz seed found
+        // it with twelve such segments outstanding and two hundred further job cycles leaving
+        // the count exactly where it was.
+        //
+        // So deferChangeSetSegments probes each segment through the plan before it records
+        // any of them, and a change set holding one it cannot drain takes the inline route
+        // whole - the same all-or-nothing escape a full pending set already took.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        enableDeferral(Micros.HOUR_MICROS);
+        assertMemoryLeak(() -> {
+            createViewStartingFrom(seedThreeDays(), "2026-01-02T01:00:00.000000Z");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                // The head, so the three seeded days are closed below it.
+                commit(row(5, 1, "acct-1"), job);
+                assertViewRowCount(7);
+
+                // Exactly on the boundary, in a closed segment: the shape whose plan declines.
+                commit(row(2, 1, "acct-2"), job);
+
+                Assert.assertEquals(
+                        "a segment the pass could not have drained must not be deferred",
+                        1,
+                        job.undeferrableChangeSetCountForTest()
+                );
+                Assert.assertEquals(0, job.deferredSegmentCountForTest());
+                Assert.assertEquals(0, viewInstance().getPendingRepairsSegments());
+                Assert.assertFalse(
+                        "nothing may be written to the set for a segment that cannot leave it",
+                        pendingSetExists()
+                );
+                // Repaired inline instead, so the view is correct in that segment now rather
+                // than never.
+                assertViewRowCount(8);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAPendingSegmentNoPassCanRepairIsRecoveredRatherThanRetriedForever() throws Exception {
+        // The backstop under the guard above, and the reason the guard alone is not the fix.
+        // The probe runs against the view's boundary and durable frontier as they stand when
+        // the correction is deferred; the pass plans the entry against them as they stand
+        // when it runs. An entry written under one verdict can therefore meet another, and
+        // the grounds a per-segment plan declines on are properties of the view and the
+        // segment rather than of the moment - so the next pass declines it again, forever.
+        //
+        // The pass now escalates to the recompute a set that cannot be acted on has always
+        // taken: read the applied base, republish the whole view range, drop the set. That
+        // repairs the segment it could not plan along with every other one the set named.
+        //
+        // Production cannot reach this state while the probe stands, which is why the state
+        // is injected rather than constructed.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        enableDeferral(Micros.HOUR_MICROS);
+        assertMemoryLeak(() -> {
+            createView(seedThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, "acct-1"), job);
+                commit(row(2, 3, "acct-1"), job);
+                Assert.assertEquals(1, viewInstance().getPendingRepairsSegments());
+                Assert.assertTrue(pendingSetExists());
+                // Knowingly stale in that segment, which is what deferral promises.
+                assertViewRowCount(7);
+
+                job.setSimulateBackfillPassDeclineForTest(true);
+                setCurrentMicros(currentMicros + 2 * Micros.HOUR_MICROS);
+                driveRefreshToQuiescence(job);
+
+                Assert.assertEquals(
+                        "the pass escalated rather than leaving an entry it cannot act on pending",
+                        1,
+                        job.backfillPassRecoveryCountForTest()
+                );
+                Assert.assertEquals(
+                        "the recompute repairs every segment the set named",
+                        0,
+                        viewInstance().getPendingRepairsSegments()
+                );
+                Assert.assertFalse(pendingSetExists());
+                assertViewRowCount(8);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
     public void testTwoCorrectionsInOneSegmentAreRepairedOnce() throws Exception {
         // The coalescing the interval buys, and the only thing deferral adds on top of
         // per-segment scoping: two corrections into one closed segment cost one repair
@@ -482,6 +580,24 @@ public class LiveViewCheckpointBackfillPassTest extends AbstractLiveViewTest {
         execute("insert into tx values " + seedRows);
         drainWalQueue();
         execute("create live view lv flush every 100ms start from beginning as "
+                + "select created_at, cod_acct_no, "
+                + "sum(amt_txn) over w as cumulative_sum, "
+                + "count(cod_acct_no) over w as cumulative_count "
+                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+    }
+
+    /**
+     * The same view with an explicit {@code START FROM} boundary. A corrected row landing
+     * exactly on that boundary is what makes a per-segment plan decline on its output floor,
+     * because the decomposition keeps rows at or above the boundary and drops the rest - so
+     * the segment's own minimum is the boundary itself.
+     */
+    private void createViewStartingFrom(String seedRows, String boundary) throws Exception {
+        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
+                + "amt_txn double) timestamp(created_at) partition by hour wal");
+        execute("insert into tx values " + seedRows);
+        drainWalQueue();
+        execute("create live view lv flush every 100ms start from '" + boundary + "' as "
                 + "select created_at, cod_acct_no, "
                 + "sum(amt_txn) over w as cumulative_sum, "
                 + "count(cod_acct_no) over w as cumulative_count "
