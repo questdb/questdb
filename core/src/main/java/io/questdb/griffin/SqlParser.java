@@ -1282,7 +1282,7 @@ public class SqlParser {
     private static String keepFilterWhereText(String predicate, boolean flip) {
         return flip
                 ? "NOT (" + predicate + ")"
-                : "CASE WHEN (" + predicate + ") THEN false ELSE true END";
+                : RowExpiryUtil.buildRowExpiryKeepFilter(predicate);
     }
 
     /**

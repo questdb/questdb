@@ -983,6 +983,89 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPredicateThatOnlyFailsWhenWrappedRejected() throws Exception {
+        // A read never runs the predicate on its own. It runs it wrapped, as
+        //
+        //   CASE WHEN (<predicate>) THEN false ELSE true END
+        //
+        // and QuestDB compiles a single-branch CASE WHEN (<expr> = <constant>) into a switch, which
+        // demands the two operands have the same type where '=' converts one of them. So a predicate can
+        // bind on its own and fail every read of the view it is set on. Validation binds the wrapped form
+        // for exactly this reason, so these are refused at DDL time instead.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL INDEX, s STRING, i INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('a', 'x', 1, 1.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            // the bare predicate binds - SELECT ... WHERE k = 12345 compiles and returns no rows - so
+            // nothing but the wrapped bind can catch this one
+            assertQuery("SELECT count() FROM base WHERE k = 12345")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            assertExceptionNoLeakCheck(
+                    "CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN k = 12345",
+                    25,
+                    "invalid EXPIRE ROWS predicate: type mismatch [expected=SYMBOL, actual=INT]"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("mv"));
+
+            assertExceptionNoLeakCheck(
+                    "CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN s = 12345",
+                    25,
+                    "invalid EXPIRE ROWS predicate: type mismatch [expected=STRING, actual=INT]"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("mv"));
+
+            // an implicit cast the bind folds reaches the DDL as an ImplicitCastException, which is a
+            // RuntimeException rather than a CairoException, so the catch has to name it to report it as
+            // an invalid policy instead of letting it escape
+            assertExceptionNoLeakCheck(
+                    "CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN i = 'abc'",
+                    25,
+                    "invalid EXPIRE ROWS predicate: inconvertible value: `abc` [STRING -> INT]"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("mv"));
+
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)");
+            drainWalAndMatViewQueues();
+
+            // ALTER goes through the same validator
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN k = 12345",
+                    48,
+                    "invalid EXPIRE ROWS predicate: type mismatch [expected=SYMBOL, actual=INT]"
+            );
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN i = 'abc'",
+                    48,
+                    "invalid EXPIRE ROWS predicate: inconvertible value: `abc` [STRING -> INT]"
+            );
+            Assert.assertNull("no policy must have been stored", expiryPredicate("mv"));
+            // the view is still readable, which is what the rejection was protecting
+            assertQuery("SELECT count() FROM mv").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+
+            // The same comparison the switch rewrite rejects is accepted where no switch is built: a
+            // matching type, an operator other than '=', and an '=' that is not the whole predicate.
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN k = 'a'");
+            drainWalAndMatViewQueues();
+            Assert.assertEquals("k = 'a'", expiryPredicate("mv"));
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN k != 12345");
+            drainWalAndMatViewQueues();
+            Assert.assertEquals("k != 12345", expiryPredicate("mv"));
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < 2.0 OR k = 12345");
+            drainWalAndMatViewQueues();
+            Assert.assertEquals("v < 2.0 OR k = 12345", expiryPredicate("mv"));
+            assertQuery("SELECT count() FROM mv").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+
+            // A designated-timestamp ordering comparison reads through NOT (...) rather than the CASE
+            // wrap, and validating the CASE form must not refuse it.
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN ts < now()");
+            drainWalAndMatViewQueues();
+            Assert.assertEquals("ts < now()", expiryPredicate("mv"));
+            assertQuery("SELECT count() FROM mv").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+        });
+    }
+
+    @Test
     public void testRootLevelAggregatePredicateRejected() throws Exception {
         // The read filter embeds the predicate as a CASE argument, where an aggregate is illegal. The
         // function parser rejects an aggregate only when it is an argument of another function, so a

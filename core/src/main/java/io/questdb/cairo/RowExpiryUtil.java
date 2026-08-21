@@ -137,11 +137,18 @@ public final class RowExpiryUtil {
     }
 
     /**
-     * Builds the keep-rows filter (the rows that have NOT expired) for the cleanup job's scalar-WHEN path:
+     * Builds the keep-rows filter (the rows that have NOT expired) for a scalar-WHEN policy:
      * {@code CASE WHEN (<predicate>) THEN false ELSE true END}, which keeps every row whose predicate is
      * not TRUE. The predicate is wrapped in parentheses so its internal operator precedence cannot
-     * leak. Applies to any predicate shape, including compound ones and {@code IN}, and matches the read
-     * filter the parser builds, so the sweep deletes only rows a read of the view already hides.
+     * leak. Applies to any predicate shape, including compound ones and {@code IN}.
+     * <p>
+     * All three users of this filter call this method, so all three run the same text: the read filter
+     * {@code SqlParser.keepFilterWhereText} builds (except in the flip case, which is a bare
+     * {@code NOT (...)}), the cleanup sweep, and the DDL validation in
+     * {@code SqlCompilerImpl.validateExpiryPredicateOnMetadata}. That is what makes the sweep delete only
+     * rows a read already hides, and what lets validation refuse a predicate whose wrapped form would fail
+     * to compile even though the bare predicate binds - a {@code SYMBOL} column compared for equality with
+     * an integer, say, which the wrapped form turns into a {@code switch} that then rejects the types.
      * <p>
      * A NULL operand follows QuestDB's two-valued comparison semantics: {@code v < 2.0} is FALSE for a
      * NULL {@code v} and keeps the row, while {@code NOT (v >= 2.0)}, {@code v != 2.0} and
