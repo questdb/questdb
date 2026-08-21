@@ -127,6 +127,29 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
     }
 
+    /**
+     * Collects the name of every table and view the model tree reads into {@code outTableNames}, with
+     * {@code viewsOnly} narrowing the result to the views. Names repeat when the query names the same
+     * object more than once; a caller that needs them distinct de-duplicates on the way out.
+     * <p>
+     * The traversal reaches every model a compiled query reads: down the nested-model chain, into each
+     * join model, into the union branch, and into the sub-query hanging off any expression the model
+     * holds. That last one carries a scalar sub-query and an {@code IN (SELECT ...)} the optimiser left
+     * as a sub-query - the shapes that name a table nowhere else in the tree. A CTE needs no case of its
+     * own: the parser inlines it as a nested model wherever it is referenced
+     * ({@code SqlParser#parseSelectFrom}).
+     * <p>
+     * A sub-query is reached two ways, because one of them is only true some of the time.
+     * {@link IQueryModel#getExpressionModels()} is the parser's index of the sub-queries an expression
+     * of that model carries, and the optimiser rewrites a model's expressions - moving a WHERE clause
+     * down into a model built fresh for it - without carrying the index across, so the index of the
+     * model that ends up owning the expression can be empty. The AST walk below is what covers those:
+     * it descends the expressions themselves, where {@link ExpressionNode#queryModel} still hangs off
+     * the node that named the sub-query. The index still earns its place for a sub-query whose
+     * expression this method's field list does not name.
+     * <p>
+     * Names are flyweights over the model's own tokens, so a caller that outlives the model copies them.
+     */
     public static void collectAllTableAndViewNames(
             @NotNull IQueryModel model,
             @NotNull ObjList<CharSequence> outTableNames,
@@ -145,6 +168,34 @@ public class SqlUtil {
             if (viewNameExpr != null) {
                 outTableNames.add(unquote(viewNameExpr.token));
             }
+
+            final ObjList<ExpressionNode> expressionModels = m.getExpressionModels();
+            for (int i = 0, n = expressionModels.size(); i < n; i++) {
+                // null once the optimiser has converted the sub-query into a join; the join model
+                // below then carries the same table.
+                final IQueryModel expressionModel = expressionModels.getQuick(i).queryModel;
+                if (expressionModel != null) {
+                    collectAllTableAndViewNames(expressionModel, outTableNames, viewsOnly);
+                }
+            }
+
+            // Every expression a SELECT model can hold that the grammar lets a sub-query appear in.
+            collectSubQueryNames(m.getWhereClause(), outTableNames, viewsOnly);
+            collectSubQueryNames(m.getPostJoinWhereClause(), outTableNames, viewsOnly);
+            collectSubQueryNames(m.getConstWhereClause(), outTableNames, viewsOnly);
+            collectSubQueryNames(m.getOuterJoinExpressionClause(), outTableNames, viewsOnly);
+            collectSubQueryNames(m.getJoinCriteria(), outTableNames, viewsOnly);
+            collectSubQueryNames(m.getLimitLo(), outTableNames, viewsOnly);
+            collectSubQueryNames(m.getLimitHi(), outTableNames, viewsOnly);
+            collectSubQueryNames(m.getJoinColumns(), outTableNames, viewsOnly);
+            collectSubQueryNames(m.getGroupBy(), outTableNames, viewsOnly);
+            collectSubQueryNames(m.getOrderBy(), outTableNames, viewsOnly);
+            collectSubQueryNames(m.getSampleByFill(), outTableNames, viewsOnly);
+            collectSubQueryNames(m.getLatestBy(), outTableNames, viewsOnly);
+            collectSubQueryNames(m.getUnnestExpressions(), outTableNames, viewsOnly);
+            // getColumns() is whichever of these two is in play, so the pair covers it at either stage
+            collectSubQueryNamesFromColumns(m.getBottomUpColumns(), outTableNames, viewsOnly);
+            collectSubQueryNamesFromColumns(m.getTopDownColumns(), outTableNames, viewsOnly);
 
             final ObjList<IQueryModel> joinModels = m.getJoinModels();
             for (int i = 0, n = joinModels.size(); i < n; i++) {
@@ -1959,6 +2010,60 @@ public class SqlUtil {
             depMap.put(tableName, columns);
         }
         columns.add(columnName);
+    }
+
+    /**
+     * Descends one expression, adding the tables and views of every sub-query it carries to
+     * {@code outTableNames}. {@link ExpressionNode#queryModel} is the sub-query the node named -
+     * {@code IN (SELECT ...)}, {@code EXISTS (SELECT ...)}, a scalar sub-select - and it stays on the
+     * node for as long as the expression itself survives, which is what makes this the reliable half
+     * of {@link #collectAllTableAndViewNames}'s sub-query coverage.
+     */
+    private static void collectSubQueryNames(
+            @Nullable ExpressionNode node,
+            @NotNull ObjList<CharSequence> outTableNames,
+            boolean viewsOnly
+    ) {
+        if (node == null) {
+            return;
+        }
+        if (node.queryModel != null) {
+            collectAllTableAndViewNames(node.queryModel, outTableNames, viewsOnly);
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            collectSubQueryNames(node.args.getQuick(i), outTableNames, viewsOnly);
+        }
+        collectSubQueryNames(node.lhs, outTableNames, viewsOnly);
+        collectSubQueryNames(node.rhs, outTableNames, viewsOnly);
+    }
+
+    private static void collectSubQueryNames(
+            @Nullable ObjList<ExpressionNode> nodes,
+            @NotNull ObjList<CharSequence> outTableNames,
+            boolean viewsOnly
+    ) {
+        if (nodes == null) {
+            return;
+        }
+        for (int i = 0, n = nodes.size(); i < n; i++) {
+            collectSubQueryNames(nodes.getQuick(i), outTableNames, viewsOnly);
+        }
+    }
+
+    private static void collectSubQueryNamesFromColumns(
+            @Nullable ObjList<QueryColumn> columns,
+            @NotNull ObjList<CharSequence> outTableNames,
+            boolean viewsOnly
+    ) {
+        if (columns == null) {
+            return;
+        }
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            if (column != null) {
+                collectSubQueryNames(column.getAst(), outTableNames, viewsOnly);
+            }
+        }
     }
 
     private static void collectColumnReferencesFromExpression(

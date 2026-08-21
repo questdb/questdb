@@ -94,6 +94,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final boolean deferred;
     private final int periodDelay;
     private final char periodDelayUnit;
+    private final ObjList<CharSequence> referencedNameSink = new ObjList<>();
     private final ObjList<String> referencedTableNames = new ObjList<>();
     private final int refreshType;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
@@ -629,32 +630,39 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     /**
-     * Collects the distinct names of every plain table the model tree reads (nested models, join
-     * models, unions). Sub-queries and CTE references carry no table name of their own and recurse;
-     * table functions are skipped.
+     * Collects the distinct names of every table and view the model tree reads, so
+     * {@code SqlCompilerImpl#executeCreateMatView} can reject a policied reference anywhere in the
+     * defining query rather than only at the declared base.
+     * <p>
+     * {@link SqlUtil#collectAllTableAndViewNames} does the walk. That is the same collector
+     * {@code SqlCompilerImpl#findMatViewReferencing} runs in the opposite direction, when an
+     * {@code ALTER ... SET EXPIRE ROWS} asks which views already read the target: the two guards have
+     * to answer the same question, or the same pair of views is legal in one creation order and
+     * refused in the other, and two hand-written walks drift apart the moment one of them learns a
+     * reference form the other does not know.
+     * <p>
+     * The names the walk yields are flyweights over the model, which this operation outlives, so they
+     * are copied to strings here.
      */
-    private static void collectReferencedTableNames(@Nullable IQueryModel model, ObjList<String> namesOut) {
+    private void collectReferencedTableNames(@Nullable IQueryModel model, ObjList<String> namesOut) {
         if (model == null) {
             return;
         }
-        final CharSequence tableName = model.getTableName();
-        if (tableName != null && model.getTableNameFunction() == null) {
+        referencedNameSink.clear();
+        SqlUtil.collectAllTableAndViewNames(model, referencedNameSink, false);
+        for (int i = 0, n = referencedNameSink.size(); i < n; i++) {
+            final CharSequence name = referencedNameSink.getQuick(i);
             boolean isPresent = false;
-            for (int i = 0, n = namesOut.size(); i < n; i++) {
-                if (Chars.equals(namesOut.getQuick(i), tableName)) {
+            for (int j = 0, k = namesOut.size(); j < k; j++) {
+                if (Chars.equals(namesOut.getQuick(j), name)) {
                     isPresent = true;
                     break;
                 }
             }
             if (!isPresent) {
-                namesOut.add(Chars.toString(tableName));
+                namesOut.add(Chars.toString(name));
             }
         }
-        collectReferencedTableNames(model.getNestedModel(), namesOut);
-        for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
-            collectReferencedTableNames(model.getJoinModels().getQuick(i), namesOut);
-        }
-        collectReferencedTableNames(model.getUnionModel(), namesOut);
     }
 
     private static void copyBaseTableSymbolColumnCapacity(

@@ -1115,6 +1115,145 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewReadingPoliciedViewFromSubqueryRejected() throws Exception {
+        // A sub-query in the WHERE clause reads the policied view just as a JOIN does, so CREATE has to
+        // refuse it for the same reason: refresh would read v through the read filter and materialize a
+        // filtered result. The sub-query hangs off an expression model rather than a join model, which is
+        // the one reference form the reference collector used to walk past.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE b (sym SYMBOL, bv DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base2 (sym SYMBOL, vv DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW v AS (SELECT * FROM base2) EXPIRE ROWS WHEN vv < 2.0");
+            execute("CREATE MATERIALIZED VIEW clean AS (SELECT * FROM base2)");
+            drainWalAndMatViewQueues();
+            Assert.assertNotNull("v must carry the policy under test", expiryPredicate("v"));
+
+            // IN (SELECT ...) that the optimiser leaves as a sub-query
+            assertExceptionNoLeakCheck(
+                    """
+                            CREATE MATERIALIZED VIEW m1 WITH BASE b AS
+                            (SELECT ts, sym, first(bv) bv FROM b WHERE sym IN (SELECT sym FROM v) SAMPLE BY 1d)""",
+                    25,
+                    "cannot create a materialized view referencing 'v': it carries an EXPIRE ROWS policy"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("m1"));
+
+            // a scalar sub-query, which names v nowhere else in the model tree
+            assertExceptionNoLeakCheck(
+                    """
+                            CREATE MATERIALIZED VIEW m2 WITH BASE b AS
+                            (SELECT ts, sym, first(bv) bv FROM b WHERE bv > (SELECT max(vv) FROM v) SAMPLE BY 1d)""",
+                    25,
+                    "cannot create a materialized view referencing 'v': it carries an EXPIRE ROWS policy"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("m2"));
+
+            // v reached through a sub-query nested inside another sub-query
+            assertExceptionNoLeakCheck(
+                    """
+                            CREATE MATERIALIZED VIEW m3 WITH BASE b AS
+                            (SELECT ts, sym, first(bv) bv FROM b
+                             WHERE sym IN (SELECT sym FROM base2 WHERE sym IN (SELECT sym FROM v)) SAMPLE BY 1d)""",
+                    25,
+                    "cannot create a materialized view referencing 'v': it carries an EXPIRE ROWS policy"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("m3"));
+
+            // The sub-query sits in the WHERE of an outer SELECT, which the optimiser moves into a model it
+            // builds for it. The parser's per-model sub-query index does not follow the move, so only a walk
+            // of the expression itself still finds v here.
+            assertExceptionNoLeakCheck(
+                    """
+                            CREATE MATERIALIZED VIEW m5 WITH BASE b AS
+                            (SELECT * FROM (SELECT ts, sym, first(bv) bv FROM b SAMPLE BY 1d)
+                             WHERE bv > (SELECT max(vv) FROM v))""",
+                    25,
+                    "cannot create a materialized view referencing 'v': it carries an EXPIRE ROWS policy"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("m5"));
+
+            // the same shape over a policy-free view is accepted, so the rejections above come from the
+            // policy and not from the sub-query itself
+            execute("""
+                    CREATE MATERIALIZED VIEW m4 WITH BASE b AS
+                    (SELECT ts, sym, first(bv) bv FROM b WHERE sym IN (SELECT sym FROM clean) SAMPLE BY 1d)""");
+            drainWalAndMatViewQueues();
+            Assert.assertNotNull(engine.getTableTokenIfExists("m4"));
+        });
+    }
+
+    @Test
+    public void testSetExpireOnViewReadFromSubqueryOfAnotherViewRejected() throws Exception {
+        // The mirror image of testCreateMatViewReadingPoliciedViewFromSubqueryRejected: the two views
+        // exist first and v gains the policy afterwards. Both guards run the same collector, so a
+        // sub-query reference is refused whichever order the two statements arrive in.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE b (sym SYMBOL, bv DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base2 (sym SYMBOL, vv DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW v AS (SELECT * FROM base2)");
+            execute("CREATE MATERIALIZED VIEW scalar_v AS (SELECT * FROM base2)");
+            execute("CREATE MATERIALIZED VIEW outer_v AS (SELECT * FROM base2)");
+            // nobody reads this one, so it is the control for the rejections below
+            execute("CREATE MATERIALIZED VIEW unreferenced AS (SELECT * FROM base2)");
+            drainWalAndMatViewQueues();
+            execute("""
+                    CREATE MATERIALIZED VIEW m1 WITH BASE b AS
+                    (SELECT ts, sym, first(bv) bv FROM b WHERE sym IN (SELECT sym FROM v) SAMPLE BY 1d)""");
+            execute("""
+                    CREATE MATERIALIZED VIEW m2 WITH BASE b AS
+                    (SELECT ts, sym, first(bv) bv FROM b WHERE bv > (SELECT max(vv) FROM scalar_v) SAMPLE BY 1d)""");
+            // the sub-query in an outer WHERE, which the optimiser moves into a model of its own
+            execute("""
+                    CREATE MATERIALIZED VIEW m3 WITH BASE b AS
+                    (SELECT * FROM (SELECT ts, sym, first(bv) bv FROM b SAMPLE BY 1d)
+                     WHERE sym IN (SELECT sym FROM outer_v))""");
+            drainWalAndMatViewQueues();
+
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW v SET EXPIRE ROWS WHEN vv < 2.0",
+                    24,
+                    "cannot set an EXPIRE ROWS policy on 'v': materialized view 'm1' references it"
+            );
+            Assert.assertNull("policy must not have been set on v", expiryPredicate("v"));
+
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW scalar_v SET EXPIRE ROWS WHEN vv < 2.0",
+                    24,
+                    "cannot set an EXPIRE ROWS policy on 'scalar_v': materialized view 'm2' references it"
+            );
+            Assert.assertNull("policy must not have been set on scalar_v", expiryPredicate("scalar_v"));
+
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW outer_v SET EXPIRE ROWS WHEN vv < 2.0",
+                    24,
+                    "cannot set an EXPIRE ROWS policy on 'outer_v': materialized view 'm3' references it"
+            );
+            Assert.assertNull("policy must not have been set on outer_v", expiryPredicate("outer_v"));
+
+            execute("ALTER MATERIALIZED VIEW unreferenced SET EXPIRE ROWS WHEN vv < 2.0");
+            drainWalAndMatViewQueues();
+            Assert.assertNotNull("control view must carry the policy", expiryPredicate("unreferenced"));
+
+            // v stayed policy-free, so m1 keeps every symbol the sub-query matches
+            execute("""
+                    INSERT INTO base2 VALUES
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 5.0, '2024-01-01T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("""
+                    INSERT INTO b VALUES
+                    ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 20.0, '2024-01-01T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+
+            assertQuery("SELECT sym, bv FROM m1 ORDER BY sym")
+                    .expectSize().noLeakCheck().returns("sym\tbv\nA\t10.0\nB\t20.0\n");
+        });
+    }
+
+    @Test
     public void testCreateViewOverPoliciedBaseRejected() throws Exception {
         // A materialized view must not derive from a base that carries an EXPIRE ROWS policy: refresh reads
         // the RAW base, so it would copy the base's expired-but-not-yet-reclaimed rows.

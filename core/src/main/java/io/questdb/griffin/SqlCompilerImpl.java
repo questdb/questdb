@@ -6602,11 +6602,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * walk ran.
      * <p>
      * {@link io.questdb.cairo.mv.DependentViewGraph} answers the base-table question only, so this re-parses
-     * each view's stored SQL with a pooled compiler and collects the table names of the resulting model -
-     * the same reference set CREATE MATERIALIZED VIEW builds from its own query before accepting the
-     * statement, and it covers the same shapes: the base, the join models, the union arms and the nested
-     * models. Optimising the SQL (rather than only parsing it) inlines any plain view in the way, so a
-     * materialized view that reaches {@code referencedToken} through one is found too.
+     * each view's stored SQL with a pooled compiler and runs {@link SqlUtil#collectAllTableAndViewNames} over
+     * the resulting model. That is literally the collector CREATE MATERIALIZED VIEW builds its own reference
+     * set with, which is what keeps the two guards answering the same question: whichever creation order a
+     * user picks, a materialized view reading a policied one is refused. Optimising the SQL (rather than only
+     * parsing it) inlines any plain view in the way, so a materialized view that reaches
+     * {@code referencedToken} through one is found too.
      * <p>
      * The parse runs under {@link #compileViewContext}, whose read-only security context stands in for the
      * ALTER's caller: the caller is asking about its own view and need not hold SELECT on tables it never
