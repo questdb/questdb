@@ -31,6 +31,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -49,14 +50,18 @@ import org.junit.Test;
  * reference repo calls a "folder" - one directory, one {@code _txn} entry, one {@code _geometry}
  * chain. See PARTITION_COMPACTION_state.md for the corrections this port required.
  * <p>
- * JOIN, MOVE-TAIL and REWRITE are implemented (PARTITION_COMPACTION.md Sec.9 steps 0, 1, 2, 3, 5).
- * MOVE-TAIL is ported onto this branch's classic-split machinery (a new sibling {@code attachedPartitions}
- * entry for the tail) rather than the reference's hardlink/{@code partitionTop} scheme - see
- * PARTITION_COMPACTION_state.md. MAKE-PLAIN and TRIM-FILES (also step 4) are not implemented: a MOVE-TAIL'd
- * front's own leftover dead space is left for its own later REWRITE to reclaim, not shrunk in place. The
- * two tests that assert MAKE-PLAIN/TRIM-FILES-specific behaviour are expected to fail on that one
- * assertion while their data-integrity assertions pass - see the state doc for the exact failure recorded
- * for each.
+ * JOIN, MOVE-TAIL, MAKE-PLAIN and REWRITE are implemented (PARTITION_COMPACTION.md Sec.9 steps 0, 1, 2,
+ * 3, 4, 5). MOVE-TAIL is ported onto this branch's classic-split machinery (a new sibling
+ * {@code attachedPartitions} entry for the tail) rather than the reference's hardlink/{@code partitionTop}
+ * scheme - see PARTITION_COMPACTION_state.md. MAKE-PLAIN reclaims a MOVE-TAIL'd front's leftover dead
+ * space in place, gated on the same {@link io.questdb.cairo.TxnScoreboard} reader check REWRITE never
+ * needs (it only ever appends). TRIM-FILES (also step 4, the file-shortening half of the reference's
+ * in-place reclaim) is not implemented: a MAKE-PLAIN'd partition's files stay at their old, now-oversized
+ * length until a later REWRITE copies it into a fresh, right-sized directory. The one test that asserts
+ * MAKE-PLAIN's reader wait ({@code testMakePlainWaitsForAReaderHoldingThePreMoveTailTransaction}) is
+ * expected to fail: its fixture's stride sits below MOVE-TAIL's front-share threshold, so REWRITE runs
+ * instead of MAKE-PLAIN, and REWRITE is not reader-gated - see the state doc for the exact failure
+ * recorded.
  */
 public class O3PartitionCompactionTest extends AbstractCairoTest {
 
@@ -188,11 +193,143 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
+     * MAKE-PLAIN's own success path: a successful MOVE-TAIL is immediately followed, in the same
+     * housekeeping pass, by an attempt at MAKE-PLAIN on the front it just left behind - the front is
+     * exactly MAKE-PLAIN's own eligible shape (one piece, row 0, dead space above it), and with no reader
+     * in the way there is nothing to wait for. No bytes copied, {@code nameTxn} unchanged, proof this is
+     * bookkeeping and not a REWRITE in disguise.
+     */
+    @Test
+    public void testMakePlainReclaimsAMoveTailedFrontsDeadSpace() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            // Same fixture shape as testMoveTailCopiesTheTailNotTheWholePartition: a huge clean front
+            // with a small, repeatedly-relocated stride pre-split into its own tail pieces, so MOVE-TAIL
+            // (not REWRITE) is what the piece-count rule triggers.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+
+            createDayTable("x", "2024-01-01", 20_000);
+            backdate("x", "2024-01-01T05:00:00", 200);
+            backdate("x", "2024-01-01T05:00:00", 200);
+            backdate("x", "2024-01-01T05:00:00", 200);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, "2");
+
+            final String expected = fingerprintOfDay("x", "2024-01-01");
+            final long frontNameTxnBefore = frontNameTxnOfDay("x", "2024-01-01");
+
+            enableCompaction();
+            runCompactionPasses("x");
+
+            Assert.assertFalse(
+                    "MAKE-PLAIN did not follow MOVE-TAIL in the same housekeeping pass",
+                    isComposite("x", "2024-01-01")
+            );
+            Assert.assertEquals(
+                    "MAKE-PLAIN did not reclaim the dead space MOVE-TAIL left above the front's one piece",
+                    0,
+                    deadRowsOfDay("x", "2024-01-01")
+            );
+            Assert.assertEquals(
+                    "MAKE-PLAIN rewrote the front - its nameTxn must stay the one MOVE-TAIL left behind",
+                    frontNameTxnBefore,
+                    frontNameTxnOfDay("x", "2024-01-01")
+            );
+            Assert.assertEquals("MAKE-PLAIN changed the data", expected, fingerprintOfDay("x", "2024-01-01"));
+        });
+    }
+
+    /**
+     * MAKE-PLAIN must wait for a reader still pinning the transaction its pre-MAKE-PLAIN geometry record
+     * came from, the same way REWRITE and MOVE-TAIL wait for theirs - an older reader resolving that
+     * record would otherwise misread the reclaimed dead space as belonging to a piece that is no longer
+     * there. Unlike {@link #testMakePlainWaitsForAReaderHoldingThePreMoveTailTransaction}, this fixture's
+     * stride is pre-split into its own piece and MOVE-TAIL runs first, so the front actually reaches
+     * MAKE-PLAIN's eligible shape instead of being reclaimed by REWRITE before a pinned reader is even in
+     * the picture. The reader opens BEFORE MOVE-TAIL runs, so it pins the pre-MOVE-TAIL transaction, not
+     * a later one that already sees the MAKE-PLAIN-eligible shape and would have nothing to wait for.
+     */
+    @Test
+    public void testMakePlainWaitsForAPinnedReaderThenReclaimsOnceItGoes() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+
+            createDayTable("x", "2024-01-01", 20_000);
+            backdate("x", "2024-01-01T05:00:00", 200);
+            backdate("x", "2024-01-01T05:00:00", 200);
+            backdate("x", "2024-01-01T05:00:00", 200);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, "2");
+            enableCompaction();
+
+            final TableToken tt = engine.verifyTableName("x");
+            final String before = fingerprintOfDay("x", "2024-01-01");
+
+            try (TableReader pinned = engine.getReader(tt)) {
+                Assert.assertNotNull(pinned);
+
+                // MOVE-TAIL does not check the scoreboard, so it still fires with the reader pinned to
+                // the pre-MOVE-TAIL transaction. The MAKE-PLAIN attempt chained onto its success is what
+                // does check it, and declines here - the front is left reduced to its one piece with the
+                // dead space still above it, not reclaimed.
+                runCompactionPasses("x");
+                Assert.assertTrue("fixture did not reach MOVE-TAIL", isComposite("x", "2024-01-01"));
+                Assert.assertEquals(1, pieceCountOfDay("x", "2024-01-01"));
+                final long deadBeforeMakePlain = deadRowsOfDay("x", "2024-01-01");
+                Assert.assertTrue("MOVE-TAIL left no dead space to protect", deadBeforeMakePlain > 0);
+
+                // The decline above started a one-minute backoff on the partition - clear it, so the
+                // second decline below is proven to still be the reader check, not a leftover backoff.
+                setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
+                runCompactionPasses("x");
+
+                Assert.assertEquals(
+                        "the rows of the compacted day changed under compaction",
+                        before,
+                        fingerprintOfDay("x", "2024-01-01")
+                );
+                Assert.assertTrue(
+                        "the partition was made non-composite while a reader still held the" +
+                                " pre-MAKE-PLAIN transaction - its geometry record still lists the" +
+                                " reclaimed dead space as live",
+                        isComposite("x", "2024-01-01")
+                );
+                Assert.assertEquals(
+                        "MAKE-PLAIN must not touch the partition while declined - dead rows changed" +
+                                " with a reader still pinned",
+                        deadBeforeMakePlain,
+                        deadRowsOfDay("x", "2024-01-01")
+                );
+            }
+
+            // Reader gone: the decline above also started a one-minute backoff on the partition (the
+            // same bookkeeping any other declined compaction gets) - clear it before the retry, or this
+            // pass would be suppressed for a reason that has nothing to do with the reader anymore.
+            setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
+            runCompactionPasses("x");
+            Assert.assertFalse(
+                    "the partition is still composite after the last reader went away;" +
+                            " dead rows: " + deadRowsOfDay("x", "2024-01-01"),
+                    isComposite("x", "2024-01-01")
+            );
+            Assert.assertEquals(0, deadRowsOfDay("x", "2024-01-01"));
+            Assert.assertEquals("MAKE-PLAIN changed the data", before, fingerprintOfDay("x", "2024-01-01"));
+        });
+    }
+
+    /**
      * MAKE-PLAIN lowers {@code E} so the partition stops being composite, waiting for readers to move
-     * on first. Not implemented in this pass. This fixture's stride sits mid-partition (~25% front),
-     * below MOVE-TAIL's default {@code prefix.min.percent} (50%), so REWRITE is what runs - regardless of
-     * a pinned reader, since it never writes below {@code E} - so this is expected to fail on the
-     * "still composite while a reader is pinned" assertion. See PARTITION_COMPACTION_state.md.
+     * on first - see {@link #testMakePlainWaitsForAPinnedReaderThenReclaimsOnceItGoes} for a fixture that
+     * actually reaches it. This fixture's stride sits mid-partition (~25% front), below MOVE-TAIL's
+     * default {@code prefix.min.percent} (50%), so REWRITE is what runs instead - regardless of a pinned
+     * reader, since it never writes below {@code E} - so this is expected to fail on the "still composite
+     * while a reader is pinned" assertion. See PARTITION_COMPACTION_state.md.
      */
     @Test
     public void testMakePlainWaitsForAReaderHoldingThePreMoveTailTransaction() throws Exception {
@@ -250,7 +387,10 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      * MOVE-TAIL leaves the clean front's directory untouched and copies only the messy tail pieces into
      * a new sibling partition. Unlike REWRITE-only compaction, the day ends up as TWO {@code _txn}
      * entries and the front's own {@code nameTxn} is unchanged - proof the front was never rewritten,
-     * not just that fewer bytes moved.
+     * not just that fewer bytes moved. The front's own composite state does not survive the same pass,
+     * though: with no reader in the way, the MAKE-PLAIN attempt {@code runCompaction} chains onto a
+     * successful MOVE-TAIL reclaims it immediately - see {@link #testMakePlainReclaimsAMoveTailedFrontsDeadSpace}
+     * for that half in isolation.
      */
     @Test
     public void testMoveTailCopiesTheTailNotTheWholePartition() throws Exception {
@@ -304,19 +444,18 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                     frontNameTxnBefore,
                     frontNameTxnOfDay("x", "2024-01-01")
             );
-            Assert.assertTrue(
-                    "the front partition was made non-composite - MOVE-TAIL must leave its E untouched," +
-                            " not reclaim it in place",
+            // MOVE-TAIL itself leaves E untouched - it is the MAKE-PLAIN attempt chained onto its
+            // success, not MOVE-TAIL, that reclaims the front's dead space. With no reader pinned in this
+            // fixture, that reclaim happens in the very same housekeeping pass: the front ends up plain,
+            // not composite, and its dead rows - both what MOVE-TAIL left behind and what it grew by
+            // relocating the tail - drop to zero.
+            Assert.assertFalse(
+                    "MAKE-PLAIN did not follow MOVE-TAIL in the same housekeeping pass",
                     isComposite("x", "2024-01-01")
             );
-            // MOVE-TAIL does not reclaim the front's pre-existing dead space - only REWRITE (or a later
-            // pass over the now much smaller front) does that. Total dead can only grow here, by exactly
-            // the tail's own size: the moved rows' OLD location becomes dead the moment a fresh copy
-            // lives in the new sibling partition, on top of whatever was already dead before.
             Assert.assertEquals(
-                    "dead rows should grow by exactly the moved tail's size - the front's pre-existing" +
-                            " dead space is deliberately left for a later REWRITE, not reclaimed here",
-                    deadBefore + written,
+                    "MAKE-PLAIN did not reclaim the front's dead rows",
+                    0,
                     deadRowsOfDay("x", "2024-01-01")
             );
         });

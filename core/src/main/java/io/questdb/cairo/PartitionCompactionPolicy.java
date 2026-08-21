@@ -267,6 +267,50 @@ public class PartitionCompactionPolicy implements Mutable {
         return -1;
     }
 
+    /**
+     * True when {@code partitionIndex} is a composite partition already reduced to a single piece
+     * sitting at row 0 - MOVE-TAIL's own end state, JOIN folding everything into one, or any commit that
+     * merely happened to leave it that way - with real dead space above it, and none of the ordinary
+     * reasons a partition is off-limits (the last/active one, a table with lag rows still pending).
+     */
+    public static boolean isMakePlainShape(TxWriter txWriter, PartitionGeometry geometry, int partitionIndex) {
+        if (partitionIndex >= txWriter.getPartitionCount() - 1 || txWriter.getLagRowCount() > 0) {
+            return false;
+        }
+        if (!txWriter.isPartitionComposite(partitionIndex)) {
+            return false;
+        }
+        if (geometry.getPieceCount(partitionIndex) != 1 || geometry.getPieceRowOffset(partitionIndex, 0) != 0) {
+            return false;
+        }
+        // A non-composite piece's tsLo is always the directory's own floor; a composite one can differ if
+        // an earlier piece that used to sit before it was ever dropped. Only a match keeps becoming plain
+        // from quietly relabelling the partition's routing floor.
+        if (geometry.getPieceTimestampLo(partitionIndex, 0) != txWriter.getPartitionTimestampByIndex(partitionIndex)) {
+            return false;
+        }
+        return geometry.getE(partitionIndex) > txWriter.getPartitionSize(partitionIndex);
+    }
+
+    /**
+     * The index of the next MAKE-PLAIN candidate at or after {@code fromIndex} - see
+     * {@link #isMakePlainShape} - or -1. Unlike {@link #selectPartition}'s four rules, this never fires
+     * from a byte-count threshold: a MOVE-TAIL'd front usually has too little dead space of its own, and
+     * too few pieces, to cross any of them, so without this independent sweep it would sit in that shape
+     * - composite, wasting the space above its one piece - forever. Checked every housekeeping pass that
+     * {@link #selectPartition} itself found nothing to do on, the same way {@link #selectFoldablePartition}
+     * already is.
+     */
+    public int selectMakePlainCandidate(TxWriter txWriter, PartitionGeometry geometry, long nowMicros, int fromIndex) {
+        final int n = txWriter.getPartitionCount();
+        for (int i = Math.max(0, fromIndex); i < n; i++) {
+            if (isMakePlainShape(txWriter, geometry, i) && !isSuppressed(txWriter.getPartitionTimestampByIndex(i), nowMicros)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private void clearBackoff(long partitionTimestamp) {
         for (int i = 0, n = backoff.size(); i < n; i += BACKOFF_LONGS) {
             if (backoff.getQuick(i) == partitionTimestamp) {
