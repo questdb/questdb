@@ -126,7 +126,7 @@ public class TableFormatTest extends AbstractCairoTest {
 
     @Test
     public void testAlterTableSetFormatParquetRejectedOnMatView() throws Exception {
-        // compileAlterTable runs checkMatViewModification before dispatching to
+        // compileAlterTable runs checkViewModification before dispatching to
         // alterTableSetFormat, so ALTER TABLE on a matview never reaches the
         // FORMAT-specific "not supported on materialized views" branch in
         // SqlCompilerImpl.alterTableSetFormat or in TableWriter.setMetaTableFormat.

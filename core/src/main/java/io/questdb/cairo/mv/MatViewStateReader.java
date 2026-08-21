@@ -43,6 +43,9 @@ import org.jetbrains.annotations.Nullable;
 public class MatViewStateReader implements Mutable {
     private final StringSink invalidationReason = new StringSink();
     private final LongList refreshIntervals = new LongList();
+    private long backfillFrontier = Long.MIN_VALUE;
+    private long frozenBoundaryFloor = Numbers.LONG_NULL;
+    private int frozenBoundaryLimitHoursOrMonths;
     private boolean invalid;
     private long lastPeriodHi = Numbers.LONG_NULL;
     private long lastRefreshBaseTxn = -1;
@@ -58,6 +61,21 @@ public class MatViewStateReader implements Mutable {
         lastPeriodHi = Numbers.LONG_NULL;
         refreshIntervalsBaseTxn = -1;
         refreshIntervals.clear();
+        backfillFrontier = Long.MIN_VALUE;
+        frozenBoundaryFloor = Numbers.LONG_NULL;
+        frozenBoundaryLimitHoursOrMonths = 0;
+    }
+
+    public long getBackfillFrontier() {
+        return backfillFrontier;
+    }
+
+    public long getFrozenBoundaryFloor() {
+        return frozenBoundaryFloor;
+    }
+
+    public int getFrozenBoundaryLimitHoursOrMonths() {
+        return frozenBoundaryLimitHoursOrMonths;
     }
 
     @Nullable
@@ -98,6 +116,11 @@ public class MatViewStateReader implements Mutable {
         // Mat view data commit means that cached intervals were applied and should be evicted.
         refreshIntervalsBaseTxn = -1;
         refreshIntervals.clear();
+        // WAL events don't carry the frozen-zone runtime state; reset to defaults so the
+        // caller (WalUtils.readMatViewState) can overlay it from the _mv.s state file.
+        backfillFrontier = Long.MIN_VALUE;
+        frozenBoundaryFloor = Numbers.LONG_NULL;
+        frozenBoundaryLimitHoursOrMonths = 0;
         return this;
     }
 
@@ -111,6 +134,11 @@ public class MatViewStateReader implements Mutable {
         refreshIntervalsBaseTxn = info.getRefreshIntervalsBaseTxn();
         refreshIntervals.clear();
         refreshIntervals.addAll(info.getRefreshIntervals());
+        // WAL events don't carry the frozen-zone runtime state; reset to defaults so the
+        // caller (WalUtils.readMatViewState) can overlay it from the _mv.s state file.
+        backfillFrontier = Long.MIN_VALUE;
+        frozenBoundaryFloor = Numbers.LONG_NULL;
+        frozenBoundaryLimitHoursOrMonths = 0;
         return this;
     }
 
@@ -124,6 +152,11 @@ public class MatViewStateReader implements Mutable {
         // of(MatViewInvalidationInfo) siblings already fully repopulate; this block-file path must too.
         clear();
         boolean matViewStateBlockFound = false;
+        // Default the frozen-zone fields: state files written before the frozen-zone feature
+        // (and freshly-created views) have no block of this type.
+        backfillFrontier = Long.MIN_VALUE;
+        frozenBoundaryFloor = Numbers.LONG_NULL;
+        frozenBoundaryLimitHoursOrMonths = 0;
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
         while (cursor.hasNext()) {
             final ReadableBlock block = cursor.next();
@@ -158,7 +191,15 @@ public class MatViewStateReader implements Mutable {
                     refreshIntervals.add(block.getLong(offset));
                     offset += Long.BYTES;
                 }
-                return this;
+                // keep going, because the frozen-zone block might follow
+                continue;
+            }
+            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_FROZEN_MSG_TYPE) {
+                backfillFrontier = block.getLong(0);
+                frozenBoundaryFloor = block.getLong(Long.BYTES);
+                if (block.length() >= 2L * Long.BYTES + Integer.BYTES) {
+                    frozenBoundaryLimitHoursOrMonths = block.getInt(2L * Long.BYTES);
+                }
             }
         }
         if (!matViewStateBlockFound) {
@@ -167,5 +208,30 @@ public class MatViewStateReader implements Mutable {
                     .put(']');
         }
         return this;
+    }
+
+    /**
+     * Overlays only the frozen-zone runtime fields (backfill frontier, boundary floor, and its LIMIT) from the
+     * {@code _mv.s} state file, leaving the refresh-state fields untouched. Used by
+     * {@link io.questdb.cairo.wal.WalUtils#readMatViewState} when the refresh state was reconstructed
+     * from a WAL event (which does not carry the frozen-zone fields) so the frontier still survives a
+     * restart. Resets the fields to their defaults when the file has no frozen-zone block.
+     */
+    public void ofFrozenZoneOverlay(@NotNull BlockFileReader reader) {
+        backfillFrontier = Long.MIN_VALUE;
+        frozenBoundaryFloor = Numbers.LONG_NULL;
+        frozenBoundaryLimitHoursOrMonths = 0;
+        final BlockFileReader.BlockCursor cursor = reader.getCursor();
+        while (cursor.hasNext()) {
+            final ReadableBlock block = cursor.next();
+            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_FROZEN_MSG_TYPE) {
+                backfillFrontier = block.getLong(0);
+                frozenBoundaryFloor = block.getLong(Long.BYTES);
+                if (block.length() >= 2L * Long.BYTES + Integer.BYTES) {
+                    frozenBoundaryLimitHoursOrMonths = block.getInt(2L * Long.BYTES);
+                }
+                return;
+            }
+        }
     }
 }

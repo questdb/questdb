@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewBackfillValidator;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalWriter;
@@ -60,7 +61,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
             int index,
             @Nullable ResourcePoolSupervisor<WalWriterTenant> supervisor
     ) {
-        return new WalWriterTenant(
+        final WalWriterTenant tenant = new WalWriterTenant(
                 this,
                 rootEntry,
                 entry,
@@ -73,6 +74,10 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 engine.getRecentWriteTracker(),
                 engine.getTelemetryWal()
         );
+        if (tableToken.isMatView()) {
+            tenant.setPreCommitValidator(new MatViewBackfillValidator(engine, tableToken));
+        }
+        return tenant;
     }
 
     public static class WalWriterTenant extends WalWriter implements PoolTenant<WalWriterTenant> {
