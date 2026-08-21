@@ -24,15 +24,18 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DurableAckRegistry;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.client.cutlass.qwp.client.QwpBufferWriter;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
@@ -53,7 +56,9 @@ import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
 import io.questdb.cutlass.qwp.server.QwpTudCache;
 import io.questdb.std.CharSequenceLongHashMap;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -61,9 +66,13 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -72,6 +81,7 @@ import org.junit.Test;
 import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
 import java.util.HashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
@@ -195,6 +205,69 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             } finally {
                 state.onDisconnected();
                 state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeWithBufferedRowsAppliesOnNextLookup() throws Exception {
+        // C4: an ALTER COLUMN TYPE that lands while the cached writer still
+        // holds buffered uncommitted rows exercises goActive()'s hardest path --
+        // rollUncommittedToNewSegment converts the buffered column data into the
+        // new type. The buffered row must survive the refresh and commit with
+        // the new column type.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE alter_buf (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("alter_buf"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                TableWriter.Row row = tud.getWriter().newRow(1_000_000L);
+                row.putLong(1, 42);
+                row.append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                execute("ALTER TABLE alter_buf ALTER COLUMN v TYPE DOUBLE");
+                drainWalQueue();
+
+                // The cache hit applies the pending structure change; the entry
+                // survives (same identity, same token).
+                WalTableUpdateDetails again = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("alter_buf"), null, null, 1
+                );
+                Assert.assertSame(tud, again);
+
+                // A second row, written through the SAME writer right after the
+                // cache-hit lookup, using the new column type and an index
+                // re-resolved from the writer's own (possibly refreshed)
+                // metadata -- exactly as a real caller would after a lookup.
+                // WalWriter.commit() has its own last-resort structure-version
+                // check, so a lookup that skips applyPendingStructureChanges
+                // would still self-heal for a row buffered entirely before the
+                // ALTER -- but it cannot retroactively fix a row whose bytes
+                // were written under stale metadata: putDouble() writes straight
+                // into the column's memory without a type check, so this row
+                // only survives the eventual conversion correctly if the
+                // writer's metadata was already DOUBLE at the moment it was
+                // written.
+                int vIndex = again.getWriter().getMetadata().getColumnIndex("v");
+                TableWriter.Row row2 = again.getWriter().newRow(2_000_000L);
+                row2.putDouble(vIndex, 84.5);
+                row2.append();
+
+                again.commit(false);
+                drainWalQueue();
+                assertQuery("SELECT v FROM alter_buf")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("v\n42.0\n84.5\n");
             }
         });
     }
@@ -1202,6 +1275,66 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeferredCommitDroppedTableDoesNotAdvanceWatermark() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE protocol_t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE protocol_u (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setHighestProcessedSequence(2);
+
+                // Drive T through the real QWP decoder and WAL appender as a
+                // deferred frame, exactly as the WebSocket ingress path does.
+                addEncodedRow(state, "protocol_t", 1, QwpConstants.FLAG_DEFER_COMMIT);
+                Assert.assertTrue(state.isDeferCommit());
+                state.processMessage();
+                Assert.assertTrue(state.isOk());
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue(state.isOk());
+                state.markUncommittedDeferredRows();
+                state.clearMessageState();
+
+                addEncodedRow(state, "protocol_t", 2, QwpConstants.FLAG_DEFER_COMMIT);
+                Assert.assertTrue(state.isDeferCommit());
+                state.processMessage();
+                Assert.assertTrue(state.isOk());
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue(state.isOk());
+                state.markUncommittedDeferredRows();
+                state.clearMessageState();
+
+                execute("DROP TABLE protocol_t");
+
+                // A non-deferred U frame closes the group without referencing T.
+                addEncodedRow(state, "protocol_u", 3, (byte) 0);
+                Assert.assertFalse(state.isDeferCommit());
+                state.processMessage();
+                Assert.assertTrue(state.isOk());
+                state.commit();
+
+                Assert.assertFalse("group close must fail after T discards buffered rows", state.isOk());
+                Assert.assertTrue("deferred-row clamp must remain armed", state.hasUncommittedDeferredRows());
+                // protocol_u's single commit is its first sequencer txn: 1.
+                // Pinning the value (not just key presence, which >= 0 would
+                // be) catches a stale or off-by-one seqTxn in the ack map.
+                Assert.assertEquals("U must still commit while the cache evicts dropped T",
+                        1L, state.getPendingAckSeqTxns().get("protocol_u"));
+
+                state.setHighestProcessedSequence(5);
+                Assert.assertEquals("watermark must not advance over discarded T rows",
+                        2, state.getHighestProcessedSequence());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testDeferredCommitErrorCausesFullClear() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
@@ -1420,6 +1553,122 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitAllBestEffortEvictsStaleTableAfterRawCairoException() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE be_raw (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("be_raw"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                int[] rawFailureCount = {0};
+                replaceWriterWithRawCairoException(tud, rawFailureCount, 0);
+                execute("DROP TABLE be_raw");
+
+                cache.commitAllBestEffort();
+                Assert.assertEquals(1, rawFailureCount[0]);
+                Assert.assertEquals(0, getCacheSize(cache));
+                Assert.assertEquals(0, cache.size());
+
+                cache.commitAllBestEffort();
+                Assert.assertEquals("evicted TUD must not be retried", 1, rawFailureCount[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testCommitAllBestEffortEvictsStaleTableWithZeroBufferedRows() throws Exception {
+        // The zero-row dropped-table case the loop's own comment calls out:
+        // with no uncommitted rows, tud.commit(false) never reaches this
+        // loop's own CommitFailedException/Throwable catch arms, so neither
+        // explicitly marks the writer in error. The entry is still evicted,
+        // but NOT because isTableTokenStale() is the sole evictor here as one
+        // might expect: TableUpdateDetails.commit() has its own unconditional
+        // tail check (pre-existing since 2023, unrelated to this fix) that
+        // marks a WAL writer in error whenever its cached token no longer
+        // resolves by name -- the exact same precondition isTableTokenStale()
+        // needs to return true. So isWriterInError() is already true by the
+        // time this loop's predicate runs, and isTableTokenStale() is never
+        // actually invoked (short-circuited). This asserts the writer starts
+        // healthy to prove it is not pre-marked, then proves the previously
+        // untested real-writer/zero-row/externally-dropped-table combination
+        // still evicts in one pass, and pins the (perhaps surprising) true
+        // reason: isWriterInError(), not isTableTokenStale().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE be_zero (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("be_zero"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                Assert.assertTrue("no rows buffered", tud.isFirstRow());
+                Assert.assertFalse("writer starts healthy", tud.isWriterInError());
+
+                execute("DROP TABLE be_zero");
+
+                cache.commitAllBestEffort();
+
+                Assert.assertEquals("zero-row dropped table must be evicted", 0, cache.size());
+                Assert.assertTrue(
+                        "commit()'s own tail check marks the writer in error before staleness is ever checked",
+                        tud.isWriterInError()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testCommitAllBestEffortEvictsTableWhoseCommitKeepsFailing() throws Exception {
+        // C2: a live-token writer whose commit persistently fails (here: a pure
+        // rename, whose commits are rejected by the sequencer's token check) was
+        // retried and error-logged on every fire-and-forget pass forever. The
+        // loop must mark it writer-in-error and evict it in the same pass; the
+        // next datagram for the name rebuilds a fresh entry. Fire-and-forget has
+        // no ack, so dropping the buffered rows is within the UDP contract.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE be_err (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("be_err"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                tud.getWriter().newRow(1_000_000L).append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                // Pure rename: the entry stays cached (not stale), but commits
+                // through the old writer fail on the sequencer token check.
+                execute("RENAME TABLE be_err TO be_err_dst");
+
+                cache.commitAllBestEffort();
+                Assert.assertEquals("failing writer must be evicted, not retried forever", 0, cache.size());
+            }
+        });
+    }
+
+    @Test
     public void testCommitAllBestEffortHandlesDroppedTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE be_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1475,10 +1724,12 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 // Should log the error and continue without throwing.
                 cache.commitAllBestEffort();
 
-                // TUD stays in the cache (not removed on non-drop failure)
-                // and its writer is marked as being in error state.
-                Assert.assertEquals(1, getCacheSize(cache));
+                // A non-drop commit failure marks the writer in error and the
+                // loop evicts it in the same pass: retrying cannot succeed for
+                // a distressed writer, and fire-and-forget has no client to
+                // report to.
                 Assert.assertTrue(tud.isWriterInError());
+                Assert.assertEquals(0, getCacheSize(cache));
             }
         });
     }
@@ -1525,6 +1776,138 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertEquals(1, getCacheSize(cache));
                 Assert.assertFalse(tud2.isDropped());
             }
+        });
+    }
+
+    @Test
+    public void testClearSurvivesDistressedCloseFailure() throws Exception {
+        // Companion to testResetSurvivesEvictionCloseFailure, but for clear()'s
+        // distressed free loop. When a commit failure marks the cache
+        // distressed, the per-message finally routes into clear(), which frees
+        // every cached TUD to discard the connection's buffered rows. Before
+        // the fix that free had no per-entry try/catch: one writer's close()
+        // failing on ENOSPC/EIO aborted the loop, leaving the map populated,
+        // isDistressed latched true and cachedTableCount stale -- wedging the
+        // cache for the life of the connection. The commit loops deliberately
+        // let their own free failures escape into setDistressed()+clear(), so
+        // this branch is their safety net and must not itself throw.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE clear_evict_1 (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE clear_evict_2 (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud1 = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("clear_evict_1"), null, null, 2
+                );
+                Assert.assertNotNull(tud1);
+                WalTableUpdateDetails tud2 = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("clear_evict_2"), null, null, 2
+                );
+                Assert.assertNotNull(tud2);
+                Assert.assertEquals(2, cache.size());
+
+                // Distressed path only: setDistressed() skips the rollback loop
+                // and goes straight to the free loop under test.
+                cache.setDistressed();
+
+                // Only one of the two writers fails to close; clear() must still
+                // free the other and finish resetting the map, the distressed
+                // flag and the count despite the failure.
+                replaceWriterWithFailingClose(tud1);
+
+                // No try/catch here on purpose: a propagating exception fails
+                // this test outright, which is exactly the pre-fix behavior this
+                // test guards against.
+                cache.clear();
+
+                Assert.assertEquals(0, cache.size());
+            }
+        });
+    }
+
+    @Test
+    public void testCommitAllBestEffortSurvivesEvictionCloseFailure() throws Exception {
+        // M2: the eviction free in the UDP loops closes the evicted writer,
+        // which rolls back its buffered rows through real file IO that can
+        // fail on ENOSPC/EIO. That failure must not escape the best-effort
+        // loop: it would kill the receiver thread in own-thread mode and
+        // abort close() mid-cleanup, leaking the cache, appender and buffer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE evict_io (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("evict_io"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+
+                // Simulate the evicted writer's close() failing (the real
+                // rollback-on-close IO hitting ENOSPC/EIO), then drop the
+                // entry directly so the loop's own commit attempt is
+                // skipped, keeping the eviction path exactly the one under
+                // test: the free of an already-dropped entry.
+                replaceWriterWithFailingClose(tud);
+                tud.setIsDropped();
+
+                cache.commitAllBestEffort();
+
+                // The loop swallowed the close failure and completed the eviction.
+                Assert.assertEquals(0, cache.size());
+            }
+        });
+    }
+
+    @Test
+    public void testResetSurvivesEvictionCloseFailure() throws Exception {
+        // Companion to testCommitAllBestEffortSurvivesEvictionCloseFailure,
+        // but for reset() (the loop close()/the constructor's failure path
+        // funnel through). Before the fix, reset() freed each remaining TUD
+        // with no per-entry try/catch: one entry's close() failure aborted
+        // the loop mid-way, skipping the table map clear and, back in
+        // close(), the ddlMem/path/symbolCachePool frees that follow it --
+        // and propagating out of QwpUdpReceiver.close()'s finally would have
+        // also skipped Misc.free(walAppender) and Unsafe.free(buf): the exact
+        // leak M2 set out to close.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE reset_evict_1 (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE reset_evict_2 (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            QwpTudCache cache = new QwpTudCache(engine, true, true, defaultColumnTypes, PartitionBy.DAY);
+
+            WalTableUpdateDetails tud1 = cache.getTableUpdateDetails(
+                    AllowAllSecurityContext.INSTANCE, new Utf8String("reset_evict_1"), null, null, 2
+            );
+            Assert.assertNotNull(tud1);
+            WalTableUpdateDetails tud2 = cache.getTableUpdateDetails(
+                    AllowAllSecurityContext.INSTANCE, new Utf8String("reset_evict_2"), null, null, 2
+            );
+            Assert.assertNotNull(tud2);
+            Assert.assertEquals(2, getCacheSize(cache));
+
+            // Only one of the two writers fails to close; reset() (invoked by
+            // close() below) must still free the other and finish clearing
+            // the map despite the failure.
+            replaceWriterWithFailingClose(tud1);
+
+            // No try/catch here on purpose: a propagating exception fails
+            // this test outright, which is exactly the pre-fix behavior this
+            // test guards against.
+            cache.close();
+
+            Assert.assertEquals(0, cache.size());
         });
     }
 
@@ -1583,6 +1966,188 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitAllReportsTxnCommittedInsideAppend() throws Exception {
+        // QwpWalAppender.appendToWalColumnar force-commits through
+        // commitIfMaxUncommittedRowsCountReached() once a table crosses
+        // qwp.max.uncommitted.rows. That commit advances the sequencer txn AND
+        // drains the writer, so the group-closing commitAll() finds an empty
+        // writer. It must still report the txn: the ack and durable-upload
+        // watermarks only ever learn about committed work through this consumer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE append_commit (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            // maxUncommittedRows=2 mirrors QwpIngressProcessorState, which passes
+            // qwp.max.uncommitted.rows. WAL writers report no metadata service, so
+            // this cache-level value - not the table's WITH clause - drives the
+            // force commit.
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY, -1, 2)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("append_commit"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                // Stand in for the appender: write past the cap, then run the same
+                // force commit the appender runs after endColumnarWrite().
+                for (int i = 0; i < 4; i++) {
+                    tud.getWriter().newRow(i).append();
+                }
+                tud.commitIfMaxUncommittedRowsCountReached();
+
+                long committedSeqTxn = tud.getLastSeqTxn();
+                Assert.assertTrue("the force commit must advance the txn", committedSeqTxn > 0);
+                Assert.assertTrue("the force commit must drain the writer", tud.isFirstRow());
+
+                long[] reported = new long[]{Long.MIN_VALUE};
+                int[] calls = new int[]{0};
+                try {
+                    cache.commitAll((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+
+                Assert.assertEquals("commitAll must report the txn exactly once", 1, calls[0]);
+                Assert.assertEquals(committedSeqTxn, reported[0]);
+
+                // Reporting is exactly-once: a second pass over unchanged state
+                // must not re-issue the txn.
+                calls[0] = 0;
+                try {
+                    cache.commitAll((_, _, _) -> calls[0]++);
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertEquals("an already-reported txn must not repeat", 0, calls[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testCommitAllPreservesPartialProgressBeforeNonDropFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE partial_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE partial_fail (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE partial_survivor (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails droppedTud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("partial_drop"), null, null, 3
+                );
+                WalTableUpdateDetails failingTud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("partial_fail"), null, null, 3
+                );
+                WalTableUpdateDetails survivorTud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("partial_survivor"), null, null, 3
+                );
+                Assert.assertNotNull(droppedTud);
+                Assert.assertNotNull(failingTud);
+                Assert.assertNotNull(survivorTud);
+
+                droppedTud.setIsDropped();
+                replaceWriterWithFake(failingTud, false);
+
+                try {
+                    cache.commitAll();
+                    Assert.fail("commitAll() should have re-thrown the non-drop failure");
+                } catch (CairoException e) {
+                    Assert.assertFalse(e.isTableDropped());
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable type", t);
+                }
+
+                Assert.assertEquals(2, getCacheSize(cache));
+                Assert.assertEquals(2, cache.size());
+                Assert.assertNull(getCachedTud(cache, "partial_drop"));
+                Assert.assertSame(failingTud, getCachedTud(cache, "partial_fail"));
+                Assert.assertSame(survivorTud, getCachedTud(cache, "partial_survivor"));
+            }
+        });
+    }
+
+    @Test
+    public void testCommitAllPropagatesWhenDroppedTableDiscardsBufferedRows() throws Exception {
+        // C2: the sibling of the getTableUpdateDetails guard. When commitAll
+        // evicts a DROPped table that still holds buffered rows, freeing the
+        // commitOnClose=false TUD rolls those rows back. On the deferred-ack
+        // path commitAll must PROPAGATE (not swallow) so the caller keeps its
+        // watermark clamp and the client replays, instead of the cumulative ack
+        // covering the discarded rows (a phantom ack -> silent data loss). A
+        // co-cached survivor (the group-closing frame's real target) still
+        // commits and advances exactly once.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE c2_dropped (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE c2_survivor (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails droppedTud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("c2_dropped"), null, null, 2
+                );
+                WalTableUpdateDetails survivorTud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("c2_survivor"), null, null, 2
+                );
+                Assert.assertNotNull(droppedTud);
+                Assert.assertNotNull(survivorTud);
+
+                // The survivor buffers a real row that must still commit.
+                survivorTud.getWriter().newRow(0L).append();
+                Assert.assertFalse(survivorTud.isFirstRow());
+
+                // Simulate c2_dropped being DROPped mid-group while still holding
+                // buffered rows: the fake reports a non-zero uncommitted row
+                // count and a table-dropped commit failure.
+                replaceWriterWithFake(droppedTud, true);
+
+                int[] advanced = {0};
+                try {
+                    cache.commitAll((_, _, _) -> advanced[0]++);
+                    Assert.fail("commitAll must propagate when a dropped table discards buffered rows");
+                } catch (CairoException e) {
+                    Assert.assertTrue(
+                            e.getFlyweightMessage().toString().contains("discarded buffered rows")
+                    );
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable type", t);
+                }
+
+                // The dropped table was evicted; the survivor stayed and
+                // advanced exactly once (the dropped table never acknowledges).
+                Assert.assertEquals(1, cache.size());
+                Assert.assertNull(getCachedTud(cache, "c2_dropped"));
+                Assert.assertSame(survivorTud, getCachedTud(cache, "c2_survivor"));
+                Assert.assertEquals("only the survivor advances", 1, advanced[0]);
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM c2_survivor").noRandomAccess().expectSize().returns("count\n1\n");
+        });
+    }
+
+    @Test
     public void testCommitAllRemovesDroppedTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE commit_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1603,22 +2168,25 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertNotNull(tud);
 
                 // Replace the real writer with a fake that simulates a
-                // table-dropped commit failure. This exercises the
-                // catch (CommitFailedException) branch where
-                // e.isTableDropped() returns true, followed by the
-                // if (tud.isDropped()) removal path.
+                // table-dropped commit failure. The fake reports a non-zero
+                // uncommitted row count, so the dropped table is discarding
+                // buffered rows. commitAll() must still evict it, but it must
+                // also PROPAGATE (C1) so a QWP deferred-ack caller cannot
+                // acknowledge the rows this eviction rolled back.
                 replaceWriterWithFake(tud, true);
 
-                // commitAll() should catch the CommitFailedException, mark
-                // the TUD as dropped, remove it from the cache, and free it.
                 Assert.assertEquals(1, getCacheSize(cache));
                 try {
                     cache.commitAll();
-                } catch (Exception e) {
-                    throw e;
+                    Assert.fail("commitAll() must propagate when a dropped table discards buffered rows");
+                } catch (CairoException e) {
+                    Assert.assertTrue(
+                            e.getFlyweightMessage().toString().contains("discarded buffered rows")
+                    );
                 } catch (Throwable t) {
-                    throw new AssertionError("unexpected throwable", t);
+                    throw new AssertionError("unexpected throwable type", t);
                 }
+                // The dropped TUD is still evicted and freed.
                 Assert.assertEquals(0, getCacheSize(cache));
             }
         });
@@ -1659,6 +2227,95 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 } catch (Throwable t) {
                     throw new AssertionError("unexpected throwable type", t);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testCommitAllRetriesReportAfterConsumerThrows() throws Exception {
+        // reportCommittedTxn() must not advance the TUD's reported-seqTxn watermark
+        // until the consumer has actually accepted the txn. If it advances first and
+        // the consumer then throws, that seqTxn is unreportable for the rest of the
+        // TUD's life -- a committed WAL txn the ack / durable-upload watermarks never
+        // learn about.
+        //
+        // This pins the CACHE-LEVEL contract only. The production wiring never reaches
+        // the re-offer: QwpIngressProcessorState.commit() and
+        // commitIfMaxUncommittedRowsReached() call tudCache.setDistressed() when the
+        // consumer throws, and the frame handler's state.clear() then frees every TUD,
+        // so the txn is lost under either ordering -- harmlessly, because the frame is
+        // NACKed and the client replays from its acked watermark (see
+        // testCommitConsumerThrowRejectsState). The ordering this test pins is defence
+        // in depth for a future caller that does not distress the cache.
+        //
+        // This test drives the real QwpTudCache on purpose: FakeConsumerTudCache
+        // overrides commitAll() and commitIfMaxUncommittedRowsReached() wholesale, so a
+        // state-level test never reaches reportCommittedTxn().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE consumer_throw_retry (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("consumer_throw_retry"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                tud.getWriter().newRow(0L).append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                // First pass: the consumer sees the txn and then fails, the way a
+                // CharSequenceLongHashMap rehash would fail on OutOfMemoryError
+                // partway through recordCommittedTable()'s puts.
+                long[] offered = new long[]{Long.MIN_VALUE};
+                IllegalStateException consumerFailure = Assert.assertThrows(
+                        "commitAll() must propagate the consumer failure",
+                        IllegalStateException.class,
+                        () -> cache.commitAll((_, _, seqTxn) -> {
+                            offered[0] = seqTxn;
+                            throw new IllegalStateException("consumer failed");
+                        })
+                );
+                Assert.assertEquals("consumer failed", consumerFailure.getMessage());
+                long committedSeqTxn = tud.getLastSeqTxn();
+                Assert.assertTrue("the commit must advance the txn", committedSeqTxn > 0);
+                Assert.assertEquals(committedSeqTxn, offered[0]);
+
+                // Second pass: the txn is committed in the WAL but no consumer has
+                // accepted it, so it must be offered again.
+                long[] reported = new long[]{Long.MIN_VALUE};
+                int[] calls = new int[]{0};
+                try {
+                    cache.commitAll((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertEquals("the txn the failed consumer never accepted must be re-offered", 1, calls[0]);
+                Assert.assertEquals(committedSeqTxn, reported[0]);
+
+                // Exactly-once still holds once a consumer has accepted it.
+                calls[0] = 0;
+                try {
+                    cache.commitAll((_, _, _) -> calls[0]++);
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertEquals("an accepted txn must not repeat", 0, calls[0]);
             }
         });
     }
@@ -1713,12 +2370,20 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCommitAllSkipsConsumerWhenFirstRow() throws Exception {
-        // When no uncommitted rows are pending, tud.isFirstRow() returns true and
-        // the consumer must NOT be invoked — the commit is a no-op and wouldn't
-        // advance the sequencer txn.
+    public void testCommitAllSkipsConsumerWhenSeqTxnNegative() throws Exception {
+        // commitAll() has no isFirstRow() guard of its own: it calls tud.commit(false)
+        // and then reportCommittedTxn() unconditionally. What keeps the consumer away
+        // here is reportCommittedTxn()'s FIRST guard clause, seqTxn < 0. This test
+        // creates the table, so its WalWriter is brand new and its lastSeqTxn is still
+        // TableSequencer.NO_TXN (Long.MIN_VALUE); with no rows pending, commit(false)
+        // is a no-op and leaves it there. Long.MIN_VALUE < 0 short-circuits the guard
+        // before the seqTxn <= getLastReportedSeqTxn() clause is even evaluated. That
+        // second clause would hold here too, because the TUD constructor seeds
+        // lastReportedSeqTxn from this same virgin writer, so this test pins the
+        // outcome for a writer with no txn rather than one clause in isolation; the
+        // <= clause has its own test, testCommitAllSkipsSeqTxnInheritedFromPooledWriter.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE first_row_skip (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE no_seq_txn_skip (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -1728,13 +2393,14 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             ) {
                 WalTableUpdateDetails tud = cache.getTableUpdateDetails(
                         AllowAllSecurityContext.INSTANCE,
-                        new Utf8String("first_row_skip"),
+                        new Utf8String("no_seq_txn_skip"),
                         null,
                         null,
                         1
                 );
                 Assert.assertNotNull(tud);
-                // Real writer, no rows ingested → getUncommittedRowCount() == 0 → isFirstRow() is true.
+                // Real writer, no rows ingested, so commit(false) below is a no-op and
+                // the writer never gets a sequencer txn.
                 Assert.assertTrue(tud.isFirstRow());
 
                 boolean[] invoked = new boolean[]{false};
@@ -1745,7 +2411,189 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 } catch (Throwable t) {
                     throw new AssertionError("unexpected throwable", t);
                 }
-                Assert.assertFalse("consumer must be skipped when no rows to commit", invoked[0]);
+                Assert.assertFalse("consumer must be skipped while the writer's seqTxn is negative", invoked[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testCommitAllSkipsSeqTxnInheritedFromPooledWriter() throws Exception {
+        // A WalWriter returned to the engine pool keeps its lastSeqTxn: the pool's
+        // refresh() only calls goActive(), and neither goActive() nor rollback0()
+        // touches the field. So the next connection that borrows the same writer
+        // starts life seeing a seqTxn IT never committed. reportCommittedTxn must
+        // not hand that inherited txn to the ack / durable-upload watermarks --
+        // doing so parks a (table, seqTxn) entry the connection has no work behind,
+        // which a PRIMARY->REPLICA demote then waits out in
+        // roleChangeCloseWithUploadGrace.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pooled_inherit (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+
+            // Connection A: commit one row, then release the writer back to the pool.
+            long committedByA;
+            try (QwpTudCache cacheA = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tudA = cacheA.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("pooled_inherit"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tudA);
+                tudA.getWriter().newRow(0L).append();
+                try {
+                    cacheA.commitAll();
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                committedByA = tudA.getLastSeqTxn();
+                Assert.assertTrue("connection A must have advanced the txn", committedByA > 0);
+            }
+
+            // Connection B: re-borrows the warm writer and commits NOTHING.
+            try (QwpTudCache cacheB = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tudB = cacheB.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("pooled_inherit"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tudB);
+                // Premise of the test: the re-borrowed writer really did carry A's txn over.
+                Assert.assertEquals(
+                        "premise: the pooled writer must retain the previous owner's seqTxn",
+                        committedByA,
+                        tudB.getLastSeqTxn()
+                );
+                Assert.assertTrue(tudB.isFirstRow());
+
+                long[] reported = new long[]{Long.MIN_VALUE};
+                int[] calls = new int[]{0};
+                try {
+                    cacheB.commitAll((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertEquals(
+                        "an inherited seqTxn must not be reported (got " + reported[0] + ")",
+                        0,
+                        calls[0]
+                );
+
+                // A genuine commit on this connection must still be reported.
+                tudB.getWriter().newRow(1L).append();
+                try {
+                    cacheB.commitAll((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertEquals("connection B's own commit must be reported", 1, calls[0]);
+                Assert.assertEquals(tudB.getLastSeqTxn(), reported[0]);
+                Assert.assertTrue("the reported txn must be B's, not A's", reported[0] > committedByA);
+            }
+        });
+    }
+
+    @Test
+    public void testCommitAllStopsBeforeLaterDroppedTableOnNonDropFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE stop_fail (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE stop_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails failingTud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("stop_fail"), null, null, 2
+                );
+                WalTableUpdateDetails droppedTud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("stop_drop"), null, null, 2
+                );
+                Assert.assertNotNull(failingTud);
+                Assert.assertNotNull(droppedTud);
+
+                replaceWriterWithFake(failingTud, false);
+                droppedTud.setIsDropped();
+
+                try {
+                    cache.commitAll();
+                    Assert.fail("commitAll() should stop at the non-drop failure");
+                } catch (CairoException e) {
+                    Assert.assertFalse(e.isTableDropped());
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable type", t);
+                }
+
+                Assert.assertEquals(2, getCacheSize(cache));
+                Assert.assertEquals(2, cache.size());
+                Assert.assertSame(failingTud, getCachedTud(cache, "stop_fail"));
+                Assert.assertSame(droppedTud, getCachedTud(cache, "stop_drop"));
+            }
+        });
+    }
+
+    @Test
+    public void testCommitIfMaxUncommittedRowsPropagatesWhenDroppedTableDiscardsBufferedRows() throws Exception {
+        // C1 on the mid-group forced-commit path: a max-uncommitted-rows commit
+        // that hits a DROPped table with buffered rows must propagate, not
+        // swallow, so the group-closing commit cannot later release the
+        // deferred-ack clamp over rows this eviction discarded.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cim_dropped (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            // maxUncommittedRows=1: a single buffered row reaches the force-commit
+            // threshold (WAL tables have no metadataService, so the cache's
+            // default is used).
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY, -1, 1)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("cim_dropped"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+
+                // Simulate DROP mid-group with a buffered row over the threshold.
+                replaceWriterWithFake(tud, true);
+
+                try {
+                    cache.commitIfMaxUncommittedRowsReached((_, _, _) -> {
+                    });
+                    Assert.fail("commitIfMaxUncommittedRowsReached must propagate discarded buffered rows");
+                } catch (CairoException e) {
+                    Assert.assertTrue(
+                            e.getFlyweightMessage().toString().contains("discarded buffered rows")
+                    );
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable type", t);
+                }
+                Assert.assertEquals(0, cache.size());
             }
         });
     }
@@ -1789,6 +2637,405 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 state.commit();
 
                 Assert.assertFalse(state.isOk());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCommitIfMaxUncommittedRowsReachedPopulatesDurableMaps() throws Exception {
+        // Joins the two halves of the durable-ack path that every other test covers
+        // separately: the real QwpTudCache.reportCommittedTxn() feeding the real
+        // QwpIngressProcessorState.recordCommittedTable(). The state-level tests install
+        // FakeConsumerTudCache, which overrides both commit entry points wholesale so
+        // reportCommittedTxn never runs, and the cache-level tests pass a counting lambda
+        // rather than the production committedTxnConsumer. Neither shape proves that a txn
+        // the cache reports reaches pendingDurableSeqTxns AND pendingDurableDirNames --
+        // and the dir name is what collectDurableProgress() looks the registry up by, so
+        // losing it silently strands the connection's durable work.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE durable_seam (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+
+                // A REAL cache in place of the state's own, not FakeConsumerTudCache.
+                // maxUncommittedRows=2 mirrors qwp.max.uncommitted.rows so the
+                // appender-style force commit below actually fires. The state takes
+                // ownership on the successful field set and frees it in close().
+                Field tudCacheField = QwpIngressProcessorState.class.getDeclaredField("tudCache");
+                tudCacheField.setAccessible(true);
+                Misc.free((QwpTudCache) tudCacheField.get(state));
+                QwpTudCache cache = new QwpTudCache(
+                        engine, true, true, new DefaultColumnTypes(lineConfig), PartitionBy.DAY, -1, 2
+                );
+                try {
+                    tudCacheField.set(state, cache);
+                } catch (Throwable th) {
+                    Misc.free(cache);
+                    throw new AssertionError("could not install the real cache", th);
+                }
+
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("durable_seam"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+                final String dirName = tud.getTableToken().getDirName();
+
+                // Stand in for QwpWalAppender: write past the cap, then run the same
+                // force commit it runs after endColumnarWrite(). It drains the writer,
+                // so nothing downstream can infer the commit from pending rows.
+                for (int i = 0; i < 4; i++) {
+                    tud.getWriter().newRow(i).append();
+                }
+                tud.commitIfMaxUncommittedRowsCountReached();
+                final long committedSeqTxn = tud.getLastSeqTxn();
+                Assert.assertTrue("the force commit must advance the txn", committedSeqTxn > 0);
+                Assert.assertTrue("the force commit must drain the writer", tud.isFirstRow());
+
+                // Production wiring, end to end: the state hands the cache its own
+                // committedTxnConsumer, which is this::recordCommittedTable.
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue("the mid-group commit must not reject the state", state.isOk());
+
+                Assert.assertEquals(
+                        "the reported txn must reach the cumulative-ack watermark",
+                        committedSeqTxn,
+                        state.getPendingAckSeqTxns().get("durable_seam")
+                );
+
+                Field seqTxnsField = QwpIngressProcessorState.class.getDeclaredField("pendingDurableSeqTxns");
+                seqTxnsField.setAccessible(true);
+                CharSequenceLongHashMap pendingDurableSeqTxns = (CharSequenceLongHashMap) seqTxnsField.get(state);
+                Field dirNamesField = QwpIngressProcessorState.class.getDeclaredField("pendingDurableDirNames");
+                dirNamesField.setAccessible(true);
+                @SuppressWarnings("unchecked")
+                CharSequenceObjHashMap<String> pendingDurableDirNames =
+                        (CharSequenceObjHashMap<String>) dirNamesField.get(state);
+
+                Assert.assertEquals("exactly one table has outstanding durable work", 1, pendingDurableSeqTxns.size());
+                Assert.assertEquals(
+                        "the reported txn must reach the durable-upload watermark",
+                        committedSeqTxn,
+                        pendingDurableSeqTxns.get("durable_seam")
+                );
+                Assert.assertEquals("exactly one table has a pending dir name", 1, pendingDurableDirNames.size());
+                Assert.assertEquals(
+                        "the durable entry must carry the table's dir name, the key the registry is "
+                                + "queried by; without it collectDurableProgress can never cover this table",
+                        dirName,
+                        pendingDurableDirNames.get("durable_seam")
+                );
+                Assert.assertTrue("the connection must count as having pending durable work", state.hasPendingDurableWork());
+
+                // The pair is usable as a durable watermark: a registry that has
+                // uploaded exactly this seqTxn under this dir name closes the table out.
+                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
+                registry.set(dirName, committedSeqTxn);
+                CharSequenceLongHashMap progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(1, progress.size());
+                Assert.assertEquals(committedSeqTxn, progress.get("durable_seam"));
+                Assert.assertTrue(state.isDurableProgressSnapshotFullyUploaded());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCommitIfMaxUncommittedRowsReachedReportsStructuralTxnOnDeferredFrame() throws Exception {
+        // CHARACTERIZATION, not regression: this pins deliberately accepted behaviour
+        // rather than guarding against a bug. A FLAG_DEFER_COMMIT frame that introduces a
+        // column runs an implicit ALTER, and structural txns share the sequencer txn space
+        // with data txns, so the mid-group commitIfMaxUncommittedRowsReached() pass finds
+        // an advanced seqTxn with no rows behind it and reports it. Accepted because the
+        // ALTER is permanent work this connection produced, because the value never
+        // reaches the client as a durable watermark (collectDurableProgress forwards only
+        // the registry's uploadedSeqTxn), and because the group-closing commit supersedes
+        // it with the data txn -- which is the second half of what this test asserts.
+        // This test drives the real cache on purpose: FakeConsumerTudCache overrides
+        // both commit entry points wholesale, so a state-level test would never reach
+        // reportCommittedTxn.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE deferred_structural (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            // maxUncommittedRows far above the row count, so the mid-group pass has
+            // nothing to flush -- the below-the-cap deferred shape.
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY, -1, 10_000)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("deferred_structural"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                // Stand in for the appender: phase 1 adds the column the frame
+                // introduced, phase 2 appends rows that stay below the cap.
+                final long preAlterSeqTxn = tud.getLastSeqTxn();
+                tud.getWriter().addColumn("extra", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                final long structuralSeqTxn = tud.getLastSeqTxn();
+                // A writer with no txn yet reports NO_TXN (Long.MIN_VALUE), so the ALTER has to
+                // move getLastSeqTxn() strictly forward AND off the sentinel onto a real txn.
+                Assert.assertTrue(
+                        "the implicit ALTER must advance the sequencer txn, was: "
+                                + preAlterSeqTxn + " -> " + structuralSeqTxn,
+                        structuralSeqTxn > preAlterSeqTxn && structuralSeqTxn >= 0
+                );
+                tud.getWriter().newRow(0).append();
+                Assert.assertFalse("the deferred frame's rows must stay uncommitted", tud.isFirstRow());
+
+                long[] reported = new long[]{Long.MIN_VALUE};
+                int[] calls = new int[]{0};
+                try {
+                    cache.commitIfMaxUncommittedRowsReached((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+
+                Assert.assertEquals("the metadata-only txn is reported exactly once", 1, calls[0]);
+                Assert.assertEquals(structuralSeqTxn, reported[0]);
+                Assert.assertFalse("reporting must not commit the deferred rows", tud.isFirstRow());
+
+                // The group-closing commit supersedes the metadata-only entry with the
+                // data txn, which is strictly ahead of it.
+                calls[0] = 0;
+                try {
+                    cache.commitAll((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+
+                Assert.assertEquals("the group-closing commit reports exactly once", 1, calls[0]);
+                Assert.assertTrue(
+                        "the data txn must supersede the metadata-only txn",
+                        reported[0] > structuralSeqTxn
+                );
+                Assert.assertEquals(reported[0], tud.getLastReportedSeqTxn());
+            }
+        });
+    }
+
+    @Test
+    public void testCommitIfMaxUncommittedRowsReachedReportsTxnCommittedInsideAppend() throws Exception {
+        // Mid-group twin of testCommitAllReportsTxnCommittedInsideAppend, driving the
+        // real cache: every other caller of commitIfMaxUncommittedRowsReached() reaches
+        // it through a test double that overrides it wholesale.
+        // QwpWalAppender.appendToWalColumnar force-commits through
+        // commitIfMaxUncommittedRowsCountReached() once a table crosses
+        // qwp.max.uncommitted.rows. That commit advances the sequencer txn AND drains
+        // the writer, so the deferred group's mid-batch
+        // commitIfMaxUncommittedRowsReached() finds an empty writer. It must still
+        // report the txn: the ack and durable-upload watermarks only ever learn about
+        // committed work through this consumer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE max_rows_append_commit (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            // maxUncommittedRows=2 mirrors QwpIngressProcessorState, which passes
+            // qwp.max.uncommitted.rows. WAL writers report no metadata service, so
+            // this cache-level value - not the table's WITH clause - drives the
+            // force commit.
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY, -1, 2)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("max_rows_append_commit"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                // Stand in for the appender: write past the cap, then run the same
+                // force commit the appender runs after endColumnarWrite().
+                for (int i = 0; i < 4; i++) {
+                    tud.getWriter().newRow(i).append();
+                }
+                tud.commitIfMaxUncommittedRowsCountReached();
+
+                long committedSeqTxn = tud.getLastSeqTxn();
+                Assert.assertTrue("the force commit must advance the txn", committedSeqTxn > 0);
+                Assert.assertTrue("the force commit must drain the writer", tud.isFirstRow());
+
+                long[] reported = new long[]{Long.MIN_VALUE};
+                int[] calls = new int[]{0};
+                try {
+                    cache.commitIfMaxUncommittedRowsReached((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+
+                Assert.assertEquals(
+                        "commitIfMaxUncommittedRowsReached must report the txn exactly once",
+                        1,
+                        calls[0]
+                );
+                Assert.assertEquals(committedSeqTxn, reported[0]);
+
+                // Reporting is exactly-once: a second mid-batch pass over unchanged
+                // state must not re-issue the txn.
+                calls[0] = 0;
+                try {
+                    cache.commitIfMaxUncommittedRowsReached((_, _, _) -> calls[0]++);
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertEquals("an already-reported txn must not repeat", 0, calls[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testCommitIfMaxUncommittedRowsReachedStructuralTxnHoldsDurableWorkPending() throws Exception {
+        // The junction testCommitIfMaxUncommittedRowsReachedReportsStructuralTxnOnDeferredFrame
+        // stops short of: that test drives a bare consumer lambda, so it pins the cache's
+        // reporting but never where the reported txn lands. The metadata-only txn a
+        // below-the-cap FLAG_DEFER_COMMIT frame reports reaches
+        // QwpIngressProcessorState.recordCommittedTable, which fills pendingDurableSeqTxns
+        // and makes hasPendingDurableWork() true; the base shape reported nothing on this
+        // frame shape, so those maps stayed empty. QwpIngressUpgradeProcessor reads that
+        // predicate in opposite directions: roleChangeCloseWithUploadGrace consults the
+        // registry only while work is pending, and defers the close until the registry
+        // covers it, while beginCloseEchoWaitIfEligible demands !hasPendingDurableWork()
+        // among its three conjuncts, so pending work disqualifies the close-echo wait and
+        // finishServerFatalClose drains instead. This test pins the inputs those paths
+        // read -- the predicate and the snapshot coverage flags -- not the close outcome,
+        // which QwpIngressDeferredCloseDurableAckTest drives at the processor level.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE deferred_structural_pending (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+
+                // A REAL cache in place of the state's own, so the production
+                // committedTxnConsumer runs behind the real reportCommittedTxn.
+                // maxUncommittedRows far above the row count keeps the mid-group pass
+                // with nothing to flush -- the below-the-cap deferred shape. The state
+                // takes ownership on the successful field set and frees it in close().
+                Field tudCacheField = QwpIngressProcessorState.class.getDeclaredField("tudCache");
+                tudCacheField.setAccessible(true);
+                Misc.free((QwpTudCache) tudCacheField.get(state));
+                QwpTudCache cache = new QwpTudCache(
+                        engine, true, true, new DefaultColumnTypes(lineConfig), PartitionBy.DAY, -1, 10_000
+                );
+                try {
+                    tudCacheField.set(state, cache);
+                } catch (Throwable th) {
+                    Misc.free(cache);
+                    throw new AssertionError("could not install the real cache", th);
+                }
+
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("deferred_structural_pending"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+                final String dirName = tud.getTableToken().getDirName();
+
+                Assert.assertFalse(
+                        "a fresh connection owes no durable work",
+                        state.hasPendingDurableWork()
+                );
+
+                // Stand in for the appender on a deferred frame: phase 1 runs the
+                // implicit ALTER for the column the frame introduced, phase 2 appends
+                // rows that stay below the cap.
+                final long preAlterSeqTxn = tud.getLastSeqTxn();
+                tud.getWriter().addColumn("extra", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                final long structuralSeqTxn = tud.getLastSeqTxn();
+                // A writer with no txn yet reports NO_TXN (Long.MIN_VALUE), so the ALTER has to
+                // move getLastSeqTxn() strictly forward AND off the sentinel onto a real txn.
+                Assert.assertTrue(
+                        "the implicit ALTER must advance the sequencer txn, was: "
+                                + preAlterSeqTxn + " -> " + structuralSeqTxn,
+                        structuralSeqTxn > preAlterSeqTxn && structuralSeqTxn >= 0
+                );
+                tud.getWriter().newRow(0).append();
+                Assert.assertFalse("the deferred frame's rows must stay uncommitted", tud.isFirstRow());
+
+                // Production wiring: the state hands the cache this::recordCommittedTable.
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue("the mid-group pass must not reject the state", state.isOk());
+                Assert.assertFalse("reporting must not commit the deferred rows", tud.isFirstRow());
+
+                Field seqTxnsField = QwpIngressProcessorState.class.getDeclaredField("pendingDurableSeqTxns");
+                seqTxnsField.setAccessible(true);
+                CharSequenceLongHashMap pendingDurableSeqTxns = (CharSequenceLongHashMap) seqTxnsField.get(state);
+                Assert.assertEquals(
+                        "the metadata-only txn must reach the durable-upload watermark",
+                        structuralSeqTxn,
+                        pendingDurableSeqTxns.get("deferred_structural_pending")
+                );
+                Assert.assertTrue(
+                        "a metadata-only txn from a deferred frame must hold the connection's "
+                                + "durable work pending, which is what defers a demote close",
+                        state.hasPendingDurableWork()
+                );
+
+                // What roleChangeCloseWithUploadGrace reads on a demote here: with no upload
+                // coverage yet the snapshot falls short of full coverage, which is what sends
+                // that path into the deferral. The snapshot itself stays empty because
+                // collectDurableProgress forwards only the registry's own uploadedSeqTxn,
+                // never the pending value.
+                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
+                Assert.assertEquals(0, state.collectDurableProgress(registry).size());
+                Assert.assertFalse(
+                        "an unuploaded metadata-only txn must leave the snapshot short of full coverage",
+                        state.isDurableProgressSnapshotFullyUploaded()
+                );
+
+                // ...and the bound on that deferral: coverage of the ALTER's own seqTxn
+                // restores full coverage, without the deferred group ever committing its rows.
+                registry.set(dirName, structuralSeqTxn);
+                CharSequenceLongHashMap progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(1, progress.size());
+                Assert.assertEquals(structuralSeqTxn, progress.get("deferred_structural_pending"));
+                Assert.assertTrue(state.isDurableProgressSnapshotFullyUploaded());
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -1936,6 +3183,215 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitWalTablesEvictsStaleTableAfterRawCairoException() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE interval_raw (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("interval_raw"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                int[] rawFailureCount = {0};
+                // commitIfIntervalElapsed() reads the row count while completing its
+                // debug record, then commit() reads it again. Let the log read succeed
+                // and throw raw CairoException from commit() itself.
+                replaceWriterWithRawCairoException(tud, rawFailureCount, 1);
+                execute("DROP TABLE interval_raw");
+
+                cache.commitWalTables(Long.MAX_VALUE);
+                Assert.assertEquals(1, rawFailureCount[0]);
+                Assert.assertEquals(0, getCacheSize(cache));
+                Assert.assertEquals(0, cache.size());
+
+                cache.commitWalTables(Long.MAX_VALUE);
+                Assert.assertEquals("evicted TUD must not be retried", 1, rawFailureCount[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testCommitWalTablesEvictsStaleTableWithZeroBufferedRows() throws Exception {
+        // Same zero-row/dropped-table scenario as the commitAllBestEffort
+        // sibling test (see its comment for the full explanation), exercised
+        // through commitWalTables()'s own commit-if-elapsed call path: with
+        // no uncommitted rows, tud.commitIfIntervalElapsed() never reaches
+        // this loop's own catch arms, so the entry is evicted via
+        // TableUpdateDetails.commit()'s own pre-existing tail check (marks a
+        // WAL writer in error whenever its cached token no longer resolves by
+        // name), NOT via isTableTokenStale() -- that check needs the exact
+        // same precondition and is short-circuited away by the time this
+        // loop's predicate runs. Starts from a healthy writer to prove it is
+        // not pre-marked, then proves the previously untested
+        // real-writer/zero-row/externally-dropped-table combination still
+        // evicts in one pass, and pins the true reason.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE interval_zero (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("interval_zero"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                Assert.assertTrue("no rows buffered", tud.isFirstRow());
+                Assert.assertFalse("writer starts healthy", tud.isWriterInError());
+
+                execute("DROP TABLE interval_zero");
+
+                cache.commitWalTables(Long.MAX_VALUE);
+
+                Assert.assertEquals("zero-row dropped table must be evicted", 0, cache.size());
+                Assert.assertTrue(
+                        "commit()'s own tail check marks the writer in error before staleness is ever checked",
+                        tud.isWriterInError()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testCommitWalTablesNonDropCommitFailure() throws Exception {
+        // Mirrors testCommitAllBestEffortNonDropCommitFailure but drives
+        // commitWalTables()'s own CommitFailedException(isTableDropped=false)
+        // catch arm directly -- the sibling test only exercises
+        // commitAllBestEffort(), and the raw-CairoException test above only
+        // exercises commitWalTables()'s generic catch(Throwable) arm, leaving
+        // this branch unverified.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE interval_fail (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("interval_fail"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                replaceWriterWithFake(tud, false);
+
+                cache.commitWalTables(Long.MAX_VALUE);
+
+                // A non-drop commit failure marks the writer in error and the
+                // loop evicts it in the same pass.
+                Assert.assertTrue(tud.isWriterInError());
+                Assert.assertEquals(0, getCacheSize(cache));
+            }
+        });
+    }
+
+    @Test
+    public void testStaleTokenAloneEvictsInCommitWalTables() throws Exception {
+        // M7b: in every other eviction test the commit runs first and its
+        // dropped/error detection short-circuits the staleness check. Here the
+        // commit interval has NOT elapsed, so commitIfIntervalElapsed() returns
+        // before committing anything -- isTableTokenStale must carry the
+        // eviction by itself.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE stale_only (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY,
+                    Long.MAX_VALUE / 4, 500_000)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("stale_only"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                Assert.assertEquals(1, cache.size());
+
+                execute("DROP TABLE stale_only");
+
+                // Wall clock 0: far below the entry's nextCommitTime, so the
+                // interval commit is skipped -- no CommitFailedException, no
+                // writerInError. Only the staleness check can evict.
+                cache.commitWalTables(0);
+                Assert.assertEquals(
+                        "isTableTokenStale must evict without a commit having run",
+                        0, cache.size()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testReadOnlyRefusalEvictsCachedTableFromUdpLoop() throws Exception {
+        // M3 (decided): a role-derived read-only refusal EVICTS the cached entry,
+        // discarding its buffered rows. This is deliberate, not an oversight:
+        // ENT quiesces the UDP loop on demote (acceptOpen=false), so this path
+        // only fires in the narrow flip window -- once, bounded by one commit
+        // window; the WS path answers the same refusal by severing the
+        // connection (roleChangeClosePending), and ENT's getWalWriter refuses
+        // acquisition on a read-only node, so retaining a held writer would keep
+        // a hole in that fence open. See the comment in commitWalTables.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ro_evict (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            AtomicBoolean readOnly = new AtomicBoolean(false);
+            try (CairoEngine roEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                @Override
+                public boolean isReadOnlyMode() {
+                    return readOnly.get();
+                }
+            }) {
+                LineHttpProcessorConfiguration lineConfig =
+                        new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+                DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+                try (QwpTudCache cache = new QwpTudCache(
+                        roEngine, true, true, defaultColumnTypes, PartitionBy.DAY, 1, 500_000)
+                ) {
+                    WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE, new Utf8String("ro_evict"), null, null, 1
+                    );
+                    Assert.assertNotNull(tud);
+                    tud.getWriter().newRow(1_000_000L).append();
+                    Assert.assertEquals(1, cache.size());
+
+                    // Demote: the next interval commit refuses with readOnlyAccess()
+                    // and the loop evicts the entry, rolling its buffered row back.
+                    readOnly.set(true);
+                    cache.commitWalTables(Long.MAX_VALUE - 1);
+                    Assert.assertEquals(
+                            "read-only refusal must evict the cached entry", 0, cache.size()
+                    );
+                }
+            }
+            // The buffered row was rolled back by the eviction, not committed.
+            drainWalQueue();
+            assertQuery("SELECT count() FROM ro_evict")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+        });
+    }
+
+    @Test
     public void testDoubleCloseIsSafe() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
@@ -1990,6 +3446,65 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetTableUpdateDetailsEvictsEntryWhenGoActiveFails() throws Exception {
+        // C2: goActive() marks the writer distressed on ANY failure and the flag
+        // never clears. The table is alive, so no staleness check would ever
+        // evict the entry -- without eviction here the table is wedged on this
+        // receiver until restart. The lookup must evict + free the entry on
+        // goActive() failure and rethrow; the next lookup heals with a fresh
+        // writer from the pool.
+        final AtomicBoolean failNextChangeLogOpen = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, "_txnlog.meta.d")
+                        && failNextChangeLogOpen.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE go_fail (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("go_fail"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                Assert.assertEquals(1, cache.size());
+
+                // Advance the table's seqTxn so the next lookup re-checks the
+                // change log, and arm the one-shot open failure.
+                execute("ALTER TABLE go_fail ALTER COLUMN val TYPE LONG");
+                drainWalQueue();
+                failNextChangeLogOpen.set(true);
+
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE, new Utf8String("go_fail"), null, null, 1
+                    );
+                    Assert.fail("a failed goActive() must propagate");
+                } catch (CairoException ignore) {
+                }
+                Assert.assertEquals("failed entry must be evicted", 0, cache.size());
+
+                // The next lookup heals with a fresh writer and ingestion works.
+                WalTableUpdateDetails healed = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("go_fail"), null, null, 1
+                );
+                Assert.assertNotNull(healed);
+                Assert.assertNotSame(tud, healed);
+            }
+        });
+    }
+
+    @Test
     public void testGetTableUpdateDetailsFreesWriterOnFailure() throws Exception {
         // Exercises the catch(Throwable) block in QwpTudCache.getTableUpdateDetails()
         // that frees the WAL writer when the try block fails after the writer
@@ -2031,6 +3546,405 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 } catch (RuntimeException e) {
                     Assert.assertEquals("simulated map failure", e.getMessage());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsPropagatesWhenEvictingStaleTudWithBufferedRows() throws Exception {
+        // C1 regression: a stale (DROPped) cached TUD that still holds
+        // uncommitted rows must not be evicted silently. Freeing a TUD built
+        // with commitOnClose=false rolls its buffered rows back; in the QWP
+        // deferred-ack path a later group-closing commit would then clear the
+        // uncommitted-deferred-rows clamp and let the cumulative durable-ack
+        // cover rows that this eviction discarded -- a phantom ack and silent
+        // data loss. The dropped table is gone, so the rows cannot be re-homed;
+        // evicting such a TUD must propagate so the caller cannot acknowledge
+        // discarded rows (the UDP receiver, which never acks, simply drops the
+        // datagram and heals on the next one).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE c1_evict (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("c1_evict"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                // Buffer an uncommitted row so the stale writer holds pending data.
+                tud.getWriter().newRow(0L).append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                // Drop the table so the cached TUD becomes stale (its token
+                // resolves by neither name nor directory).
+                execute("DROP TABLE c1_evict");
+
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE,
+                            new Utf8String("c1_evict"),
+                            null,
+                            null,
+                            1
+                    );
+                    Assert.fail("evicting a stale TUD with buffered rows must propagate");
+                } catch (CairoException e) {
+                    Assert.assertTrue(
+                            e.getFlyweightMessage().toString().contains("discarded buffered rows")
+                    );
+                }
+
+                // The stale TUD was evicted; the cache no longer retains it.
+                Assert.assertEquals(0, cache.size());
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsRenamedTableIsNotEvicted() throws Exception {
+        // M1: the second term of isTableTokenStale (getTableTokenByDirName ==
+        // null) must exclude a live RENAMEd table from eviction. A rename keeps
+        // the on-disk directory, so the dir still resolves the token even though
+        // the OLD name no longer does. A re-lookup by the old name must return
+        // the SAME cached TUD (not evicted) and must NOT roll its buffered rows
+        // back -- dropping or inverting the term would treat the rename as a
+        // drop, evict the live writer, and (because it holds buffered rows)
+        // throw the C1 discard exception. (Committing through the stale writer
+        // after a rename is a separate, pre-existing concern: WalWriter.commit
+        // then raises TableReferenceOutOfDateException; the guard's job is only
+        // to avoid the false eviction, which is what this test pins.) When the
+        // old name IS re-used by a new table, the entry becomes stale and eviction
+        // salvage-commits its buffered rows into the renamed table -- see
+        // testGetTableUpdateDetailsSalvagesRenamedTablesBufferedRowsOnRecreate.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rename_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("rename_src"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+
+                // Buffer an uncommitted row, then rename the table out from
+                // under the cache (which is still keyed by the old name).
+                tud.getWriter().newRow(1_000_000L).append();
+                Assert.assertFalse(tud.isFirstRow());
+                execute("RENAME TABLE rename_src TO rename_dst");
+
+                // Re-lookup by the OLD name: the token resolves by directory, so
+                // the TUD is NOT stale and must be returned unchanged, with its
+                // buffered row intact (not rolled back by a false eviction).
+                WalTableUpdateDetails again = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("rename_src"), null, null, 1
+                );
+                Assert.assertSame("a renamed (not dropped) table must not be evicted", tud, again);
+                Assert.assertEquals(1, cache.size());
+                Assert.assertFalse("buffered rows must survive a rename", again.isFirstRow());
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsSalvagesRenamedTablesBufferedRowsOnRecreate() throws Exception {
+        // C1: when the old name is re-used by a NEW table (rename + recreate),
+        // the cached entry is stale -- but its writer's table is alive under the
+        // new name, so its buffered rows are salvageable: the eviction commits
+        // them through the old writer (into the renamed table) instead of
+        // discarding them, then rebuilds the entry against the new table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sal_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("sal_src"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                tud.getWriter().newRow(1_000_000L).append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                execute("RENAME TABLE sal_src TO sal_dst");
+                execute("CREATE TABLE sal_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                WalTableUpdateDetails rebuilt = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("sal_src"), null, null, 1
+                );
+                Assert.assertNotNull(rebuilt);
+                Assert.assertNotSame("stale entry must be rebuilt against the new table", tud, rebuilt);
+                Assert.assertEquals(1, cache.size());
+
+                // The buffered row was salvage-committed into the renamed table.
+                drainWalQueue();
+                assertQuery("SELECT count() FROM sal_dst")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+                assertQuery("SELECT count() FROM sal_src")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n0\n");
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsDiscardsWhenSalvageCommitFails() throws Exception {
+        // When the salvage commit of a renamed table's buffered rows FAILS,
+        // the eviction must (a) refuse the lookup with the discard message
+        // instead of acknowledging silently, (b) still evict the entry, and
+        // (c) NOT notify the committed-txn consumer: a notification here would
+        // plant a per-table durable-ack watermark for rows that were rolled
+        // back -- the phantom-ack shape this PR exists to prevent.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sal_fail_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            int[] consumerNotifications = new int[1];
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                cache.setCommittedTxnConsumer((tableName, tableDirName, seqTxn) -> consumerNotifications[0]++);
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("sal_fail_src"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                tud.getWriter().newRow(1_000_000L).append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                execute("RENAME TABLE sal_fail_src TO sal_fail_dst");
+                execute("CREATE TABLE sal_fail_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // The stale re-lookup below reaches evictStaleTud's salvage
+                // branch (dir alive under sal_fail_dst, instanceof WalWriter
+                // passes) and the injected commit failure makes
+                // salvageBufferedRows return false.
+                replaceWriterWithFailingCommitWalWriter(tud);
+
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE, new Utf8String("sal_fail_src"), null, null, 1
+                    );
+                    Assert.fail("a failed salvage must refuse the lookup, not acknowledge");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(),
+                            "renamed table discarded buffered rows, cannot acknowledge");
+                }
+                Assert.assertEquals("failed salvage must still evict the entry", 0, cache.size());
+                Assert.assertEquals("failed salvage must not plant a durable-ack watermark",
+                        0, consumerNotifications[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsSalvageConsumerFailurePreservesCommittedRows() throws Exception {
+        // A committed-txn consumer can fail after salvage has already committed
+        // the buffered rows. The cache must preserve and propagate that failure
+        // after eviction instead of claiming that it discarded the rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sal_report_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                IllegalStateException reportFailure = new IllegalStateException("simulated report failure");
+                cache.setCommittedTxnConsumer((_, _, _) -> {
+                    throw reportFailure;
+                });
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("sal_report_src"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                tud.getWriter().newRow(1_000_000L).append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                execute("RENAME TABLE sal_report_src TO sal_report_dst");
+                execute("CREATE TABLE sal_report_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE, new Utf8String("sal_report_src"), null, null, 1
+                    );
+                    Assert.fail("the committed-txn consumer failure must propagate");
+                } catch (IllegalStateException e) {
+                    Assert.assertSame(reportFailure, e);
+                }
+                Assert.assertEquals("the stale entry must still be evicted", 0, cache.size());
+
+                drainWalQueue();
+                assertQuery("SELECT count() FROM sal_report_dst")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+                assertQuery("SELECT count() FROM sal_report_src")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n0\n");
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsSalvageNotifiesCommittedTxnConsumer() throws Exception {
+        // I1: the salvage commit in evictStaleTud bypasses
+        // commitAll(consumer)/commitIfMaxUncommittedRowsReached(consumer), the
+        // only other paths that feed QwpIngressProcessorState.recordCommittedTable
+        // and, through it, the pendingAckSeqTxns / pendingDurableSeqTxns /
+        // pendingDurableDirNames bookkeeping a durable-ack client relies on.
+        // Without a dedicated hook, a successful salvage leaves those maps
+        // untouched even though the rows are now durable in the WAL --
+        // collectDurableProgress/isDurableWorkFullyUploaded would then let a
+        // durable ack cover a WAL segment that was never registered for
+        // upload. Drives the same rename+recreate scenario as
+        // testGetTableUpdateDetailsSalvagesRenamedTablesBufferedRowsOnRecreate
+        // above through the real QwpIngressProcessorState (production
+        // wiring) instead of poking QwpTudCache directly.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sal_consumer_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+
+                // Buffer a row without committing: a deferred frame leaves it
+                // sitting uncommitted in the writer, exactly what the salvage
+                // in evictStaleTud requires.
+                addEncodedRow(state, "sal_consumer_src", 1, QwpConstants.FLAG_DEFER_COMMIT);
+                Assert.assertTrue(state.isDeferCommit());
+                state.processMessage();
+                Assert.assertTrue(state.isOk());
+                state.clearMessageState();
+
+                // Rename the table out from under the cache, then recreate it
+                // under the old name: the cached entry goes stale and its
+                // buffered row is salvage-committed into the renamed table.
+                execute("RENAME TABLE sal_consumer_src TO sal_consumer_dst");
+                execute("CREATE TABLE sal_consumer_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // A second frame naming the old name drives the stale lookup
+                // and salvage eviction inside processMessage/getTableUpdateDetails.
+                addEncodedRow(state, "sal_consumer_src", 2, (byte) 0);
+                Assert.assertFalse(state.isDeferCommit());
+                state.processMessage();
+                Assert.assertTrue(state.isOk());
+
+                // The salvage must land in the SAME bookkeeping a normal
+                // commitAll(consumer) txn reaches, under the renamed table's
+                // identity (the writer's rebound token), not the stale
+                // lookup name.
+                Assert.assertEquals(1, state.getPendingAckSeqTxns().size());
+                // RENAME publishes the table's sequencer txn 1; the salvage
+                // commit is txn 2. Pinning the value catches a stale or
+                // phantom seqTxn that mere key presence (>= 0) would pass.
+                Assert.assertEquals(
+                        "salvaged txn must be recorded under the renamed table's identity",
+                        2L, state.getPendingAckSeqTxns().get("sal_consumer_dst")
+                );
+                Assert.assertTrue(
+                        "durable-ack bookkeeping must also see the salvaged txn",
+                        state.hasPendingDurableWork()
+                );
+                Assert.assertEquals(1, fieldSize(state, "pendingDurableSeqTxns"));
+                Assert.assertEquals(1, fieldSize(state, "pendingDurableDirNames"));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsSalvageSurvivesCloseFailure() throws Exception {
+        // Mirror image of testGetTableUpdateDetailsDiscardsWhenSalvageCommitFails:
+        // there the salvage FAILS and the lookup must refuse; here the salvage
+        // SUCCEEDS and only the close that follows it fails, so the lookup must
+        // NOT refuse. evictStaleTud frees the TUD right after the salvage commit,
+        // and that free closes the writer, rolling back through real file IO that
+        // can hit ENOSPC/EIO. Before the guard that failure escaped
+        // getTableUpdateDetails and the QWP layer refused the frame -- pushing the
+        // client to replay rows the renamed table had already durably accepted,
+        // duplicating them. The guard swallows the close failure and lets the
+        // successful salvage stand.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sal_close_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            int[] consumerNotifications = new int[1];
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                cache.setCommittedTxnConsumer((tableName, tableDirName, seqTxn) -> consumerNotifications[0]++);
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("sal_close_src"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+
+                // Install the failing-close writer BEFORE buffering the row: the
+                // row then sits in that writer, so the salvage commit is a real
+                // one and the close is the only step that fails.
+                replaceWriterWithFailingCloseWalWriter(tud);
+                tud.getWriter().newRow(1_000_000L).append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                execute("RENAME TABLE sal_close_src TO sal_close_dst");
+                execute("CREATE TABLE sal_close_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // No try/catch here on purpose: an escaping close failure fails
+                // this test outright, which is exactly the pre-guard behavior.
+                WalTableUpdateDetails rebuilt = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("sal_close_src"), null, null, 1
+                );
+                Assert.assertNotNull(rebuilt);
+                Assert.assertNotSame("stale entry must be rebuilt against the new table", tud, rebuilt);
+                Assert.assertEquals(1, cache.size());
+                Assert.assertEquals("a successful salvage must still record its txn",
+                        1, consumerNotifications[0]);
+
+                // The salvaged row landed in the renamed table -- these are the
+                // very rows a refused frame would have made the client resend.
+                drainWalQueue();
+                assertQuery("SELECT count() FROM sal_close_dst")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+                assertQuery("SELECT count() FROM sal_close_src")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n0\n");
             }
         });
     }
@@ -2204,6 +4118,191 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 } catch (CairoException e) {
                     Assert.assertTrue(e.getMessage().contains("too many distinct tables"));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testLookupDuringRenameWindowRefusesInsteadOfRebinding() throws Exception {
+        // C1: CairoEngine.rename() publishes the RENAME to the sequencer change
+        // log BEFORE it updates the name registry. Inside that window a cache-hit
+        // lookup for the old name sees: not stale (name still resolves to the
+        // cached token), dir-name guard passes (dir still resolves to it too),
+        // seqTxn gate open (the RENAME advanced it) -- and goActive() replays the
+        // RENAME into the cached writer, silently rebinding it to the renamed
+        // table while the cache key, TUD and acks keep the old name. From then on
+        // every commit succeeds into the renamed table with OK acks, forever.
+        // The lookup must instead salvage the buffered rows (they belong to the
+        // same physical table), evict the entry and refuse the frame, so the
+        // client retries after the registry has caught up. The window is frozen
+        // here by publishing the sequencer-level rename WITHOUT the registry
+        // update that CairoEngine.rename() would perform afterwards.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE win_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            ObjList<String> committedTableNames = new ObjList<>();
+            ObjList<String> committedDirNames = new ObjList<>();
+            LongList committedSeqTxns = new LongList();
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                cache.setCommittedTxnConsumer((tableName, tableDirName, seqTxn) -> {
+                    committedTableNames.add(tableName);
+                    committedDirNames.add(tableDirName);
+                    committedSeqTxns.add(seqTxn);
+                });
+
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("win_src"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                tud.getWriter().newRow(1_000_000L).append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                // Freeze the C1 race window: sequencer knows the rename, the name
+                // registry does not.
+                TableToken token = engine.verifyTableName("win_src");
+                long renameTxn;
+                try (WalWriter w = engine.getWalWriter(token)) {
+                    renameTxn = w.renameTable("win_src", "win_dst", AllowAllSecurityContext.INSTANCE);
+                }
+
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE, new Utf8String("win_src"), null, null, 1
+                    );
+                    Assert.fail("lookup during the rename window must refuse, not adopt the rebound writer");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "is being renamed");
+                }
+                Assert.assertEquals(0, cache.size());
+
+                // The buffered row was salvage-committed through the rebound
+                // writer before eviction: the sequencer advanced exactly one data
+                // txn past the rename.
+                Assert.assertEquals(
+                        renameTxn + 1,
+                        engine.getTableSequencerAPI().getTxnTracker(token).getSeqTxn()
+                );
+
+                // The salvage commit bypasses commitAll/commitIfMaxUncommittedRowsReached,
+                // so it must notify committedTxnConsumer itself -- exactly once, keyed
+                // under the RENAMED table's identity, with the salvaged txn.
+                Assert.assertEquals(1, committedTableNames.size());
+                Assert.assertEquals("win_dst", committedTableNames.get(0));
+                Assert.assertEquals(renameTxn + 1, committedSeqTxns.get(0));
+            }
+        });
+    }
+
+    @Test
+    public void testLookupDuringRenameWindowWithNoBufferedRowsStillRefuses() throws Exception {
+        // C1 corollary: the same frozen-window race, but with NO buffered rows --
+        // the normal inter-batch state on the WS path, which commits after every
+        // batch. There is nothing to salvage, so salvageBufferedRows must no-op
+        // (no rebind, no commit, no committedTxnConsumer notification) instead of
+        // re-notifying the consumer with the seqTxn of an earlier, already-acked
+        // commit under the renamed table's identity -- a phantom per-table
+        // watermark that would make durable-ack gating wait on a table the client
+        // never wrote to. The lookup must still refuse and evict.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE win_empty_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            ObjList<String> committedTableNames = new ObjList<>();
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                cache.setCommittedTxnConsumer((tableName, tableDirName, seqTxn) -> committedTableNames.add(tableName));
+
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("win_empty_src"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                Assert.assertTrue(tud.isFirstRow());
+
+                // Freeze the C1 race window: sequencer knows the rename, the name
+                // registry does not.
+                TableToken token = engine.verifyTableName("win_empty_src");
+                long renameTxn;
+                try (WalWriter w = engine.getWalWriter(token)) {
+                    renameTxn = w.renameTable("win_empty_src", "win_empty_dst", AllowAllSecurityContext.INSTANCE);
+                }
+
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE, new Utf8String("win_empty_src"), null, null, 1
+                    );
+                    Assert.fail("lookup during the rename window must refuse, not adopt the rebound writer");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "is being renamed");
+                }
+                Assert.assertEquals(0, cache.size());
+
+                Assert.assertEquals("consumer must not fire when there was nothing to salvage", 0, committedTableNames.size());
+
+                // No salvage commit happened: the sequencer sits exactly where the
+                // rename left it.
+                Assert.assertEquals(
+                        renameTxn,
+                        engine.getTableSequencerAPI().getTxnTracker(token).getSeqTxn()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testSalvageAuthorizesAgainstReboundTableToken() throws Exception {
+        // M6: a salvage commit writes into the RENAMED table (goActive() rebound
+        // the writer), so the ACL check must name that table. The TUD's pinned
+        // token still carries the OLD name -- which, on this path, has already
+        // been re-used by a DIFFERENT table -- so authorizing against it asks
+        // about the wrong table entirely (invisible under AllowAll, wrong
+        // permit/deny under an enterprise ACL).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE acl_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            ObjList<TableToken> authorized = new ObjList<>();
+            SecurityContext recording = new AllowAllSecurityContext() {
+                @Override
+                public void authorizeInsert(TableToken tableToken) {
+                    authorized.add(tableToken);
+                }
+            };
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        recording, new Utf8String("acl_src"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                tud.getWriter().newRow(1_000_000L).append();
+
+                execute("RENAME TABLE acl_src TO acl_dst");
+                execute("CREATE TABLE acl_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                authorized.clear();
+                cache.getTableUpdateDetails(recording, new Utf8String("acl_src"), null, null, 1);
+
+                // The salvage commit ran during the lookup above. Its insert
+                // authorization must name the table the rows landed in.
+                Assert.assertTrue("salvage must authorize an insert", authorized.size() > 0);
+                Assert.assertEquals(
+                        "salvage must authorize against the writer's rebound token",
+                        "acl_dst",
+                        authorized.getQuick(0).getTableName()
+                );
             }
         });
     }
@@ -3407,6 +5506,23 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         return fake;
     }
 
+    private static void addEncodedRow(QwpIngressProcessorState state, String tableName, int value, byte flags) {
+        try (QwpTableBuffer buffer = new QwpTableBuffer(tableName);
+             QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+            QwpTableBuffer.ColumnBuffer valueColumn = buffer.getOrCreateColumn("val", QwpConstants.TYPE_INT, false);
+            QwpTableBuffer.ColumnBuffer timestampColumn =
+                    buffer.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
+            valueColumn.addInt(value);
+            timestampColumn.addLong(1_000_000L + value);
+            buffer.nextRow();
+
+            int size = encoder.encode(buffer);
+            long ptr = encoder.getBuffer().getBufferPtr();
+            Unsafe.putByte(ptr + QwpConstants.HEADER_OFFSET_FLAGS, flags);
+            state.addData(ptr, ptr + size);
+        }
+    }
+
     private static void addNativeData(QwpIngressProcessorState state, byte[] data) {
         long ptr = Unsafe.malloc(data.length, MemoryTag.NATIVE_HTTP_CONN);
         try {
@@ -3426,6 +5542,13 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         return ((LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails>) field.get(cache)).size();
     }
 
+    @SuppressWarnings("unchecked")
+    private static WalTableUpdateDetails getCachedTud(QwpTudCache cache, String tableName) throws Exception {
+        Field field = QwpTudCache.class.getDeclaredField("tableUpdateDetails");
+        field.setAccessible(true);
+        return ((LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails>) field.get(cache)).get(new Utf8String(tableName));
+    }
+
     private static @NotNull QwpTableBlockCursor getQwpTableBlockCursor(long addr) throws QwpParseException {
         final QwpArrayColumnCursor arrayCursor = new QwpArrayColumnCursor();
         arrayCursor.of(addr, 2, 1, QwpConstants.TYPE_DOUBLE_ARRAY);
@@ -3443,6 +5566,104 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         };
     }
 
+    private static void replaceWriterWithFailingClose(WalTableUpdateDetails tud) throws Exception {
+        Field writerField = TableUpdateDetails.class.getDeclaredField("writerAPI");
+        writerField.setAccessible(true);
+
+        // Free the real writer to avoid native memory leaks.
+        Misc.free((TableWriterAPI) writerField.get(tud));
+
+        writerField.set(tud, Proxy.newProxyInstance(
+                TableWriterAPI.class.getClassLoader(),
+                new Class[]{TableWriterAPI.class},
+                (_, method, _) -> {
+                    if ("close".equals(method.getName())) {
+                        // Simulates the evicted writer's close() rolling back
+                        // its buffered rows and hitting ENOSPC/EIO on the
+                        // real file IO.
+                        throw CairoException.critical(5).put("simulated close failure");
+                    }
+                    throw new UnsupportedOperationException(method.getName());
+                }
+        ));
+    }
+
+    private static void replaceWriterWithFailingCloseWalWriter(WalTableUpdateDetails tud) throws Exception {
+        // A REAL WalWriter subclass, not a TableWriterAPI proxy: evictStaleTud
+        // only attempts salvage when tud.getWriter() instanceof WalWriter, so no
+        // proxy reaches the salvage arm at all. Unlike
+        // replaceWriterWithFailingCommitWalWriter, nothing about the commit is
+        // faked -- the caller installs this writer BEFORE buffering its row, so
+        // the row lives here and the salvage commits it for real. Only the close
+        // that follows the salvage fails.
+        TableToken token = tud.getTableToken();
+        Field writerField = TableUpdateDetails.class.getDeclaredField("writerAPI");
+        writerField.setAccessible(true);
+
+        // Free the real writer to avoid native memory leaks.
+        Misc.free((TableWriterAPI) writerField.get(tud));
+
+        writerField.set(tud, new WalWriter(
+                engine.getConfiguration(),
+                token,
+                engine.getTableSequencerAPI(),
+                engine.getDdlListener(token),
+                engine.getWalDirectoryPolicy(),
+                engine.getWalLocker(),
+                engine.getRecentWriteTracker(),
+                engine.getTelemetryWal()
+        ) {
+            @Override
+            public void close() {
+                // Release the real resources first so the test stays leak-free,
+                // then simulate the rollback-on-close file IO hitting
+                // ENOSPC/EIO on the way out.
+                super.close();
+                throw CairoException.critical(5).put("simulated close failure");
+            }
+        });
+    }
+
+    private static void replaceWriterWithFailingCommitWalWriter(WalTableUpdateDetails tud) throws Exception {
+        // A REAL WalWriter subclass, not a TableWriterAPI proxy: evictStaleTud
+        // only attempts salvage when tud.getWriter() instanceof WalWriter, so
+        // no proxy can reach salvageBufferedRows' commit-failure arm. The
+        // constructor resolves the live (renamed) table's sequencer through
+        // the cached token's directory and rebinds to the current metadata
+        // token, so goActive() finds the writer current and the injected
+        // failure fires inside the salvage commit itself.
+        TableToken token = tud.getTableToken();
+        Field writerField = TableUpdateDetails.class.getDeclaredField("writerAPI");
+        writerField.setAccessible(true);
+
+        // Free the real writer to avoid native memory leaks.
+        Misc.free((TableWriterAPI) writerField.get(tud));
+
+        writerField.set(tud, new WalWriter(
+                engine.getConfiguration(),
+                token,
+                engine.getTableSequencerAPI(),
+                engine.getDdlListener(token),
+                engine.getWalDirectoryPolicy(),
+                engine.getWalLocker(),
+                engine.getRecentWriteTracker(),
+                engine.getTelemetryWal()
+        ) {
+            @Override
+            public long getUncommittedRowCount() {
+                // TableUpdateDetails.commit() short-circuits on zero; report a
+                // pending row so the commit below is reached. This also keeps
+                // tud.isFirstRow() false, the salvage precondition.
+                return 1;
+            }
+
+            @Override
+            public void commit() {
+                throw CairoException.nonCritical().put("simulated salvage commit failure");
+            }
+        });
+    }
+
     private static void replaceWriterWithFake(WalTableUpdateDetails tud, boolean isTableDropped) throws Exception {
         TableToken tableToken = tud.getTableToken();
         Field writerField = TableUpdateDetails.class.getDeclaredField("writerAPI");
@@ -3458,12 +5679,45 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     case "getUncommittedRowCount" -> 1L;
                     case "getWalId" -> 1;
                     case "getSegmentId" -> 0;
-                    case "commit" -> {
+                    case "getLastSeqTxn" -> 0L;
+                    // commit(false) -> commit(), commit(true) -> ic(); both must
+                    // surface the same simulated failure.
+                    case "commit", "ic" -> {
                         if (isTableDropped) {
                             throw CairoException.tableDropped(tableToken);
                         }
                         throw CairoException.nonCritical().put("simulated commit failure");
                     }
+                    case "close", "rollback" -> null;
+                    default -> throw new UnsupportedOperationException(method.getName());
+                }
+        ));
+    }
+
+    private static void replaceWriterWithRawCairoException(
+            WalTableUpdateDetails tud,
+            int[] rawFailureCount,
+            int successfulCallsBeforeFailure
+    ) throws Exception {
+        Field writerField = TableUpdateDetails.class.getDeclaredField("writerAPI");
+        writerField.setAccessible(true);
+
+        Misc.free((TableWriterAPI) writerField.get(tud));
+        int[] callsBeforeFailure = {successfulCallsBeforeFailure};
+        writerField.set(tud, Proxy.newProxyInstance(
+                TableWriterAPI.class.getClassLoader(),
+                new Class[]{TableWriterAPI.class},
+                (_, method, _) -> switch (method.getName()) {
+                    case "getUncommittedRowCount" -> {
+                        if (callsBeforeFailure[0] > 0) {
+                            callsBeforeFailure[0]--;
+                            yield 1L;
+                        }
+                        rawFailureCount[0]++;
+                        throw CairoException.nonCritical().put("simulated raw commit failure");
+                    }
+                    case "getWalId" -> 1;
+                    case "getSegmentId" -> 0;
                     case "close", "rollback" -> null;
                     default -> throw new UnsupportedOperationException(method.getName());
                 }

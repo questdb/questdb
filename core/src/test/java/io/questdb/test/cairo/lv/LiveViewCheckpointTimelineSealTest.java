@@ -48,14 +48,11 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -267,7 +264,14 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     @Test
     public void testNormalCadenceAppendsPermanentRootsAndPublishesCompleteState() throws Exception {
         assertMemoryLeak(() -> {
-            createView(true);
+            // The shape this case describes is the legacy one - an anchor root beside a
+            // per-function root whose state is a data page - so its window function has to
+            // be one the fused plan leaves residual and one that writes a page rather than
+            // inlining. The exponential moving average is both: it declares no accumulator
+            // family and no fixed width, so its whole image goes to a data segment, which
+            // is what the reference counting below is about. It replaced ksum here when the
+            // compensated total joined the group.
+            createPageBackedAnchoredView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 appendAndRefresh(job, 10, 1);
                 appendAndRefresh(job, 20, 2);
@@ -931,6 +935,22 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
         }
     }
 
+    /**
+     * An anchored view whose one window function keeps a page-backed root of its own: the
+     * exponential moving average declares no accumulator family and no fixed checkpoint
+     * width, so it is neither inlined into the leaf nor fused into the window state, and
+     * the seal writes the legacy anchor-root plus function-root plus data-segment shape.
+     * It replaced ksum here when the compensated total joined the group.
+     */
+    private void createPageBackedAnchoredView() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute(
+                "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                        "SELECT ts, sym, avg(x, 'period', 5) OVER w s FROM base " +
+                        "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')"
+        );
+    }
+
     private LiveViewCheckpointMetaStore openStore(LiveViewInstance instance) {
         final LiveViewCheckpointMetaStore store = new LiveViewCheckpointMetaStore(configuration);
         try (Path checkpointsDir = checkpointsDir(instance)) {
@@ -994,21 +1014,6 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
             }
         }
         return new RuntimeSnapshot(anchor, Arrays.copyOf(states, count));
-    }
-
-    private static ObjList<WindowFunction> unwrapWindowFunctions(LiveViewInstance instance) {
-        RecordCursorFactory factory = instance.getCompiledFactory();
-        while (factory != null) {
-            if (factory instanceof WindowRecordCursorFactory windowFactory) {
-                return windowFactory.getWindowFunctions();
-            }
-            if (factory instanceof QueryProgress) {
-                factory = factory.getBaseFactory();
-                continue;
-            }
-            break;
-        }
-        throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
     }
 
     private static String timestamp(int second) {

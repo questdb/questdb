@@ -398,6 +398,24 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastArrayFails() throws Exception {
+        assertMemoryLeak(() -> {
+            // an array shares its tag with every other array, so dimensionality has to be
+            // checked outside the cast-group table
+            String prefix = "create table y as (select ARRAY[1.0, 2.0] a from long_sequence(2)), cast(";
+            assertQuery(prefix + "a as double[][])")
+                    .noLeakCheck()
+                    .fails(prefix.length(), "unsupported cast [column=a, from=DOUBLE[], to=DOUBLE[][]]");
+            assertQuery(prefix + "a as uuid)")
+                    .noLeakCheck()
+                    .fails(prefix.length(), "unsupported cast [column=a, from=DOUBLE[], to=UUID]");
+            assertQuery(prefix + "a as long256)")
+                    .noLeakCheck()
+                    .fails(prefix.length(), "unsupported cast [column=a, from=DOUBLE[], to=LONG256]");
+        });
+    }
+
+    @Test
     public void testCastByteDate() throws Exception {
         assertCastByte(
                 """
@@ -836,6 +854,40 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         """,
                 ColumnType.TIMESTAMP
         );
+    }
+
+    @Test
+    public void testCastDecimalToDecimal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT 1.5::DECIMAL(10,2) a, 2.25::DECIMAL(30,4) b FROM long_sequence(1))");
+            execute("CREATE TABLE y AS (SELECT * FROM x), CAST(a AS DECIMAL(20,4)), CAST(b AS DECIMAL(9,4))");
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            1.5000\t2.2500
+                            """);
+            assertQuery("SELECT typeOf(a) ta, typeOf(b) tb FROM y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ta\ttb
+                            DECIMAL(20,4)\tDECIMAL(9,4)
+                            """);
+        });
+    }
+
+    @Test
+    public void testCastDecimalToNonDecimalFails() throws Exception {
+        assertCastDecimalFail(ColumnType.UUID);
+        assertCastDecimalFail(ColumnType.DOUBLE);
+        assertCastDecimalFail(ColumnType.LONG);
+        assertCastDecimalFail(ColumnType.STRING);
+        assertCastDecimalFail(ColumnType.VARCHAR);
+        assertCastDecimalFail(ColumnType.LONG256);
+        assertCastDecimalFail(ColumnType.BOOLEAN);
+        assertCastDecimalFail(ColumnType.IPv4);
     }
 
     @Test
@@ -1845,6 +1897,27 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastNonNumericToDecimalFails() throws Exception {
+        // the record copier has no arm for these sources, so the cast clause has to refuse them
+        assertCastToDecimalFail("rnd_double()", ColumnType.DOUBLE);
+        assertCastToDecimalFail("rnd_float()", ColumnType.FLOAT);
+        assertCastToDecimalFail("rnd_date(0, 1000, 0)", ColumnType.DATE);
+        assertCastToDecimalFail("rnd_boolean()", ColumnType.BOOLEAN);
+        assertCastToDecimalFail("rnd_uuid4()", ColumnType.UUID);
+    }
+
+    @Test
+    public void testCastNullSourceToFixed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y AS (SELECT NULL a FROM long_sequence(1)), CAST(a AS INT)");
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\nnull\n");
+        });
+    }
+
+    @Test
     public void testCastNumberFail() throws Exception {
         assertCastIntFail(ColumnType.BOOLEAN);
         assertCastLongFail(ColumnType.BOOLEAN);
@@ -1891,6 +1964,23 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastSymbolFail(ColumnType.DOUBLE);
         assertCastSymbolFail(ColumnType.DATE);
         assertCastSymbolFail(ColumnType.TIMESTAMP);
+    }
+
+    @Test
+    public void testCastNumericToDecimal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT 42::BYTE b, 4200::SHORT s, 420000 i, 42000000000L l, '7'::CHAR c FROM long_sequence(1))");
+            execute("CREATE TABLE y AS (SELECT * FROM x)" +
+                    ", CAST(b AS DECIMAL(10,2)), CAST(s AS DECIMAL(10,2)), CAST(i AS DECIMAL(10,2))" +
+                    ", CAST(l AS DECIMAL(20,2)), CAST(c AS DECIMAL(10,2))");
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            b\ts\ti\tl\tc
+                            42.00\t4200.00\t420000.00\t42000000000.00\t7.00
+                            """);
+        });
     }
 
     @Test
@@ -8385,6 +8475,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCast(expectedData, expectedMeta, sql);
     }
 
+    private void assertCastDecimalFail(int castTo) throws Exception {
+        String prefix = "create table y as (select 1.5::decimal(10,2) a from long_sequence(2)), cast(";
+        assertQuery(prefix + "a as " + ColumnType.nameOf(castTo) + ")")
+                .fails(prefix.length(), "unsupported cast");
+    }
+
     private void assertCastDouble(String expectedData, int castTo) throws Exception {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
@@ -8503,6 +8599,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "), cast(a as " + ColumnType.nameOf(castTo) + ")";
 
         assertCast(expectedData, expectedMeta, sql);
+    }
+
+    private void assertCastToDecimalFail(String sourceExpr, int sourceType) throws Exception {
+        String prefix = "create table y as (select " + sourceExpr + " a from long_sequence(2)), cast(";
+        assertQuery(prefix + "a as decimal(20,2))")
+                .fails(prefix.length(), "unsupported cast [column=a, from=" + ColumnType.nameOf(sourceType) + ", to=DECIMAL(20,2)]");
     }
 
     private void assertCreateTableAsSelect(CharSequence expectedMetadata, CharSequence sql, Fiddler fiddler) throws Exception {

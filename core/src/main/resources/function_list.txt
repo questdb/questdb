@@ -171,6 +171,9 @@ io.questdb.griffin.engine.functions.math.AbsShortFunctionFactory
 io.questdb.griffin.engine.functions.math.AbsLongFunctionFactory
 io.questdb.griffin.engine.functions.math.AbsDoubleFunctionFactory
 
+# '__lateral_limit'
+io.questdb.griffin.engine.functions.math.LateralLimitFunctionFactory
+
 # 'trigonometric'
 io.questdb.griffin.engine.functions.math.SinDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.CosDoubleFunctionFactory

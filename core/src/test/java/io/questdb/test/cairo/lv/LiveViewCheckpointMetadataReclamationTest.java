@@ -96,11 +96,18 @@ import java.util.Set;
 public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewTest {
 
     // ANCHOR compiles only inside a live view, and every row these cases commit
-    // lands on the same calendar day, so a plain row_number() over the same
+    // lands on the same calendar day, so a plain cumulative sum over the same
     // partition and order is exactly what the anchored view must produce.
+    //
+    // The argument is an expression rather than a column, which the fused window-state
+    // plan declines - and that is deliberate. What this view is here for is an anchor
+    // root of its own, whose entry is the anchor value alone: that value moves once a
+    // day, so consecutive seals put byte-identical entries and the map writer drops
+    // them, which is the page sharing under test. A fused entry carries the accumulator
+    // beside the anchor and so changes on every commit, sharing nothing.
     private static final String ANCHORED_RECOMPUTE_SQL =
-            "SELECT ts, sym, row_number() OVER (PARTITION BY sym ORDER BY ts) AS s FROM base";
-    private static final String ANCHORED_VIEW_SQL = "SELECT ts, sym, row_number() OVER w AS s FROM base " +
+            "SELECT ts, sym, sum(x + 0.0) OVER (PARTITION BY sym ORDER BY ts) AS s FROM base";
+    private static final String ANCHORED_VIEW_SQL = "SELECT ts, sym, sum(x + 0.0) OVER w AS s FROM base " +
             "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')";
     private static final int KEYS = 4;
     // Four seals per sweep, so the files a failed publication leaves are observable

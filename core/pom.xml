@@ -42,7 +42,7 @@
         </argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
-        <web.console.version>2.0.2</web.console.version>
+        <web.console.version>2.0.3</web.console.version>
         <qdbr.path>rust/qdbr</qdbr.path>
         <qdbr.release>false</qdbr.release>
 

@@ -49,6 +49,8 @@ import io.questdb.cairo.map.MapValueMergeFunction;
 import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.CompressedOffsets;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BitSet;
@@ -74,6 +76,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.tools.LimitedMemoryTracker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -831,6 +834,55 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstructorRejectsHeapAboveCompressedOffsetCeiling() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // resize() clamps to the ceiling, but the initial page was allocated raw and only
+            // checked against BATCH_OFFSET_MASK, which sits 16x higher. A page above the ceiling
+            // therefore reached the heap intact and every entry starting past the 32GB mark
+            // compressed to a truncated offset or to the empty-slot encoding, so a probe aliased an
+            // earlier entry or read a live one as empty. Nothing in the map ran before that: the
+            // growth guard only fires once the oversized page fills.
+            //
+            // openOnInit == false keeps both halves allocation-free, so the boundary can be pinned
+            // exactly rather than approached with a 32GB malloc.
+            try (
+                    OrderedMap map = new OrderedMap(
+                            CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE,
+                            new SingleColumnType(ColumnType.LONG),
+                            new SingleColumnType(ColumnType.LONG),
+                            16,
+                            0.5,
+                            Integer.MAX_VALUE,
+                            false
+                    )
+            ) {
+                // A page at the ceiling is accepted: the last entry it can hold still starts below
+                // the first offset that collides. This is what makes the guard `>` and not `>=`.
+                Assert.assertEquals(0, map.size());
+            }
+
+            try {
+                new OrderedMap(
+                        CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE + 8,
+                        new SingleColumnType(ColumnType.LONG),
+                        new SingleColumnType(ColumnType.LONG),
+                        16,
+                        0.5,
+                        Integer.MAX_VALUE,
+                        false
+                ).close();
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "OrderedMap heap size exceeds compressed offset addressable range "
+                                + "[heapBytes=34359738360, maxAddressable=34359738352]"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testCopyToKeyFixedSizeKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
@@ -1294,6 +1346,67 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHeapSizeBetweenStructuralMinimumAndEntrySize() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // 24 bytes against a 16-byte entry: one entry fits and every later one grows the heap, so a
+            // map configured this small runs its queries rather than failing them. That is what ties
+            // MIN_MAP_PAGE_SIZE to the map's own structural bound - it asserts heapSize > 3 - instead of
+            // to an entry size: a floor picked above the bound rejects working page sizes like this one
+            // at startup, and the per-query check below already covers the rest.
+            try (
+                    OrderedMap map = new OrderedMap(
+                            24,
+                            new SingleColumnType(ColumnType.LONG),
+                            new SingleColumnType(ColumnType.LONG),
+                            16,
+                            0.5,
+                            Integer.MAX_VALUE
+                    )
+            ) {
+                final int N = 100;
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putLong(i);
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putLong(0, i * 3L);
+                }
+
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putLong(i);
+                    MapValue value = key.findValue();
+                    Assert.assertNotNull(value);
+                    Assert.assertEquals(i * 3L, value.getLong(0));
+                }
+                Assert.assertEquals(N, map.size());
+            }
+
+            // The entry size is the boundary the map itself enforces, and it names the property while
+            // doing so, so the query-dependent half of the minimum needs no startup floor. A page equal
+            // to the entry size is rejected: the check is `>=`, since the heap has to hold the entry
+            // and still have somewhere to append the next one from.
+            try {
+                new OrderedMap(
+                        16,
+                        new SingleColumnType(ColumnType.LONG),
+                        new SingleColumnType(ColumnType.LONG),
+                        16,
+                        0.5,
+                        Integer.MAX_VALUE
+                ).close();
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "page size is too small to fit a single key, consider increasing "
+                                + "`cairo.sql.small.map.page.size` [expected=16, actual=16]"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testKeyCopyFromFixedSizeKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
@@ -1734,6 +1847,95 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMergeTopBitOffsetSlotStaysOccupiedFixedSizeKey() throws Exception {
+        assertMergeSkipsPlantedSlot(false);
+    }
+
+    @Test
+    public void testMergeTopBitOffsetSlotStaysOccupiedVarSizeKey() throws Exception {
+        assertMergeSkipsPlantedSlot(true);
+    }
+
+    @Test
+    public void testMergeTopBitOffsetSourceSlotIsNotSkipped() throws Exception {
+        // The merge source scan decides a slot is empty on "raw offset == 0" alone. A signed test
+        // reads every entry from 16GB up - exactly the offsets whose top bit is set - as an empty
+        // slot and drops it, which is the parallel GROUP BY shard-merge silently losing a group
+        // with no exception raised.
+        //
+        // A planted source offset cannot address a real entry without a 16GB heap, and the merge
+        // dereferences it as soon as it decides to process the slot. So the observable is the step
+        // immediately before that dereference: against a destination heap that is exactly full,
+        // copying the entry has to ask resize() for room, and resize() rejects it at the ceiling
+        // before reading a single source byte. Skipping the slot never reaches resize() at all.
+        //
+        // Only the fixed-size-key merge can be driven this way - mergeVarSizeKey() reads the key
+        // length off the source address before it probes, and no planted offset both sets the top
+        // bit and lands inside a test-sized heap, since the smallest such offset decodes to
+        // 17,179,869,176 bytes. That is why both merge loops resolve their source slot through the
+        // single OrderedMap.srcEntryAddr(): this test therefore covers the line the var-size loop
+        // actually executes, not a copy of it. CompressedOffsetsTest pins the underlying predicate
+        // at the boundary as well.
+        //
+        // The throw below depends on resize() rejecting the entry before the Unsafe.copyMemory on
+        // the next line, which holds today but is statement ordering rather than a contract. A
+        // refactor to copy-then-reserve would turn this red test into a SIGSEGV, so re-check the
+        // order here before changing either merge loop's tail.
+        TestUtils.assertMemoryLeak(() -> {
+            SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG);
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+
+            // LONG key plus LONG value is a 16-byte entry, so a 32-byte ceiling holds exactly the
+            // two entries seeded below and has no room for a third.
+            final long maxHeapSize = 32;
+            try (
+                    OrderedMap dest = new OrderedMap(32, keyTypes, valueTypes, 16, 0.5, Integer.MAX_VALUE, true, maxHeapSize);
+                    OrderedMap src = new OrderedMap(1024, keyTypes, valueTypes, 16, 0.5, Integer.MAX_VALUE)
+            ) {
+                for (int i = 0; i < 2; i++) {
+                    MapKey destKey = dest.withKey();
+                    destKey.putLong(i);
+                    destKey.createValue().putLong(0, i);
+
+                    // The same keys in the source, so every live source entry merges into an
+                    // existing destination entry and never asks the destination heap for room.
+                    MapKey srcKey = src.withKey();
+                    srcKey.putLong(i);
+                    srcKey.createValue().putLong(0, i);
+                }
+                // A destination heap with room to spare would dereference the planted offset
+                // instead of throwing, so assert the precondition rather than assume it.
+                Assert.assertEquals(maxHeapSize, dest.getUsedHeapSize());
+                Assert.assertEquals(maxHeapSize, dest.getHeapSize());
+
+                // Control: the very same merge without a planted slot must complete. It makes the
+                // throw below differential - a live key that stopped matching its destination entry
+                // would ask the full heap for room and fail here, rather than leave the test green
+                // for a reason that has nothing to do with the planted slot.
+                dest.merge(src, new TestMapValueMergeFunction());
+                Assert.assertEquals(2, dest.size());
+                Assert.assertEquals(maxHeapSize, dest.getUsedHeapSize());
+
+                // The lowest offset that compresses with its top bit set already needs a 16GB
+                // heap, so the slot has to be planted rather than grown into.
+                final int plantedOffset = 0x8000_0001;
+                final int plantedHash = 0x5EED_BEEF;
+                // Keeping the planted hash off every live key's keeps the destination probe on the
+                // hash-mismatch branch, which never dereferences the offset it is walking past.
+                assertHashUnused(dest, plantedHash);
+                src.pokeRawSlot(firstEmptySlot(src), plantedOffset, plantedHash);
+
+                try {
+                    dest.merge(src, new TestMapValueMergeFunction());
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 32 memory exceeded in FastMap");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMergeVarSizeKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
@@ -1825,6 +2027,58 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProbeTreatsTopBitOffsetSlotAsOccupied() throws Exception {
+        // A compressed offset with the top bit set is a legal, occupied slot: it encodes a heap
+        // offset at or above 16GB. Testing emptiness as "raw > 0" instead of "raw != 0" reads such
+        // a slot as free and silently overwrites a live group - no exception, just a wrong GROUP BY
+        // result. A 16GB heap is not constructible here, so plant the slot directly.
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.INT);
+
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.LONG);
+
+            try (OrderedMap map = new OrderedMap(1024, keyTypes, valueTypes, 16, 0.5, 24)) {
+                final int key = 42;
+
+                // Learn which slot the key probes to, then empty the table again.
+                MapKey k = map.withKey();
+                k.putInt(key);
+                Assert.assertTrue(k.createValue().isNew());
+                final int home = onlyOccupiedSlot(map);
+                final int keyHash = hashCodeAt(map, home);
+                map.clear();
+
+                // Plant an occupied slot with the top bit set right where the key probes. Flipping
+                // only the top hash bit keeps the planted hash distinct from the key's, so every
+                // consumer stays on the hash-mismatch branch and never dereferences the offset.
+                final int plantedOffset = 0x8000_0001;
+                final int plantedHash = keyHash ^ 0x8000_0000;
+                map.pokeRawSlot(home, plantedOffset, plantedHash);
+
+                // createValue() has to probe past the planted slot instead of overwriting it.
+                k = map.withKey();
+                k.putInt(key);
+                Assert.assertTrue(k.createValue().isNew());
+
+                Assert.assertEquals("planted slot must survive the probe", plantedOffset, rawOffsetAt(map, home));
+                Assert.assertEquals(plantedHash, hashCodeAt(map, home));
+
+                final int next = (home + 1) & (map.getKeyCapacity() - 1);
+                Assert.assertTrue("key must land in the slot after the planted one", isSlotOccupied(map, next));
+                Assert.assertEquals(keyHash, hashCodeAt(map, next));
+
+                // The read-only probe has to walk past the planted slot too, otherwise it reports
+                // a live key as absent.
+                k = map.withKey();
+                k.putInt(key);
+                Assert.assertFalse("lookup must find the key beyond the planted slot", k.notFound());
+            }
+        });
+    }
+
+    @Test
     public void testRecordAsKey() throws Exception {
         assertMemoryLeak(() -> {
             final int N = 5000;
@@ -1885,6 +2139,384 @@ public class OrderedMapTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testRehashPreservesTopBitOffsetSlots() throws Exception {
+        // rehash() rebuilds the table straight from the raw slots. It has to carry a top-bit offset
+        // across, and must not overwrite one while placing a colliding entry. Reading such a slot
+        // as empty drops a live group outright.
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.INT);
+
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.LONG);
+
+            try (OrderedMap map = new OrderedMap(1024, keyTypes, valueTypes, 16, 0.5, 24)) {
+                MapKey k = map.withKey();
+                k.putInt(0);
+                Assert.assertTrue(k.createValue().isNew());
+                final int anchorHash = hashCodeAt(map, onlyOccupiedSlot(map));
+
+                // Both planted hashes share their low bits with a live key's, so all three collide
+                // at the same index of the rebuilt table and the inner placement probe has to walk
+                // over them. Flipping only high bits keeps the hashes distinct, so no consumer ever
+                // compares keys against a planted slot.
+                final int plantedOffsetA = 0x8000_0001;
+                final int plantedOffsetB = 0xFFFF_FFFE;
+                final int plantedHashA = anchorHash ^ 0x8000_0000;
+                final int plantedHashB = anchorHash ^ 0x4000_0000;
+                int planted = 0;
+                for (int i = 0, n = map.getKeyCapacity(); i < n && planted < 2; i++) {
+                    if (!isSlotOccupied(map, i)) {
+                        map.pokeRawSlot(
+                                i,
+                                planted == 0 ? plantedOffsetA : plantedOffsetB,
+                                planted == 0 ? plantedHashA : plantedHashB
+                        );
+                        planted++;
+                    }
+                }
+                Assert.assertEquals(2, planted);
+
+                // The three poke siblings establish that their planted hash hits no live key before
+                // planting it. This test plants first and fills afterwards, so it has to establish
+                // the same precondition against the keys the fill loop is about to insert: a
+                // collision would put Vect.memeq on a 2^34 offset and abort the fork instead of
+                // failing. A scratch map over the same key range answers that without disturbing
+                // the map under test.
+                try (OrderedMap scratch = new OrderedMap(1024, keyTypes, valueTypes, 16, 0.5, 24)) {
+                    for (int i = 0; i < 1000; i++) {
+                        MapKey scratchKey = scratch.withKey();
+                        scratchKey.putInt(i);
+                        scratchKey.createValue();
+                    }
+                    assertHashUnused(scratch, plantedHashA);
+                    assertHashUnused(scratch, plantedHashB);
+                }
+
+                // Grow past the load factor so that rehash() runs.
+                final int initialCapacity = map.getKeyCapacity();
+                for (int i = 1; i < 1000 && map.getKeyCapacity() == initialCapacity; i++) {
+                    k = map.withKey();
+                    k.putInt(i);
+                    k.createValue();
+                }
+                Assert.assertTrue("rehash must have run", map.getKeyCapacity() > initialCapacity);
+
+                // Every real key plus both planted slots must have survived the rebuild.
+                Assert.assertEquals(map.size() + 2, occupiedSlotCount(map));
+
+                // Counting rather than flagging also detects a real key whose hash collided with a
+                // planted one, which would put a 2^34 offset on the hash-match branch.
+                int countA = 0;
+                int countB = 0;
+                for (int i = 0, n = map.getKeyCapacity(); i < n; i++) {
+                    final long slot = map.rawSlotAt(i);
+                    final int rawOffset = Numbers.decodeLowInt(slot);
+                    final int hash = Numbers.decodeHighInt(slot);
+                    if (hash == plantedHashA) {
+                        Assert.assertEquals(plantedOffsetA, rawOffset);
+                        countA++;
+                    } else if (hash == plantedHashB) {
+                        Assert.assertEquals(plantedOffsetB, rawOffset);
+                        countB++;
+                    }
+                }
+                Assert.assertEquals("planted slot A must survive the rehash exactly once", 1, countA);
+                Assert.assertEquals("planted slot B must survive the rehash exactly once", 1, countB);
+            }
+        });
+    }
+
+    @Test
+    public void testResizeAcceptsTargetEqualToMaxHeapSize() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // A 2064-byte ceiling is an exact multiple of the 16-byte entry, and the heap doubles
+            // 32 -> ... -> 2048, so the 129th entry makes target exactly 2064. That is the boundary
+            // of the throw predicate: an entry that fits exactly must be accepted, so the map holds
+            // 129 entries rather than stopping at the 128 that fitted in the 2048-byte heap.
+            final long maxHeapSize = 2_064;
+            final int clampedEntries = 129;
+
+            try (
+                    OrderedMap map = new OrderedMap(
+                            32,
+                            new SingleColumnType(ColumnType.LONG),
+                            new SingleColumnType(ColumnType.LONG),
+                            16,
+                            0.5,
+                            Integer.MAX_VALUE,
+                            true,
+                            maxHeapSize
+                    )
+            ) {
+                for (int i = 0; i < clampedEntries; i++) {
+                    MapKey key = map.withKey();
+                    key.putLong(i);
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putLong(0, i);
+                }
+                Assert.assertEquals(maxHeapSize, map.getHeapSize());
+                Assert.assertEquals(clampedEntries, map.size());
+                Assert.assertEquals(16L * clampedEntries, map.getUsedHeapSize());
+
+                try {
+                    MapKey overflowing = map.withKey();
+                    overflowing.putLong(clampedEntries);
+                    overflowing.createValue();
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 2064 memory exceeded in FastMap");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testResizeClampedHeapVarSizeKey() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // Same clamp as the fixed-size case, but reached through VarSizeKey.checkCapacity(),
+            // which resizes mid-key and has to shift startAddr/appendAddr by the realloc delta.
+            // A 4-char STRING key plus a LONG value is a 24-byte entry: the heap grows
+            // 32 -> 64 -> ... -> 2048, then clamps to 3064 instead of overshooting to 4096.
+            // 3064 bytes hold 127 entries; the pre-clamp 2048 held 85.
+            final long maxHeapSize = 3_064;
+            final int clampedEntries = 127;
+
+            try (
+                    OrderedMap map = new OrderedMap(
+                            32,
+                            new SingleColumnType(ColumnType.STRING),
+                            new SingleColumnType(ColumnType.LONG),
+                            16,
+                            0.5,
+                            Integer.MAX_VALUE,
+                            true,
+                            maxHeapSize
+                    )
+            ) {
+                // Fill to one entry short of the ceiling. The clamp happens well before that.
+                for (int i = 0; i < clampedEntries - 1; i++) {
+                    MapKey key = map.withKey();
+                    key.putStr(varSizeKey(i));
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putLong(0, i);
+                }
+                Assert.assertEquals(maxHeapSize, map.getHeapSize());
+
+                // Every entry written into the clamped heap must still be readable.
+                for (int i = 0; i < clampedEntries - 1; i++) {
+                    MapKey key = map.withKey();
+                    key.putStr(varSizeKey(i));
+                    MapValue value = key.findValue();
+                    Assert.assertNotNull(value);
+                    Assert.assertEquals(i, value.getLong(0));
+                }
+
+                // The last entry fits exactly, the one after it does not.
+                MapKey key = map.withKey();
+                key.putStr(varSizeKey(clampedEntries - 1));
+                key.createValue().putLong(0, clampedEntries - 1);
+                Assert.assertEquals(clampedEntries, map.size());
+                Assert.assertEquals(24L * clampedEntries, map.getUsedHeapSize());
+
+                try {
+                    MapKey overflowing = map.withKey();
+                    overflowing.putStr(varSizeKey(clampedEntries));
+                    overflowing.createValue();
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 3064 memory exceeded in FastMap");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testResizeClampsHeapToMaxHeapSize() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // The heap ceiling is 16 bytes below 2^35, so it is never a power of two, while
+            // every doubling step is. Model that at KB scale: growing 32 -> 64 -> ... -> 2048,
+            // the next step (4096) overshoots the 3064-byte ceiling and must clamp to it
+            // rather than fail. 3064 bytes hold 191 16-byte entries; the pre-clamp 2048 held 128.
+            final long maxHeapSize = 3_064;
+            final int clampedEntries = 191;
+
+            try (
+                    OrderedMap map = new OrderedMap(
+                            32,
+                            new SingleColumnType(ColumnType.LONG),
+                            new SingleColumnType(ColumnType.LONG),
+                            16,
+                            0.5,
+                            Integer.MAX_VALUE,
+                            true,
+                            maxHeapSize
+                    )
+            ) {
+                // Fill to one entry short of the ceiling. The clamp happens at 2048 -> 3064,
+                // so everything past entry 128 only exists because resize() clamped.
+                for (int i = 0; i < clampedEntries - 1; i++) {
+                    MapKey key = map.withKey();
+                    key.putLong(i);
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putLong(0, i);
+                }
+                // 3064 is not a power of two, so nothing downstream may assume the heap is one.
+                // Without the clamp this would have stopped at the 2048-byte doubling step.
+                Assert.assertEquals(maxHeapSize, map.getHeapSize());
+
+                // Probing works over the clamped heap. It needs one entry of headroom at kPos,
+                // where withKey() stages the search key, so it has to run before the last insert.
+                for (int i = 0; i < clampedEntries - 1; i++) {
+                    MapKey key = map.withKey();
+                    key.putLong(i);
+                    MapValue value = key.findValue();
+                    Assert.assertNotNull(value);
+                    Assert.assertEquals(i, value.getLong(0));
+                }
+
+                // The last entry fits exactly, the one after it does not.
+                MapKey lastKey = map.withKey();
+                lastKey.putLong(clampedEntries - 1);
+                lastKey.createValue().putLong(0, clampedEntries - 1);
+                Assert.assertEquals(clampedEntries, map.size());
+                Assert.assertEquals(16L * clampedEntries, map.getUsedHeapSize());
+
+                try {
+                    MapKey overflowing = map.withKey();
+                    overflowing.putLong(clampedEntries);
+                    overflowing.createValue();
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 3064 memory exceeded in FastMap");
+                }
+
+                // Cursor iteration over the clamped heap yields every entry, in insertion order.
+                int i = 0;
+                try (RecordCursor cursor = map.getCursor()) {
+                    MapRecord record = map.getRecord();
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(i, record.getLong(1));
+                        Assert.assertEquals(i, record.getValue().getLong(0));
+                        i++;
+                    }
+                }
+                Assert.assertEquals(clampedEntries, i);
+
+                // restoreInitialCapacity() must cope with the clamped, non-power-of-two heap.
+                map.restoreInitialCapacity();
+                Assert.assertEquals(32L, map.getHeapSize());
+                Assert.assertEquals(0, map.size());
+            }
+        });
+    }
+
+    @Test
+    public void testResizeThrowsWhenEntryExceedsMaxHeapSize() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // A single entry larger than the ceiling can never fit, clamp or no clamp.
+            try (
+                    OrderedMap map = new OrderedMap(
+                            32,
+                            new SingleColumnType(ColumnType.STRING),
+                            new SingleColumnType(ColumnType.LONG),
+                            16,
+                            0.5,
+                            Integer.MAX_VALUE,
+                            true,
+                            3_064
+                    )
+            ) {
+                try {
+                    MapKey key = map.withKey();
+                    key.putStr("a".repeat(4_000));
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 3064 memory exceeded in FastMap");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRestoreInitialCapacityBillsTheTrackerForEveryBlockItReleases() throws Exception {
+        // Every heap realloc and free bills the tracker for the block it actually touches, and the
+        // map takes that size from the [heapAddr, heapLimit) pair it manages the block through
+        // rather than from a cached size that could name a different block. Growing the heap,
+        // shrinking it back and closing it must therefore return the tracker to exactly zero.
+        //
+        // The map opens lazily and the test binds the tracker before reopen(), so the tracker sees
+        // every allocation from the first one and the closing balance is a complete account rather
+        // than a difference between two arbitrary points.
+        TestUtils.assertMemoryLeak(() -> {
+            final SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG);
+            final SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(64 * 1024)) {
+                // This leg grows the heap, restores it, then closes it. The balance it takes
+                // mid-flight is the part the enclosing leak check cannot reach, since that reading
+                // falls while the map is still open.
+                try (OrderedMap map = new OrderedMap(32, keyTypes, valueTypes, 16, 0.5, 1024, false)) {
+                    map.setMemoryTracker(tracker);
+                    map.reopen();
+                    fillLongKeys(map, 100);
+                    // A 32-byte heap holds two 16-byte entries, so 100 of them force several
+                    // resizes, and the 0.5 load factor over 32 slots grows the offsets array too.
+                    Assert.assertTrue("the map must have outgrown its initial heap", map.getHeapSize() > 32L);
+                    Assert.assertTrue("the map must have outgrown its initial offsets array", map.getKeyCapacity() > 32);
+
+                    map.restoreInitialCapacity();
+                    Assert.assertEquals(32L, map.getHeapSize());
+                    // 32-byte heap plus a 32-slot offsets array, and nothing else outstanding. The
+                    // test pins the capacity separately so a sizing change names itself here
+                    // instead of surfacing as an unexplained byte count.
+                    Assert.assertEquals(32, map.getKeyCapacity());
+                    Assert.assertEquals(32 + (32L << 3), tracker.getUsed());
+                }
+                Assert.assertEquals("close() must return every tracker-charged byte", 0, tracker.getUsed());
+
+                // This leg closes straight off a grown heap, with no restore in between, so close()
+                // has to size the free off a heap it never shrank.
+                try (OrderedMap map = new OrderedMap(32, keyTypes, valueTypes, 16, 0.5, 1024, false)) {
+                    map.setMemoryTracker(tracker);
+                    map.reopen();
+                    fillLongKeys(map, 100);
+                    Assert.assertTrue("the map must have outgrown its initial heap", map.getHeapSize() > 32L);
+                }
+                Assert.assertEquals("close() must return every tracker-charged byte", 0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testRestoreInitialCapacityHeapFailureLeavesMapClosed() throws Exception {
+        // restoreInitialCapacity() reallocs the key heap and then the offsets array, and rolls the
+        // whole thing back through close() if either throws. A lazily opened map reaches that path
+        // from reopen(): both reallocs grow from address and size zero, so a per-query limit can
+        // reject them.
+        //
+        // A failing realloc cannot leave the map describing a block it no longer owns: the map
+        // derives the heap size from the pointer pair, so no second copy of it exists to commit
+        // early. That leaves the rollback itself to cover, which is reachable and was untested.
+        // This half pins the tag the breach reports and the map staying reusable once the test
+        // lifts the limit; close() has nothing to do here, since the failing realloc left heapAddr
+        // at 0.
+        assertRestoreInitialCapacityRollback(16, "memoryTag=" + MemoryTag.NATIVE_FAST_MAP);
+    }
+
+    @Test
+    public void testRestoreInitialCapacityOffsetsFailureLeavesMapClosed() throws Exception {
+        // A limit of exactly initialHeapSize lets the heap realloc through - the check is
+        // used + size > limit, so 0 + 32 > 32 is false - and stops the offsets realloc that follows
+        // it. That is the half-restored state the catch has to unwind, and the only one of the two
+        // that pins close() staying in the catch: drop it and the map is left open on a heap with a
+        // stale key capacity.
+        assertRestoreInitialCapacityRollback(32, "memoryTag=" + MemoryTag.NATIVE_FAST_MAP_INT_LIST);
     }
 
     @Test
@@ -2219,6 +2851,215 @@ public class OrderedMapTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static void assertHashUnused(OrderedMap map, int hashCodeLo) {
+        for (int i = 0, n = map.getKeyCapacity(); i < n; i++) {
+            long slot = map.rawSlotAt(i);
+            if (Numbers.decodeLowInt(slot) != 0) {
+                Assert.assertNotEquals(
+                        "planted hash must not collide with a live key",
+                        hashCodeLo,
+                        Numbers.decodeHighInt(slot)
+                );
+            }
+        }
+    }
+
+    /**
+     * Plants an occupied slot with the top bit set in the destination table, right where the source
+     * key probes to, then merges. The merge probe has to walk over the planted slot; reading it as
+     * empty overwrites it with the merged entry.
+     */
+    private static void assertMergeSkipsPlantedSlot(boolean isVarSizeKey) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.INT);
+            if (isVarSizeKey) {
+                keyTypes.add(ColumnType.STRING);
+            }
+
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.LONG);
+
+            try (
+                    OrderedMap dest = new OrderedMap(1024, keyTypes, valueTypes, 16, 0.5, 24);
+                    OrderedMap src = new OrderedMap(1024, keyTypes, valueTypes, 16, 0.5, 24)
+            ) {
+                // Learn which destination slot the key probes to, then empty the table again.
+                MapKey k = dest.withKey();
+                k.putInt(7);
+                if (isVarSizeKey) {
+                    k.putStr("abc");
+                }
+                k.createValue().putLong(0, 1);
+                final int home = onlyOccupiedSlot(dest);
+                final int keyHash = hashCodeAt(dest, home);
+                dest.clear();
+
+                // Flipping only the top hash bit keeps the planted hash distinct from the key's, so
+                // the merge stays on the hash-mismatch branch and never dereferences the offset.
+                final int plantedOffset = 0x8000_0001;
+                final int plantedHash = keyHash ^ 0x8000_0000;
+                dest.pokeRawSlot(home, plantedOffset, plantedHash);
+
+                k = src.withKey();
+                k.putInt(7);
+                if (isVarSizeKey) {
+                    k.putStr("abc");
+                }
+                k.createValue().putLong(0, 2);
+
+                dest.merge(src, new TestMapValueMergeFunction());
+
+                Assert.assertEquals("planted slot must survive the merge", plantedOffset, rawOffsetAt(dest, home));
+                Assert.assertEquals(plantedHash, hashCodeAt(dest, home));
+
+                final int next = (home + 1) & (dest.getKeyCapacity() - 1);
+                Assert.assertTrue("merged key must land in the slot after the planted one", isSlotOccupied(dest, next));
+                Assert.assertEquals(keyHash, hashCodeAt(dest, next));
+                Assert.assertEquals(1, dest.size());
+
+                // The source entry was inserted, not merged into the planted slot, so the value is
+                // the source's own rather than a sum.
+                try (RecordCursor destCursor = dest.getCursor()) {
+                    Assert.assertTrue(destCursor.hasNext());
+                    Assert.assertEquals(2, dest.getRecord().getValue().getLong(0));
+                    Assert.assertFalse(destCursor.hasNext());
+                }
+            }
+        });
+    }
+
+    /**
+     * Drives {@code restoreInitialCapacity()} on a lazily opened map under a per-query limit tight
+     * enough to fail one of its two reallocs, and asserts the rollback: the breach surfaces as an
+     * out-of-memory {@code CairoException} naming the expected memory tag, the map is left fully
+     * closed with nothing charged to the tracker, and it is reusable once the limit is lifted.
+     * <p>
+     * The tracker rather than the RSS ceiling, because {@code used + size > limit} selects the
+     * failing allocation byte-exactly, while the process-wide ceiling moves under other threads.
+     */
+    private static void assertRestoreInitialCapacityRollback(long limitBytes, String expectedTag) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG);
+            final SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+            // openOnInit = false: the constructor allocates nothing, so initialHeapSize is 32 and
+            // initialKeyCapacity is 32 - a 256-byte offsets array - and reopen() has to grow both
+            // from zero. An eagerly opened map cannot reach a failing realloc here at all: the
+            // restore would be a shrink, and a non-positive delta bypasses the limit check.
+            try (
+                    LimitedMemoryTracker tracker = new LimitedMemoryTracker(limitBytes);
+                    OrderedMap map = new OrderedMap(32, keyTypes, valueTypes, 16, 0.5, 1024, false)
+            ) {
+                map.setMemoryTracker(tracker);
+                try {
+                    map.reopen();
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    // Pins which of the two reallocs failed. Without it the test passes vacuously
+                    // when a sizing change moves the breach to the other allocation.
+                    TestUtils.assertContains(e.getFlyweightMessage(), expectedTag);
+                }
+
+                Assert.assertFalse("the failed restore must leave the map closed", map.isOpen());
+                Assert.assertEquals(0, map.getHeapSize());
+                Assert.assertEquals("the rollback must return every tracker-charged byte", 0, tracker.getUsed());
+
+                // Recovery: with room to spare the same map reopens and round trips a key.
+                tracker.setLimit(64 * 1024);
+                map.reopen();
+                Assert.assertTrue(map.isOpen());
+                MapKey key = map.withKey();
+                key.putLong(42);
+                key.createValue().putLong(0, 7);
+                Assert.assertEquals(1, map.size());
+                key = map.withKey();
+                key.putLong(42);
+                MapValue value = key.findValue();
+                Assert.assertNotNull(value);
+                Assert.assertEquals(7, value.getLong(0));
+            }
+        });
+    }
+
+    private static void fillLongKeys(OrderedMap map, int count) {
+        for (int i = 0; i < count; i++) {
+            MapKey key = map.withKey();
+            key.putLong(i);
+            MapValue value = key.createValue();
+            Assert.assertTrue(value.isNew());
+            value.putLong(0, i);
+        }
+    }
+
+    private static int firstEmptySlot(OrderedMap map) {
+        for (int i = 0, n = map.getKeyCapacity(); i < n; i++) {
+            if (!isSlotOccupied(map, i)) {
+                return i;
+            }
+        }
+        Assert.fail("expected a free slot to plant into");
+        return -1;
+    }
+
+    /**
+     * The hash half of a raw slot. Keeps knowledge of the slot's
+     * {@code [rawOffset | hashCodeLo]} packing in this file to the three accessors below.
+     */
+    private static int hashCodeAt(OrderedMap map, int slot) {
+        return Numbers.decodeHighInt(map.rawSlotAt(slot));
+    }
+
+    /**
+     * A slot is empty when its biased offset half reads 0, which is exactly the predicate the
+     * map's eight scans route through {@code CompressedOffsets.isEmptyBiased8}.
+     */
+    private static boolean isSlotOccupied(OrderedMap map, int slot) {
+        return Numbers.decodeLowInt(map.rawSlotAt(slot)) != 0;
+    }
+
+    private static int occupiedSlotCount(OrderedMap map) {
+        int count = 0;
+        for (int i = 0, n = map.getKeyCapacity(); i < n; i++) {
+            if (isSlotOccupied(map, i)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static int onlyOccupiedSlot(OrderedMap map) {
+        int found = -1;
+        for (int i = 0, n = map.getKeyCapacity(); i < n; i++) {
+            if (isSlotOccupied(map, i)) {
+                Assert.assertEquals("expected exactly one occupied slot", -1, found);
+                found = i;
+            }
+        }
+        Assert.assertNotEquals("expected exactly one occupied slot", -1, found);
+        return found;
+    }
+
+    /**
+     * The biased-offset half of a raw slot, as {@code pokeRawSlot} takes it.
+     */
+    private static int rawOffsetAt(OrderedMap map, int slot) {
+        return Numbers.decodeLowInt(map.rawSlotAt(slot));
+    }
+
+    /**
+     * Builds a 4-char key that is distinct by construction, so an entry count can be asserted
+     * without depending on a random generator not colliding. The width is what matters: a 4-char
+     * STRING key plus a LONG value is exactly a 24-byte entry.
+     */
+    private static String varSizeKey(int i) {
+        return "k"
+                + (char) ('a' + i / 676 % 26)
+                + (char) ('a' + i / 26 % 26)
+                + (char) ('a' + i % 26);
     }
 
     private void assertCursor2(Rnd rnd, TestRecord.ArrayBinarySequence binarySequence, int keyColumnOffset, Rnd rnd2, RecordCursor mapCursor) {
