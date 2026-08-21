@@ -90,10 +90,19 @@ Report these as Category E (non-test failures) in the final output. Common cases
   Anchor on that line shape, not a `grep -A N` window around the heading: the
   runner echoes the workflow's own `run:` body into the log, so a heading match
   returns script source first, and a fixed window silently truncates a long
-  finding list. Nothing back means there were no findings and the job failed for
-  another reason — `ERROR: Unexpected exit code [1]` is gitleaks exiting 1 on a
-  commit range it cannot resolve, which a re-run usually clears. Report that raw
-  error; do not call it a leaked credential.
+  finding list. Nothing back means the scan produced no findings and the job
+  failed for another reason; read the log before naming which one.
+  - `ERROR: Unexpected exit code [1]` alongside `fatal: Invalid revision range`
+    is gitleaks failing on a commit range it cannot resolve, typically after a
+    force-push. A re-run usually clears this one.
+  - `FTL unable to load gitleaks config` (exit 1), or a Go `panic:` trace from
+    `regexp: Compile` (exit 2), means `.gitleaks.toml` itself is broken — an
+    unbalanced `(` in a `[[rules.allowlists]]` regex is enough. The panic exits
+    2, so the action still reports `Leaks detected, see job summary for details`
+    even though nothing was scanned and no `results.sarif` was written. Name the
+    config error, not that warning, and do not expect a re-run to clear it.
+
+  Report the raw error in both cases; do not call it a leaked credential.
   With findings, report them and do not act on them: like every Category E
   failure, the decision is the user's (Step 5). A real credential has to be
   rotated first, and only a confirmed false positive gets suppressed by

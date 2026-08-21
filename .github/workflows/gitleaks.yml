@@ -49,11 +49,13 @@ jobs:
             echo "$fingerprints"
             echo '```'
             echo
-            echo 'Each line pins a start line, recorded as of the commit that introduced the'
-            echo 'finding. If a later commit shifts that line, the entry stops matching. For a'
-            echo 'false positive in a file you are still editing, or one that keeps coming'
-            echo 'back, add a line-independent `[[rules.allowlists]]` regex to `.gitleaks.toml`'
-            echo 'instead. See CONTRIBUTING.md, "Secret scanning".'
+            echo 'Each line pins a file path and a start line, recorded as of the commit that'
+            echo 'introduced the finding. Anything that moves the finding before the merge --'
+            echo 'a later commit here, an unrelated pull request shifting the same line on'
+            echo '`master`, a rename -- stops the entry matching. For a false positive in a'
+            echo 'file that is still changing, or one that keeps coming back, add a'
+            echo 'line-independent `[[rules.allowlists]]` regex to `.gitleaks.toml` instead.'
+            echo 'See CONTRIBUTING.md, "Secret scanning".'
             echo
             if [ "$GITHUB_EVENT_NAME" = 'pull_request' ]; then
               echo 'Commit the entry to this branch. Do NOT paste the four-part `Fingerprint:`'

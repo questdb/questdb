@@ -386,15 +386,22 @@ Do not paste the four-part `Fingerprint:` line that gitleaks prints in the job
 log. PRs here are squash-merged, so the commit it names never reaches `master`:
 the entry silences your PR and then fails the push scan of `master`.
 
-A three-part entry still pins a start line, and the scan records that line as of
-the commit that introduced the finding. If a later commit on your branch inserts
-or deletes lines above it in the same file, the squashed commit carries the
-finding on a different line, the entry stops matching, and the push scan of
-`master` fails on a pull request that was green. Nothing warns you — the scan
-reads commit diffs and never re-reads the line. So paste an ignore entry only
-for a line you are done editing. For a false positive that recurs, or one in a
-file you are still changing, add a line-independent allowlist to
-`.gitleaks.toml` instead:
+A three-part entry still pins a file path and a start line, both recorded as of
+the commit that introduced the finding, and the push scan of `master` matches
+them against the squashed commit. Anything that moves the finding before that
+commit lands stops the entry matching:
+
+- a later commit on your branch inserts or deletes lines above it in the same
+  file;
+- an unrelated pull request lands on `master` and shifts that line, which you
+  neither control nor see;
+- the file is renamed, even with no edit to the line itself.
+
+Each case leaves the pull request green and fails the push scan of `master`.
+Nothing warns you — the scan reads commit diffs and never re-reads the line. So
+paste an ignore entry only for a line whose file is settled. For a false
+positive that recurs, or one in a file that anyone is still changing, add a
+line-independent allowlist to `.gitleaks.toml` instead:
 
 ```toml
 [[rules]]
