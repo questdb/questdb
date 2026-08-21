@@ -428,6 +428,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         final long piecesBefore = ctx.bounds.size() / O3CompositeMergeStrategy.LONGS_PER_BOUND;
         final long eBefore = geometry.getE(partitionIndex);
+        // The committed, pre-cut piece count, read before beginUpdate/commitUpdate below replace it -
+        // piecesBefore already reflects the pre-split cuts step 2 applied in memory, so the delta between
+        // the two is exactly how many of those cuts landed (each one adds a single bound entry).
+        final long piecesBeforeCuts = geometry.getPieceCount(partitionIndex);
         int keepCount = 0, mergeCount = 0, newPieceCount = 0, appendCount = 0, dropCount = 0;
         for (int i = 0; i < plan.actions.size(); i++) {
             switch (plan.actions.getQuick(i).type) {
@@ -519,19 +523,39 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // pieces are what the design exists to leave alone, and the physical row count growing by far less
         // than the partition holds is the win it claims. Reading that off several lines, interleaved with
         // other partitions' and other tables', is what a per-action log costs.
+        final Path dirPath = Path.getThreadLocal(pathToTable);
+        setPathForNativePartition(
+                dirPath,
+                tableWriter.getMetadata().getTimestampType(),
+                tableWriter.getPartitionBy(),
+                partitionTimestamp,
+                srcNameTxn
+        );
+        // newRows is what THIS pass physically wrote - e is grow-only and every action that writes
+        // anything does so at the tail (see executeCompositePlan), so the extent's own growth already
+        // is that count, with no separate accumulator to keep in step.
+        final long newRows = e - eBefore;
+        // How many of those written rows are genuinely new, versus existing rows a MERGE recopied to
+        // relocate them: the ratio is this pass's own write amplification, the same metric and rounding
+        // ApplyWal2TableJob's own "ampl=" already uses.
+        final long incomingRows = srcOooHi - srcOooLo + 1;
+        final double amplification = incomingRows > 0
+                ? Numbers.roundUp(Numbers.roundUp(100.0 * newRows / incomingRows, 2) / 100.0, 2)
+                : 0;
         LOG.info().$("merge-append composite partition [table=").$(tableWriter.getTableToken())
-                .$(", ts=").$ts(ColumnType.getTimestampDriver(tableWriter.getMetadata().getTimestampType()), partitionTimestamp)
+                .$(", dir=").$substr(tableWriter.getPathRootSize(), dirPath)
                 // What the partition ENDS UP with, not what the plan produced: a plan whose pieces tile
                 // the files publishes no geometry, and such a partition holds one piece by definition.
                 .$(", pieces=").$(piecesBefore).$("->").$(isComposite ? ctx.pieces.size() / 4 : (fullyReplaced ? 0 : 1))
+                .$(", split=").$(piecesBefore - piecesBeforeCuts)
                 .$(", keep=").$(keepCount)
                 .$(", merge=").$(mergeCount)
-                .$(", newPieces=").$(newPieceCount)
-                .$(", append=").$(appendCount)
-                .$(", drop=").$(dropCount)
-                .$(", newRows=").$(liveRows)
-                .$(", newPhysicalRows=").$(e)
-                .$(", deadRows=").$(e > 0 ? Math.round((e - liveRows) * 100.0 / e * 100.0) / 100.0 : 0).$('%')
+                .$(", newPieces=").$(newPieceCount + appendCount)
+                .$(", newRows=").$(incomingRows)
+                .$(", totalRows=").$(liveRows)
+                .$(", totalPhysicalRows=").$(e)
+                .$(", ampl=").$(amplification)
+                .$(", deadRows=").$(liveRows > 0 ? Math.round((e - liveRows) * 100.0 / liveRows * 100.0) / 100.0 : 0).$('%')
                 .I$();
 
         final long geometryRef = !isComposite ? TableWriter.NO_GEOMETRY_REF : geometry.publish(
@@ -1160,6 +1184,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         if (TxReader.geometryGeneration(committedRef) >= TxReader.PARTITION_GEOMETRY_MAX_GENERATION) {
             final long nextOffset = TxReader.geometryOffset(committedRef) + geometry.getCommittedRecordSize(partitionIndex);
             if (nextOffset + PartitionGeometryFile.recordSize(actionCount) > PartitionGeometryFile.MAX_FILE_SIZE) {
+                LOG.info().$("assembling fresh partition version: geometry chain exhausted [table=")
+                        .$(tableWriter.getTableToken())
+                        .$(", partitionIndex=").$(partitionIndex)
+                        .$(", generation=").$(TxReader.geometryGeneration(committedRef))
+                        .$(", nextOffset=").$(nextOffset)
+                        .$(", maxFileSize=").$(PartitionGeometryFile.MAX_FILE_SIZE)
+                        .I$();
                 return true;
             }
         }

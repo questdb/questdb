@@ -76,6 +76,9 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             // The age rule fires when a partition has not changed shape for this long AND it still has
             // waste or more than one piece.
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+            // Waste/table-pressure alone must not be what fires here - only the age rule, once idle.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_PERCENT, "99");
 
             setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
             createDayTable("x", "2024-01-01", 20_000);
@@ -110,15 +113,17 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             enableMergeAppend();
             enableCompaction();
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
 
             createDayTable("x", "2024-01-01", 20_000);
             // Three rewrites: each merge-append here rewrites the WHOLE partition (no pre-split cuts
             // it), so two rounds leave dead just under the live count - three pushes past the ratio.
+            // The tight ratio is set only now, after the buildup: with it in effect throughout,
+            // compaction reclaims the waste as it is created and there is nothing left to loop on.
             backdate("x", "2024-01-01T06:00:00", 200);
             backdate("x", "2024-01-01T06:00:00", 200);
             backdate("x", "2024-01-01T06:00:00", 200);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
             runCompactionPasses("x");
 
             // The partition must have been dealt with by now - this is what fails while compaction
@@ -194,15 +199,20 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             enableMergeAppend();
             enableCompaction();
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
+            // A full-partition rewrite naturally crosses the table-wide dead-percent default (50%)
+            // partway through the buildup below; keep the table-pressure rule out of the way so only
+            // the waste-ratio rule (set after the buildup) is what fires.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_PERCENT, "99");
 
             createDayTable("x", "2024-01-01", 20_000);
             // Three rewrites: each merge-append here rewrites the WHOLE partition (no pre-split cuts
             // it), so two rounds leave dead just under the live count - three pushes past the ratio.
+            // The tight ratio is set only now, after the buildup - see testWasteRatioTriggerReclaimsDeadRows.
             backdate("x", "2024-01-01T06:00:00", 200);
             backdate("x", "2024-01-01T06:00:00", 200);
             backdate("x", "2024-01-01T06:00:00", 200);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
 
             final TableToken tt = engine.verifyTableName("x");
             final String before = fingerprintOfDay("x", "2024-01-01");
@@ -250,7 +260,6 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             // stride leaves behind, so the waste-ratio rule (dead > ratio*live) never fires here - the
             // piece-count rule is what selects this partition instead.
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, "2");
             // Small enough that the pre-split isolates the repeatedly-touched stride into its own piece
             // instead of merge-append relocating the whole partition - MOVE-TAIL needs a genuine clean
             // front left standing at row 0 to have anything to leave alone.
@@ -263,10 +272,12 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             // partition.
             createDayTable("x", "2024-01-01", 20_000);
             // Three rewrites: each one relocates only the pre-split-isolated stride, adding one more
-            // piece each time until the piece-count rule (max.pieces=2) fires.
+            // piece each time. The piece-count limit is set only now, after the buildup, so it is the
+            // OBSERVED pass that trips it (max.pieces=2), not the buildup itself.
             backdate("x", "2024-01-01T05:00:00", 200);
             backdate("x", "2024-01-01T05:00:00", 200);
             backdate("x", "2024-01-01T05:00:00", 200);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, "2");
 
             final long deadBefore = deadRowsOfDay("x", "2024-01-01");
             Assert.assertTrue("fixture produced no waste", deadBefore > 0);
@@ -324,20 +335,18 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
             // Waste alone must not be what fires here.
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, "4");
 
             createDayTable("x", "2024-01-01", 40_000);
-            // Six separated strides, so the pre-split cuts the day repeatedly. Compaction stays off
-            // through the buildup: on, a commit that would itself cross the piece-count limit assembles
-            // the fresh version directly (see O3PartitionJob#shouldAssembleFreshPartitionVersion) instead
-            // of leaving the breach for housekeep to find, which is exactly the shape this fixture needs
-            // to build.
+            // Six separated strides, so the pre-split cuts the day repeatedly. The piece-count limit is
+            // set only now, after the buildup, so it is the OBSERVED pass that trips it, not the buildup
+            // itself.
             backdate("x", "2024-01-01T02:00:00", 60);
             backdate("x", "2024-01-01T06:00:00", 60);
             backdate("x", "2024-01-01T10:00:00", 60);
             backdate("x", "2024-01-01T14:00:00", 60);
             backdate("x", "2024-01-01T18:00:00", 60);
             backdate("x", "2024-01-01T22:00:00", 60);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, "4");
 
             final long piecesBefore = pieceCountOfDay("x", "2024-01-01");
             Assert.assertTrue(
@@ -442,15 +451,20 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             enableMergeAppend();
             enableCompaction();
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
+            // A full-partition rewrite naturally crosses the table-wide dead-percent default (50%)
+            // partway through the buildup below; keep the table-pressure rule out of the way so only
+            // the waste-ratio rule (set after the buildup) is what fires.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_PERCENT, "99");
 
             createDayTable("x", "2024-01-01", 20_000);
             // Three rewrites: each merge-append here rewrites the WHOLE partition (no pre-split cuts
             // it), so two rounds leave dead just under the live count - three pushes past the ratio.
+            // The tight ratio is set only now, after the buildup - see testWasteRatioTriggerReclaimsDeadRows.
             backdate("x", "2024-01-01T06:00:00", 200);
             backdate("x", "2024-01-01T06:00:00", 200);
             backdate("x", "2024-01-01T06:00:00", 200);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
 
             final TableToken tt = engine.verifyTableName("x");
             // First pass: REWRITE reclaims the waste (no MOVE-TAIL instalment plan in this port).
@@ -488,18 +502,21 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     public void testWasteRatioTriggerReclaimsDeadRows() throws Exception {
         assertMemoryLeak(() -> {
             enableMergeAppend();
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
+            // A full-partition rewrite naturally crosses the table-wide dead-percent default (50%)
+            // partway through the buildup below; keep the table-pressure rule out of the way so only
+            // the waste-ratio rule (set after the buildup) is what fires.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_PERCENT, "99");
 
             // A small partition churned hard: each rewrite of the 400-row stride abandons the
-            // previous copy, so dead rows climb past 3x the live rows. Compaction stays off through the
-            // buildup: on, a commit that would itself cross the ratio assembles the fresh version
-            // directly (see O3PartitionJob#shouldAssembleFreshPartitionVersion) instead of leaving the
-            // breach for housekeep to find, which is exactly the shape this fixture needs to build.
+            // previous copy, so dead rows climb past 3x the live rows. The tight ratio is set only now,
+            // after the buildup: with it in effect throughout, compaction reclaims the waste as it is
+            // created and there is nothing left to observe.
             createDayTable("x", "2024-01-01", 600);
             for (int i = 0; i < 8; i++) {
                 backdate("x", "2024-01-01T06:00:00", 400);
             }
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
 
             final long deadBefore = deadRows("x");
             final long live = liveRows("x");

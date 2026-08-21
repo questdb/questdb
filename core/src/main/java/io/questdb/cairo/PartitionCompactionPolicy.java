@@ -227,7 +227,10 @@ public class PartitionCompactionPolicy implements Mutable {
             tablePressureOn = !(deadRowsTable * 100 < total * configuration.getPartitionCompactionTableDeadStopPercent()
                     && deadBytes <= configuration.getPartitionCompactionTableDeadMaxSize() / 2);
         } else {
-            tablePressureOn = deadRowsTable * 100 >= total * configuration.getPartitionCompactionTableDeadPercent()
+            // total == 0 (no composite partition seen yet) must never turn this on: 0 >= 0 would
+            // otherwise satisfy the percentage check trivially, latching table pressure on from the
+            // very first commit of any table, well before there is any real waste to speak of.
+            tablePressureOn = (total > 0 && deadRowsTable * 100 >= total * configuration.getPartitionCompactionTableDeadPercent())
                     || deadBytes > configuration.getPartitionCompactionTableDeadMaxSize();
         }
 

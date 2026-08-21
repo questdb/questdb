@@ -2472,6 +2472,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getPartitionTimestampByIndex(partitionIndex);
     }
 
+    /**
+     * The length of {@code path}'s db-root prefix, so a caller building its own partition path off
+     * {@code getFrameFactory()}'s table root can log it relative to the db root the same way this class's
+     * own log lines do, via {@code $substr(getPathRootSize(), path)}.
+     */
+    public int getPathRootSize() {
+        return pathRootSize;
+    }
+
     public long getPhysicallyWrittenRowsSinceLastCommit() {
         return physicallyWrittenRowsSinceLastCommit.sum();
     }
@@ -15579,7 +15588,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 case DROP -> deadRows += O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
             }
         }
-        return PartitionCompactionPolicy.exceedsThresholds(configuration, liveRows, deadRows, pieceCount, avgRecordSize());
+        final boolean breaches = PartitionCompactionPolicy.exceedsThresholds(configuration, liveRows, deadRows, pieceCount, avgRecordSize());
+        if (breaches) {
+            LOG.info().$("assembling fresh partition version: would breach compaction thresholds [table=")
+                    .$(tableToken)
+                    .$(", partitionIndex=").$(partitionIndex)
+                    .$(", anticipatedLiveRows=").$(liveRows)
+                    .$(", anticipatedDeadRows=").$(deadRows)
+                    .$(", anticipatedPieces=").$(pieceCount)
+                    .$(", maxPieces=").$(configuration.getPartitionCompactionMaxPieces())
+                    .$(", deadRowsRatio=").$(configuration.getPartitionCompactionDeadRowsRatio())
+                    .$(", deadMinSize=").$(configuration.getPartitionCompactionDeadMinSize())
+                    .I$();
+        }
+        return breaches;
     }
 
     @FunctionalInterface
