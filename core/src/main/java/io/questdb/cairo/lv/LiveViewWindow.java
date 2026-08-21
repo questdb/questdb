@@ -1442,6 +1442,33 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
+     * Re-stamps this window's incremental baseline onto the generation a keyed repair's
+     * splice published, keeping the dirty set it already holds.
+     * <p>
+     * Unconditional where {@link #onCheckpointRepairBaselinePublished} is not, and for the
+     * mirror-image reason. A chaining repair replays through this runtime and carries the
+     * provisional repair stamp, so re-stamping it is a hand-off; a keyed repair replays
+     * through an isolated one and leaves this window standing on the generation its last
+     * cadence seal named - a real generation, which the splice has now moved past. Left
+     * alone it would not match the generation the next seal builds on, and that seal would
+     * image the whole live domain instead of the keys that moved.
+     * <p>
+     * The dirty set survives, which is the half that makes the re-stamp sound. The keys it
+     * holds are the ones this window moved since its last seal, and the newest root the
+     * splice kept sits at or above that seal's boundary, so they are a superset of what the
+     * next seal owes - together with the keys
+     * {@link #transplantCheckpointWindowEntry} has just added to it.
+     */
+    public void adoptKeyedRepairBaseline(long generation) {
+        if (isCheckpointFullScanRequired) {
+            // Already latched onto a complete freeze by something this repair does not
+            // know about. Stamping would clear that latch.
+            return;
+        }
+        checkpointBaselineGeneration = generation;
+    }
+
+    /**
      * Reopen hook for the wrapping {@link AnchorDispatchingCursor}: invoked
      * whenever the cursor stack issues {@code toTop()} between refresh ticks.
      * Resets only the anchor expression's per-cursor iteration state; the
@@ -1849,6 +1876,100 @@ public class LiveViewWindow implements QuietCloseable {
             plan.getComponent(c).resetState(value, plan.getComponentSlotBase(c));
         }
         restoreFrontierEntry(anchorValue);
+    }
+
+    /**
+     * Writes one key's whole fused state into this <b>live</b> window, over whatever it
+     * already held, and marks the key for the next seal.
+     * <p>
+     * This is how an open-segment keyed repair hands its result back. The repair replays
+     * the keys its correction touched through a second runtime
+     * ({@code LiveViewRepairRuntime}), because a replay that follows some keys cannot run
+     * through the runtime the forward drain stands in: it would leave every key it did not
+     * follow holding state rewound to the repair's anchor. So the replay ends with the
+     * corrected accumulators in the isolated runtime and this one still holding the stale
+     * ones for exactly those keys, and this closes that gap - one key at a time, over a
+     * domain bounded by the correction rather than by the view.
+     * <p>
+     * Deliberately not {@link #restoreCheckpointWindowEntry}, which serves a restore into
+     * an emptied runtime and refuses an entry that already exists. Three things follow from
+     * writing into a live map instead:
+     * <ul>
+     *     <li><b>The key is marked dirty.</b> Its state moved without a row passing through
+     *     {@link #processRow}, so nothing else would name it, and the next seal images the
+     *     keys it is told about. A key this window has never held is marked as new, which
+     *     is what keeps the running logical total an incremental freeze adds against
+     *     describing the domain it now has.</li>
+     *     <li><b>The frontier bookkeeping is corrected rather than re-counted.</b> A key
+     *     already here is already in a bucket, so only a key that is new - or one whose
+     *     anchor value the replay moved on - changes what the compaction trigger counts.
+     *     Re-counting an existing key would inflate the current bucket by the whole key
+     *     domain of every repair.</li>
+     *     <li><b>A tombstone is cancelled.</b> The state written here is live by
+     *     construction: the replay emitted this key's rows.</li>
+     * </ul>
+     *
+     * @param keySource the entry's encoded partition key, bounded to its exact length
+     * @param payload   the key's scalar state, exactly the manifest's width, as
+     *                  {@link #freezeCheckpointEntries} emitted it from the runtime that
+     *                  replayed the key
+     */
+    public void transplantCheckpointWindowEntry(
+            @NotNull LiveViewStatePageReader keySource,
+            byte @NotNull [] payload
+    ) {
+        final LiveViewWindowStatePlan plan = checkpointWindowStatePlan;
+        if (plan == null) {
+            throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                    .put("live view checkpoint window state transplant without an adopted plan");
+        }
+        final MapKey key = anchorMap.withKey();
+        final long consumed = LiveViewSnapshotKeyCodec.readKey(key, keySource, 0, partitionKeyTypes);
+        if (consumed != keySource.size()) {
+            throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                    .put("live view checkpoint window state transplant key decoder did not consume the entry exactly [expected=")
+                    .put(keySource.size()).put(", consumed=").put(consumed).put(']');
+        }
+        final MapValue value = key.createValue();
+        final boolean isNewPartition = value.isNew();
+        // Read before the write below overwrites them, and only where they mean anything:
+        // createValue() promises no zero fill, so a new entry's slots are whatever the
+        // map's backing held.
+        final boolean wasInitialized = !isNewPartition && value.getByte(SLOT_INITIALIZED) != 0;
+        final long lastAnchor = wasInitialized ? value.getLong(SLOT_ANCHOR_VALUE) : Numbers.LONG_NULL;
+        if (wasInitialized && value.getByte(SLOT_TOMBSTONE) == 1) {
+            tombstoneCount--;
+        }
+        final long anchorValue = LiveViewCheckpointWindowRoot.readAnchorValue(payload);
+        value.putLong(SLOT_ANCHOR_VALUE, anchorValue);
+        value.putByte(SLOT_INITIALIZED, (byte) 1);
+        value.putByte(SLOT_TOMBSTONE, (byte) 0);
+        // EPOCH_NONE rather than the live cadence: the mark below is made now, and leaving
+        // the stamp behind it costs one repeat mark from this key's next row and cannot
+        // lose one.
+        value.putShort(SLOT_DIRTY_EPOCH, EPOCH_NONE);
+        final LiveViewWindowStateManifest manifest = plan.getManifest();
+        final int durableComponentCount = plan.getDurableComponentCount();
+        for (int c = 0; c < durableComponentCount; c++) {
+            plan.getComponent(c).restoreStateFrom(
+                    payload,
+                    manifest.getComponentStateOffset(c),
+                    value,
+                    plan.getComponentSlotBase(c)
+            );
+        }
+        // A runtime-only member's bytes travel on a root of its own, which a keyed repair
+        // does not re-version key by key - which is why the route refuses a view carrying
+        // one. Identity here states that rather than leaving the slots as they were.
+        for (int c = durableComponentCount, n = plan.getComponentCount(); c < n; c++) {
+            plan.getComponent(c).resetState(value, plan.getComponentSlotBase(c));
+        }
+        if (!wasInitialized) {
+            restoreFrontierEntry(anchorValue);
+        } else if (lastAnchor != anchorValue) {
+            movePartitionToCurrentBucket(false, lastAnchor);
+        }
+        markCheckpointPartitionDirtyByKey(keySource, isNewPartition);
     }
 
     /**
@@ -2513,6 +2634,37 @@ public class LiveViewWindow implements QuietCloseable {
         // turns a key the sweep evicted earlier in the cadence back into an upsert.
         // Writing it on a fresh entry also keeps the marker off whatever bytes the map's
         // backing happened to hold - createValue() zero-fills on no implementation.
+        value.putByte(DIRTY_SLOT_EVICTED, (byte) 0);
+    }
+
+    /**
+     * Joins one key to the checkpoint dirty set from its encoded image rather than from a
+     * row, for a caller that moved that key's state without a row passing through
+     * {@link #processRow}.
+     * <p>
+     * The set is keyed exactly as {@link #markCheckpointPartitionDirty} keys it - the
+     * partition key's own columns - and the two decoders agree by construction:
+     * {@link LiveViewSnapshotKeyCodec} writes the image this reads off the same map record
+     * the sink would have written from.
+     */
+    private void markCheckpointPartitionDirtyByKey(
+            @NotNull LiveViewStatePageReader keySource,
+            boolean isNewPartition
+    ) {
+        checkpointDirtyMarkCount++;
+        if (checkpointDirtyAnchorMap == null) {
+            checkpointDirtyAnchorMap = createTrackedDirtyAnchorMap(
+                    cairoConfiguration,
+                    partitionKeyTypes,
+                    memoryTracker
+            );
+        }
+        final MapKey key = checkpointDirtyAnchorMap.withKey();
+        LiveViewSnapshotKeyCodec.readKey(key, keySource, 0, partitionKeyTypes);
+        final MapValue value = key.createValue();
+        if (value.isNew()) {
+            value.putByte(DIRTY_SLOT_NEW_SINCE_CHECKPOINT, isNewPartition ? (byte) 1 : (byte) 0);
+        }
         value.putByte(DIRTY_SLOT_EVICTED, (byte) 0);
     }
 

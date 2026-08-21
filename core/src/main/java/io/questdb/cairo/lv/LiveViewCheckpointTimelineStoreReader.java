@@ -267,9 +267,12 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
      *     key's state across one anchor entry and one root per function, and a function's
      *     own root is restored whole or not at all. This refuses rather than restoring
      *     half a key.</li>
-     *     <li><b>Every checkpoint-capable function must be part of the group.</b> A
-     *     residual function - one holding a partition map of its own - has no per-key
-     *     restore, for the same reason.</li>
+     *     <li><b>Every checkpoint-capable function must be a durable projection of the
+     *     group.</b> A residual function holds a partition map of its own and a
+     *     runtime-only member holds a root of its own; each is restored - and later
+     *     re-versioned, and charged for - whole rather than key by key. A durable
+     *     projection carries nothing outside the fused entry, so one key's entry is one
+     *     key's whole state.</li>
      *     <li><b>Validation covers the root's shape, not its entries.</b> The ordinary
      *     restore walks every entry to prove the whole root decodes before it writes any
      *     of it; walking here would be the very cost this avoids. The header checks are
@@ -328,7 +331,6 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             }
             anchorWindow.beginCheckpointRestore();
             restoreWindowStateKeys(anchorWindow, keys);
-            restoreGroupedFunctionKeys(functions, anchorWindow, keys);
             return new Result(
                     pin.getGeneration(),
                     pin.getNormalizedBaseSeqTxn(),
@@ -1123,13 +1125,9 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 // replay's first row for a key is already its whole state.
                 continue;
             }
-            if (isDurableGroupedProjection(anchorWindow, function)) {
-                continue;
+            if (!isDurableGroupedProjection(anchorWindow, function)) {
+                return false;
             }
-            if (memberProjectionIndex(anchorWindow, function, false) >= 0) {
-                continue;
-            }
-            return false;
         }
         return true;
     }
@@ -1158,49 +1156,6 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             anchorWindow.restoreCheckpointWindowEntry(openKeyPage(entry.getKey()), scalarState);
             restoredLogicalStateBytes += entry.getKey().length + scalarState.length;
         });
-    }
-
-    /**
-     * Rehydrates {@code keys}' slice of every runtime-only member's own root, after
-     * {@link #restoreWindowStateKeys} has created the entries they write into.
-     * <p>
-     * Each member is left on the post-restore full scan, exactly as
-     * {@link #restoreGroupedFunction} leaves it: nothing here publishes a root, so nothing
-     * here may hand a function a baseline to freeze incrementally against.
-     */
-    private void restoreGroupedFunctionKeys(
-            @NotNull ObjList<WindowFunction> functions,
-            @NotNull LiveViewWindow anchorWindow,
-            @NotNull LiveViewCheckpointOutputKeyDomain keys
-    ) {
-        final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
-        final LiveViewCheckpointPageRef partitionRootRef = new LiveViewCheckpointPageRef();
-        final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            final WindowFunction function = functions.getQuick(i);
-            if (!function.supportsCheckpointState() || isDurableGroupedProjection(anchorWindow, function)) {
-                continue;
-            }
-            final int projectionIndex = memberProjectionIndex(anchorWindow, function, false);
-            if (projectionIndex < 0) {
-                // isEveryFunctionGrouped has already refused a view holding one of these.
-                continue;
-            }
-            functionDirectory.find(function.checkpointFunctionIdentity().getEncoded(), functionRootRef);
-            functionRoot.of(checkpointsDir, functionRootRef);
-            function.onCheckpointRestoreBegin();
-            functionRoot.getPartitionMapRootRef(partitionRootRef);
-            keys.forEach(key -> {
-                if (!partitionReader.find(partitionRootRef, key, entry)) {
-                    return;
-                }
-                final byte[] scalarState = entry.getScalarState();
-                if (scalarState.length == 0) {
-                    throw invalid("grouped member root entry carries no inline state");
-                }
-                anchorWindow.restoreCheckpointMemberEntry(projectionIndex, openKeyPage(key), scalarState);
-            });
-        }
     }
 
     private void validateAnchor(@NotNull LiveViewWindow anchorWindow, LiveViewCheckpointPageRef anchorRootRef) {

@@ -48,6 +48,8 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.RepairPublicationStage;
 import io.questdb.cairo.map.Map;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
@@ -93,6 +95,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
@@ -371,6 +374,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private long openSegmentKeyedPricedCount;
     private long openSegmentKeyedUnpricedCount;
     private long openSegmentKeyedWholeRangeRows;
+    // The transplant's scratch: one keyed repair's finished per-key state, read off the
+    // isolated runtime through the same freeze contract a seal uses and written into the
+    // primary through the matching restore. Sized by the correction's key domain, and
+    // cleared rather than dropped so a worker pays for the growth once.
+    private final MemoryCARW transplantKeyMemory = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+    private final LiveViewStatePageReader transplantKeyPage = new LiveViewStatePageReader();
+    private final ObjList<byte[]> transplantKeys = new ObjList<>();
+    private final ObjList<byte[]> transplantPayloads = new ObjList<>();
+    private final ObjList<byte[]> transplantRemovedKeys = new ObjList<>();
+    private final LongList transplantValues = new LongList();
+    // Keys this worker has handed back to a primary runtime, summed over every keyed
+    // resume it published.
+    private long transplantedKeyCount;
+    // How many resumes this worker ran by key rather than by reading every row above the
+    // anchor, and how many of those published sparsely.
+    private long openSegmentKeyedResumeCount;
+    private long openSegmentSparseResumeCount;
     // The keyed replay of one closed segment: the key domain its indexed scan follows, and
     // the merge that supplies every other key's row from the view's own stored output.
     // Worker-owned scratch, armed per segment and disarmed the moment the repair that took
@@ -612,6 +632,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         stagingBuffer = Misc.free(stagingBuffer);
         Misc.free(rowsBounds);
         Misc.free(keyedReplay);
+        Misc.free(transplantKeyMemory);
         // A repair this worker parked between turns can only be continued by this
         // worker, so a closing worker abandons it rather than leaving its pinned
         // reader, uncommitted replacement and staged segment for nobody.
@@ -1781,20 +1802,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * The isolated runtime a converging out-of-order repair replays through, or null when
      * this repair replays through the primary one.
      * <p>
-     * Only a repair that stops at a finite convergence boundary is offered it: such a
-     * repair rebuilds the state of {@code [L, H)} and leaves the state above {@code H}
-     * alone, so the primary runtime it would otherwise wipe is already correct and there
-     * is no reason to take it aside. Everything else - an unlocalized rebuild, a localized
-     * repair whose influence reaches the frontier - replaces the runtime with its own
-     * replay state and must therefore run in it.
+     * Only a repair that leaves the primary's own state standing is offered it, and there
+     * are two such repairs. One stops at a finite convergence boundary: it rebuilds the
+     * state of {@code [L, H)} and leaves the state above {@code H} alone, so the primary it
+     * would otherwise wipe is already correct. The other is the open-segment keyed resume:
+     * it reaches the frontier, but only for the keys its correction touched, and it hands
+     * those keys back through
+     * {@code LiveViewWindow.transplantCheckpointWindowEntry} rather than by replacing the
+     * runtime. Everything else - an unlocalized rebuild, a localized repair whose influence
+     * reaches the frontier - replaces the runtime with its own replay state and must
+     * therefore run in it.
      * <p>
      * A second compile that fails does not fail the repair. The copy-aside path is still
      * there and still correct, so the failure is logged and the repair takes it; a view
      * that can compile its SELECT once and not twice is short of memory, not short of a
      * runtime.
      */
-    private @Nullable LiveViewRepairRuntime isolatedRepairRuntime(LiveViewInstance instance, boolean finiteHighBound) {
-        if (!finiteHighBound || !engine.getConfiguration().isLiveViewCheckpointRepairIsolatedRuntimeEnabled()) {
+    private @Nullable LiveViewRepairRuntime isolatedRepairRuntime(LiveViewInstance instance, boolean isPrimaryStateKept) {
+        if (!isPrimaryStateKept || !engine.getConfiguration().isLiveViewCheckpointRepairIsolatedRuntimeEnabled()) {
             return null;
         }
         LiveViewRepairRuntime runtime = instance.getRepairRuntime();
@@ -5205,6 +5230,162 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Whether an open-segment resume may follow the correction's own keys, on everything
+     * decidable before the anchor root is opened.
+     * <p>
+     * Five things, and each denies rather than degrades:
+     * <ul>
+     *     <li>the switch, because what the route changes is not only the read - a key the
+     *     correction did not touch keeps its stored row rather than being recomputed from
+     *     the base, and inside the open segment that is the current day's data;</li>
+     *     <li>the open segment's key domain, collected in full by the decomposition;</li>
+     *     <li>the pricing, which says a keyed read of this resume's own interval is the
+     *     smaller of the two;</li>
+     *     <li>the view's own dedup keys, because the publication is an upsert on them.
+     *     Without them the block would have to carry every stored row above the anchor,
+     *     which is the whole range and no saving at all;</li>
+     *     <li>an anchor at or above the open segment's start, so the replay crosses no
+     *     anchor boundary. A replay that crossed one would move keys between the
+     *     compaction frontier's buckets on a runtime holding only some of them.</li>
+     * </ul>
+     */
+    private boolean isOpenSegmentKeyedResumeAvailable(LiveViewInstance instance, long replayLowTs) {
+        if (!engine.getConfiguration().isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled()
+                || !openSegmentKeyDomainReady
+                || !openSegmentKeyedScanCheaper) {
+            return false;
+        }
+        if (!instance.isDedupKeyed()
+                || instance.getDedupKeyColumnIndex() != LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex(
+                        instance.getCompiledPlan())) {
+            // The view carries no identity for a sparse publication to upsert on, or it
+            // carries one over another column than the pair a repair would check.
+            return false;
+        }
+        final LiveViewWindow anchorWindow = instance.getAnchorWindow();
+        final LiveViewCheckpointAnchorPlan anchorPlan = anchorWindow == null
+                ? null
+                : anchorWindow.getCheckpointAnchorPlan();
+        if (anchorPlan == null) {
+            return false;
+        }
+        final long frontierTs = instance.getLatestSeenTs();
+        if (frontierTs == Numbers.LONG_NULL) {
+            return false;
+        }
+        final long activeSegmentStart = anchorPlan.getSegmentStart(frontierTs);
+        return activeSegmentStart != Long.MIN_VALUE && replayLowTs >= activeSegmentStart;
+    }
+
+    /**
+     * Arms the keyed replay with the open segment's key domain, the way
+     * {@link #armKeyedReplay} arms it with a closed segment's.
+     * <p>
+     * The domain comes off {@link #segmentChangeSet} rather than off a loop, because a
+     * resume is one repair rather than a queue of them: nothing carries it across a turn,
+     * and {@link #openSegmentKeyDomainReady} is what says it belongs to this repair.
+     *
+     * @return true when every key resolved against the pinned reader's own symbol map
+     */
+    private boolean armOpenSegmentKeyedReplay(LiveViewInstance instance, TableReader reader) {
+        keyedReplay.clear();
+        final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
+        final int scanColumnIndex = keyedScanColumnIndex(instance, compiledPlan);
+        if (scanColumnIndex < 0) {
+            return false;
+        }
+        final LiveViewCheckpointKeyProjector projector = compiledPlan.getWindowFactory().getCheckpointKeyProjector();
+        if (projector == null) {
+            return false;
+        }
+        final int readerColumnIndex = compiledPlan.getPageFrameFactory().getBaseColumnIndex(scanColumnIndex);
+        try {
+            return keyedReplay.arm(
+                    scanColumnIndex,
+                    reader.getSymbolMapReader(readerColumnIndex),
+                    projector.getCheckpointKeyColumnTypes(),
+                    segmentChangeSet.getResidualKeys(),
+                    segmentChangeSet.hasResidualNullKey()
+            );
+        } catch (Throwable t) {
+            // Arming is not repairing: whatever went wrong costs the localization and
+            // nothing else, and the whole-range resume below is still correct.
+            LOG.info().$("live view open segment keyed replay could not be armed [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
+            keyedReplay.clear();
+            return false;
+        }
+    }
+
+    /**
+     * Hands one keyed resume's finished per-key state back to the primary runtime.
+     * <p>
+     * A keyed resume replays through the isolated runtime, so when it ends the corrected
+     * accumulators are there and the primary still holds the stale ones for exactly the
+     * keys the correction touched. Every other key's state in the primary is correct and
+     * must not be touched - that is the whole reason the replay followed keys at all - so
+     * what moves is one entry per key the replay actually saw.
+     * <p>
+     * The two halves are the contract a checkpoint already defines: a complete freeze of
+     * the isolated window emits each key's image and fused payload exactly as a seal would
+     * write them to a root, and the primary takes them exactly as a restore would read
+     * them. Nothing new is serialised, and the isolated map holds this correction's keys
+     * alone, so the walk is bounded by the correction rather than by the view.
+     * <p>
+     * Runs after the splice has published and before the head seal, because the seal
+     * images the primary and must see the state this leaves. It is also why it may not
+     * fail silently: a transplant that threw half way would leave the primary holding some
+     * corrected keys and some stale ones, with the durable output already correct for all
+     * of them - so the caller marks the window state dirty and lets the next cycle rebuild
+     * rather than sealing what it cannot describe.
+     *
+     * @return how many keys moved
+     */
+    private int transplantKeyedRepairState(LiveViewInstance instance, @Nullable LiveViewWindow replayWindow) {
+        final LiveViewWindow primaryWindow = instance.getAnchorWindow();
+        if (primaryWindow == null || replayWindow == null) {
+            return 0;
+        }
+        final LiveViewWindowStatePlan plan = replayWindow.getCheckpointWindowStatePlan();
+        if (plan == null) {
+            // The route's own gate has already refused a view whose state is not fused, so
+            // this is a guard rather than a case.
+            throw CairoException.critical(0)
+                    .put("live view keyed resume cannot hand back state without a window state plan");
+        }
+        transplantKeys.clear();
+        transplantPayloads.clear();
+        transplantValues.clear();
+        transplantRemovedKeys.clear();
+        replayWindow.freezeCheckpointEntries(
+                transplantKeyMemory,
+                transplantKeys,
+                transplantValues,
+                transplantRemovedKeys,
+                // Complete rather than incremental: the isolated map IS the key domain, so
+                // there is no predecessor to image a difference against and nothing to
+                // gain from one.
+                false,
+                plan.getTotalInlineStateBytes(),
+                transplantPayloads
+        );
+        for (int i = 0, n = transplantKeys.size(); i < n; i++) {
+            final byte[] key = transplantKeys.getQuick(i);
+            transplantKeyMemory.jumpTo(0);
+            for (int b = 0; b < key.length; b++) {
+                transplantKeyMemory.putByte(key[b]);
+            }
+            primaryWindow.transplantCheckpointWindowEntry(
+                    transplantKeyPage.of(transplantKeyMemory, 0, key.length),
+                    transplantPayloads.getQuick(i)
+            );
+        }
+        transplantedKeyCount += transplantKeys.size();
+        return transplantKeys.size();
+    }
+
+    /**
      * Arms the keyed replay for one closed segment, or leaves it disarmed so the segment
      * reads whole.
      * <p>
@@ -6369,22 +6550,46 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             executionContext.of(reader);
             readerAttached = true;
 
-            final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
-            final Function filter = compiledPlan.getFilter();
-            final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
-            RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
-            final int cursorTimestampIndex = outMetadata.getTimestampIndex();
+            final LiveViewCompiledPlan primaryPlan = instance.getCompiledPlan();
             // What a resume following the correction's own keys would read, against what
             // reading every row above the anchor costs. Priced here because the interval is
             // only known here: the floor is the anchor the plan selected and the ceiling is
             // the end of the base table.
             priceOpenSegmentKeyedScan(
                     instance,
-                    compiledPlan,
+                    primaryPlan,
                     reader,
                     replayLowTs,
                     plan.getScanHighTsInclusive()
             );
+            // Whether this resume follows the correction's own keys. Everything the route
+            // needs is known by now - the domain, the pricing, the view's own identity -
+            // except the anchor root's shape, which the restore below answers by declining.
+            boolean keyed = isOpenSegmentKeyedResumeAvailable(instance, replayLowTs)
+                    && armOpenSegmentKeyedReplay(instance, reader);
+            // A keyed replay may not fold its rows into the runtime the forward drain
+            // stands in: it follows some keys, so the primary would be left holding state
+            // rewound to this anchor for every key it did not follow. The isolated runtime
+            // holds this correction's keys and nothing else, and the transplant at the end
+            // is what hands them back.
+            final LiveViewRepairRuntime repairRuntime = keyed ? isolatedRepairRuntime(instance, true) : null;
+            if (keyed && repairRuntime == null) {
+                // No second runtime to replay into, and the copy-aside overlay is not an
+                // alternative here: it is proportional to the view's whole key domain,
+                // which is the cost this route exists to avoid.
+                keyedReplay.clear();
+                keyed = false;
+            }
+            final LiveViewCompiledPlan compiledPlan = keyed ? repairRuntime.getPlan() : primaryPlan;
+            final WindowRecordCursorFactory replayWindowFactory = keyed ? repairRuntime.getWindowFactory() : windowFactory;
+            final Function filter = compiledPlan.getFilter();
+            final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
+            RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
+            final int cursorTimestampIndex = outMetadata.getTimestampIndex();
+            if (keyed) {
+                isolatedReplayTurnCount++;
+                openSegmentKeyedResumeCount++;
+            }
 
             // Opened before the scan, and before anything touches the timeline: the
             // capture pins the generation it reads the boundary list from, and the list
