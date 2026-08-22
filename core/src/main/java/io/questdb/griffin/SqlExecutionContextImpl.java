@@ -72,6 +72,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final Decimal64 decimal64 = new Decimal64();
     private final int defaultPageFrameMaxRows;
     private final int defaultPageFrameMinRows;
+    private final ExecutionState executionState;
     private final IntStack hasIntervalStack = new IntStack();
     private final ObjStack<RuntimeIntrinsicIntervalModel> intervalModelObjStack = new ObjStack<>();
     private final MicrosecondClock microClock;
@@ -126,6 +127,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         cairoConfiguration = cairoEngine.getConfiguration();
         microClock = cairoConfiguration.getMicrosecondClock();
         nanoClock = cairoConfiguration.getNanosecondClock();
+        executionState = cairoEngine.createExecutionState();
         securityContext = DenyAllSecurityContext.INSTANCE;
         jitMode = cairoConfiguration.getSqlJitMode();
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled() && sharedQueryWorkerCount > 0;
@@ -268,6 +270,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public @Nullable ExecutionState getExecutionState() {
+        return executionState;
+    }
+
+    @Override
     public int getIntervalFunctionType() {
         return intervalFunctionType;
     }
@@ -371,6 +378,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     public void initNow() {
         this.nowNanos = nanoClock.getTicks();
         this.nowMicros = microClock.getTicks();
+        if (executionState != null) {
+            executionState.onExecutionStart(this);
+        }
     }
 
     public boolean isCacheHit() {
