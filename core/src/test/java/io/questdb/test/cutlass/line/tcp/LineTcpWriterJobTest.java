@@ -25,20 +25,16 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.Metrics;
-import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
 import io.questdb.cutlass.line.tcp.LineTcpMeasurementEvent;
-import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler;
+import io.questdb.cutlass.line.tcp.LineTcpWriterJob;
 import io.questdb.mp.Job;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.lang.reflect.Constructor;
 
 public class LineTcpWriterJobTest extends AbstractCairoTest {
 
@@ -47,63 +43,26 @@ public class LineTcpWriterJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final int queueCapacity = 4;
             final ReplenishingSequence sequence = new ReplenishingSequence(queueCapacity);
-            final Constructor<LineTcpMeasurementEvent> eventConstructor = LineTcpMeasurementEvent.class.getDeclaredConstructor(
-                    long.class,
-                    long.class,
-                    byte.class,
-                    DefaultColumnTypes.class,
-                    boolean.class,
-                    int.class,
-                    boolean.class
-            );
-            eventConstructor.setAccessible(true);
             try (RingQueue<LineTcpMeasurementEvent> queue = new RingQueue<>(
-                    () -> newEvent(eventConstructor),
+                    () -> new LineTcpMeasurementEvent(0L, 0L, (byte) 0, null, false, 0, false),
                     queueCapacity
             )) {
-                final Job job = newJob(queue, sequence);
+                final Job job = new LineTcpWriterJob(
+                        1,
+                        queue,
+                        sequence,
+                        () -> 0,
+                        Long.MAX_VALUE,
+                        null,
+                        Metrics.DISABLED,
+                        new ObjList<>()
+                );
 
                 Assert.assertTrue(job.run(Job.RUNNING_STATUS));
                 Assert.assertEquals(queueCapacity, sequence.getDoneCount());
                 Assert.assertEquals(queueCapacity, sequence.getRemainingCount());
             }
         });
-    }
-
-    private static LineTcpMeasurementEvent newEvent(Constructor<LineTcpMeasurementEvent> constructor) {
-        try {
-            return constructor.newInstance(0L, 0L, (byte) 0, null, false, 0, false);
-        } catch (ReflectiveOperationException e) {
-            throw new AssertionError(e);
-        }
-    }
-
-    private static Job newJob(
-            RingQueue<LineTcpMeasurementEvent> queue,
-            Sequence sequence
-    ) throws ReflectiveOperationException {
-        final Class<?> jobClass = Class.forName("io.questdb.cutlass.line.tcp.LineTcpWriterJob");
-        final Constructor<?> constructor = jobClass.getDeclaredConstructor(
-                int.class,
-                RingQueue.class,
-                Sequence.class,
-                MillisecondClock.class,
-                long.class,
-                LineTcpMeasurementScheduler.class,
-                Metrics.class,
-                ObjList.class
-        );
-        constructor.setAccessible(true);
-        return (Job) constructor.newInstance(
-                1,
-                queue,
-                sequence,
-                (MillisecondClock) () -> 0,
-                Long.MAX_VALUE,
-                null,
-                Metrics.DISABLED,
-                new ObjList<>()
-        );
     }
 
     private static final class ReplenishingSequence extends SCSequence {

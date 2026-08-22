@@ -37,7 +37,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-class LineTcpWriterJob implements Job, Closeable {
+public class LineTcpWriterJob implements Job, Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpWriterJob.class);
     private final ObjList<TableUpdateDetails> assignedTables;
     private final long commitInterval;
@@ -49,7 +49,7 @@ class LineTcpWriterJob implements Job, Closeable {
     private final Sequence sequence;
     private final int workerId;
 
-    LineTcpWriterJob(
+    public LineTcpWriterJob(
             int workerId,
             RingQueue<LineTcpMeasurementEvent> queue,
             Sequence sequence,
