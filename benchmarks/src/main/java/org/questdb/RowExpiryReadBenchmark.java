@@ -74,37 +74,39 @@ import java.util.Arrays;
  * <pre>
  *   view       query             avg_ms   plan
  *   mv_none    count()             0.05   Count                                        row count from the txn file
- *   mv_none    lookup sym='S5'     0.25   -                                            symbol index
- *   mv_none    filter v&gt;900        1.44   Async JIT Filter + Count
- *   mv_none    one day             0.06   Interval forward scan + Count
+ *   mv_none    lookup sym='S5'     0.24   -                                            symbol index
+ *   mv_none    filter v&gt;900        1.37   Async JIT Filter + Count
+ *   mv_none    one day             0.05   Interval forward scan + Count
  *   mv_ts      count()             0.05   Interval forward scan + Count                keep-filter flips to ts &gt;= T
  *   mv_ts      lookup sym='S5'     0.08   Interval forward scan
- *   mv_ts      filter v&gt;900        0.73   Async JIT Filter + Interval forward scan     JIT survives
- *   mv_ts      one day             0.02   Interval forward scan + Count
- *   mv_val     count()             7.06   Count + case(                                ~130x: no txn-file count
- *   mv_val     lookup sym='S5'     0.13   case(
- *   mv_val     filter v&gt;900        8.84   Count + case(                                ~6x: the CASE takes the JIT away
- *   mv_val     one day             1.26   Interval forward scan + Count + case(
+ *   mv_ts      filter v&gt;900        0.70   Async JIT Filter + Interval forward scan     JIT survives
+ *   mv_ts      one day             0.03   Interval forward scan + Count
+ *   mv_val     count()             3.85   Async JIT Filter + Count                     ~75x: no txn-file count
+ *   mv_val     lookup sym='S5'     0.13   -
+ *   mv_val     filter v&gt;900        1.68   Async JIT Filter + Count                     ~1.2x: JIT survives
+ *   mv_val     one day             0.49   Async JIT Filter + Interval forward scan + Count
  *   mv_latest  count()             0.12   Count                                        LATEST ON ~ O(#keys)
  *   mv_latest  lookup sym='S5'     0.08   -
- *   mv_latest  filter v&gt;900        0.09   Count
- *   mv_latest  one day             0.09   Count
- *   mv_max     count()            48.05   Count + CachedWindowLight + case(            ~900x: window over the whole view
- *   mv_max     lookup sym='S5'     0.44   CachedWindowLight + case(                    filter on the PARTITION BY key
- *   mv_max     filter v&gt;900       47.43   Count + CachedWindowLight + case(
- *   mv_max     one day            48.14   Count + CachedWindowLight + case(            the day restriction saves nothing
- *   cleanup mv_ts:     15.4 ms, partitions 8 -> 4
- *   cleanup mv_latest:  0.2 ms, partitions 8 -> 8   (structural policy: the sweep frees nothing)
+ *   mv_latest  filter v&gt;900        0.07   Count
+ *   mv_latest  one day             0.07   Count
+ *   mv_max     count()            44.34   Count + CachedWindowLight + case(            ~870x: window over the whole view
+ *   mv_max     lookup sym='S5'     0.38   CachedWindowLight + case(                    filter on the PARTITION BY key
+ *   mv_max     filter v&gt;900       48.01   Count + CachedWindowLight + case(
+ *   mv_max     one day            47.42   Count + CachedWindowLight + case(            the day restriction saves nothing
+ *   cleanup mv_ts:     20.9 ms, partitions 8 -> 4
+ *   cleanup mv_latest:  0.3 ms, partitions 8 -> 8   (structural policy: the sweep frees nothing)
  * </pre>
  * Takeaways. A WHEN predicate on the designated timestamp is the mode to reach for: its keep-filter flips to
  * a bare {@code ts >= T}, which prunes partitions and leaves the caller's own filter JIT-compilable, and it
  * is the only mode here that frees disk. The threshold has to be provably non-null for that flip - a
  * timestamp literal or a clock call, not a {@code cast(...)}, which the parser treats as possibly-null and
- * serves through the CASE form instead.
+ * leaves as an un-inverted {@code NOT} instead.
  * <p>
- * A value predicate always reads through that CASE form. The optimiser merges it with the caller's WHERE,
- * so the caller's filter loses JIT compilation too, and {@code count()} can no longer take the row count
- * from the transaction file.
+ * A value predicate has no bounds to prune on, so every read of {@code mv_val} scans the whole view and
+ * {@code count()} can no longer take the row count from the transaction file - that scan is the whole of
+ * the gap. The keep-filter itself is a {@code NOT} the JIT compiler accepts, so it merges into the caller's
+ * WHERE without costing it its own machine-code compilation: {@code filter v>900} runs at about what it
+ * costs on the unpolicied view.
  * <p>
  * A window keep-filter (KEEP HIGHEST/LOWEST, top-N, a WHEN with a window function) computes the window over
  * the whole view on every read, which is why the one-day query costs as much as the whole-view count. Each
@@ -170,8 +172,8 @@ public class RowExpiryReadBenchmark {
                 for (String view : new String[]{"mv_none", "mv_ts", "mv_val", "mv_latest", "mv_max"}) {
                     timeQuery(compiler, ctx, view, "count()", "select count() from " + view);
                     timeQuery(compiler, ctx, view, "lookup sym='S5'", "select sym, v, ts from " + view + " where sym = 'S5'");
-                    // A caller filter that is JIT-compilable on its own: a value policy's CASE keep-filter
-                    // merges into it and takes the JIT compilation away.
+                    // A caller filter that is JIT-compilable on its own: a value policy's keep-filter merges
+                    // into it, and the merged filter is still JIT-compilable.
                     timeQuery(compiler, ctx, view, "filter v>900", "select count() from " + view + " where v > 900.0");
                     // One day out of DAYS: a timestamp keep-filter still prunes, a window one reads the
                     // whole view regardless.

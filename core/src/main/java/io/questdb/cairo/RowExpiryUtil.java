@@ -137,18 +137,22 @@ public final class RowExpiryUtil {
     }
 
     /**
-     * Builds the keep-rows filter (the rows that have NOT expired) for a scalar-WHEN policy:
+     * Builds the keep-rows filter (the rows that have NOT expired) for a scalar-WHEN policy as
      * {@code CASE WHEN (<predicate>) THEN false ELSE true END}, which keeps every row whose predicate is
      * not TRUE. The predicate is wrapped in parentheses so its internal operator precedence cannot
      * leak. Applies to any predicate shape, including compound ones and {@code IN}.
      * <p>
-     * All three users of this filter call this method, so all three run the same text: the read filter
-     * {@code SqlParser.keepFilterWhereText} builds (except in the flip case, which is a bare
-     * {@code NOT (...)}), the cleanup sweep, and the DDL validation in
-     * {@code SqlCompilerImpl.validateExpiryPredicateOnMetadata}. That is what makes the sweep delete only
-     * rows a read already hides, and what lets validation refuse a predicate whose wrapped form would fail
-     * to compile even though the bare predicate binds - a {@code SYMBOL} column compared for equality with
-     * an integer, say, which the wrapped form turns into a {@code switch} that then rejects the types.
+     * Two callers run this text: the cleanup sweep, and the DDL validation in
+     * {@code SqlCompilerImpl.validateExpiryPredicateOnMetadata}, which binds what the sweep will compile.
+     * Reads express the same keep set as {@code NOT (<predicate>)} ({@code SqlParser.keepFilterWhereText}),
+     * which the JIT compiler can turn into machine code where a {@code CASE} cannot. Both spellings mean
+     * "the predicate is not TRUE" and keep exactly the same rows, including rows whose operand is NULL;
+     * {@code RowExpiryFuzzTest} checks the sweep against the read for randomised data, which is what holds
+     * the two in step. They are spelled differently because of what the optimiser does to each: a read's
+     * {@code NOT} survives only because the parser marks the query block it sits in
+     * ({@code SqlParser.markExpiryKeepFilter}), and the sweep builds its own SQL, where there is no block
+     * to mark and {@code SqlOptimiser.optimiseBooleanNot} would turn {@code NOT (v < 2.0)} into
+     * {@code v >= 2.0} and delete the NULL rows a read keeps. A {@code CASE} gives it nothing to rewrite.
      * <p>
      * A NULL operand follows QuestDB's two-valued comparison semantics: {@code v < 2.0} is FALSE for a
      * NULL {@code v} and keeps the row, while {@code NOT (v >= 2.0)}, {@code v != 2.0} and

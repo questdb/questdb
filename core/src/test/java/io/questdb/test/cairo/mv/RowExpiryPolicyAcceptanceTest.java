@@ -36,7 +36,8 @@ import org.junit.Test;
  * <p>
  * The parser captures a policy's parts as raw text and the read filter drops them into a generated
  * query: the keep column into {@code max(<col>) OVER (...)}, the PARTITION BY list into that
- * {@code OVER} clause, a {@code WHEN} predicate into a projected CASE. Whatever a check does not
+ * {@code OVER} clause, a scalar {@code WHEN} predicate into a {@code NOT (...)} filter and a window one
+ * into a projected CASE. Whatever a check does not
  * resolve therefore reaches the generated SQL as written. The compile-time probe cannot see all of
  * it, because it runs the query with {@code LIMIT 0} and so evaluates no row. Successive rounds of
  * review each found one more part that nothing resolved - a keep column with no {@code max()}, a

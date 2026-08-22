@@ -143,6 +143,7 @@ public class QueryModel implements IQueryModel {
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
     private boolean isCteModel;
+    private boolean isExpiryKeepFilter;
     private boolean isExpiryWindowBarrier;
     private boolean isLateralCountCoalesceRequired;
     // LateralJoinRewriter marks the final lateral output so SqlOptimiser can hide
@@ -463,6 +464,7 @@ public class QueryModel implements IQueryModel {
         //  default is SELECT
         isUpdateModel = false;
         isCteModel = false;
+        isExpiryKeepFilter = false;
         isExpiryWindowBarrier = false;
         isLateralCountCoalesceRequired = false;
         lateralCountCoalesceGuard = null;
@@ -1328,6 +1330,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public boolean isExpiryKeepFilter() {
+        return isExpiryKeepFilter;
+    }
+
+    @Override
     public boolean isExpiryWindowBarrier() {
         return isExpiryWindowBarrier;
     }
@@ -1711,6 +1718,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setExplicitTimestamp(boolean explicitTimestamp) {
         this.explicitTimestamp = explicitTimestamp;
+    }
+
+    @Override
+    public void setExpiryKeepFilter(boolean isExpiryKeepFilter) {
+        this.isExpiryKeepFilter = isExpiryKeepFilter;
     }
 
     @Override

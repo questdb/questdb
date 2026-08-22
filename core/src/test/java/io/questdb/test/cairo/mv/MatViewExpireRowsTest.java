@@ -664,7 +664,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     @Test
     public void testExpireScalarKeepsNullPredicateRows() throws Exception {
         // A row whose predicate is not TRUE (here a NULL v under "v < 2.0", which QuestDB evaluates as
-        // FALSE) is KEPT, not expired: the read filter is CASE WHEN (pred) THEN false ELSE true. This
+        // FALSE) is KEPT, not expired: the read filter is NOT (pred), which is TRUE for it. This
         // holds for this predicate, not for every predicate over a NULL operand -- see
         // testExpireScalarNullRowsFollowPredicateTruthValue.
         assertMemoryLeak(() -> {
@@ -1079,6 +1079,32 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadFilterCompilesToJitAndKeepsNullRows() throws Exception {
+        // A read of a value-policied view filters on NOT (<predicate>), and the parser marks the query
+        // block so the optimiser leaves that NOT as written. Two things follow. Rows whose operand is NULL
+        // stay visible, because "v < 2.0" is FALSE for a NULL v and the NOT of that is TRUE -- the inverted
+        // "v >= 2.0" would have hidden them. And the filter is one the JIT compiler can turn into machine
+        // code, which a CASE wrap of the same rule is not, so the caller's own filter keeps its JIT
+        // compilation instead of dropping to the interpreted path.
+        assertMemoryLeak(() -> {
+            createValuePolicyView();
+
+            printSql("explain select * from mv");
+            TestUtils.assertContains(sink, "Async JIT Filter");
+            TestUtils.assertContains(sink, "not (");
+
+            printSql("explain select * from mv where v > -100.0");
+            TestUtils.assertContains(sink, "Async JIT Filter");
+
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("""
+                    sym\tv
+                    B\tnull
+                    C\t9.0
+                    """);
+        });
+    }
+
+    @Test
     public void testReadFilterCorrectForNonMonotonicFuturePredicate() throws Exception {
         // ts > now() is NON-MONOTONIC: a future-dated row is hidden now but must REAPPEAR once now() advances
         // past its timestamp. The read filter recomputes now() on every read, so it stays correct regardless.
@@ -1103,10 +1129,65 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadFilterKeepsNotAcrossQueryShapes() throws Exception {
+        // The mark travels on the query block the parser builds, and several rewrites run over that block
+        // before the optimiser reaches the NOT. If any of them dropped the mark the filter would silently
+        // become "v >= 2.0" and the NULL row would disappear, so each shape asserts the plan AND the rows.
+        assertMemoryLeak(() -> {
+            createValuePolicyView();
+
+            final String twoRows = """
+                    sym\tv
+                    B\tnull
+                    C\t9.0
+                    """;
+            assertKeepFilterSurvives("select sym, v from mv order by sym", twoRows);
+            assertKeepFilterSurvives("select sym, v from (select * from mv) order by sym", twoRows);
+            assertKeepFilterSurvives("with c as (select * from mv) select sym, v from c order by sym", twoRows);
+            assertKeepFilterSurvives("declare @unused := 1 select sym, v from mv order by sym", twoRows);
+            assertKeepFilterSurvives("select a.sym, a.v from mv a join mv b on a.sym = b.sym order by a.sym", """
+                    sym\tv
+                    B\tnull
+                    C\t9.0
+                    """);
+            assertKeepFilterSurvives("select sym, v from mv union all select sym, v from mv order by sym", """
+                    sym\tv
+                    B\tnull
+                    B\tnull
+                    C\t9.0
+                    C\t9.0
+                    """);
+            assertKeepFilterSurvives("select ts, count() c from mv sample by 1d order by ts", "ts", """
+                    ts\tc
+                    2024-01-02T00:00:00.000000Z\t1
+                    2024-01-03T00:00:00.000000Z\t1
+                    """);
+        });
+    }
+
+    @Test
+    public void testReadFilterMarkDoesNotSpreadToCallerNot() throws Exception {
+        // The mark reaches only the blocks the parser builds, and the caller's own predicates land in them
+        // well after the inversion has run, so a NOT the caller writes is still inverted -- and drops NULL
+        // rows -- exactly as it does on a plain table.
+        assertMemoryLeak(() -> {
+            createValuePolicyView();
+
+            printSql("explain select sym, v from mv where not (v < 100.0)");
+            TestUtils.assertContains(sink, "v>=100.0");
+
+            final String noRows = "sym\tv\n";
+            assertQuery("select sym, v from mv where not (v < 100.0)").noLeakCheck().returns(noRows);
+            assertQuery("select sym, v from base where not (v < 100.0)").noLeakCheck().returns(noRows);
+        });
+    }
+
+    @Test
     public void testReadFilterTimestampNullConstantKeepsAllRows() throws Exception {
         // ts < cast(null as timestamp) is never TRUE, so NO row expires -- all rows stay visible. The
         // null-unsafe flip (NOT(ts < T) -> ts >= T) would have produced `ts >= NULL` and hidden EVERY row
-        // (read/cleanup divergence: cleanup keeps them). The provably-non-null guard keeps the CASE form here.
+        // (read/cleanup divergence: cleanup keeps them). The provably-non-null guard leaves the NOT unflipped
+        // here instead.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
             execute("create materialized view mv as (select * from base) expire rows when ts < cast(null as timestamp)");
@@ -1458,9 +1539,12 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             TestUtils.assertContains(sink, "Interval forward scan");
             assertEquals(CairoTable.EXPIRY_FLIP_YES, table.getExpiryFlipEligibility());
 
+            // Without the flip the filter stays the NOT the parser wrote, which no longer yields a
+            // timestamp interval, so the scan covers every partition.
             table.setExpiryFlipEligibility(CairoTable.EXPIRY_FLIP_NO);
             printSql("explain select * from mv where true");
-            TestUtils.assertContains(sink, "case(");
+            TestUtils.assertContains(sink, "not (");
+            Assert.assertFalse(sink.toString(), sink.toString().contains("Interval forward scan"));
 
             table.setExpiryFlipEligibility(CairoTable.EXPIRY_FLIP_YES);
             printSql("explain select * from mv where not false");
@@ -2155,6 +2239,25 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 .returns("expire_clause\n" + expected + "\n");
     }
 
+    // Asserts that the keep-filter reached the plan as the NOT the parser wrote, never as the inverted
+    // comparison, and that the query returns the rows the un-inverted filter keeps.
+    private void assertKeepFilterSurvives(String sql, String expected) throws Exception {
+        assertKeepFilterSurvives(sql, null, expected);
+    }
+
+    // timestampColumn names the result's designated timestamp, or is null when the result carries none.
+    private void assertKeepFilterSurvives(String sql, String timestampColumn, String expected) throws Exception {
+        printSql("explain " + sql);
+        final String plan = sink.toString();
+        TestUtils.assertContains(plan, "not (");
+        Assert.assertFalse(plan, plan.contains("v>=2.0"));
+        if (timestampColumn != null) {
+            assertQuery(sql).timestamp(timestampColumn).noRandomAccess().noLeakCheck().returns(expected);
+        } else {
+            assertQuery(sql).noLeakCheck().returns(expected);
+        }
+    }
+
     // Base table plus a policied passthrough mat view "mv" whose keep-set is the single row B/9.0.
     private void createPolicedViewBase() throws Exception {
         execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2166,6 +2269,20 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 5.0");
         drainWalAndMatViewQueues();
         assertQuery("SELECT k, v FROM mv ORDER BY k").noLeakCheck().returns("k\tv\nB\t9.0\n");
+    }
+
+    // Base table plus a policied passthrough mat view "mv" over a value column that holds a NULL: row A
+    // expires, row B has a NULL v and is kept, row C is kept.
+    private void createValuePolicyView() throws Exception {
+        execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("""
+                INSERT INTO base VALUES
+                ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                ('B', null, '2024-01-02T00:00:00.000000Z'),
+                ('C', 9.0, '2024-01-03T00:00:00.000000Z')""");
+        drainWalAndMatViewQueues();
+        execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2.0");
+        drainWalAndMatViewQueues();
     }
 
     private void assertTtlKept(String viewName, int expectedDays) {

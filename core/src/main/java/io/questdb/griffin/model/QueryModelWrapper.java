@@ -848,6 +848,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public boolean isExpiryKeepFilter() {
+        return delegate.isExpiryKeepFilter();
+    }
+
+    @Override
     public boolean isExpiryWindowBarrier() {
         return delegate.isExpiryWindowBarrier();
     }
@@ -1079,6 +1084,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setExplicitTimestamp(boolean explicitTimestamp) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setExpiryKeepFilter(boolean isExpiryKeepFilter) {
         throw new UnsupportedOperationException();
     }
 

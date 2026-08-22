@@ -984,14 +984,16 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
     @Test
     public void testPredicateThatOnlyFailsWhenWrappedRejected() throws Exception {
-        // A read never runs the predicate on its own. It runs it wrapped, as
+        // The cleanup sweep never runs the predicate on its own. It runs it wrapped, as
         //
         //   CASE WHEN (<predicate>) THEN false ELSE true END
         //
         // and QuestDB compiles a single-branch CASE WHEN (<expr> = <constant>) into a switch, which
         // demands the two operands have the same type where '=' converts one of them. So a predicate can
-        // bind on its own and fail every read of the view it is set on. Validation binds the wrapped form
-        // for exactly this reason, so these are refused at DDL time instead.
+        // bind on its own and fail the sweep of the view it is set on, every cadence. Validation binds the
+        // wrapped form for exactly this reason, so these are refused at DDL time instead. Reads are more
+        // permissive - they run NOT (<predicate>), which adds no strictness - so validating the sweep's
+        // wrap refuses only policies whose sweep could not run.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (k SYMBOL INDEX, s STRING, i INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base VALUES ('a', 'x', 1, 1.0, '2024-01-01T00:00:00.000000Z')");
@@ -1056,8 +1058,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             Assert.assertEquals("v < 2.0 OR k = 12345", expiryPredicate("mv"));
             assertQuery("SELECT count() FROM mv").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
 
-            // A designated-timestamp ordering comparison reads through NOT (...) rather than the CASE
-            // wrap, and validating the CASE form must not refuse it.
+            // A designated-timestamp ordering comparison is flipped to a bare comparison on the read side,
+            // and validating the sweep's CASE wrap must not refuse it.
             execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN ts < now()");
             drainWalAndMatViewQueues();
             Assert.assertEquals("ts < now()", expiryPredicate("mv"));
@@ -1067,7 +1069,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
     @Test
     public void testRootLevelAggregatePredicateRejected() throws Exception {
-        // The read filter embeds the predicate as a CASE argument, where an aggregate is illegal. The
+        // The sweep's keep-filter embeds the predicate as a CASE argument, where an aggregate is illegal. The
         // function parser rejects an aggregate only when it is an argument of another function, so a
         // bare root-level aggregate binds fine at validation; the explicit check closes that gap.
         assertMemoryLeak(() -> {
@@ -1511,7 +1513,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         // microsecond spelling does: materialized_views() reports FILTER_AND_RECLAIM, the sweep wipes the
         // wholly-expired partition, and the read filter keeps the flipped bare comparison. A clock the
         // classifier does not know by name reports FILTER_ONLY, reclaims nothing, and reads through the
-        // CASE form, which neither prunes partitions nor compiles to a JIT filter.
+        // un-inverted NOT, which does not prune partitions.
         // Only the runtime-constant clocks (now/now_ns) additionally reduce to a timestamp interval;
         // systimestamp/systimestamp_ns evaluate per row, so their flipped comparison stays a filter.
         assertMemoryLeak(() -> {
@@ -1531,10 +1533,10 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                         .noRandomAccess()
                         .returns("expire_enforcement\nFILTER_AND_RECLAIM\n");
 
-                // The keep filter NOT(ts < <clock>) flips to the bare ts >= <clock>; the CASE fallback the
-                // parser uses for a possibly-NULL threshold would show up as "case(".
+                // The keep filter NOT(ts < <clock>) flips to the bare ts >= <clock>; the un-inverted fallback
+                // the parser uses for a possibly-NULL threshold would show up as "not (".
                 printSql("EXPLAIN SELECT * FROM mv");
-                TestUtils.assertNotContains(sink, "case(");
+                TestUtils.assertNotContains(sink, "not (");
                 if (Chars.equals(clock, "now_ns()")) {
                     // A runtime-constant clock reduces further: WhereClauseParser extracts a timestamp
                     // interval from the flipped comparison and the scan prunes partitions.

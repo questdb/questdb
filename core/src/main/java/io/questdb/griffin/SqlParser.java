@@ -1089,16 +1089,38 @@ public class SqlParser {
             }
         }
         final String syntheticSql = "SELECT * FROM " + RowExpiryUtil.quoteIdentifier(tableName) + " WHERE "
-                + keepFilterWhereText(predicate, flip);
+                + keepFilterWhereText(predicate);
 
         final GenericLexer subLexer = viewLexers.next();
         subLexer.of(syntheticSql);
 
         final IQueryModel subQuery = parseAsSubQuery(subLexer, null, false, sqlParserCallback, model.getDecls(), true);
+        if (!flip) {
+            markExpiryKeepFilter(subQuery);
+        }
         model.setNestedModel(subQuery);
         model.setNestedModelIsSubQuery(true);
         if (model.getAlias() == null) {
             model.setAlias(literal(tableName, position));
+        }
+    }
+
+    /**
+     * Marks the query blocks of the keep-filter sub-query, i.e. the {@code SELECT * FROM "t" WHERE NOT (...)}
+     * just parsed, so that {@code SqlOptimiser.optimiseBooleanNot} leaves their WHERE as written. The NOT
+     * has to survive to keep the rows whose predicate is not TRUE; see {@link #keepFilterWhereText}.
+     * <p>
+     * Every block in the chain is marked rather than only the one holding the WHERE today, so that a
+     * rewrite moving the filter between these blocks cannot quietly expose it to the inversion. All of them
+     * are the parser's own, and the caller's predicates only reach them at {@code moveWhereInsideSubQueries},
+     * which runs long after {@code optimiseBooleanNot} - so a NOT the caller wrote is still inverted.
+     * <p>
+     * The flip form is never marked: turning its {@code NOT (ts < T)} into a bare {@code ts >= T} is what
+     * lets {@code WhereClauseParser} read a timestamp interval out of it and skip whole partitions.
+     */
+    private static void markExpiryKeepFilter(IQueryModel model) {
+        for (IQueryModel m = model; m != null; m = m.getNestedModel()) {
+            m.setExpiryKeepFilter(true);
         }
     }
 
@@ -1251,22 +1273,23 @@ public class SqlParser {
     /**
      * Returns the keep-filter WHERE-clause text for an EXPIRE ROWS predicate — the rows that have NOT
      * expired. A row expires only when the predicate is TRUE, so the keep-filter keeps every row whose
-     * predicate result is anything else.
+     * predicate result is anything else. The text is {@code NOT (predicate)} either way; what the caller
+     * varies is whether it marks the query block, which decides what
+     * {@code SqlOptimiser.optimiseBooleanNot} is allowed to do with that {@code NOT}:
      * <ul>
      *     <li>{@code flip} (a designated-timestamp ordering comparison, see
-     *     {@link #isTimestampFlippablePredicate}): {@code NOT (predicate)}. {@code SqlOptimiser} then turns
-     *     that into the flipped bare comparison (e.g. {@code NOT(ts < now())} -> {@code ts >= now()}) in
-     *     {@code optimiseBooleanNot}, which is what lets {@link WhereClauseParser} extract a timestamp
-     *     interval and prune partitions. Safe because the timestamp is never NULL.</li>
-     *     <li>otherwise: {@code CASE WHEN (predicate) THEN false ELSE true END}, which keeps the
-     *     not-TRUE rows of EVERY predicate shape. A plain {@code NOT(predicate)} is unsafe here:
-     *     {@code SqlOptimiser.optimiseBooleanNot} rewrites {@code NOT(a < b)} into the inverted bare
-     *     comparison {@code a >= b}, and a comparison and its inversion BOTH evaluate to false on a
-     *     NULL/NaN operand, so the rewritten filter drops rows the policy must keep (e.g.
-     *     {@code NOT(v < 2.0)} compiles to {@code v >= 2.0}, which hides NULL rows).
-     *     {@code (predicate) IS NOT TRUE} is likewise unreliable for composite booleans such as
-     *     {@code IN}. The CASE form is not JIT-serializable, so reads of a value-policied view run the
-     *     interpreted filter; that standing cost is the price of keeping the not-TRUE rows.</li>
+     *     {@link #isTimestampFlippablePredicate}): the block is left unmarked, so the optimiser turns the
+     *     {@code NOT} into the inverted bare comparison (e.g. {@code NOT(ts < now())} -> {@code ts >= now()}),
+     *     which is what lets {@link WhereClauseParser} extract a timestamp interval and prune partitions.
+     *     Safe because the timestamp is never NULL.</li>
+     *     <li>otherwise: {@code markExpiryKeepFilter} marks the block and the optimiser leaves the
+     *     {@code NOT} alone, which keeps the not-TRUE rows of EVERY predicate shape. Letting the rewrite
+     *     run would be unsafe: it turns {@code NOT(a < b)} into the inverted bare comparison {@code a >= b},
+     *     and a comparison and its inversion BOTH evaluate to false on a NULL/NaN operand, so the inverted
+     *     filter drops rows the policy must keep ({@code NOT(v < 2.0)} would become {@code v >= 2.0}, which
+     *     hides NULL rows). {@code (predicate) IS NOT TRUE} is unreliable for composite booleans such as
+     *     {@code IN}, and a {@code CASE} wrap, while correct, is not JIT-serializable, so it would cost the
+     *     caller's own filter its machine-code compilation as well.</li>
      * </ul>
      * <p>
      * What happens to a row whose predicate operand is NULL follows QuestDB's two-valued comparison
@@ -1275,21 +1298,21 @@ public class SqlParser {
      * operand expires it. {@code NOT (v >= 2.0)} is such a predicate ({@code NULL >= 2.0} is FALSE, so the
      * {@code NOT} is TRUE), and so are {@code v != 2.0} and {@code v IS NULL}. {@code v < 2.0} and
      * {@code NOT (v >= 2.0)} therefore express DIFFERENT policies for NULL rows although they read as the
-     * same rule, and the expired NULL rows are physically deleted by the cleanup sweep, which computes the
-     * same filter. {@code MatViewExpireRowsTest.testExpireScalarNullRowsFollowPredicateTruthValue} pins
-     * this across the spellings.
+     * same rule, and the expired NULL rows are physically deleted by the cleanup sweep, which keeps the same
+     * rows through a {@code CASE} wrap of its own ({@link RowExpiryUtil#buildRowExpiryKeepFilter} explains
+     * why the sweep spells it differently). {@code MatViewExpireRowsTest.testExpireScalarNullRowsFollowPredicateTruthValue}
+     * pins this across the spellings.
      */
-    private static String keepFilterWhereText(String predicate, boolean flip) {
-        return flip
-                ? "NOT (" + predicate + ")"
-                : RowExpiryUtil.buildRowExpiryKeepFilter(predicate);
+    private static String keepFilterWhereText(String predicate) {
+        return "NOT (" + predicate.trim() + ")";
     }
 
     /**
      * Whether the predicate is a designated-timestamp ordering comparison whose other operand references
      * no column — i.e. the {@code ts < now()} shape, for which {@code NOT(predicate)} can be safely flipped
      * to a bare comparison for partition pruning. Parses the predicate purely to inspect it (the node is
-     * discarded). Returns false (keep the always-correct CASE form) for everything else.
+     * discarded). Returns false for everything else, which leaves the {@code NOT} un-inverted - always
+     * correct, just unable to prune.
      */
     private boolean isTimestampFlippablePredicate(
             String predicate,
@@ -1317,8 +1340,8 @@ public class SqlParser {
      * {@link #isOperandProvablyNonNull} (a non-null literal, a wall-clock function such as now(), or
      * null-preserving timestamp arithmetic over non-null operands) — exactly the {@code ts < now()} shape the
      * partition-pruning optimisation targets. Every other shape (including a column-free but possibly-NULL
-     * constant like {@code cast(null as timestamp)}) keeps the CASE wrap, which is always correct (it
-     * just does not prune). Without this guard, a policy like {@code EXPIRE ROWS WHEN v < 2.0} on
+     * constant like {@code cast(null as timestamp)}) keeps the un-inverted {@code NOT}, which is always
+     * correct (it just does not prune). Without this guard, a policy like {@code EXPIRE ROWS WHEN v < 2.0} on
      * a nullable column would hide (and the cleanup job would delete) rows whose {@code v} is NULL even though
      * they never expired.
      */
@@ -1344,7 +1367,7 @@ public class SqlParser {
      * {@code timestamp_floor}, {@code +}, {@code -}, {@code *}) applied to provably-non-null operands.
      * Everything else — a column (LITERAL), bind variable, the NULL literal, {@code cast(...)},
      * {@code to_timestamp(...)}, or any unknown function — is treated as possibly-NULL, so the flip falls
-     * back to the always-correct CASE form. Being conservative here only costs a partition-pruning
+     * back to the always-correct un-inverted {@code NOT}. Being conservative here only costs a partition-pruning
      * opportunity, never correctness. (Merely "references no column" is NOT enough: a column-free constant
      * such as {@code cast(null as timestamp)} is still NULL, and flipping {@code NOT(ts < NULL)} to
      * {@code ts >= NULL} would wrongly hide every row.)

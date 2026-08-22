@@ -6787,7 +6787,10 @@ public class SqlOptimiser implements Mutable {
             return;
         }
         ExpressionNode where = model.getWhereClause();
-        if (where != null) {
+        // A row-expiry keep-filter is written as NOT (<predicate>) and has to stay that way: the inversion
+        // below turns NOT (v < 2.0) into v >= 2.0, and both spellings are false for a NULL v, so the
+        // inverted filter hides rows the policy keeps. See SqlParser.keepFilterWhereText.
+        if (where != null && !model.isExpiryKeepFilter()) {
             model.setWhereClause(optimiseBooleanNot(where, false));
         }
 

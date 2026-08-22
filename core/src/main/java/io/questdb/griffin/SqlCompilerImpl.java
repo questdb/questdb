@@ -6816,10 +6816,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Binds the predicate wrapped the way a read of a policied view wraps it, and refuses the policy when
-     * that fails. A read never runs the predicate on its own: the parser rewrites a reference to the view
-     * into a sub-query filtered by {@link RowExpiryUtil#buildRowExpiryKeepFilter}, so what actually gets
-     * compiled is
+     * Binds the predicate wrapped the way the cleanup sweep wraps it, and refuses the policy when that
+     * fails. The sweep never runs the predicate on its own: it computes its survivor set through
+     * {@link RowExpiryUtil#buildRowExpiryKeepFilter}, so what actually gets compiled is
      * <p>
      * {@code CASE WHEN (<predicate>) THEN false ELSE true END}
      * <p>
@@ -6827,22 +6826,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * {@code CASE WHEN (<expr> = <constant>)} into a {@code switch}, and {@code switch} requires the two
      * operands to have the same type where {@code =} is happy to convert one. So
      * {@code EXPIRE ROWS WHEN k = 12345} on a {@code SYMBOL} column {@code k} binds fine on its own -
-     * {@code SELECT ... WHERE k = 12345} runs and returns no rows - while every read of the view it is set
+     * {@code SELECT ... WHERE k = 12345} runs and returns no rows - while the sweep over the view it is set
      * on fails with
      * <p>
      * {@code type mismatch [expected=SYMBOL, actual=INT]}
      * <p>
-     * an error that names neither the view's policy nor EXPIRE ROWS, leaving nothing to work back from.
-     * Binding the wrapped form here turns that into a rejected {@code ALTER} / {@code CREATE}.
+     * every cadence, an error that names neither the view's policy nor EXPIRE ROWS, leaving nothing to work
+     * back from. Binding the wrapped form here turns that into a rejected {@code ALTER} / {@code CREATE}.
      * <p>
-     * The wrap this validates is the {@code CASE} one, never the {@code NOT (...)} the parser substitutes
-     * for a designated-timestamp ordering comparison. Two reasons. The flip verdict is not a property of
-     * the predicate alone - the parser memoizes it per table and re-derives it when the query carries
-     * {@code DECLARE} - so this could not reproduce it without duplicating that decision. And it does not
-     * need to: a predicate is flip-eligible only when its operator is {@code <}, {@code <=}, {@code >} or
-     * {@code >=}, and the {@code switch} rewrite that makes the {@code CASE} form stricter needs {@code =},
-     * so the {@code CASE} form binds a flip-eligible predicate exactly as the bare one does. Validating
-     * {@code CASE} therefore covers both read shapes and can reject neither wrongly.
+     * Reads are more permissive: they express the same keep set as {@code NOT (<predicate>)}, which adds no
+     * strictness of its own, so a predicate this method accepts always reads. Validating the stricter of
+     * the two wraps therefore refuses only policies whose sweep could not run.
      * <p>
      * A predicate whose implicit cast only fails once a row is evaluated - {@code v < 'abc'} on a
      * {@code DOUBLE} column - still gets through, here and in the bare bind above. Catching it would mean
