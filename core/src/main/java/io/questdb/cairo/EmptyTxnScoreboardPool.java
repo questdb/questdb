@@ -77,8 +77,8 @@ public class EmptyTxnScoreboardPool implements TxnScoreboardPool {
             }
 
             @Override
-            public boolean isRangeAvailableIgnoringEpochPins(long fromTxn, long toTxn) {
-                return true;
+            public int scanRangeHolders(long fromTxn, long toTxn) {
+                return RANGE_FREE;
             }
 
             @Override

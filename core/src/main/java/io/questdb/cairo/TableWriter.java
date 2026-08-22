@@ -5781,30 +5781,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return walTxnDetails.calculateInsertTransactionBlock(seqTxn, pressureControl, getWalMaxLagRows(), inOrderMinTimestamp);
     }
 
-    private boolean canSquashOverwritePartitionTail(int partitionIndex) {
-        return txnScoreboard.isRangeAvailable(
-                squashRangeFromTxn(partitionIndex),
-                squashRangeToTxn(partitionIndex)
-        );
-    }
-
     /**
-     * True when the ONLY thing holding the squash range is a durable-epoch pin -- no reader, no
-     * checkpoint. Such a partition cannot be squashed by OVERWRITE (the epoch cut still describes
-     * its current contents, and a recovery rewind to that cut would read whatever we wrote over
-     * them), but it CAN be squashed by COPY: that writes a new partition version and only queues
-     * the old one, whose real removal goes back through the epoch-protected predicate.
+     * Who holds this partition's squash range: a {@link TxnScoreboard#RANGE_HELD_BY_EPOCH} pin blocks
+     * an in-place OVERWRITE but not a COPY (the copy writes a new partition version and only queues
+     * the old one, whose real removal goes back through the epoch-protected predicate);
+     * {@link TxnScoreboard#RANGE_HELD_BY_OTHER} -- a reader or a checkpoint -- blocks both, because
+     * something is reading those files right now.
      * <p>
-     * Without this, ADAPTIVE never squashes a split partition at all. The epoch pin sits at the
-     * last cut, and the last cut is always at least one txn behind the {@code toTxn} the gate asks
-     * about, so the pin is permanently inside the range -- proven at every epoch cadence, including
-     * epoch-every-batch, where the pin merely tracks one txn behind instead of standing still.
+     * ONE scan, answering both questions. Under ADAPTIVE the epoch pin is always present, so the
+     * caller always needs both answers: the epoch pin sits at the last cut, and the last cut is
+     * always at least one txn behind the {@code toTxn} the gate asks about, so it is permanently
+     * inside the range -- at every epoch cadence, including epoch-every-batch, where the pin merely
+     * tracks one txn behind instead of standing still. Without the distinction ADAPTIVE never
+     * squashes a split partition at all.
      */
-    private boolean canSquashCopyPartitionTail(int partitionIndex) {
-        return txnScoreboard.isRangeAvailableIgnoringEpochPins(
-                squashRangeFromTxn(partitionIndex),
-                squashRangeToTxn(partitionIndex)
-        );
+    private int scanSquashRangeHolders(int partitionIndex) {
+        final long fromTxn = squashRangeFromTxn(partitionIndex);
+        return txnScoreboard.scanRangeHolders(fromTxn, squashRangeToTxn(partitionIndex, fromTxn));
     }
 
     private long squashRangeFromTxn(int partitionIndex) {
@@ -5812,7 +5805,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return fromTxn < 0 ? 0 : fromTxn;
     }
 
-    private long squashRangeToTxn(int partitionIndex) {
+    private long squashRangeToTxn(int partitionIndex, long fromTxn) {
         long toTxn = txWriter.getTxn();
         if (partitionIndex + 1 < txWriter.getPartitionCount()) {
             // If the next partition is a split partition part of same logical partition
@@ -5820,7 +5813,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // then if there are no readers between transaction range [0, 3) the partition is unlocked to append.
             if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex)) ==
                     txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1))) {
-                toTxn = Math.max(squashRangeFromTxn(partitionIndex) + 1, getPartitionNameTxn(partitionIndex + 1) + 1);
+                toTxn = Math.max(fromTxn + 1, getPartitionNameTxn(partitionIndex + 1) + 1);
             }
         }
         return toTxn;
@@ -15345,13 +15338,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Move targetPartitionIndex to the first unlocked partition in the range
         int targetPartitionIndex = partitionIndexLo;
         for (int n = partitionIndexHi - 1; targetPartitionIndex < n; targetPartitionIndex++) {
-            boolean canOverwrite = canSquashOverwritePartitionTail(targetPartitionIndex);
+            final int holders = scanSquashRangeHolders(targetPartitionIndex);
+            boolean canOverwrite = holders == TxnScoreboard.RANGE_FREE;
             // A durable-epoch pin blocks the overwrite but not the copy. Squashing by copy here
             // keeps ADAPTIVE's partition layout the same as every other mode's; skipping would
             // leave the split standing forever, because that pin never leaves the range.
             // Deliberately NOT reached for a reader or checkpoint pin: those keep the existing
             // deferral, so a busy table still waits rather than copying under every scan.
-            if (canOverwrite || force || canSquashCopyPartitionTail(targetPartitionIndex)) {
+            if (canOverwrite || force || (holders & TxnScoreboard.RANGE_HELD_BY_OTHER) == 0) {
                 targetPartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex);
                 copyTargetFrame = !canOverwrite;
                 break;

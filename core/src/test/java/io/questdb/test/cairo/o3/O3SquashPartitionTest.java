@@ -46,6 +46,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
+import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.Overrides;
@@ -72,6 +74,75 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         Overrides overrides = node1.getConfigurationOverrides();
         overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 << 10);
         super.setUp();
+    }
+
+    @Test
+    public void testCopySquashLeavesNoOrphanPartitionVersionDir() throws Exception {
+        // Under ADAPTIVE the squash takes the COPY route, because the durable-epoch pin blocks the
+        // in-place overwrite. A copy PUBLISHES a new partition version directory and queues the old
+        // one, and that queued removal is itself epoch-protected -- so the superseded directory
+        // legitimately outlives the squash.
+        //
+        // This pins that it does not outlive the EPOCH: once the epoch moves (writer close flushes it)
+        // and O3PartitionPurgeJob runs, the day is back to a single directory. Without it, the extra
+        // version directories the copy route produces would be a silent on-disk leak that no row-count
+        // or SQL assertion can see -- repeated split+squash rounds would just accumulate.
+        assertMemoryLeak(() -> {
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
+
+            executeWithRewriteTimestamp(
+                    "create table osq as (" +
+                            "select cast(x as int) i," +
+                            " timestamp_sequence('2024-02-01T00', 60 * 1000000L)::#TIMESTAMP ts" +
+                            " from long_sequence(600)" +
+                            ") timestamp (ts) partition by DAY WAL",
+                    timestampType.getTypeName()
+            );
+            drainWalQueue();
+            // A later day, so the squash target is never the last partition.
+            executeWithRewriteTimestamp(
+                    "insert into osq select cast(x as int) i," +
+                            " timestamp_sequence('2024-02-02T00', 60 * 1000000L)::#TIMESTAMP ts" +
+                            " from long_sequence(60)",
+                    timestampType.getTypeName()
+            );
+            drainWalQueue();
+
+            // Several split-then-squash rounds: each copy squash supersedes a version directory.
+            for (int round = 0; round < 3; round++) {
+                executeWithRewriteTimestamp(
+                        "insert into osq select cast(9000 + x as int) i," +
+                                " timestamp_sequence('2024-02-01T05:00', 1000000L)::#TIMESTAMP ts" +
+                                " from long_sequence(50)",
+                        timestampType.getTypeName()
+                );
+                drainWalQueue();
+            }
+
+            final long rows = countRows("osq");
+            Assert.assertEquals(810L, rows);
+
+            // Close the writer (flushes the durable epoch, moving the pin off the superseded versions)
+            // and let the purge job discover them from the directory listing.
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+                while (purgeJob.run()) {
+                    Os.pause();
+                }
+            }
+
+            Assert.assertEquals(
+                    "the copy squash's superseded partition versions must be reclaimed once the epoch"
+                            + " has moved past them, leaving one directory for the day",
+                    1,
+                    countPartitionVersionDirs("osq", "2024-02-01")
+            );
+            // ...and the data is still all there afterwards.
+            Assert.assertEquals(rows, countRows("osq"));
+        });
     }
 
     @Test
@@ -1954,4 +2025,34 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             }
         });
     }
+
+    private static int countPartitionVersionDirs(String tableName, String partitionPrefix) {
+        final java.io.File tableDir = new java.io.File(
+                configuration.getDbRoot().toString(),
+                engine.verifyTableName(tableName).getDirName()
+        );
+        final java.io.File[] entries = tableDir.listFiles();
+        Assert.assertNotNull("table directory must exist", entries);
+        int count = 0;
+        for (java.io.File f : entries) {
+            // "2024-02-01" itself and every "2024-02-01.<n>" version of it, but not another day.
+            if (f.isDirectory()
+                    && f.getName().startsWith(partitionPrefix)
+                    && (f.getName().length() == partitionPrefix.length() || f.getName().charAt(partitionPrefix.length()) == '.')) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static long countRows(String tableName) {
+        try (io.questdb.cairo.sql.RecordCursorFactory f = select("select count() from " + tableName)) {
+            try (io.questdb.cairo.sql.RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                return c.hasNext() ? c.getRecord().getLong(0) : -1L;
+            }
+        } catch (io.questdb.griffin.SqlException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
 }

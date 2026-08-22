@@ -29,7 +29,9 @@ import io.questdb.cairo.PartitionChecksumSidecar;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -37,6 +39,8 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -92,6 +96,49 @@ public class PartitionChecksumReadPathTest extends AbstractCairoTest {
                             + " structural, not a block hash",
                     during < 64 * 1024
             );
+        });
+    }
+
+    @Test
+    public void testColumnOpenFailureStillPropagatesAndRetriesWithCoverageOn() throws Exception {
+        // Verification runs at the head of openPartition0, BEFORE the columns are opened, and swallows
+        // its own I/O failures by design (an unopenable sidecar degrades to ABSENT so detection never
+        // costs ingestion). This pins the other half of that: a failure opening a real COLUMN file
+        // must still propagate, and a retry must still succeed, with coverage enabled.
+        //
+        // TimeFrameCursorTest covers the same contract with coverage OFF, because it arms the fault by
+        // COUNTING file ops and verification's own ops shifted that count. Here the fault is armed on
+        // the PATH instead, so it lands on the column open whatever else the open path starts doing.
+        final AtomicBoolean armed = new AtomicBoolean();
+        final AtomicInteger fired = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (armed.get() && Utf8s.endsWithAscii(name, "2024-01-01" + File.separator + "v.d")) {
+                    armed.set(false);
+                    fired.incrementAndGet();
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createSealed("r5");
+
+            armed.set(true);
+            try {
+                sumV("r5");
+                Assert.fail("a failed column open must not read as healthy");
+            } catch (CairoException expected) {
+                // The open failed, as armed.
+            }
+            Assert.assertEquals("the injection must have fired on the column open, not been consumed"
+                    + " elsewhere", 1, fired.get());
+
+            // Retry: the partition must open cleanly once the fault is gone, i.e. the failed open left
+            // no half-open partition state behind.
+            engine.releaseInactive();
+            Assert.assertEquals(165L, sumV("r5"));
         });
     }
 

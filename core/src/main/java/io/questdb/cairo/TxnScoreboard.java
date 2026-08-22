@@ -45,6 +45,20 @@ public interface TxnScoreboard extends QuietCloseable {
     // See TxnScoreboardV2.toInternalId() for the id->slot mapping.
     int EPOCH_ID_A = -2;
     int EPOCH_ID_B = -3;
+    /**
+     * {@link #scanRangeHolders(long, long)}: nothing holds the range.
+     */
+    int RANGE_FREE = 0;
+    /**
+     * {@link #scanRangeHolders(long, long)}: a durable-epoch pin ({@link #EPOCH_ID_A} /
+     * {@link #EPOCH_ID_B}) holds the range. Blocks an in-place overwrite, not a copy.
+     */
+    int RANGE_HELD_BY_EPOCH = 1;
+    /**
+     * {@link #scanRangeHolders(long, long)}: a reader or a checkpoint holds the range. Blocks a copy
+     * too -- something is reading those files right now.
+     */
+    int RANGE_HELD_BY_OTHER = 2;
 
     boolean acquireTxn(int id, long txn);
 
@@ -66,22 +80,25 @@ public interface TxnScoreboard extends QuietCloseable {
 
     boolean isRangeAvailable(long fromTxn, long toTxn);
 
-    /**
-     * As {@link #isRangeAvailable(long, long)}, but ignores the durable-epoch pins.
-     * <p>
-     * ONLY for deciding whether a partition may be squashed by COPY. Every other caller of
-     * {@link #isRangeAvailable(long, long)} is a purge -- it is about to DELETE bytes a recovery
-     * rewind may still need -- and must keep the epoch protection. A copy squash deletes nothing:
-     * it writes a new partition version and merely queues the old one, whose actual removal goes
-     * back through the epoch-protected predicate.
-     * <p>
-     * Needed because the epoch pin sits at the last cut, which is always BEHIND the txn the squash
-     * gate asks about, so under ADAPTIVE the gate would otherwise never open -- at any epoch
-     * cadence.
-     */
-    boolean isRangeAvailableIgnoringEpochPins(long fromTxn, long toTxn);
-
     boolean isTxnAvailable(long txn);
+
+    /**
+     * One pass over the scoreboard reporting WHO holds {@code [fromTxn, toTxn)}: a durable-epoch
+     * pin, anything else (a reader or a checkpoint), both, or nothing. Returns a mask of
+     * {@link #RANGE_HELD_BY_EPOCH} / {@link #RANGE_HELD_BY_OTHER}, or {@link #RANGE_FREE}.
+     * <p>
+     * The squash gate needs BOTH answers -- may it overwrite (nothing holds the range), and failing
+     * that may it copy (no reader or checkpoint holds it) -- and asking them as two predicates meant
+     * two full scans on exactly the path that always takes both, since under ADAPTIVE the epoch pin
+     * is always present. One scan answers both.
+     * <p>
+     * Deliberately NOT offered to the purge callers of {@link #isRangeAvailable(long, long)}. Each of
+     * those is about to DELETE bytes a recovery rewind may still need, so for them an epoch pin and a
+     * reader pin are the same answer: no. Only a copy squash can act on the distinction, because it
+     * deletes nothing -- it writes a new partition version and merely queues the old one, whose real
+     * removal goes back through the epoch-protected predicate.
+     */
+    int scanRangeHolders(long fromTxn, long toTxn);
 
     long releaseTxn(int id, long txn);
 }
