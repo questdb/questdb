@@ -107,6 +107,164 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertPartitionWhereIntArithmeticWrapIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            createFourDailyPartitions("cnv", false);
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE cnv CONVERT PARTITION TO PARQUET WHERE ts > 1_720_468_802 * 1_000_000",
+                    "SELECT count() FROM cnv",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE cnv CONVERT PARTITION TO PARQUET WHERE ts > 1_000_000 * 5000",
+                    "SELECT count() FROM cnv",
+                    "count\n4\n"
+            );
+        });
+    }
+
+    @Test
+    public void testConvertPartitionWhereNarrowIntBoundIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            createFourDailyPartitions("cnv2", false);
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE cnv2 CONVERT PARTITION TO PARQUET WHERE ts > '1720468802' * 1_000_000",
+                    "SELECT count() FROM cnv2",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE cnv2 CONVERT PARTITION TO NATIVE WHERE ts > abs(1_720_468_802) * 1_000_000",
+                    "SELECT count() FROM cnv2",
+                    "count\n4\n"
+            );
+        });
+    }
+
+    @Test
+    public void testConvertPartitionWhereNegatedBindVariableStrideIsAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            createFourDailyPartitions("cnv3", false);
+            try {
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                execute("ALTER TABLE cnv3 CONVERT PARTITION TO PARQUET WHERE ts < dateadd('d', -$1, '2024-07-11T00:00:00.000000Z'::timestamp)");
+                // CONVERT leaves the row count alone, so the count on its own says nothing about
+                // which partition the WHERE clause selected; the parquet flag does. The stride is
+                // -2 days from 2024-07-11, so only 2024-07-08 falls below the cut-off.
+                assertQuery("SELECT count() FROM cnv3").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
+                assertQuery("SELECT name, isParquet FROM table_partitions('cnv3')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
+                                name\tisParquet
+                                2024-07-08\ttrue
+                                2024-07-09\tfalse
+                                2024-07-10\tfalse
+                                2024-07-11\tfalse
+                                """);
+            } finally {
+                bindVariableService.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testConvertPartitionWhereNegatedBindVariableStrideIsAcceptedForWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // a WAL table compiles the statement twice - once to sequence it, once to apply it -
+            // and the guard has to take the unary negation both times. CONVERT leaves the row count
+            // alone, so the count says nothing about which compile ran; the parquet flag does. Only
+            // the WAL apply owns a reader, so only it can select a partition and convert it.
+            createFourDailyPartitions("cnv4", true);
+            try {
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                execute("ALTER TABLE cnv4 CONVERT PARTITION TO PARQUET WHERE ts < dateadd('d', -$1, '2024-07-11T00:00:00.000000Z'::timestamp)");
+                drainWalQueue();
+                assertQuery("SELECT count() FROM cnv4").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
+                assertQuery("SELECT name, isParquet FROM table_partitions('cnv4')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
+                                name\tisParquet
+                                2024-07-08\ttrue
+                                2024-07-09\tfalse
+                                2024-07-10\tfalse
+                                2024-07-11\tfalse
+                                """);
+            } finally {
+                bindVariableService.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testDetachPartitionWhereIntArithmeticWrapIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            createFourDailyPartitions("det", false);
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE det DETACH PARTITION WHERE ts > 1_720_468_802 * 1_000_000",
+                    "SELECT count() FROM det",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE det DETACH PARTITION WHERE ts > 1_000_000 * 5000",
+                    "SELECT count() FROM det",
+                    "count\n4\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDetachPartitionWhereNarrowIntBoundIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            createFourDailyPartitions("det2", false);
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE det2 DETACH PARTITION WHERE ts > '1720468802' * 1_000_000",
+                    "SELECT count() FROM det2",
+                    "count\n4\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDetachPartitionWhereNegatedBindVariableStrideIsAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            createFourDailyPartitions("det3", false);
+            try {
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                execute("ALTER TABLE det3 DETACH PARTITION WHERE ts < dateadd('d', -$1, '2024-07-11T00:00:00.000000Z'::timestamp)");
+                assertQuery("SELECT count() FROM det3").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+            } finally {
+                bindVariableService.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testDetachPartitionWhereNegatedBindVariableStrideIsAcceptedForWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // a WAL table compiles the statement twice - once to sequence it, once to apply it -
+            // and the guard has to take the unary negation both times. The sequencing compile owns
+            // no reader, so it selects no partition and detaches nothing; the row count below falls
+            // only if the WAL apply re-compiled the statement and took it again.
+            createFourDailyPartitions("det4", true);
+            try {
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                execute("ALTER TABLE det4 DETACH PARTITION WHERE ts < dateadd('d', -$1, '2024-07-11T00:00:00.000000Z'::timestamp)");
+                drainWalQueue();
+                assertQuery("SELECT count() FROM det4").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+            } finally {
+                bindVariableService.clear();
+            }
+        });
+    }
+
+    @Test
     public void testDropMalformedPartition0() throws Exception {
         assertMemoryLeak(() -> {
                     createX("DAY", 72000000);
@@ -417,6 +575,484 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropPartitionWhereInRangeIntArithmeticIsAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            // INT arithmetic that stays inside the INT range computes exactly what it reads like,
+            // so it is accepted whatever its operands are spelled as
+            createFourDailyPartitions("c1", false);
+            execute("ALTER TABLE c1 DROP PARTITION WHERE ts > abs(5) * 2");
+            assertQuery("SELECT count() FROM c1").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+
+            // a quoted operand is read through the engine's own implicit cast, so this is 10 - the
+            // quoting makes no difference to the value and must make none to the verdict
+            createFourDailyPartitions("c2", false);
+            execute("ALTER TABLE c2 DROP PARTITION WHERE ts > '5' * 2");
+            assertQuery("SELECT count() FROM c2").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+
+            // the largest INT is still an INT
+            createFourDailyPartitions("c3", false);
+            execute("ALTER TABLE c3 DROP PARTITION WHERE ts > 2_147_483_647 + 0");
+            assertQuery("SELECT count() FROM c3").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+
+            // arithmetic buried inside a wider expression: the guard walks into it and finds it sound
+            createFourDailyPartitions("c4", false);
+            execute("ALTER TABLE c4 DROP PARTITION WHERE ts + 1_000_000 * 60 > 1_720_483_200_000_000L");
+            assertQuery("SELECT count() FROM c4").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            // floating point does not wrap
+            createFourDailyPartitions("c5", false);
+            execute("ALTER TABLE c5 DROP PARTITION WHERE ts > 1e6 * 1_720_468_802");
+            assertQuery("SELECT count() FROM c5").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            // no underscore separator here: the lexer takes them in integer literals only
+            createFourDailyPartitions("c6", false);
+            execute("ALTER TABLE c6 DROP PARTITION WHERE ts > 1_720_468_802 * 1000000.0");
+            assertQuery("SELECT count() FROM c6").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            // the other two spellings of the "drop everything" idiom
+            createFourDailyPartitions("c7", false);
+            execute("ALTER TABLE c7 DROP PARTITION WHERE ts >= 0");
+            assertQuery("SELECT count() FROM c7").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+
+            createFourDailyPartitions("c8", false);
+            execute("ALTER TABLE c8 DROP PARTITION WHERE ts > -1");
+            assertQuery("SELECT count() FROM c8").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+        });
+    }
+
+    @Test
+    public void testDropPartitionWhereIntArithmeticEvaluatingToNullIsAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            // every narrow-int factory answers NULL for a NULL operand or a zero divisor, and a
+            // NULL bound matches no partition floor, so nothing can be over-matched: the guard
+            // stays out of the way and the pre-existing empty-match check reports the statement
+            assertPartitionFilterMatchesNothing("nul1", "ts > null * 1_000_000");
+            assertPartitionFilterMatchesNothing("nul2", "ts > 1_000_000 / 0");
+            assertPartitionFilterMatchesNothing("nul3", "ts > 1_000_000 % 0");
+        });
+    }
+
+    @Test
+    public void testDropPartitionWhereIntArithmeticWrapIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            createFourDailyPartitions("y", false);
+
+            // seconds -> micros: 1_720_468_802 * 1_000_000 wraps to -607_497_088, which is below
+            // every partition floor, so the unguarded filter matches the whole table
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE y DROP PARTITION WHERE ts > 1_720_468_802 * 1_000_000",
+                    "SELECT count() FROM y",
+                    "count\n4\n"
+            );
+            // seconds -> millis: 1_720_468_802 * 1000 wraps to -1_813_083_696
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE y DROP PARTITION WHERE ts > 1_720_468_802 * 1000",
+                    "SELECT count() FROM y",
+                    "count\n4\n"
+            );
+            // the wrap is not always negative: 1_000_000 * 5000 wraps to +705_032_704, which is
+            // 1970-01-01T00:11:45Z in micros and still below every partition floor
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE y DROP PARTITION WHERE ts > 1_000_000 * 5000",
+                    "SELECT count() FROM y",
+                    "count\n4\n"
+            );
+            // a wrapped bound reached through a cast is the same loss
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE y DROP PARTITION WHERE ts > (1_720_468_802 * 1_000_000)::timestamp",
+                    "SELECT count() FROM y",
+                    "count\n4\n"
+            );
+            // negating the wrapped product flips its sign but not the outcome
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE y DROP PARTITION WHERE ts > -1_720_468_802 * 1_000_000",
+                    "SELECT count() FROM y",
+                    "count\n4\n"
+            );
+            // addition wraps too
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE y DROP PARTITION WHERE ts > 2_000_000_000 + 2_000_000_000",
+                    "SELECT count() FROM y",
+                    "count\n4\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDropPartitionWhereIntArithmeticWrapIsRejectedForMonthPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY MONTH");
+            execute("""
+                    INSERT INTO m VALUES
+                    ('2024-05-08T00:00:00.000000Z', 1),
+                    ('2024-06-08T00:00:00.000000Z', 2),
+                    ('2024-07-08T00:00:00.000000Z', 3),
+                    ('2024-08-08T00:00:00.000000Z', 4)
+                    """);
+            drainWalQueue();
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE m DROP PARTITION WHERE ts > 1_720_468_802 * 1_000_000",
+                    "SELECT count() FROM m",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE m DROP PARTITION WHERE ts > 1_000_000 * 5000",
+                    "SELECT count() FROM m",
+                    "count\n4\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDropPartitionWhereIntArithmeticWrapIsRejectedForWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createFourDailyPartitions("w", true);
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE w DROP PARTITION WHERE ts > 1_720_468_802 * 1_000_000",
+                    "SELECT count() FROM w",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE w DROP PARTITION WHERE ts > 1_000_000 * 5000",
+                    "SELECT count() FROM w",
+                    "count\n4\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDropPartitionWhereNarrowIntBoundIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            createFourDailyPartitions("n1", false);
+
+            // a quoted numeric operand: overload resolution still casts it to a number, so this is
+            // INT arithmetic and it wraps. This is what a script produces when it interpolates a
+            // value into a quoted SQL template.
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n1 DROP PARTITION WHERE ts > '1720468802' * 1_000_000",
+                    "SELECT count() FROM n1",
+                    "count\n4\n"
+            );
+            // an explicit narrowing cast, on either operand
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n1 DROP PARTITION WHERE ts > 1_720_468_802::int * 1_000_000",
+                    "SELECT count() FROM n1",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n1 DROP PARTITION WHERE ts > 1_720_468_802 * 1_000_000::int",
+                    "SELECT count() FROM n1",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n1 DROP PARTITION WHERE ts > cast(1_720_468_802 as int) * 1_000_000",
+                    "SELECT count() FROM n1",
+                    "count\n4\n"
+            );
+            // SHORT promotes to INT and wraps just the same
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n1 DROP PARTITION WHERE ts > 1_720_468_802::short * 1_000_000",
+                    "SELECT count() FROM n1",
+                    "count\n4\n"
+            );
+            // an INT-returning function call
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n1 DROP PARTITION WHERE ts > abs(1_720_468_802) * 1_000_000",
+                    "SELECT count() FROM n1",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n1 DROP PARTITION WHERE ts > coalesce(1_720_468_802, 1) * 1_000_000",
+                    "SELECT count() FROM n1",
+                    "count\n4\n"
+            );
+            // CASE
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n1 DROP PARTITION WHERE ts > case when true then 1_720_468_802 else 1 end * 1_000_000",
+                    "SELECT count() FROM n1",
+                    "count\n4\n"
+            );
+            // widening the RESULT does not undo a wrap that already happened, so the cast is
+            // looked through
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n1 DROP PARTITION WHERE ts > ('1720468802' * 1_000_000)::timestamp",
+                    "SELECT count() FROM n1",
+                    "count\n4\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDropPartitionWhereNarrowIntBoundIsRejectedForBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            createFourDailyPartitions("n3", false);
+            try {
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 1_720_468_802);
+                assertPartitionFilterWrapRejected(
+                        "ALTER TABLE n3 DROP PARTITION WHERE ts > $1 * 1_000_000",
+                        "SELECT count() FROM n3",
+                        "count\n4\n"
+                );
+                // the same on the right-hand operand
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 1_000_000);
+                assertPartitionFilterWrapRejected(
+                        "ALTER TABLE n3 DROP PARTITION WHERE ts > 1_720_468_802 * $1",
+                        "SELECT count() FROM n3",
+                        "count\n4\n"
+                );
+                // a named bind variable is the same shape
+                bindVariableService.clear();
+                bindVariableService.setInt("cutoff", 1_720_468_802);
+                assertPartitionFilterWrapRejected(
+                        "ALTER TABLE n3 DROP PARTITION WHERE ts > :cutoff * 1_000_000",
+                        "SELECT count() FROM n3",
+                        "count\n4\n"
+                );
+                // an undefined bind variable is typed by the whole expression before the bound is
+                // read, so it lands on INT rather than UNDEFINED and is refused too
+                bindVariableService.clear();
+                assertPartitionFilterWrapRejected(
+                        "ALTER TABLE n3 DROP PARTITION WHERE ts > $1 * 1_000_000",
+                        "SELECT count() FROM n3",
+                        "count\n4\n"
+                );
+                // a 64-bit bind variable carries a real timestamp and is accepted
+                bindVariableService.clear();
+                bindVariableService.setTimestamp(0, 1_720_483_200_000_000L);
+                execute("ALTER TABLE n3 DROP PARTITION WHERE ts > $1");
+                assertQuery("SELECT count() FROM n3").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+            } finally {
+                bindVariableService.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testDropPartitionWhereNarrowIntBoundIsRejectedForComparisonShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            createFourDailyPartitions("n2", false);
+
+            // the timestamp on the right-hand side
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n2 DROP PARTITION WHERE '1720468802' * 1_000_000 < ts",
+                    "SELECT count() FROM n2",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n2 DROP PARTITION WHERE ts >= '1720468802' * 1_000_000",
+                    "SELECT count() FROM n2",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n2 DROP PARTITION WHERE ts = '1720468802' * 1_000_000",
+                    "SELECT count() FROM n2",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n2 DROP PARTITION WHERE ts != '1720468802' * 1_000_000",
+                    "SELECT count() FROM n2",
+                    "count\n4\n"
+            );
+            // BETWEEN, either bound
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n2 DROP PARTITION WHERE ts between '1720468802' * 1_000_000 and 1_820_468_802_000_000L",
+                    "SELECT count() FROM n2",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n2 DROP PARTITION WHERE ts between 1_720_468_802_000_000L and '1820468802' * 1_000_000",
+                    "SELECT count() FROM n2",
+                    "count\n4\n"
+            );
+            // IN, single and multi element
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n2 DROP PARTITION WHERE ts in ('1720468802' * 1_000_000)",
+                    "SELECT count() FROM n2",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n2 DROP PARTITION WHERE ts in ('1720468802' * 1_000_000, 1_820_468_802_000_000L)",
+                    "SELECT count() FROM n2",
+                    "count\n4\n"
+            );
+            // nested under NOT / OR
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n2 DROP PARTITION WHERE not (ts <= '1720468802' * 1_000_000)",
+                    "SELECT count() FROM n2",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n2 DROP PARTITION WHERE ts > '1720468802' * 1_000_000 or false",
+                    "SELECT count() FROM n2",
+                    "count\n4\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDropPartitionWhereNarrowIntBoundIsRejectedForWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createFourDailyPartitions("n4", true);
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n4 DROP PARTITION WHERE ts > '1720468802' * 1_000_000",
+                    "SELECT count() FROM n4",
+                    "count\n4\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDropPartitionWhereNegatedBindVariableIsAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                // the retention idiom: the job binds a positive day count and the statement negates
+                // it. Negation cannot carry the result outside the range the bind variable already
+                // covers, so the guard has nothing to prove and the statement must run.
+                createFourDailyPartitions("neg1", false);
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                execute("ALTER TABLE neg1 DROP PARTITION WHERE ts < dateadd('d', -$1, '2024-07-11T00:00:00.000000Z'::timestamp)");
+                assertQuery("SELECT count() FROM neg1").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+                // a named bind variable is the same shape
+                createFourDailyPartitions("neg2", false);
+                bindVariableService.clear();
+                bindVariableService.setInt("days", 2);
+                execute("ALTER TABLE neg2 DROP PARTITION WHERE ts < dateadd('d', -:days, '2024-07-11T00:00:00.000000Z'::timestamp)");
+                assertQuery("SELECT count() FROM neg2").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+                // the statement a retention job actually sends, whose cut-off sits well past the data
+                createFourDailyPartitions("neg3", false);
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 30);
+                execute("ALTER TABLE neg3 DROP PARTITION WHERE ts < dateadd('d', -$1, now())");
+                assertQuery("SELECT count() FROM neg3").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+
+                // a WAL table compiles the statement twice - once to sequence it, once to apply it -
+                // and takes it both times
+                createFourDailyPartitions("neg4", true);
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                execute("ALTER TABLE neg4 DROP PARTITION WHERE ts < dateadd('d', -$1, '2024-07-11T00:00:00.000000Z'::timestamp)");
+                drainWalQueue();
+                assertQuery("SELECT count() FROM neg4").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+                // negating a bound rather than a stride is accepted for the same reason: the bare
+                // bind variable can already carry every value the negation can produce
+                createFourDailyPartitions("neg5", false);
+                bindVariableService.clear();
+                bindVariableService.setInt(0, -1);
+                execute("ALTER TABLE neg5 DROP PARTITION WHERE ts > -$1");
+                assertQuery("SELECT count() FROM neg5").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+
+                // the guard still refuses the products the negation sits inside, because those can
+                // reach a value the operand alone never could
+                createFourDailyPartitions("neg6", false);
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 1_720_468_802);
+                assertPartitionFilterWrapRejected(
+                        "ALTER TABLE neg6 DROP PARTITION WHERE ts > -$1 * 1_000_000",
+                        "SELECT count() FROM neg6",
+                        "count\n4\n"
+                );
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 1_720_468_802);
+                assertPartitionFilterWrapRejected(
+                        "ALTER TABLE neg6 DROP PARTITION WHERE ts > -($1 * 1_000_000)",
+                        "SELECT count() FROM neg6",
+                        "count\n4\n"
+                );
+
+                // a binary node keeps failing closed even where the negation is the whole intent,
+                // because proving those needs the operand's value and the guard does not have it
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                assertPartitionFilterWrapRejected(
+                        "ALTER TABLE neg6 DROP PARTITION WHERE ts < dateadd('d', 0 - $1, now())",
+                        "SELECT count() FROM neg6",
+                        "count\n4\n"
+                );
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                assertPartitionFilterWrapRejected(
+                        "ALTER TABLE neg6 DROP PARTITION WHERE ts < dateadd('d', -1 * $1, now())",
+                        "SELECT count() FROM neg6",
+                        "count\n4\n"
+                );
+
+                // the refusal names three remedies and the third one is the only one a dateadd
+                // stride can take, so it has to work: bind the day count already negated
+                createFourDailyPartitions("neg7", false);
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 2);
+                try {
+                    execute("ALTER TABLE neg7 DROP PARTITION WHERE ts < dateadd('d', $1 * 30, now())");
+                    Assert.fail("statement was accepted");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "widen an operand (1_000_000L, expr::long), use a timestamp literal, or bind the computed value itself"
+                    );
+                }
+                bindVariableService.clear();
+                bindVariableService.setInt(0, -60);
+                execute("ALTER TABLE neg7 DROP PARTITION WHERE ts < dateadd('d', $1, now())");
+                assertQuery("SELECT count() FROM neg7").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+            } finally {
+                bindVariableService.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testDropPartitionWhereNestedIntArithmeticWrapIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            createFourDailyPartitions("n5", false);
+
+            // the wrap happens one level below a parent that is itself 64-bit typed, so the
+            // parent's own type says nothing about it and only the arithmetic node can be judged
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n5 DROP PARTITION WHERE ts - '1720468802' * 1_000_000 > 0",
+                    "SELECT count() FROM n5",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n5 DROP PARTITION WHERE ts + '1720468802' * 1_000_000 > 0",
+                    "SELECT count() FROM n5",
+                    "count\n4\n"
+            );
+            // buried in a function argument, where the function returns a timestamp or a long
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n5 DROP PARTITION WHERE ts > to_utc('1720468802'::int * 1_000_000, 'UTC')",
+                    "SELECT count() FROM n5",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n5 DROP PARTITION WHERE ts > coalesce('1720468802' * 1_000_000, 0L)",
+                    "SELECT count() FROM n5",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n5 DROP PARTITION WHERE ts > case when true then '1720468802' * 1_000_000 else 0L end",
+                    "SELECT count() FROM n5",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n5 DROP PARTITION WHERE ts > greatest('1720468802' * 1_000_000, 0L)",
+                    "SELECT count() FROM n5",
+                    "count\n4\n"
+            );
+            assertPartitionFilterWrapRejected(
+                    "ALTER TABLE n5 DROP PARTITION WHERE ts > dateadd('s', '1720468802' * 1000, 0::timestamp)",
+                    "SELECT count() FROM n5",
+                    "count\n4\n"
+            );
+        });
+    }
+
+    @Test
     public void testDropPartitionWhereTimestampColumnNameIsOtherThanTimestamp() throws Exception {
         assertMemoryLeak(() -> {
                     createXWithDifferentTimestampName();
@@ -536,6 +1172,83 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                             """, "2020");
                 }
         );
+    }
+
+    @Test
+    public void testDropPartitionWhereWiderBoundSpellingsAreAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            // widening one operand keeps the arithmetic at 64 bits, so the bound is the intended one
+            createFourDailyPartitions("a1", false);
+            execute("ALTER TABLE a1 DROP PARTITION WHERE ts > 1_720_468_802 * 1_000_000L");
+            assertQuery("SELECT count() FROM a1").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            // a plain 64-bit literal is the same bound
+            createFourDailyPartitions("a2", false);
+            execute("ALTER TABLE a2 DROP PARTITION WHERE ts > 1_720_468_802_000_000L");
+            assertQuery("SELECT count() FROM a2").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            // a timestamp literal is unaffected
+            createFourDailyPartitions("a3", false);
+            execute("ALTER TABLE a3 DROP PARTITION WHERE ts > '2024-07-08T00:00:00.000000Z'");
+            assertQuery("SELECT count() FROM a3").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            // INT arithmetic that does not wrap stays legal, wherever it sits
+            createFourDailyPartitions("a4", false);
+            execute("ALTER TABLE a4 DROP PARTITION WHERE ts < dateadd('d', 2 * 7, now())");
+            assertQuery("SELECT count() FROM a4").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+
+            // a bare INT literal bound keeps working; this is the documented "drop everything" idiom
+            createFourDailyPartitions("a5", false);
+            execute("ALTER TABLE a5 DROP PARTITION WHERE ts > 0");
+            assertQuery("SELECT count() FROM a5").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+        });
+    }
+
+    @Test
+    public void testDropPartitionWhereWiderBoundSpellingsWithComputedOperandsAreAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            // a 64-bit function result keeps the product at 64 bits
+            createFourDailyPartitions("b1", false);
+            execute("ALTER TABLE b1 DROP PARTITION WHERE ts > extract(epoch from '2024-07-08'::timestamp) * 1_000_000");
+            assertQuery("SELECT count() FROM b1").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            createFourDailyPartitions("b2", false);
+            execute("ALTER TABLE b2 DROP PARTITION WHERE ts > datediff('s', 0::timestamp, '2024-07-08'::timestamp) * 1_000_000");
+            assertQuery("SELECT count() FROM b2").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            // widening one OPERAND is the documented fix and it is accepted
+            createFourDailyPartitions("b3", false);
+            execute("ALTER TABLE b3 DROP PARTITION WHERE ts > (24 * 3600)::long * 1_000_000");
+            assertQuery("SELECT count() FROM b3").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+
+            // a cast over a constant leaf stays exempt, whichever the target type
+            createFourDailyPartitions("b4", false);
+            execute("ALTER TABLE b4 DROP PARTITION WHERE ts > 1_720_468_802_000_000::timestamp");
+            assertQuery("SELECT count() FROM b4").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            createFourDailyPartitions("b5", false);
+            execute("ALTER TABLE b5 DROP PARTITION WHERE ts > '2024-07-08'::timestamp");
+            assertQuery("SELECT count() FROM b5").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            // a widening cast over 64-bit arithmetic is looked through and found sound
+            createFourDailyPartitions("b6", false);
+            execute("ALTER TABLE b6 DROP PARTITION WHERE ts > (extract(epoch from '2024-07-08'::timestamp) * 1_000_000)::timestamp");
+            assertQuery("SELECT count() FROM b6").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            // the interval shapes with string bounds are untouched
+            createFourDailyPartitions("b7", false);
+            execute("ALTER TABLE b7 DROP PARTITION WHERE ts in ('2024-07-09', '2024-07-10')");
+            assertQuery("SELECT count() FROM b7").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+
+            createFourDailyPartitions("b8", false);
+            execute("ALTER TABLE b8 DROP PARTITION WHERE ts between '2024-07-09' and '2024-07-10'");
+            assertQuery("SELECT count() FROM b8").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+
+            // a TIMESTAMP-returning function bound
+            createFourDailyPartitions("b9", false);
+            execute("ALTER TABLE b9 DROP PARTITION WHERE ts = to_timestamp('2024-07-09', 'yyyy-MM-dd')");
+            assertQuery("SELECT count() FROM b9").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+        });
     }
 
     @Test
@@ -1097,6 +1810,38 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         );
     }
 
+    private void assertPartitionFilterMatchesNothing(String tableName, String predicate) throws Exception {
+        createFourDailyPartitions(tableName, false);
+        try {
+            execute("ALTER TABLE " + tableName + " DROP PARTITION WHERE " + predicate);
+            Assert.fail("statement was accepted: " + predicate);
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "no partitions matched WHERE clause");
+        }
+        assertQuery("SELECT count() FROM " + tableName).noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
+    }
+
+    private void assertPartitionFilterWrapRejected(String alterSql, String countSql, String expectedCount) throws Exception {
+        boolean rejected = false;
+        try {
+            execute(alterSql);
+        } catch (SqlException e) {
+            rejected = true;
+            TestUtils.assertContains(e.getFlyweightMessage(), "INT arithmetic overflow");
+            // both spellings of the refusal - proven wrap and not-proven - end with the same
+            // three remedies, and the message is the only place a caller learns what to do
+            TestUtils.assertContains(
+                    e.getFlyweightMessage(),
+                    "widen an operand (1_000_000L, expr::long), use a timestamp literal, or bind the computed value itself"
+            );
+        }
+        drainWalQueue();
+        // the row count assertion comes first on purpose: it is the one that goes red on the
+        // silent-destruction bug, so the failure names the loss rather than the missing error
+        assertQuery(countSql).noLeakCheck().expectSize().noRandomAccess().returns(expectedCount);
+        Assert.assertTrue("statement was accepted: " + alterSql, rejected);
+    }
+
     private void assertPartitionResult(String expectedBeforeDrop, String intervalSearch) throws Exception {
         assertQuery("select count() from x where timestamp in '" + intervalSearch + "'")
                 .noLeakCheck()
@@ -1111,6 +1856,17 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                 .expectSize()
                 .noRandomAccess()
                 .returns(expectedBeforeDrop);
+    }
+
+    private void createFourDailyPartitions(String tableName, boolean walEnabled) throws Exception {
+        execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY"
+                + (walEnabled ? " WAL" : " BYPASS WAL"));
+        execute("INSERT INTO " + tableName + " VALUES" +
+                " ('2024-07-08T00:00:00.000000Z', 1)," +
+                " ('2024-07-09T00:00:00.000000Z', 2)," +
+                " ('2024-07-10T00:00:00.000000Z', 3)," +
+                " ('2024-07-11T00:00:00.000000Z', 4)");
+        drainWalQueue();
     }
 
     private void createX(String partitionBy, long increment) throws SqlException {

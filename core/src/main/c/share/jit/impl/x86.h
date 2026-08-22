@@ -377,10 +377,31 @@ namespace questdb::x86 {
         return r;
     }
 
+    // QuestDB reads any non-finite floating point value as NULL - Numbers#isNull is an
+    // exponent-bits test, so it covers +/-Infinity as well as NaN - and
+    // DivFloatFunctionFactory / DivDoubleFunctionFactory fold a non-finite quotient to NaN
+    // ("Numbers.isFinite(f) ? f : Float.NaN") so the comparison treats it as NULL rather than
+    // as a very large number. The division has to fold the same way here, or a zero divisor
+    // makes the two filters select different rows: the Java filter reads NaN > 0 as false and
+    // drops the row while a propagated +Infinity > 0 keeps it.
+    //
+    // Only division folds. Mul/Add/Sub deliberately do NOT fold in the Java factories either,
+    // so overflowing to an infinity there already agrees on both paths and must stay that way.
     inline Vec float_div(Compiler &c, const Vec &lhs, const Vec &rhs) {
         Vec r =c.new_xmm_ss();
         c.movss(r, lhs);
         c.divss(r, rhs);
+        // Same exponent-bits test float_cmp_epsilon uses: all ones in the exponent means
+        // +/-Infinity or NaN.
+        Mem NaN = c.new_int32_const(asmjit::ConstPoolScope::kLocal, 0x7fc00000); // float NaN
+        Label l_exit = c.new_label();
+        Gp int_r = c.new_gp32();
+        c.movd(int_r, r);
+        c.and_(int_r, 0x7F800000);
+        c.cmp(int_r, 0x7F800000);
+        c.jne(l_exit);
+        c.movss(r, NaN);
+        c.bind(l_exit);
         return r;
     }
 
@@ -405,10 +426,22 @@ namespace questdb::x86 {
         return r;
     }
 
+    // See float_div: a non-finite quotient folds to NaN so it orders as NULL, matching
+    // DivDoubleFunctionFactory.
     inline Vec double_div(Compiler &c, const Vec &lhs, const Vec &rhs) {
         Vec r =c.new_xmm_sd();
         c.movsd(r, lhs);
         c.divsd(r, rhs);
+        Mem NaN = c.new_int64_const(asmjit::ConstPoolScope::kLocal, 0x7ff8000000000000LL); // double NaN
+        Mem inf_memory = c.new_int64_const(asmjit::ConstPoolScope::kLocal, 0x7FF0000000000000LL);
+        Label l_exit = c.new_label();
+        Gp int_r = c.new_gp64();
+        c.movq(int_r, r);
+        c.and_(int_r, inf_memory);
+        c.cmp(int_r, inf_memory);
+        c.jne(l_exit);
+        c.movsd(r, NaN);
+        c.bind(l_exit);
         return r;
     }
 

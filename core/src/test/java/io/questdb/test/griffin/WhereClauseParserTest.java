@@ -55,6 +55,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -95,6 +96,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private static TableReader unindexedReader;
     private static TableReader unindexedReaderNanos;
     private final WhereClauseParser e = new WhereClauseParser();
+    private final ObjectPool<ExpressionNode> expressionNodePool = new ObjectPool<>(ExpressionNode.FACTORY, 128);
     private final FunctionParser functionParser = new FunctionParser(
             configuration,
             engine.getFunctionFactoryCache()
@@ -3224,12 +3226,30 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAndOffsetDescendsIntoTokenlessSubQueryConjunct() throws Exception {
+        // analyzeAndOffset recurses into its predicate argument, and removeAndIntrinsics dispatches
+        // on the token it finds there; a sub-query conjunct carries a null token and must not be
+        // treated as an intrinsic (used to throw NPE). The predicate references the designated
+        // timestamp, so it clears the referencesTimestamp guard and the walk actually descends -
+        // and_offset over a predicate that does NOT reference it is rejected before recursing, see
+        // testAndOffsetWithTokenlessSubQueryPredicate.
+        IntrinsicModel m = modelOf("and_offset(timestamp > '2015-02-23' and (select * from x), 'h', 1)");
+        Assert.assertNotNull(m);
+    }
+
+    @Test
     public void testAndOffsetWithTokenlessSubQueryPredicate() throws Exception {
-        // and_offset recurses into its predicate argument; a sub-query predicate
-        // has a null token and must not be treated as an intrinsic (used to throw NPE)
-        IntrinsicModel m = modelOf("and_offset((select * from x), 'h', 1)");
-        Assert.assertNotNull(m.filter);
-        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        // and_offset is an internal pseudo-function with no FunctionFactory, so only SqlOptimiser
+        // may insert it - and it only ever wraps a predicate over the designated timestamp. A
+        // sub-query predicate references no timestamp, which makes this a hand-written call, and
+        // analyzeAndOffset rejects it rather than consuming the conjunct or rebuilding it as a
+        // dateadd over a sub-query.
+        try {
+            modelOf("and_offset((select * from x), 'h', 1)");
+            Assert.fail("expected SqlException");
+        } catch (SqlException e) {
+            Assert.assertEquals("[0] unknown function name: and_offset", e.getMessage());
+        }
     }
 
     @Test
@@ -4729,7 +4749,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? reader : readerNanos,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }
@@ -4749,7 +4770,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? reader : readerNanos,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }
@@ -4769,7 +4791,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? noDesignatedTimestampNorIdxReader : noDesignatedTimestampNorIdxReaderNanos,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }
@@ -4788,7 +4811,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     noTimestampReader,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }
@@ -4808,7 +4832,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? nonEmptyReader : nonEmptyReaderNanos,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }
@@ -4936,7 +4961,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false,
                     unindexedReader,
-                    false
+                    false,
+                    expressionNodePool
             );
         }
     }

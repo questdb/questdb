@@ -78,6 +78,8 @@ public class PushdownFilterExtractor implements Mutable {
     public static final int OP_IS_NULL = 5;
     public static final int OP_LE = 2;
     public static final int OP_LT = 1;
+    // Not an op the native side knows about: it marks a condition that cannot be pushed down.
+    public static final int OP_UNSUPPORTED = -1;
 
     private final ObjList<PushdownFilterCondition> conditions = new ObjList<>();
     private final ObjList<ExpressionNode> orValues = new ObjList<>();
@@ -582,6 +584,14 @@ public class PushdownFilterExtractor implements Mutable {
         private final int operationType;
         private final ObjList<Function> valueFunctions = new ObjList<>();
         private final ObjList<ExpressionNode> values = new ObjList<>();
+        // Set when value serialization declined this condition AND every one of its values is a
+        // compile-time constant, so re-running it cannot reach a different answer.
+        // ParquetRowGroupFilter.prepareFilterList runs once per parquet partition and re-raised the
+        // same ImplicitCastException every time - a string bound on a TIMESTAMP column arrives as a
+        // StrConstant whose getLong() throws - which over thousands of partitions is thousands of
+        // exceptions for one permanent answer. A bind variable is a RUNTIME constant, not a
+        // constant, so a value that can be re-bound is never cached.
+        private boolean isSerializationDeclined;
 
         public PushdownFilterCondition(CharSequence columnName, int columnWriterIndex, int columnType) {
             this(columnName, columnWriterIndex, columnType, OP_EQ);
@@ -635,10 +645,32 @@ public class PushdownFilterExtractor implements Mutable {
             return values;
         }
 
+        /**
+         * Reports whether every value is a compile-time constant, i.e. whether an outcome computed
+         * from the values holds for the life of the condition. A bind variable is a runtime
+         * constant and answers false.
+         */
+        public boolean hasConstantValuesOnly() {
+            for (int i = 0, n = valueFunctions.size(); i < n; i++) {
+                if (!valueFunctions.getQuick(i).isConstant()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         public void init(SqlExecutionContext executionContext) throws SqlException {
             for (int i = 0, n = valueFunctions.size(); i < n; i++) {
                 valueFunctions.getQuick(i).init(null, executionContext);
             }
+        }
+
+        public boolean isSerializationDeclined() {
+            return isSerializationDeclined;
+        }
+
+        public void setSerializationDeclined() {
+            isSerializationDeclined = true;
         }
     }
 }

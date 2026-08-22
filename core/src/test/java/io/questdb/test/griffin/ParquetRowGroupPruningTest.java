@@ -26,15 +26,21 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -537,6 +543,13 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
     @Test
     public void testBloomFilterDouble() throws Exception {
+        // A DOUBLE equality no longer prunes on the bloom filter at this magnitude: the bloom filter
+        // hashes the exact bits of the bound, while the row-level filter keeps every row within
+        // DOUBLE_TOLERANCE of it, and a group holding 3.3300000000499 would report 3.33 as absent.
+        // The bound pushes as the BETWEEN spanning its tolerance band instead, which prunes on the
+        // min/max stats only (both values here fall inside them). testDoubleColumnExactEqStillPrunes-
+        // OnBloomFilter covers the magnitude at which the band holds the bound alone and the bloom
+        // filter comes back.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -548,17 +561,25 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQuery("SELECT val FROM x WHERE val = 3.33")
                     .noLeakCheck()
                     .returns("val\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
 
-            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
             assertQuery("SELECT val FROM x WHERE val = 5.55")
                     .noLeakCheck()
                     .returns("""
                             val
                             5.55
                             """);
+
+            // A bound clear of the group's min/max still prunes it, through the band.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 99.99")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
 
@@ -1205,7 +1226,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     (3, '2024-01-01T02:00:00.000000Z', 10),
                     (4, '2024-01-01T03:00:00.000000Z', 100),
                     (5, '2024-01-01T04:00:00.000000Z', 1000),
-                    (6, '2024-01-02T01:00:00.000000Z', 10000)
+                    (6, '2024-01-02T01:00:00.000000Z', 10_000)
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
@@ -1227,6 +1248,381 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                             1\tnull
                             2\tnull
                             """);
+        });
+    }
+
+    @Test
+    public void testByteAndShortColumnTopRowsSurvivePruning() throws Exception {
+        // BYTE and SHORT have no NULL sentinel, so a column top reads back as a perfectly ordinary
+        // 0. The parquet writer marks those rows definition-level 0, which keeps them out of the
+        // min/max statistics and the bloom set - and the pruning code only consults null_count when
+        // the FILTER value is the type's null sentinel, which for these two types does not exist.
+        // So a row group whose real values are 5 and 6 reports min=5/max=6 and gets skipped for
+        // "= 0" and "< 1", losing the column-top rows that native storage returns.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x ADD COLUMN b BYTE");
+            execute("ALTER TABLE x ADD COLUMN s SHORT");
+            // The 2024-01-02 row keeps 2024-01-01 out of the active slot so it can convert.
+            execute("""
+                    INSERT INTO x VALUES
+                    (3, '2024-01-01T02:00:00.000000Z', 5, 5),
+                    (4, '2024-01-01T03:00:00.000000Z', 6, 6),
+                    (5, '2024-01-02T01:00:00.000000Z', 7, 7)
+                    """);
+
+            final String eqByte = """
+                    id\tb
+                    1\t0
+                    2\t0
+                    """;
+            final String eqShort = """
+                    id\ts
+                    1\t0
+                    2\t0
+                    """;
+
+            // Native storage: the column-top rows read as 0 and match.
+            assertQuery("SELECT id, b FROM x WHERE b = 0").noLeakCheck().returns(eqByte);
+            assertQuery("SELECT id, b FROM x WHERE b < 1").noLeakCheck().returns(eqByte);
+            assertQuery("SELECT id, s FROM x WHERE s = 0").noLeakCheck().returns(eqShort);
+            assertQuery("SELECT id, s FROM x WHERE s < 1").noLeakCheck().returns(eqShort);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            assertHasParquetPartitions("x", true);
+
+            // Parquet must agree with native on every one of them.
+            assertQuery("SELECT id, b FROM x WHERE b = 0").noLeakCheck().returns(eqByte);
+            assertQuery("SELECT id, b FROM x WHERE b < 1").noLeakCheck().returns(eqByte);
+            assertQuery("SELECT id, s FROM x WHERE s = 0").noLeakCheck().returns(eqShort);
+            assertQuery("SELECT id, s FROM x WHERE s < 1").noLeakCheck().returns(eqShort);
+
+            // A bound that genuinely excludes both the stored values and the column-top 0 must
+            // still prune, so the fix does not simply switch pruning off for these columns.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT id, b FROM x WHERE b = 9").noLeakCheck().returns("id\tb\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // The bloom filter is the third pruning mechanism and needs its own guard: statistics
+            // can be widened to cover the implicit 0, a set of exact hashes cannot. The column-top
+            // rows were never hashed in, so a 0 probe must not come back "absent".
+            execute("CREATE TABLE y (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO y VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE y ADD COLUMN b BYTE");
+            execute("""
+                    INSERT INTO y VALUES
+                    (3, '2024-01-01T02:00:00.000000Z', 5),
+                    (4, '2024-01-01T03:00:00.000000Z', 6),
+                    (5, '2024-01-02T01:00:00.000000Z', 7)
+                    """);
+            execute("ALTER TABLE y CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02' " +
+                    "WITH (bloom_filter_columns = 'b')");
+            assertHasParquetPartitions("y", true);
+
+            assertQuery("SELECT id, b FROM y WHERE b = 0").noLeakCheck().returns(eqByte);
+            assertQuery("SELECT id, b FROM y WHERE b = 5")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tb
+                            3\t5
+                            """);
+            // 3 sits INSIDE the widened [0,6] statistics, so only the bloom set can prune it.
+            // This is what proves the bloom path above is genuinely consulted, and therefore that
+            // the 0 probe needs its own guard rather than riding on the widened statistics.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT id, b FROM y WHERE b = 3").noLeakCheck().returns("id\tb\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // A value outside both the statistics and the bloom set still prunes.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT id, b FROM y WHERE b = 9").noLeakCheck().returns("id\tb\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testByteColumnTopRowsSurviveIsNotNullPruning() throws Exception {
+        // The same family as testByteAndShortColumnTopRowsSurvivePruning, on the fourth pruning
+        // path. BYTE and SHORT have no NULL sentinel, so "b IS NOT NULL" is a constant TRUE over
+        // them - a column-top row reads as 0 and 0 IS NOT NULL. The parquet writer marks those rows
+        // definition-level 0 though, so a row group lying wholly inside the column top reports
+        // null_count == num_values, which the decoders take as "every value is null" and skip. The
+        // rows vanish. Only a partition entirely predating the ADD COLUMN shows it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE z (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO z VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE z ADD COLUMN b BYTE");
+            execute("ALTER TABLE z ADD COLUMN s SHORT");
+            execute("ALTER TABLE z ADD COLUMN f BOOLEAN");
+            // 2024-01-02 is the only partition with data for these, so 2024-01-01 is wholly top.
+            execute("INSERT INTO z VALUES (3, '2024-01-02T00:00:00.000000Z', 7, 7, true)");
+
+            final String expectedByte = """
+                    id\tb
+                    1\t0
+                    2\t0
+                    3\t7
+                    """;
+            final String expectedShort = """
+                    id\ts
+                    1\t0
+                    2\t0
+                    3\t7
+                    """;
+            final String expectedBool = """
+                    id\tf
+                    1\tfalse
+                    2\tfalse
+                    3\ttrue
+                    """;
+            assertQuery("SELECT id, b FROM z WHERE b IS NOT NULL").noLeakCheck().expectSize().returns(expectedByte);
+            assertQuery("SELECT id, s FROM z WHERE s IS NOT NULL").noLeakCheck().expectSize().returns(expectedShort);
+            assertQuery("SELECT id, f FROM z WHERE f IS NOT NULL").noLeakCheck().expectSize().returns(expectedBool);
+
+            execute("ALTER TABLE z CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            assertHasParquetPartitions("z", true);
+
+            assertQuery("SELECT id, b FROM z WHERE b IS NOT NULL").noLeakCheck().expectSize().returns(expectedByte);
+            assertQuery("SELECT id, s FROM z WHERE s IS NOT NULL").noLeakCheck().expectSize().returns(expectedShort);
+            assertQuery("SELECT id, f FROM z WHERE f IS NOT NULL").noLeakCheck().expectSize().returns(expectedBool);
+
+            // The mirror image stays prunable: IS NULL is a constant FALSE over these types.
+            assertQuery("SELECT id, b FROM z WHERE b IS NULL").noLeakCheck().returns("id\tb\n");
+        });
+    }
+
+    @Test
+    public void testInfinityRowsSurviveIsNullPruning() throws Exception {
+        // Numbers.isNull(double) is an exponent-bits test, so QuestDB calls every non-finite value
+        // NULL - NaN and +/-Infinity alike - while the parquet writer's Nullable for f32/f64 reports
+        // is_nan() alone. An infinity is therefore written as an ordinary value and left out of
+        // null_count, so the IS_NULL pushdown skipped the whole row group on "null_count == 0" and
+        // dropped a row native storage returns.
+        //
+        // The infinity has to arrive through a NON-CONSTANT expression: FunctionParser folds a
+        // constant one through DoubleConstant#newInstance, which maps every non-finite value onto
+        // NULL, so "1e308 * 10" stores a NaN and the writer and reader agree on it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (m DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO src VALUES (10.0, '2024-01-01T01:00:00.000000Z')");
+            execute("CREATE TABLE inf (d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO inf VALUES (1.0, '2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO inf SELECT 1e308 * m, ts FROM src");
+            execute("INSERT INTO inf VALUES (2.0, '2024-01-02T00:00:00.000000Z')");
+
+            // A genuine infinity, not a NaN: only an infinity is greater than the largest finite
+            // double, and a NaN would fail this comparison.
+            assertQuery("SELECT count() c FROM inf WHERE d > 1e308")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+
+            final String nulls = """
+                    d
+                    null
+                    """;
+            final String nonNulls = """
+                    d
+                    1.0
+                    2.0
+                    """;
+            assertQuery("SELECT d FROM inf WHERE d IS NULL").noLeakCheck().returns(nulls);
+            assertQuery("SELECT d FROM inf WHERE d IS NOT NULL").noLeakCheck().returns(nonNulls);
+
+            execute("ALTER TABLE inf CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            assertHasParquetPartitions("inf", true);
+
+            assertQuery("SELECT d FROM inf WHERE d IS NULL").noLeakCheck().returns(nulls);
+            assertQuery("SELECT d FROM inf WHERE d IS NOT NULL").noLeakCheck().returns(nonNulls);
+        });
+    }
+
+    @Test
+    public void testInfinityRowsSurviveNullEqualityPruning() throws Exception {
+        // The same hole as testInfinityRowsSurviveIsNullPruning, on the EQ path rather than the
+        // IS NULL one. `d = null::double` is not a bare NULL keyword, so it compiles to an ordinary
+        // OP_EQ with a NaN bound; isExactEqDouble certifies NaN as exact because the native side
+        // decides a NULL bound from the null count rather than the statistics. That count came from
+        // a writer that calls only is_nan() null, so a row group holding an infinity - which
+        // Numbers.equals calls EQUAL to NULL, and which EqDoubleFunctionFactory therefore matches
+        // natively - reported has_nulls == false and was pruned away.
+        //
+        // Both signs, and both the statistics and the bloom paths: the bloom arm is the one that
+        // runs when the group carries a bloom filter for the column, and it reads the same
+        // has_nulls.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src2 (m DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO src2 VALUES (10.0, '2024-01-01T01:00:00.000000Z')");
+            execute("CREATE TABLE inf2 (d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO inf2 VALUES (1.0, '2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO inf2 SELECT 1e308 * m, ts FROM src2");
+            execute("INSERT INTO inf2 SELECT -1e308 * m, '2024-01-01T02:00:00.000000Z'::TIMESTAMP FROM src2");
+            execute("INSERT INTO inf2 VALUES (2.0, '2024-01-02T00:00:00.000000Z')");
+
+            // Genuine infinities, not NaNs: only an infinity compares outside the finite range,
+            // and a NaN would fail both comparisons.
+            assertQuery("SELECT count() c FROM inf2 WHERE d > 1e308")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+            assertQuery("SELECT count() c FROM inf2 WHERE d < -1e308")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+
+            final String nulls = """
+                    d
+                    null
+                    null
+                    """;
+            assertQuery("SELECT d FROM inf2 WHERE d = null::double").noLeakCheck().returns(nulls);
+
+            execute("ALTER TABLE inf2 CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            assertHasParquetPartitions("inf2", true);
+
+            assertQuery("SELECT d FROM inf2 WHERE d = null::double").noLeakCheck().returns(nulls);
+            // IS NULL already took this branch before the EQ path did; asserting it here keeps the
+            // two spellings of one predicate pinned to the same answer.
+            assertQuery("SELECT d FROM inf2 WHERE d IS NULL").noLeakCheck().returns(nulls);
+        });
+    }
+
+    @Test
+    public void testCharColumnTopRowsSurviveEqualityPruning() throws Exception {
+        // CHAR's column top decodes to (char) 0, which IS its NULL - but `c = null::char` is not
+        // rewritten to IS NULL. It compiles to an ordinary equality against 0, and CHAR equality is
+        // a raw comparison, so native storage matches those rows. The statistics never recorded the
+        // zeros, so parquet pruned the row group and lost them. CHAR therefore needs the statistics
+        // widening but not the IS NOT NULL guard BYTE and SHORT need.
+        //
+        // IS NULL is unaffected in THIS shape only: a column top is definition level 0, which does
+        // reach null_count. A CHAR NULL stored as a value does not - see the sibling
+        // testCharNullRowsSurviveIsNullPruning, which is the shape that broke IS NULL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cc (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO cc VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE cc ADD COLUMN c CHAR");
+            execute("""
+                    INSERT INTO cc VALUES
+                    (3, '2024-01-01T02:00:00.000000Z', 'x'),
+                    (4, '2024-01-02T00:00:00.000000Z', 'y')
+                    """);
+
+            final String expected = """
+                    id
+                    1
+                    2
+                    """;
+            assertQuery("SELECT id FROM cc WHERE c = null::char").noLeakCheck().returns(expected);
+
+            execute("ALTER TABLE cc CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            assertHasParquetPartitions("cc", true);
+
+            assertQuery("SELECT id FROM cc WHERE c = null::char").noLeakCheck().returns(expected);
+        });
+    }
+
+    @Test
+    public void testCharNullRowsSurviveIsNullPruning() throws Exception {
+        // A CHAR NULL is (char) 0 - an in-domain value the writer stores at definition level 1 like
+        // any other, because `impl Nullable for u16` reports false unconditionally. Only a column
+        // top reaches null_count for CHAR, so a row group whose NULLs were all stored as values
+        // reports null_count == 0, and the IS NULL pushdown skipped it on that count and dropped
+        // every row native storage returns.
+        //
+        // This is the shape the sibling testCharColumnTopRowsSurviveEqualityPruning does NOT cover:
+        // its NULLs come from a column top, which IS counted, which is why IS NULL survived there.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cn (id INT, c CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO cn VALUES
+                    (1, 'a', '2024-01-01T00:00:00.000000Z'),
+                    (2, null, '2024-01-01T01:00:00.000000Z'),
+                    (3, 'b', '2024-01-01T02:00:00.000000Z'),
+                    (4, null, '2024-01-01T03:00:00.000000Z'),
+                    (5, 'c', '2024-01-02T00:00:00.000000Z')
+                    """);
+
+            final String nulls = """
+                    id
+                    2
+                    4
+                    """;
+            final String nonNulls = """
+                    id
+                    1
+                    3
+                    5
+                    """;
+            assertQuery("SELECT id FROM cn WHERE c IS NULL").noLeakCheck().returns(nulls);
+            assertQuery("SELECT id FROM cn WHERE c IS NOT NULL").noLeakCheck().returns(nonNulls);
+            assertQuery("SELECT id FROM cn WHERE c = null::char").noLeakCheck().returns(nulls);
+
+            execute("ALTER TABLE cn CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            assertHasParquetPartitions("cn", true);
+
+            // IS NOT NULL is the direction that was always correct: an uncounted null keeps
+            // null_count below num_values, which declines to skip rather than over-pruning.
+            assertQuery("SELECT id FROM cn WHERE c IS NULL").noLeakCheck().returns(nulls);
+            assertQuery("SELECT id FROM cn WHERE c IS NOT NULL").noLeakCheck().returns(nonNulls);
+
+            // The equality spelling in the shape that has null_count == 0, which is what makes the
+            // two-predicate split load-bearing: CHAR is deliberately OUT of nulls_hidden_from_stats,
+            // so has_nulls is false here. These rows survive only because a stored (char) 0 is an
+            // ordinary value that lands in the min/max statistics - the premise that lets the value
+            // paths keep working without help. If that premise were wrong this arm would lose rows.
+            assertQuery("SELECT id FROM cn WHERE c = null::char").noLeakCheck().returns(nulls);
+        });
+    }
+
+    @Test
+    public void testCharValueOnByteColumnMatchesNative() throws Exception {
+        // A CHAR bound against a BYTE column compares as the digit it spells: overload
+        // resolution picks EqShortFunctionFactory, so the row filter reads '1' through
+        // CharFunction.getShort -> castCharToNumber and sees 1, not the code point 49.
+        // Two row groups with disjoint stats pin both halves of the contract. Pushing the
+        // code point prunes BOTH groups and loses the row; declining the bound outright
+        // returns the row but stops pruning the [8,9] group, so each failure mode trips a
+        // different assertion below.
+        // 4 is the floor PropServerConfiguration applies, so 8 rows give exactly two groups.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z'),
+                    (4, '2024-01-01T03:00:00.000000Z'),
+                    (6, '2024-01-01T04:00:00.000000Z'),
+                    (7, '2024-01-01T05:00:00.000000Z'),
+                    (8, '2024-01-01T06:00:00.000000Z'),
+                    (9, '2024-01-01T07:00:00.000000Z'),
+                    (101, '2024-01-02T02:00:00.000000Z')
+                    """);
+            // Only 2024-01-01 converts -- CONVERT skips the active partition -- giving two
+            // row groups, [1,4] and [6,9].
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = '1'")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            1
+                            """);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
 
@@ -2964,7 +3360,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
-                    (-30000, '2024-01-01T00:00:00.000000Z'),
+                    (-30_000, '2024-01-01T00:00:00.000000Z'),
                     (-200, '2024-01-01T01:00:00.000000Z'),
                     (-74, '2024-01-01T02:00:00.000000Z'),
                     (0, '2024-01-01T03:00:00.000000Z'),
@@ -2973,7 +3369,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            // val = 0 must not skip the row group whose min is -30000.
+            // val = 0 must not skip the row group whose min is -30_000.
             // An unsigned-extended inline min of 35536 would be greater than 0
             // and would drop every match.
             ParquetRowGroupFilter.resetRowGroupsSkipped();
@@ -2993,9 +3389,9 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                             -74
                             """);
 
-            // val = -32000 sits below the row group min (-30000); should skip.
+            // val = -32_000 sits below the row group min (-30_000); should skip.
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQuery("SELECT val FROM x WHERE val = -32000")
+            assertQuery("SELECT val FROM x WHERE val = -32_000")
                     .noLeakCheck()
                     .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
@@ -3291,6 +3687,115 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                             val
                             null
                             """);
+        });
+    }
+
+    @Test
+    public void testNonFiniteBoundPruningMatchesNative() throws Exception {
+        // Numbers.isNull(double) is an exponent-bits test, so it is true for +/-Infinity as well as
+        // NaN, and Numbers.equals(NaN, +Infinity) is therefore true. The Java row filter's negated
+        // form for >= is (eq || l > r), so d >= +Infinity KEEPS every NULL row. NULLs are absent from
+        // parquet min/max stats, so pruning must decline any bound for which the filter can keep a
+        // NULL row - otherwise it drops rows the filter keeps.
+        //
+        // A CONSTANT bound cannot carry an infinity here - FunctionParser folds 1e308 * 10.0 through
+        // DoubleConstant#newInstance, which maps every non-finite value onto NULL, so this arm only
+        // ever sees NaN and the certification loop declines it. It stays as a forward guard for the
+        // fold. testNonFiniteBindVariableBoundPruningMatchesNative covers the bound that IS
+        // reachable as a genuine infinity.
+        assertMemoryLeak(() -> {
+            createNullMixedPartialParquet("DOUBLE", "6.0", "7.0", "2.0", "9.0");
+            assertNativeMatchesPartialParquet("c6 >= 1e308 * 10.0", "c6\nnull\nnull\n");
+        });
+    }
+
+    @Test
+    public void testNonFiniteBindVariableBoundPruningMatchesNative() throws Exception {
+        // PushdownFilterExtractor accepts any isConstantOrRuntimeConstant() bound and reads it at
+        // scan time, and nothing between the PGWire binder (Double.longBitsToDouble of the raw
+        // wire bits) and the pruner normalises it - so a bind variable delivers a genuine
+        // +/-Infinity where a constant expression could only deliver NULL.
+        //
+        // Such a bound is tolerance-equal to NULL (Numbers.isNull is an exponent-bits test), so the
+        // filter's inclusive and equality forms keep every NULL row, while NULL rows never appear in
+        // a row group's min/max statistics. Pruning used to push it anyway: toleranceBound(+Inf, GE)
+        // is Math.nextDown(+Inf - 1e-10) = Double.MAX_VALUE, a FINITE bound that certifies and then
+        // prunes every group whose max is finite. The INT arm reached the same place through
+        // integralBound and the out-of-range rewrite, which turns into "> INT_MAX" and drops every
+        // group. Measured before the fix: the parquet table returned one NULL row where the native
+        // table returned two.
+        // SHORT and BYTE are excluded: they have no NULL sentinel, so the fixture holds no NULL row
+        // for pruning to lose.
+        assertMemoryLeak(() -> {
+            for (String columnType : new String[]{"DOUBLE", "FLOAT", "INT", "LONG"}) {
+                execute("DROP TABLE IF EXISTS tn");
+                execute("DROP TABLE IF EXISTS tp");
+                createNullMixedPartialParquet(columnType, "6", "7", "2", "9");
+                final String suffix = "DOUBLE".equals(columnType) || "FLOAT".equals(columnType) ? ".0" : "";
+                // Fixture in ts order: null, 6, 7 (parquet partition), null, 2, 9 (native partition).
+                final String allRows = "c6\nnull\n6" + suffix + "\n7" + suffix + "\nnull\n2" + suffix + "\n9" + suffix + "\n";
+                final String finiteRows = "c6\n6" + suffix + "\n7" + suffix + "\n2" + suffix + "\n9" + suffix + "\n";
+                final String nullRows = "c6\nnull\nnull\n";
+                final String noRows = "c6\n";
+                for (double bound : new double[]{Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
+                    final boolean isPositive = bound == Double.POSITIVE_INFINITY;
+                    // With an infinite bound, Numbers.equals(row, bound) reduces to "the row is
+                    // NULL", so "eq || ..." keeps the NULLs and "!eq && ..." drops them, while the
+                    // raw ordering half orders the infinity as an ordinary extreme.
+                    assertBindVarBoundMatchesNative(">=", bound, isPositive ? nullRows : allRows);
+                    assertBindVarBoundMatchesNative("<=", bound, isPositive ? allRows : nullRows);
+                    assertBindVarBoundMatchesNative(">", bound, isPositive ? noRows : finiteRows);
+                    assertBindVarBoundMatchesNative("<", bound, isPositive ? finiteRows : noRows);
+                    assertBindVarBoundMatchesNative("=", bound, nullRows);
+                }
+                // Control: the decline must be narrow. A finite bind-variable bound still prunes,
+                // so a degenerate isPushableFloatingBound that rejected everything would fail here
+                // rather than pass the parity sweep above. The parquet group holds {null, 6, 7}, so
+                // ">= 8" clears it and only the native 9 matches.
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                assertBindVarBoundMatchesNative(">=", 8.0, "c6\n9" + suffix + "\n");
+                Assert.assertTrue("finite bind-variable bound must still prune for " + columnType,
+                        ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testNullPruningInclusiveDouble() throws Exception {
+        // Inclusive DOUBLE bounds (<= and >=) push down over a parquet row group that mixes NULL and
+        // non-NULL values. NULLs are excluded from the row-group min/max stats and never match an
+        // inclusive comparison, so the parquet-pruned result must equal the native result, and a group
+        // clear of the bound is still pruned. Existing NULL pruning coverage exercised equality only.
+        // The parquet row group holds {null, 6, 7}; the native partition holds {null, 2, 9}.
+        assertMemoryLeak(() -> {
+            createNullMixedPartialParquet("DOUBLE", "6.0", "7.0", "2.0", "9.0");
+
+            // c6 <= 5.0 clears the parquet group (min 6 > 5); only the native 2.0 matches.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 <= 5.0", "c6\n2.0\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // c6 >= 8.0 clears the parquet group (max 7 < 8); only the native 9.0 matches.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 >= 8.0", "c6\n9.0\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testNullPruningInclusiveFloat() throws Exception {
+        // FLOAT counterpart of testNullPruningInclusiveDouble: the inclusive bound narrows through
+        // tryPutFloatFromDouble over a parquet row group that mixes NULL and non-NULL values.
+        assertMemoryLeak(() -> {
+            createNullMixedPartialParquet("FLOAT", "6.5", "7.5", "2.5", "9.5");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 <= 5.0", "c6\n2.5\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 >= 8.0", "c6\n9.5\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
 
@@ -4363,7 +4868,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQuery("SELECT val FROM x WHERE val > 10000")
+            assertQuery("SELECT val FROM x WHERE val > 10_000")
                     .noLeakCheck()
                     .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
@@ -4450,7 +4955,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQuery("SELECT val FROM x WHERE val > 10000")
+            assertQuery("SELECT val FROM x WHERE val > 10_000")
                     .noLeakCheck()
                     .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
@@ -4632,6 +5137,42 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("cnt\n145\n");
+        });
+    }
+
+    @Test
+    public void testUnmaterialisableConditionKeepsPruningForOtherConditions() throws Exception {
+        // PushdownFilterExtractor compiles each bound standalone with no target type, so a
+        // string literal against a non-designated TIMESTAMP column arrives as a StrConstant
+        // and getLong() raises ImplicitCastException. That one bound must decline on its own;
+        // it must not cost every other condition in the same query its pruning.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts2 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS INT),
+                           timestamp_sequence('2024-01-01', 100_000),
+                           timestamp_sequence('2024-01-01', 100_000)
+                    FROM long_sequence(5000)
+                    """);
+            // A second partition keeps 2024-01-01 non-active so it converts.
+            execute("INSERT INTO x VALUES (8000, '2024-01-02T02:00:00.000000Z', '2024-01-02T02:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Control: the INT bound alone prunes.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = -991")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // Same bound, now sharing the query with one the filter list cannot materialise.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = -991 AND ts2 < '2024-06-01'")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
 
@@ -5002,6 +5543,570 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDoubleColumnExactEqStillPrunesOnBloomFilter() throws Exception {
+        // The counterpart of testDoubleColumnToleranceEqPushdownNotFalsePruned: a bound whose
+        // neighbouring doubles fall outside the tolerance band matches the exact value and nothing
+        // else, so it keeps pushing as an equality and keeps consulting the bloom filter. The group's
+        // [min, max] spans the bound, so the bloom filter is the only thing that can prune it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1000000.5, '2024-01-01T00:00:00.000000Z'),
+                    (3000000.5, '2024-01-01T01:00:00.000000Z'),
+                    (5000000.5, '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 2000000.5")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            assertQuery("SELECT val FROM x WHERE val = 3000000.5")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            3000000.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testDoubleColumnToleranceEqPushdownNotFalsePruned() throws Exception {
+        // Row-level DOUBLE equality is tolerance-based (Numbers.DOUBLE_TOLERANCE, 1e-10), so
+        // "c6 = 1.0" keeps the row 1.00000000005. Pushing the exact bound into the row group filter
+        // is not: the value falls outside the group's [min, max] (and its bits are absent from the
+        // bloom filter), so pruning drops the group before the row filter ever sees it.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("DOUBLE", "1.00000000005", "0.0");
+
+            assertNativeMatchesPartialParquet("c6 = 1.0", "c6\n1.00000000005\n");
+            assertNativeMatchesPartialParquet("c6 IN (1.0, 5.0)", "c6\n1.00000000005\n");
+
+            // The tolerance band is the only thing the bound gives up: a bound clear of the group
+            // still prunes it.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 = 99.0", "c6\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testDoubleColumnToleranceRangePushdownNotFalsePruned() throws Exception {
+        // The same tolerance holds for the ops that include equality: "c6 <= 1.0" keeps the row
+        // 1.00000000005 and "c6 >= 1.0" keeps 0.99999999995, while the native side prunes on
+        // "min > bound" and "max < bound" - the exact bound drops both groups.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("DOUBLE", "1.00000000005", "0.0");
+            assertNativeMatchesPartialParquet("c6 <= 1.0", "c6\n1.00000000005\n0.0\n");
+
+            // The strict ops need no widening (the tolerance makes the row filter stricter than the
+            // pruner), and they still prune the group they exclude.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.0", "c6\n0.0\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            createBoundarySaturatedPartialParquetTyped("DOUBLE", "0.99999999995", "2.0");
+            assertNativeMatchesPartialParquet("c6 >= 1.0", "c6\n0.99999999995\n2.0\n");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 > 1.0", "c6\n2.0\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testDeclinedPushdownConditionIsRederivedForBindVariables() throws Exception {
+        // A bound the value arms cannot materialise declines the whole condition, and
+        // prepareFilterList runs once per parquet partition, so the same answer was re-derived - and
+        // for the routine cause, an ImplicitCastException re-thrown - for every one of them. The
+        // decline is now recorded on the condition, but ONLY when every value is a compile-time
+        // constant: a bind variable is a runtime constant and the next execution may bind a value
+        // that does serialize. Both halves are pinned here, the second by reusing ONE compiled
+        // factory across two bindings - a cached decline would silently cost the second execution
+        // its pruning while leaving its rows correct, which no result assertion can see.
+        assertMemoryLeak(() -> {
+            // A LONG column with a DOUBLE bound: the two sides compare at different widths, so the
+            // pushdown declines a bound above 2^53 (see tryPutLongFromDouble) and accepts one below
+            // it. That gives one decline and one prune from the same condition shape.
+            createBoundarySaturatedPartialParquetTyped("LONG", "1", "2");
+
+            // Constant, permanently declined: every row must survive, on both partitions, i.e. across
+            // two calls with the flag set by the first.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT c6 FROM tp WHERE c6 < 1e300 ORDER BY ts").noLeakCheck().returns("c6\n1\n2\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            // Same shape through a bind variable, on ONE compiled factory. The first binding declines
+            // exactly as the constant did; the second is pushable and prunes the parquet group, which
+            // can only happen if the decline was not cached.
+            bindVariableService.clear();
+            bindVariableService.setDouble("b", 1e300);
+            try (RecordCursorFactory factory = select("SELECT c6 FROM tp WHERE c6 < :b ORDER BY ts")) {
+                final StringSink sink = new StringSink();
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                }
+                TestUtils.assertEquals("c6\n1\n2\n", sink);
+                Assert.assertEquals("an unpushable bind value must not prune", 0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+                bindVariableService.setDouble("b", -5.0);
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                sink.clear();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                }
+                TestUtils.assertEquals("c6\n", sink);
+                Assert.assertTrue(
+                        "a pushable bind value must still prune after an unpushable one",
+                        ParquetRowGroupFilter.getRowGroupsSkipped() > 0
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testDoubleColumnNearToleranceMagnitudeKeepsJitModeForLaterTests() throws Exception {
+        // The tolerance test needs JIT off for its own queries and must hand the mode back
+        // afterwards. setJitMode() is what outlives a method: the context is shared by the whole
+        // class and reset() does not touch the mode, so a test that switches it and then throws
+        // would cost JIT coverage for the other ~160 tests in this class - including the ones this
+        // PR added - and show up as nothing at all. Assert the INVARIANT (the callee restores what
+        // it found) rather than a literal mode, so the pin survives a change of the
+        // test-configuration default.
+        final int configJitMode = configuration.getSqlJitMode();
+        final int contextJitMode = sqlExecutionContext.getJitMode();
+        testDoubleColumnNearToleranceMagnitudePushdownNotFalsePruned();
+        Assert.assertEquals(
+                "the tolerance test must not change the configured JIT mode",
+                configJitMode,
+                configuration.getSqlJitMode()
+        );
+        Assert.assertEquals(
+                "the tolerance test must restore the JIT mode on the execution context",
+                contextJitMode,
+                sqlExecutionContext.getJitMode()
+        );
+    }
+
+    @Test
+    public void testDoubleColumnNearToleranceMagnitudePushdownNotFalsePruned() throws Exception {
+        // Near |bound| == DOUBLE_TOLERANCE the tolerance widening cancels: "1e-10 - DOUBLE_TOLERANCE"
+        // is exactly 0.0 and nextDown(0.0) is a single subnormal ulp, nowhere near the tolerance edge.
+        // The inclusive row filter still keeps a tiny value on the far side of zero -- |(-1e-30) -
+        // 1e-10| rounds to exactly DOUBLE_TOLERANCE, which Numbers.equals calls equal -- so pushing
+        // that bound prunes the group and loses the row (the DOUBLE arm never had the FLOAT arm's
+        // certify-or-decline guard). Pruning runs before ANY row filter, so the fix must decline the
+        // pushdown; the surviving rows pin the data-integrity contract and getRowGroupsSkipped() pins
+        // the pruning signal directly.
+        //
+        // These kept rows sit exactly on the strict/inclusive filter boundary (in real arithmetic no
+        // negative value is within DOUBLE_TOLERANCE of a positive 1e-10 bound; only the rounding of
+        // Numbers.equals keeps them), so the assertQuery(...).returns(...) battery -- which runs a
+        // JIT/strict-filter pass that drops boundary rows -- is not a stable oracle here. Disable JIT
+        // and drive the query through printSql so the inclusive Java filter is the one that runs.
+        //
+        // Switch the mode on the execution context, NOT with setProperty(). setProperty() does not
+        // even switch this test: setUp() primes the shared context before the body runs, and
+        // SqlCodeGenerator reads the mode from the context alone, so these queries used to run with
+        // JIT on regardless of the override. It does not reach a later test either -
+        // Cairo#tearDown() resets the overrides after every method - so it is a no-op that reads
+        // like a guarantee. testDoubleColumnNearToleranceMagnitudeKeepsJitModeForLaterTests pins
+        // the handback.
+        final int callerJitMode = sqlExecutionContext.getJitMode();
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        try {
+            assertDoubleColumnNearToleranceMagnitudePushdownNotFalsePruned();
+        } finally {
+            sqlExecutionContext.setJitMode(callerJitMode);
+        }
+    }
+
+    @Test
+    public void testDoubleConstantAlmostIntegralPushdownNotFalsePruned() throws Exception {
+        // The integer stats slots widen the column to double and compare with the same tolerance, so
+        // a bound within 1e-10 of an integer keeps that integer's rows: "c6 <= 0.99999999999" keeps
+        // the row 1. Rounding the bare bound floors it to "c6 <= 0", which prunes the group holding
+        // that row; rounding the tolerance-widened bound lands on "c6 <= 1" and keeps it.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquet(1, -1);
+            assertNativeMatchesPartialParquet("c6 <= 0.99999999999", "c6\n1\n-1\n");
+            assertNativeMatchesPartialParquet("c6 >= 1.00000000001", "c6\n1\n");
+
+            // The same bound in the 64-bit slot.
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createBoundarySaturatedPartialParquetTyped("LONG", "1", "-1");
+            assertNativeMatchesPartialParquet("c6 <= 0.99999999999", "c6\n1\n-1\n");
+        });
+    }
+
+    @Test
+    public void testDoubleConstantFractionalPushdownNotFalsePruned() throws Exception {
+        // A fractional DOUBLE bound truncates toward zero in the INT stats slot. Truncation
+        // is not pruning-safe: "c6 < 1.5" becomes "c6 < 1", which prunes a group whose INT
+        // stat is exactly 1 even though that row satisfies 1 < 1.5. Pruning runs before the
+        // row filter, so a false-prune drops the parquet row and the partial-parquet table
+        // returns fewer rows than its all-native sibling.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquet(1, 100);
+
+            // Positive fractional bound: strict "<" false-prunes the group at 1 before the fix.
+            assertNativeMatchesPartialParquet("c6 < 1.5", "c6\n1\n");
+            assertNativeMatchesPartialParquet("c6 <= 1.5", "c6\n1\n");
+
+            // Integral DOUBLE bound stays pushdown-safe: the group at 1 is pruned correctly
+            // (row 1 fails 1 < 1.0) and the pushdown still fires -- the fix is surgical.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.0", "c6\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            // Negative fractional bound truncates the other way: "c6 > -1.5" becomes "c6 > -1",
+            // which false-prunes a group at -1 even though -1 > -1.5.
+            createBoundarySaturatedPartialParquet(-1, -100);
+            assertNativeMatchesPartialParquet("c6 > -1.5", "c6\n-1\n");
+            assertNativeMatchesPartialParquet("c6 >= -1.5", "c6\n-1\n");
+        });
+    }
+
+    @Test
+    public void testDoubleConstantFractionalPushdownNotFalsePrunedLongColumn() throws Exception {
+        // The LONG stats slot truncates a fractional DOUBLE bound via (long) getDouble(),
+        // the 64-bit twin of the INT/narrow arms. "c6 < 1.5" -> "c6 < 1" false-prunes a
+        // group at 1 even though 1 < 1.5.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("LONG", "1", "100");
+
+            assertNativeMatchesPartialParquet("c6 < 1.5", "c6\n1\n");
+
+            // Integral DOUBLE bound stays pushdown-safe and still prunes.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.0", "c6\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testDoubleConstantAbove2Pow53PushdownNotFalsePrunedLongColumn() throws Exception {
+        // There is no (LONG, DOUBLE) comparison: the row-level filter widens the column to DOUBLE and
+        // compares at double width, while row group pruning compares the stats at long width. The two
+        // agree only below 2^53, where a double still represents every integer exactly. Above it the
+        // pruner is the finer of the two and skips a group whose rows the filter keeps:
+        // (double) 10000000000000001 is exactly 1e16, so "c6 <= 1e16" and "c6 = 1e16" both keep that
+        // row, while the pushed bound (long) 1e16 == 10000000000000000 excludes the group.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("LONG", "10_000_000_000_000_001", "0");
+
+            assertNativeMatchesPartialParquet("c6 <= 1e16", "c6\n10000000000000001\n0\n");
+            assertNativeMatchesPartialParquet("c6 = 1e16", "c6\n10000000000000001\n");
+            assertNativeMatchesPartialParquet("c6 = 1e16::float", "c6\n10000000000000001\n");
+
+            // A bound below 2^53 stays exact at double width, so it still pushes down and prunes.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1000.0", "c6\n0\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testDoubleConstantOutsideIntRangePushdownNotFalsePruned() throws Exception {
+        // An out-of-INT-range DOUBLE bound saturates to INT_MAX in the 32-bit stats slot,
+        // the (int) getDouble() twin of the LONG-bound saturation. "c6 < 5e9" saturates to
+        // "c6 < INT_MAX" and false-prunes an all-INT_MAX group whose rows satisfy the filter.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquet(2_147_483_647, 0);
+
+            assertNativeMatchesPartialParquet("c6 < 5000000000.0", "c6\n2147483647\n0\n");
+
+            // Control: no INT value exceeds the bound; empty result, group may prune.
+            assertNativeMatchesPartialParquet("c6 > 5000000000.0", "c6\n");
+        });
+    }
+
+    @Test
+    public void testDoubleConstantPushdownTimestampAndDateColumns() throws Exception {
+        // getLong() throws UnsupportedOperationException on a FLOAT/DOUBLE function, so a double bound
+        // against a TIMESTAMP or DATE column threw inside the filter builder. The catch-all swallowed
+        // it, logged an error and dropped row group pruning for every condition in the query. Both arms
+        // now take the same double guard as the LONG arm: an exact in-range bound prunes, and a bound
+        // the column cannot round-trip through DOUBLE declines instead of false-pruning.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("TIMESTAMP", "1_704_067_200_000_000", "0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.7e15", "c6\n1970-01-01T00:00:00.000000Z\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            // A FLOAT bound reaches the same arm through getDouble().
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.7e15::float", "c6\n1970-01-01T00:00:00.000000Z\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            // Above 2^53 the row-level filter compares at double width and keeps the row, so the
+            // pushdown must decline rather than prune the group at long width.
+            createBoundarySaturatedPartialParquetTyped("TIMESTAMP", "10_000_000_000_000_001", "0");
+            assertNativeMatchesPartialParquet("c6 <= 1e16", "c6\n2286-11-20T17:46:40.000001Z\n1970-01-01T00:00:00.000000Z\n");
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            createBoundarySaturatedPartialParquetTyped("DATE", "1_704_067_200_000", "0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.7e12", "c6\n1970-01-01T00:00:00.000Z\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            createBoundarySaturatedPartialParquetTyped("DATE", "10_000_000_000_000_001", "0");
+            assertNativeMatchesPartialParquet("c6 <= 1e16", "c6\n318857-05-20T17:46:40.001Z\n1970-01-01T00:00:00.000Z\n");
+        });
+    }
+
+    @Test
+    public void testFloatColumnPushdownNotFalsePruned() throws Exception {
+        // A FLOAT column's stats slot is 32-bit, but there is no (FLOAT, DOUBLE) comparison: the
+        // row-level filter widens the column to DOUBLE and compares at double width (the only
+        // comparison factories are the double ones, e.g. LtDoubleVVFunctionFactory "<(DD)"). The
+        // FLOAT arm narrowed the bound with (float) getDouble(), which rounds to NEAREST - and
+        // nearest is not pruning-safe in either direction:
+        //   "<"  needs the SMALLEST float >= the bound, but nearest can round DOWN, moving the
+        //        bound onto a group's boundary float and pruning rows the filter keeps;
+        //   ">"  needs the LARGEST float <= the bound, but nearest can round UP, likewise.
+        // ("<=" and ">=" happen to survive nearest: rounding the wrong way only makes them prune
+        // less.) Pruning runs before the row filter, so a false-prune drops the parquet rows
+        // outright and the partial-parquet table returns fewer rows than its all-native sibling.
+        assertMemoryLeak(() -> {
+            // The parquet group holds the single float 1.0; the native sibling row holds 100.0.
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "1.0", "100.0");
+
+            // (float) 1.00000003 rounds DOWN to 1.0f (the next float up is 1.00000011920928955),
+            // so "< 1.00000003" pushed as "< 1.0f" prunes the group whose min stat is 1.0f - yet
+            // (double) 1.0f = 1.0 < 1.00000003 keeps the row.
+            assertNativeMatchesPartialParquet("c6 < 1.00000003", "c6\n1.0\n");
+            // The mirror image: (float) 0.99999998 rounds UP to 1.0f (the next float down is
+            // 0.99999994039535522), so "> 0.99999998" pushed as "> 1.0f" prunes a group whose max
+            // stat is 1.0f - yet (double) 1.0f = 1.0 > 0.99999998 keeps the row.
+            assertNativeMatchesPartialParquet("c6 > 0.99999998", "c6\n1.0\n100.0\n");
+
+            // The two ops nearest already served: they must keep selecting the same rows.
+            assertNativeMatchesPartialParquet("c6 <= 1.00000003", "c6\n1.0\n");
+            assertNativeMatchesPartialParquet("c6 >= 0.99999998", "c6\n1.0\n100.0\n");
+
+            // An exactly-representable bound loses nothing and must still prune: 1.0 is a float,
+            // so "< 1.0" excludes the group at 1.0 outright.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.0", "c6\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 > 100.0", "c6\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            // An integer bound has no exact float above 2^24 either: 16777217 sits halfway between
+            // 16777216f and 16777218f and rounds to even, i.e. DOWN to 16777216f. "< 16777217"
+            // then prunes the group whose min stat is 16777216f, though that row satisfies it.
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "16777216.0", "0.0");
+            assertNativeMatchesPartialParquet("c6 < 16_777_217", "c6\n1.6777216E7\n0.0\n");
+            assertNativeMatchesPartialParquet("c6 >= 16_777_217", "c6\n");
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            // The bound must also carry the comparison TOLERANCE. QuestDB compares floating point
+            // with Numbers.DOUBLE_TOLERANCE (1e-10), so "c6 >= d" keeps a row that is merely
+            // tolerance-equal to d - a row strictly BELOW it. Rounding to the nearest float ignores
+            // that, and so does rounding by an ulp: one float ulp near 1.0 is 1.2e-7, over a
+            // thousand times the tolerance, so such a bound steps clean over the band and prunes the
+            // group holding the row. Every bound below sits inside the tolerance band around 1.0.
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "1.0", "100.0");
+            assertNativeMatchesPartialParquet("c6 >= 1.00000000005", "c6\n1.0\n100.0\n");
+            assertNativeMatchesPartialParquet("c6 <= 0.99999999995", "c6\n1.0\n");
+            assertNativeMatchesPartialParquet("c6 > 0.99999999995", "c6\n100.0\n");
+            assertNativeMatchesPartialParquet("c6 < 1.00000000005", "c6\n");
+            assertNativeMatchesPartialParquet("c6 = 1.00000000005", "c6\n1.0\n");
+
+            // A bound ONE TOLERANCE away from the group's float is the hard case for the strict ops.
+            // The row is 1.0000000827e-10 from the bound - just OUTSIDE the tolerance, so the filter
+            // keeps it - but "d - tolerance" rounds back onto 1.0 exactly (the residual is far below
+            // half a double ulp), so a bound narrowed from that pivot lands on 1.0f, and the native
+            // predicate ("<" prunes on min >= bound) drops the group holding it.
+            assertNativeMatchesPartialParquet("c6 < 1.0000000001", "c6\n1.0\n");
+            assertNativeMatchesPartialParquet("c6 > 0.9999999999", "c6\n1.0\n100.0\n");
+            assertNativeMatchesPartialParquet("c6 < 100.0000000001", "c6\n1.0\n100.0\n");
+            assertNativeMatchesPartialParquet("c6 > 99.9999999999", "c6\n100.0\n");
+            // The non-strict ops prune on min > bound / max < bound, so the bound itself is already
+            // excluded from the pruned side, and they must not step the same way.
+            assertNativeMatchesPartialParquet("c6 <= 0.9999999999", "c6\n");
+            assertNativeMatchesPartialParquet("c6 >= 1.0000000001", "c6\n100.0\n");
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            // Near zero the tolerance band spans many floats, so the bound has to be walked out of
+            // it - or abandoned. A row of 0.0f is tolerance-equal to a bound of -5e-11, so the
+            // filter keeps it for "<=" and the pruner must not skip the group.
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "0.0", "5.0");
+            assertNativeMatchesPartialParquet("c6 <= -5e-11", "c6\n0.0\n");
+            assertNativeMatchesPartialParquet("c6 >= 5e-11", "c6\n0.0\n5.0\n");
+
+            // EQ has no direction to round in: it prunes when the pushed float falls outside
+            // [min, max]. Below ~8e-4 the tolerance band holds several floats, so the group can hold
+            // a matching row that is not the nearest one - 4.9999997E-4 is tolerance-equal to 0.0005
+            // (8.2e-11 away) though 5.0E-4 is what a bound of 0.0005 narrows to. Pushing the nearest
+            // float would prune this group; the bound declines instead.
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "4.9999997E-4", "5.0");
+            assertNativeMatchesPartialParquet("c6 = 0.0005", "c6\n4.9999997E-4\n");
+            // ... and a bound whose band holds exactly one float still pushes, and still prunes.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 = 5.0", "c6\n5.0\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testFloatColumnStrictOpCertifiesAgainstCompiledF32Filter() throws Exception {
+        // The engine has THREE row-level filters, not two, and isRowKept modelled only the first
+        // two: Numbers.equals (inclusive, f64), the compiled filter's double_cmp_epsilon (strict,
+        // f64) and its float_cmp_epsilon (strict, f32). A FLOAT column compared against a bound
+        // that IS exactly a float never widens, so the whole comparison - the subtraction, its
+        // absolute value and the tolerance test - happens at f32, and two things move: FLOAT_EPSILON
+        // is (float) DOUBLE_TOLERANCE, i.e. slightly LARGER than 1e-10, and rounding the difference
+        // to f32 can carry it across the tolerance.
+        //
+        // Here 2^-33 is the bound and the row is 1.6415322226515094e-11, both exactly floats. Their
+        // f64 difference is 9.999999960041972e-11, which both f64 filters call EQUAL, so "c6 < bound"
+        // drops the row on either of them. The same subtraction at f32 rounds UP to exactly
+        // FLOAT_EPSILON, and the test is strict, so the compiled f32 filter calls them UNEQUAL and
+        // KEEPS the row. Certifying against the f64 pair alone let the pushed bound land exactly on
+        // the row, and "<" prunes on min >= bound, so the row group went away before any filter ran.
+        //
+        // Two oracles, because they fail for different reasons. The ROW assertions are the
+        // user-visible half: the row survives on the all-native table and must survive on the
+        // partially-parquet one. They deliberately carry no ORDER BY - projecting or ordering by a
+        // column the filter does not read turns on parquet late materialization, which leaves the
+        // unread column's address at 0, makes the frame report column tops, and drops the query onto
+        // the Java f64 filter, which discards the row for its own (separate, pre-existing) reason.
+        // getRowGroupsSkipped() is the portable half: it reports the pruning decision itself, so it
+        // reddens on a host that runs no compiled filter at all, where the rows cannot.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "1.6415322226515094e-11", "100.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquetUnordered("c6 < 1.1641532182693481e-10", "c6\n1.6415322E-11\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            // The mirror image on ">": the bound is below the row, the two DOUBLE-width filters call
+            // them equal and drop it, the f32 one keeps it, so this group must survive too.
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "1.1641532182693481e-10", "-100.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquetUnordered("c6 > 1.6415322226515094e-11", "c6\n1.1641532E-10\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            // A bound clear of the band still prunes: the extra filter only widens the certification
+            // band by about one f32 ulp, it does not disable pushdown.
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "1.0", "100.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.0", "c6\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 > 100.0", "c6\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testFloatConstantFractionalPushdownNotFalsePruned() throws Exception {
+        // A fractional FLOAT bound truncates in the narrow (SHORT) stats slot via
+        // (int) getDouble(), the FLOAT twin of the DOUBLE arm. "c6 < 1.5" -> "c6 < 1"
+        // false-prunes a SHORT group at 1.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("SHORT", "1", "100");
+
+            assertNativeMatchesPartialParquet("c6 < 1.5::float", "c6\n1\n");
+            assertNativeMatchesPartialParquet("c6 <= 1.5::float", "c6\n1\n");
+        });
+    }
+
+    @Test
+    public void testFractionalDoubleBoundStillPrunes() throws Exception {
+        // The fix for the fractional false-prune must not surrender pruning: a fractional bound
+        // rounds the way its op preserves ("c6 < 1.5" is "c6 < 2", "c6 > 4.5" is "c6 > 4"), which
+        // selects the same rows as the double comparison and still skips a group that lies wholly
+        // outside it.
+        assertMemoryLeak(() -> {
+            // Parquet group saturated at 5, native row at 1: "< 1.5" ("< 2") must skip the group.
+            createBoundarySaturatedPartialParquet(5, 1);
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.5", "c6\n1\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 <= 1.5", "c6\n1\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            // Parquet group saturated at 1, native row at 5: "> 4.5" ("> 4") must skip the group.
+            createBoundarySaturatedPartialParquet(1, 5);
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 > 4.5", "c6\n5\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 >= 4.5", "c6\n5\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            // The 64-bit stats slot rounds the same way, below the 2^53 precision ceiling.
+            createBoundarySaturatedPartialParquetTyped("LONG", "5", "1");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.5", "c6\n1\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testLongConstantBelowIntRangePushdownNotFalsePruned() throws Exception {
+        // Parquet partition saturated at INT_MIN+1 (-2147483647). A below-INT-range
+        // LONG bound saturates in the INT stats slot; c > -5e9 matches every row, so
+        // the group must NOT prune -- a false-prune would drop the parquet row.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquet(-2_147_483_647, 0);
+
+            assertNativeMatchesPartialParquet("c6 > -5_000_000_000", "c6\n-2147483647\n0\n");
+            assertNativeMatchesPartialParquet("c6 >= -5_000_000_000", "c6\n-2147483647\n0\n");
+
+            // The other direction is unsatisfiable for every INT row, so every group prunes: "<"
+            // pushes the saturated INT_MIN bound (min >= INT_MIN always holds) and "<=" rewrites
+            // to it. The DOUBLE spelling of the bound takes the same route.
+            for (String bound : new String[]{"-5_000_000_000", "-5e9"}) {
+                for (String op : new String[]{"<", "<="}) {
+                    ParquetRowGroupFilter.resetRowGroupsSkipped();
+                    assertNativeMatchesPartialParquet("c6 " + op + ' ' + bound, "c6\n");
+                    Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSkipRowsWithFiniteBoundUnderActivePushdown() throws Exception {
         // Direct coverage for aa809bb54f ("Fix LIMIT under-count on pushdown-pruned skip").
         // Under active pushdown skipRows() walks row by row, and that walk must run unclamped:
@@ -5046,10 +6151,280 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     counter.set(16);
                     cursor.skipRows(counter, 0);
                     Assert.assertEquals(0, counter.get());
+
                 }
             }
         });
     }
+
+
+    @Test
+    public void testLongConstantOutsideIntRangePushdownNotFalsePruned() throws Exception {
+        // Parquet partition saturated at INT_MAX (2147483647). An above-INT-range LONG
+        // bound saturates in the INT stats slot; c < 5e9 matches every row, so the
+        // group must NOT prune -- a false-prune would drop the parquet row.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquet(2_147_483_647, 0);
+
+            assertNativeMatchesPartialParquet("c6 < 5_000_000_000", "c6\n2147483647\n0\n");
+            assertNativeMatchesPartialParquet("c6 <= 5_000_000_000", "c6\n2147483647\n0\n");
+
+            // The other direction is unsatisfiable for every INT row, so every group prunes: ">"
+            // pushes the saturated INT_MAX bound (max <= INT_MAX always holds) and ">=" rewrites
+            // to it. The DOUBLE spelling of the bound takes the same route.
+            for (String bound : new String[]{"5_000_000_000", "5e9"}) {
+                for (String op : new String[]{">", ">="}) {
+                    ParquetRowGroupFilter.resetRowGroupsSkipped();
+                    assertNativeMatchesPartialParquet("c6 " + op + ' ' + bound, "c6\n");
+                    Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOverflowingIntConstantPushdownWrapsToInt() throws Exception {
+        // An overflowing INT constant compared against a narrow column (BYTE/SHORT/INT)
+        // must wrap mod 2^32 in the parquet pushdown like the native INT-precision scan.
+        // Before the fix the pushdown read the un-wrapped LONG and wrongly pruned a
+        // parquet partition, so a partial-parquet table disagreed with its native sibling.
+        //   (-2649 * 965_823) wraps to INT +1_736_502_169 (> any row): const>col matches all.
+        //   ( 2649 * 965_823) wraps to INT -1_736_502_169 (< any row): col>const matches all.
+        assertMemoryLeak(() -> {
+            for (String type : new String[]{"BYTE", "SHORT", "INT"}) {
+                createNativeAndPartialParquetNarrowColumn(type);
+
+                // Positive wrap: every row passes; wrongly pruned on HEAD.
+                assertNativeMatchesPartialParquet("(-2649::SHORT * (965_823)::INT) > c6", "c6\n1\n2\n");
+                assertNativeMatchesPartialParquet("c6 < (-2649::SHORT * (965_823)::INT)", "c6\n1\n2\n");
+                // Negative wrap: every row passes; wrongly pruned on HEAD from the other side.
+                assertNativeMatchesPartialParquet("c6 > (2649::SHORT * (965_823)::INT)", "c6\n1\n2\n");
+
+                // Controls: the wrapped constant excludes every row (pass on HEAD too). The
+                // parquet side of the fixture is one converted partition holding one row, so its
+                // single row group is the only prunable one - and an unsatisfiable bound must
+                // prune it. Without this the differential is decline-blind: a pushdown that
+                // refuses the shape outright scans that group in full, still agrees with the
+                // all-native tn, and silently degrades the fix to "pruning off".
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                assertNativeMatchesPartialParquet("c6 > (-2649::SHORT * (965_823)::INT)", "c6\n");
+                Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                assertNativeMatchesPartialParquet("c6 < (2649::SHORT * (965_823)::INT)", "c6\n");
+                Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+                execute("DROP TABLE tn");
+                execute("DROP TABLE tp");
+            }
+        });
+    }
+
+    private void assertDoubleColumnNearToleranceMagnitudePushdownNotFalsePruned() throws Exception {
+        assertMemoryLeak(() -> {
+            final StringSink sink = new StringSink();
+
+            // GE: pre-fix pushes nextDown(0.0) and prunes the -1e-30 group; the fix declines the pushdown.
+            createBoundarySaturatedPartialParquetTyped("DOUBLE", "-1e-30", "5.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            printSql("SELECT c6 FROM tp WHERE c6 >= 1e-10 ORDER BY ts", sink);
+            TestUtils.assertEquals("c6\n-1.0E-30\n5.0\n", sink);
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            // EQ collapses the same way: the BETWEEN lo = nextDown(1e-10 - DOUBLE_TOLERANCE) = nextDown(0.0).
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            sink.clear();
+            printSql("SELECT c6 FROM tp WHERE c6 = 1e-10 ORDER BY ts", sink);
+            TestUtils.assertEquals("c6\n-1.0E-30\n", sink);
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            // LE mirrors GE: "c6 <= -1e-10" keeps 1e-30; pre-fix prunes on "min > nextUp(0.0)".
+            createBoundarySaturatedPartialParquetTyped("DOUBLE", "1e-30", "-5.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            sink.clear();
+            printSql("SELECT c6 FROM tp WHERE c6 <= -1e-10 ORDER BY ts", sink);
+            TestUtils.assertEquals("c6\n1.0E-30\n-5.0\n", sink);
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            // A bound a clear tolerance away from zero still prunes a group that lies wholly outside it.
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createBoundarySaturatedPartialParquetTyped("DOUBLE", "-1e-30", "5.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            sink.clear();
+            printSql("SELECT c6 FROM tp WHERE c6 >= 1.0 ORDER BY ts", sink);
+            TestUtils.assertEquals("c6\n5.0\n", sink);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    // All-native tn and a partial-parquet sibling tp with identical data: two single-row
+    // daily partitions, the first parquet so the row-group pushdown decides to scan it.
+    private void createNativeAndPartialParquetNarrowColumn(String columnType) throws Exception {
+        execute("CREATE TABLE tn (c6 " + columnType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE tp (c6 " + columnType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO tn VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
+        execute("INSERT INTO tp VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
+        execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+    }
+
+    @Test
+    public void testIntWidthProductInAndCastMatchAcrossPartialParquet() throws Exception {
+        // The INT-width IN / cast family (an overflowing a*b compared or IN-tested) had no partial
+        // parquet coverage. Pruning runs before the row filter, so a mixed-storage table could drop a
+        // row a single-storage table keeps if the pushdown disagreed with the row filter on the
+        // widened value. The native partition runs the compiled/JIT filter, the parquet partition the
+        // Java filter, so this differential pins that they agree for the width-sensitive shapes.
+        //
+        // Each assertion pins the plan node so the differential cannot silently degrade to
+        // Java-vs-Java. The IN shapes compile to the JIT ("Async JIT Filter"); QueryAssertion rewrites
+        // that expectation to "Async Filter" on a JIT-unsupported host, so on such hosts the check
+        // becomes native-Java vs parquet-Java (still a valid pruning/width-agreement check). The
+        // ::long-cast-of-arithmetic shapes are NOT compiled today (the JIT declines that cast, so both
+        // tables run the Java filter): the "Async Filter" pin states that plainly and flags if the JIT
+        // ever starts compiling them, at which point the compiled-vs-Java width agreement would need
+        // re-verifying. The native frames are small, so the compiled filter runs its scalar tail here;
+        // the four-lane AVX2 SIMD-body width class is covered by
+        // CompiledFilterRegressionTest#testWideLaneIntColumnVsLongColumn.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tp (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String rows = """
+                    INSERT INTO %s VALUES
+                    (2_000_000_000, 2, '2024-01-01T00:00:00.000000Z'),
+                    (100, 3, '2024-01-01T01:00:00.000000Z'),
+                    (null, 5, '2024-01-02T00:00:00.000000Z'),
+                    (7, 11, '2024-01-02T01:00:00.000000Z')
+                    """;
+            execute(rows.formatted("tn"));
+            execute(rows.formatted("tp"));
+            execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+
+            // (a*b) overflows INT for the first row and wraps to -294_967_296, in the pushdown, the
+            // row filter and the cast alike. The parquet partition (day 1) runs the Java filter, the
+            // native partition (day 2) the compiled filter, so each differential exercises both
+            // within one query. The 4e9 bound now matches nothing, which is the point: the pushdown
+            // must not keep a row the filter drops.
+            assertIntWidthNativeMatchesParquet("(a * b) IN (4_000_000_000)", "Async JIT Filter", "a\n");
+            assertIntWidthNativeMatchesParquet("(a * b) IN (-294_967_296)", "Async JIT Filter", "a\n2000000000\n");
+            assertIntWidthNativeMatchesParquet("(a * b) IN (null, 300)", "Async JIT Filter", "a\n100\nnull\n");
+            // JIT declines the ::long cast of an arithmetic subtree, so these run the Java filter on
+            // both tables (see the method comment). The "Async Filter" pin keeps that honest.
+            assertIntWidthNativeMatchesParquet("(a * b)::long > 1_000_000_000", "Async Filter", "a\n");
+            assertIntWidthNativeMatchesParquet("(a * b)::long = -294_967_296", "Async Filter", "a\n2000000000\n");
+        });
+    }
+
+    @Test
+    public void testBeyondFloatRangeBoundDeclinesPushdown() throws Exception {
+        // A finite DOUBLE bound beyond the FLOAT range narrows to +/-Infinity when pushed into a FLOAT
+        // stats slot ((float) 1e40 == +Infinity). QuestDB records an overflowing FLOAT as +/-Infinity
+        // in the stats, so pruning on the infinite bound is safe here; but an external read_parquet()
+        // file may keep an infinite row out of its stats and be false-pruned. The FLOAT arm therefore
+        // declines the pushdown for such a bound - no row group is skipped - and the query still
+        // returns the correct rows via a superset scan.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "1.0", "2.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            sink.clear();
+            printSql("SELECT c6 FROM tp WHERE c6 >= 1e40 ORDER BY ts", sink);
+            TestUtils.assertEquals("c6\n", sink);
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+        });
+    }
+
+    // Asserts the all-native tn and the partial-parquet tp return the SAME rows for the width-sensitive
+    // whereClause, and pins the filter plan node so the differential cannot silently become
+    // Java-vs-Java. planNode is "Async JIT Filter" for shapes the JIT compiles (QueryAssertion rewrites
+    // it to "Async Filter" on a JIT-unsupported host) and "Async Filter" for shapes it declines.
+    private void assertIntWidthNativeMatchesParquet(String whereClause, String planNode, String expected) throws Exception {
+        assertQuery("SELECT a FROM tn WHERE " + whereClause + " ORDER BY ts")
+                .noLeakCheck().withPlanContaining(planNode).returns(expected);
+        assertQuery("SELECT a FROM tp WHERE " + whereClause + " ORDER BY ts")
+                .noLeakCheck().withPlanContaining(planNode).returns(expected);
+    }
+
+    // All-native tn and a partial-parquet sibling tp with identical data. The first daily
+    // partition (single row = parquetValue) converts to parquet, so its INT stats are
+    // min == max == parquetValue -- a group saturated at that exact value. The second row
+    // (nativeValue) stays native so the pushdown actually scans the parquet partition.
+    private void createBoundarySaturatedPartialParquet(int parquetValue, int nativeValue) throws Exception {
+        createBoundarySaturatedPartialParquetTyped("INT", Integer.toString(parquetValue), Integer.toString(nativeValue));
+    }
+
+    // Typed variant of createBoundarySaturatedPartialParquet: the column type and the two row
+    // values are supplied as text so the same single-row-parquet-group setup can exercise the
+    // INT, narrow (BYTE/SHORT) and LONG stats slots.
+    private void createBoundarySaturatedPartialParquetTyped(String columnType, String parquetValue, String nativeValue) throws Exception {
+        execute("CREATE TABLE tn (c6 " + columnType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE tp (c6 " + columnType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO tn VALUES (" + parquetValue + ", '2024-01-01T00:00:00.000000Z'), (" + nativeValue + ", '2024-01-02T00:00:00.000000Z')");
+        execute("INSERT INTO tp VALUES (" + parquetValue + ", '2024-01-01T00:00:00.000000Z'), (" + nativeValue + ", '2024-01-02T00:00:00.000000Z')");
+        execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+    }
+
+    // Builds a native tn and a partial-parquet tp for inclusive-bound NULL pruning tests. Both tables
+    // hold the same two partitions; the first (2024-01-01, values pq1/pq2 plus a NULL) is converted to
+    // parquet while the second (2024-01-02, values nat1/nat2 plus a NULL) stays native. Only the first
+    // partition is a parquet row group the pruner can skip, so a bound clear of pq1/pq2 exercises the
+    // skip path, while the differential tn-vs-tp check confirms NULLs (absent from the min/max stats
+    // and never matching an inclusive comparison) do not leak into the result.
+    private void createNullMixedPartialParquet(String columnType, String pq1, String pq2, String nat1, String nat2) throws Exception {
+        execute("CREATE TABLE tn (c6 " + columnType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE tp (c6 " + columnType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        final String rows = " VALUES"
+                + " (null, '2024-01-01T00:00:00.000000Z'),"
+                + " (" + pq1 + ", '2024-01-01T01:00:00.000000Z'),"
+                + " (" + pq2 + ", '2024-01-01T02:00:00.000000Z'),"
+                + " (null, '2024-01-02T00:00:00.000000Z'),"
+                + " (" + nat1 + ", '2024-01-02T01:00:00.000000Z'),"
+                + " (" + nat2 + ", '2024-01-02T02:00:00.000000Z')";
+        execute("INSERT INTO tn" + rows);
+        execute("INSERT INTO tp" + rows);
+        execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+    }
+
+    // Binds :b to bound and asserts the all-native and the partially-parquet table return the SAME
+    // rows. Pruning may only remove row groups that hold nothing the row filter keeps, so any
+    // difference between the two tables is a pruning bug.
+    private void assertBindVarBoundMatchesNative(String op, double bound, String expected) throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setDouble("b", bound);
+        assertQuery("SELECT c6 FROM tn WHERE c6 " + op + " :b ORDER BY ts")
+                .noLeakCheck()
+                .returns(expected);
+        bindVariableService.clear();
+        bindVariableService.setDouble("b", bound);
+        assertQuery("SELECT c6 FROM tp WHERE c6 " + op + " :b ORDER BY ts")
+                .noLeakCheck()
+                .returns(expected);
+    }
+
+    // Same differential as assertNativeMatchesPartialParquet, minus the ORDER BY ts. Ordering by a
+    // column the filter does not read enables parquet late materialization, and the frame then
+    // reports column tops and falls back to the Java filter - which changes which rows survive at a
+    // tolerance boundary, independently of pruning. Use this when the assertion is about a boundary
+    // row; use the ordered variant when it is about ordering or about more than one row.
+    private void assertNativeMatchesPartialParquetUnordered(String whereClause, String expected) throws Exception {
+        assertQuery("SELECT c6 FROM tn WHERE " + whereClause)
+                .noLeakCheck()
+                .returns(expected);
+        assertQuery("SELECT c6 FROM tp WHERE " + whereClause)
+                .noLeakCheck()
+                .returns(expected);
+    }
+
+    private void assertNativeMatchesPartialParquet(String whereClause, String expected) throws Exception {
+        assertQuery("SELECT c6 FROM tn WHERE " + whereClause + " ORDER BY ts")
+                .noLeakCheck()
+                .returns(expected);
+        assertQuery("SELECT c6 FROM tp WHERE " + whereClause + " ORDER BY ts")
+                .noLeakCheck()
+                .returns(expected);
+    }
+
 
     private void assertHasParquetPartitions(String tableName, boolean expected) {
         TableToken tableToken = engine.verifyTableName(tableName);

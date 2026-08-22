@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.EntryUnavailableException;
@@ -1602,6 +1603,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     Function function = functionParser.parseFunction(expr, metadata, executionContext);
                     try {
                         if (function != null && ColumnType.isBoolean(function.getType())) {
+                            // after the main compile, so every pre-existing compile error keeps its
+                            // precedence and a bind variable is already typed by the whole expression;
+                            // still at compile time, so a WAL table refuses the statement before it is
+                            // sequenced and the WAL apply that re-compiles it refuses it again
+                            NarrowIntArithmetic.rejectWrapped(functionParser, expr, metadata, executionContext, NarrowIntArithmetic.SUBJECT_PARTITION_FILTER);
                             function.init(null, executionContext);
                             if (reader != null) {
                                 int affected = filterPartitions(function, functionPosition, reader, alterOperationBuilder);
