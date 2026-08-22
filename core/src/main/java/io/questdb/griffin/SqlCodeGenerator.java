@@ -610,7 +610,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     @TestOnly
-    public static void freeTableNameFunctionsForTesting(@Nullable IQueryModel queryModel, @NotNull Throwable failure) {
+    public static void freeTableNameFunctionsForTesting(@Nullable IQueryModel queryModel, @Nullable Throwable failure) {
         freeTableNameFunctions(queryModel, failure);
     }
 
@@ -726,6 +726,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         whereClauseParserDepth = 0;
         symbolEstimator.clear();
         intListPool.clear();
+        // `prefixes` holds the within(...) filter extracted for one query, and the extraction runs only
+        // while the within-latest-by optimisation is enabled. Clearing here keeps that filter out of the
+        // factories a later compilation generates.
+        prefixes.clear();
         pushdownFilterExtractor.clear();
         markoutHorizonContext.clear();
         sharedFactoryCache.clear();
@@ -835,8 +839,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Closes table-function factories that the optimizer attached to a query graph but generation
      * did not transfer. Transfer sites null the model field, so detaching each remaining field
      * before close prevents duplicate ownership across shared model references.
+     * <p>
+     * {@code failure} carries the in-flight exception when cleanup runs on an error path: a close
+     * failure attaches to it as a suppressed exception rather than masking it. Callers cleaning up
+     * on a success or retry path have no such exception and pass null, which lets a close failure
+     * propagate.
      */
-    static void freeTableNameFunctions(@Nullable IQueryModel queryModel, @NotNull Throwable failure) {
+    static void freeTableNameFunctions(@Nullable IQueryModel queryModel, @Nullable Throwable failure) {
         if (queryModel == null) {
             return;
         }
@@ -855,7 +864,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             final RecordCursorFactory tableNameFunction = current.getTableNameFunction();
             current.setTableNameFunction(null);
-            Misc.free(tableNameFunction, failure);
+            if (failure != null) {
+                Misc.free(tableNameFunction, failure);
+            } else {
+                Misc.free(tableNameFunction);
+            }
 
             final ObjList<ExpressionNode> expressionModels = current.getExpressionModels();
             for (int i = 0, n = expressionModels.size(); i < n; i++) {
@@ -1584,14 +1597,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ExpressionNode tolerance = slaveModel.getAsOfJoinTolerance();
         long toleranceInterval = Numbers.LONG_NULL;
         if (tolerance != null) {
-            int k = TimestampSamplerFactory.findPositiveIntervalEndIndex(tolerance.token, tolerance.position, "tolerance");
+            int k = CommonUtils.findPositiveIntervalEndIndex(tolerance.token, tolerance.position, "tolerance");
             assert tolerance.token.length() > k;
             char unit = tolerance.token.charAt(k);
             TimestampDriver timestampDriver = getTimestampDriver(getHigherPrecisionTimestampType(leftTimestamp, rightTimestampType));
             long multiplier;
             switch (unit) {
                 case 'n':
-                    toleranceInterval = TimestampSamplerFactory.parsePositiveInterval(tolerance.token, k, tolerance.position, "tolerance", Integer.MAX_VALUE, unit);
+                    toleranceInterval = CommonUtils.parsePositiveInterval(tolerance.token, k, tolerance.position, "tolerance", Integer.MAX_VALUE, unit);
                     return timestampDriver.fromNanos(toleranceInterval);
                 case 'U':
                     multiplier = timestampDriver.fromMicros(1);
@@ -1618,7 +1631,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     throw SqlException.$(tolerance.position, "unsupported TOLERANCE unit [unit=").put(unit).put(']');
             }
             int maxValue = (int) Math.min(Long.MAX_VALUE / multiplier, Integer.MAX_VALUE);
-            toleranceInterval = TimestampSamplerFactory.parsePositiveInterval(tolerance.token, k, tolerance.position, "tolerance", maxValue, unit);
+            toleranceInterval = CommonUtils.parsePositiveInterval(tolerance.token, k, tolerance.position, "tolerance", maxValue, unit);
             toleranceInterval *= multiplier;
         }
         return toleranceInterval;
@@ -2990,13 +3003,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      */
     private long evalHorizonTimeValue(ExpressionNode expr, TimestampDriver timestampDriver) throws SqlException {
         CharSequence token = expr.token;
-        int unitIndex = TimestampSamplerFactory.findIntervalEndIndex(token, expr.position);
+        int unitIndex = CommonUtils.findIntervalEndIndex(token, expr.position);
         if (unitIndex == -1) {
             // Unitless zero (e.g. "0")
             return 0;
         }
         char unit = token.charAt(unitIndex);
-        long value = TimestampSamplerFactory.parseInterval(token, unitIndex, expr.position);
+        long value = CommonUtils.parseInterval(token, unitIndex, expr.position);
         try {
             return switch (unit) {
                 case 'n' -> timestampDriver.fromNanos(value);
@@ -3997,8 +4010,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 coerceRuntimeConstantType(fillToFunc, timestampType, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", fillTo.position);
             }
 
-            int samplingIntervalEnd = TimestampSamplerFactory.findPositiveIntervalEndIndex(fillStride.token, fillStride.position, "sample");
-            long samplingInterval = TimestampSamplerFactory.parsePositiveInterval(fillStride.token, samplingIntervalEnd, fillStride.position, "sample", Numbers.INT_NULL, ' ');
+            int samplingIntervalEnd = CommonUtils.findPositiveIntervalEndIndex(fillStride.token, fillStride.position, "sample");
+            long samplingInterval = CommonUtils.parsePositiveInterval(fillStride.token, samplingIntervalEnd, fillStride.position, "sample", Numbers.INT_NULL, ' ');
             assert samplingInterval > 0;
             assert samplingIntervalEnd < fillStride.token.length();
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
@@ -11328,11 +11341,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (whereClause != null || executionContext.isOverriddenIntrinsics(reader.getTableToken()) || pushedIntervalModel != null) {
             final IntrinsicModel intrinsicModel;
             if (whereClause != null) {
+                // A latest-by key that cannot double as the intrinsic key column - a composite key, or
+                // a single key of a non-SYMBOL type - lands on a factory that reads intrinsicModel.filter
+                // and ignores intrinsicModel.keyColumn. The parser must therefore leave a predicate on an
+                // indexed symbol column in the filter; extracting it into the key column drops it from
+                // the query and returns rows the filter excludes.
+                boolean preventKeyColumnExtraction = latestByColumnCount > 1;
                 CharSequence preferredKeyColumn = null;
                 if (latestByColumnCount == 1) {
                     final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
                     if (isSymbol(queryMeta.getColumnType(latestByIndex))) {
                         preferredKeyColumn = latestBy.getQuick(0).token;
+                    } else {
+                        preventKeyColumnExtraction = true;
                     }
                 }
 
@@ -11345,7 +11366,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         functionParser,
                         queryMeta,
                         executionContext,
-                        latestByColumnCount > 1,
+                        preventKeyColumnExtraction,
                         reader,
                         SqlHints.hasNoIndexHint(model)
                 );
@@ -11406,6 +11427,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             model.setWhereClause(null);
 
             if (intrinsicModel.intrinsicValue == IntrinsicModel.FALSE) {
+                // the empty factory takes over the latest by nodes, so that the later generateLatestBy() is a no-op
+                model.getLatestBy().clear();
                 return new EmptyTableRecordCursorFactory(queryMeta);
             }
 

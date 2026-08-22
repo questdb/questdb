@@ -1860,6 +1860,44 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (!matViewDefinition.isDeferred()) {
                     matViewStateStore.enqueueIncrementalRefresh(matViewToken);
                 }
+                // Narrow the CREATE-vs-ALTER race window. Before this call the compiler read the base's
+                // EXPIRE ROWS policy and found none, but a concurrent ALTER ... SET EXPIRE on the base may
+                // have applied one in between (that ALTER's own dependents check passed because this view was
+                // not registered yet). A base with both a policy and a dependent leaks expired rows into the
+                // dependent on refresh, because refresh reads the base raw. Now that addView has registered
+                // this view, re-read the base's current policy from a fresh reader; if a policy has appeared,
+                // the catch below drops this half-created view (dropTableOrViewOrMatView) and the CREATE fails.
+                //
+                // This branch handles the ordering where the ALTER makes its policy visible BEFORE this
+                // CREATE registers the dependent. The reverse ordering -- this CREATE registers the dependent
+                // first, then the ALTER runs its dependents check -- is handled on the ALTER side: that check
+                // sees this view and skips applying the policy (SqlCompilerImpl.alterTableSetExpire and the
+                // backstop in TableWriter.setMetaExpiry).
+                //
+                // Together the two guards cover every ordering except one. Each side tests the other side's
+                // state before publishing its own, so both can pass: the ALTER checks dependents and finds
+                // none, then this CREATE registers the dependent and re-reads a base whose policy is not
+                // published yet, and only then does the ALTER publish. That leaves the base holding a policy
+                // while a dependent view exists. Nothing serialises an
+                // `ALTER MATERIALIZED VIEW mv1 SET EXPIRE ROWS ...` applying on the WAL-apply thread against a
+                // `CREATE MATERIALIZED VIEW mv2 AS (... FROM mv1)` on a SQL thread, and the window between the
+                // ALTER's dependents check and its publication spans markExpiryPolicyPossible,
+                // metadata.setExpiry and a full _meta swap with file I/O. In that state the dependent's
+                // refresh copies expired rows, because MatViewRefreshSqlExecutionContext reads the base raw.
+                // Closing it takes each side publishing its own intent before testing the other's -- the ALTER
+                // marking the pending policy ahead of its dependents check, and this CREATE consulting that
+                // mark as well as the on-disk policy.
+                final CharSequence baseTableName = matViewDefinition.getBaseTableName();
+                if (baseTableName != null) {
+                    try (TableReader baseReader = getReader(baseTableName)) {
+                        final CharSequence basePredicate = baseReader.getMetadata().getExpiryPredicate();
+                        if (basePredicate != null && basePredicate.length() > 0) {
+                            throw CairoException.nonCritical().put("cannot create materialized view over '")
+                                    .put(baseTableName)
+                                    .put("': the base concurrently acquired an EXPIRE ROWS policy");
+                        }
+                    }
+                }
             }
         } catch (CairoException e) {
             dropTableOrViewOrMatView(path, matViewToken);

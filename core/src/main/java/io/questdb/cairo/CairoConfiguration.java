@@ -539,6 +539,31 @@ public interface CairoConfiguration {
      */
     long getMatViewRefreshMemoryLimitBytes();
 
+    /**
+     * The fraction of a materialized view partition's rows that must be expired before the EXPIRE ROWS
+     * cleanup job compacts that partition. To compact a partition, the job rewrites all of the rows that
+     * are not expired.
+     * <p>
+     * This value doesn't apply to a fully expired partition because deleting it wholesale is a cheap
+     * operation. It concerns a partition that's only partially expired, specifically when the expiration
+     * policy is based on wall clock time, such as {@code ts < now() - 7d}. When the job checks this
+     * partition, it will find more rows that are newly expired due to the passage of time. It will want
+     * to copy all the surviving rows to a new partition file, and this will repeat on every cleanup run.
+     * <p>
+     * To prevent copying the partition data over and over, there's a threshold configured by this value:
+     * what fraction of the partition must be expired to warrant the copying of still-live data.
+     * A value of 0 makes the job compact a partition whenever any row expires. A value of 1 stops
+     * all compaction, and the job then frees the disk only when it reclaims a full partition.
+     * <p>
+     * This value applies to clock-based policies only. A clock-free predicate, such as {@code v < 2.0},
+     * decides each row from that row's own data, so the expired fraction of a partition changes only when
+     * the partition's rows change. One compaction pass clears the partition, and the job leaves it alone
+     * until a later refresh back-fills rows into it. The job therefore copies such a partition once per
+     * back-fill rather than once per cleanup run, and copies nothing at all while nothing writes to the
+     * view.
+     */
+    double getMatViewRowExpiryCleanupMinExpiredFraction();
+
     long getMatViewRowsPerQueryEstimate();
 
     int getMaxCrashFiles();
@@ -1255,6 +1280,14 @@ public interface CairoConfiguration {
 
     boolean isMatViewRefreshMissingWalFilesFatal();
 
+    /**
+     * When this is false, queries against a materialized view that has an EXPIRE ROWS policy stay correct,
+     * because the read-time EXPIRE filter continues to hide the expired rows. But the server does not
+     * schedule the background row-expiry cleanup job, so the job never removes an expired row from disk.
+     * EXPIRE ROWS applies to materialized views only, so this value schedules no work for an ordinary table.
+     */
+    boolean isMatViewRowExpiryCleanupEnabled();
+
     boolean isMultiKeyDedupEnabled();
 
     boolean isO3QuickSortEnabled();
@@ -1282,6 +1315,14 @@ public interface CairoConfiguration {
     // CairoConfiguration subclass to keep DISTINCT as a Distinct factory and reach
     // DistinctTimeSeriesRecordCursorFactory.
     boolean isSqlDistinctGroupByRewriteEnabled();
+
+    // Test-only seam, with no backing production property: always true in a running server, so the
+    // optimiser always rewrites a LATEST ON over a plain sub-query into a direct table read. Tests
+    // override it to false in a CairoConfiguration subclass to obtain the un-rewritten plan, which
+    // LatestByHoistEquivalenceTest compares against, shape by shape.
+    default boolean isSqlLatestOnHoistEnabled() {
+        return true;
+    }
 
     boolean isSqlJitDebugEnabled();
 

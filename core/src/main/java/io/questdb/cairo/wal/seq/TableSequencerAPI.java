@@ -64,6 +64,7 @@ public class TableSequencerAPI implements QuietCloseable {
     private final int recreateDistressedSequencerAttempts;
     private final ConcurrentHashMap<SeqTxnTracker> seqTxnTrackers = new ConcurrentHashMap<>(false);
     private final BiFunction<CharSequence, Object, TableSequencerImpl> openSequencerInstanceLambda = this::openSequencerInstance;
+    private Runnable testNextTxnIfLastTxnBarrier;
     volatile boolean closed;
 
     public TableSequencerAPI(CairoEngine engine, CairoConfiguration configuration) {
@@ -324,6 +325,28 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public long nextTxnIfLastTxn(final TableToken tableToken, long expectedLastTxn, int walId, long expectedSchemaVersion, int segmentId, int segmentTxn, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
+        if (testNextTxnIfLastTxnBarrier != null) {
+            // WalWriter calls this only after it appended and synced the conditional event. Fire outside the
+            // sequencer lock so a test can deterministically sequence a competing producer in that interval.
+            final Runnable barrier = testNextTxnIfLastTxnBarrier;
+            testNextTxnIfLastTxnBarrier = null;
+            barrier.run();
+        }
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+            long txn;
+            try {
+                if (!tableSequencer.getTableToken().equals(tableToken)) {
+                    throw TableReferenceOutOfDateException.of(tableToken);
+                }
+                txn = tableSequencer.nextTxnIfLastTxn(expectedLastTxn, expectedSchemaVersion, walId, segmentId, segmentTxn, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
+            } finally {
+                tableSequencer.unlockWrite();
+            }
+            return txn;
+        }
+    }
+
     public boolean notifyOnCheck(TableToken tableToken, long seqTxn) {
         // Updates seqTxn and returns true if CheckWalTransactionsJob should post notification
         // to run ApplyWal2TableJob for the table
@@ -467,6 +490,11 @@ public class TableSequencerAPI implements QuietCloseable {
 
     public void setHardSuspended(final TableToken tableToken, boolean hardSuspended) {
         getSeqTxnTracker(tableToken).setHardSuspended(hardSuspended);
+    }
+
+    @TestOnly
+    public void setTestNextTxnIfLastTxnBarrier(Runnable barrier) {
+        this.testNextTxnIfLastTxnBarrier = barrier;
     }
 
     public void suspendTable(final TableToken tableToken, ErrorTag errorTag, String errorMessage) {

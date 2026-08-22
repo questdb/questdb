@@ -79,6 +79,45 @@ public class SqlCodeGeneratorCleanupTest {
         Assert.assertEquals("cleanup", primaryError.getSuppressed()[0].getMessage());
     }
 
+    @Test
+    public void testFreeTableNameFunctionsWithoutPrimaryErrorClosesGraphAndPropagatesCloseFailure() {
+        // Some callers tidy up when nothing has gone wrong: after a retry, or once code
+        // generation has taken the factories over. They have no exception in hand, so they
+        // pass null. Everything still closes, and if one of the closes fails, that failure
+        // is thrown to the caller instead of being recorded against an exception that
+        // does not exist.
+        final AtomicInteger closeCount = new AtomicInteger();
+        final QueryModel root = QueryModel.FACTORY.newInstance();
+        final QueryModel nested = QueryModel.FACTORY.newInstance();
+        final QueryModel unionModel = QueryModel.FACTORY.newInstance();
+
+        root.setTableNameFunction(newFactory(closeCount, false));
+        nested.setTableNameFunction(newFactory(closeCount, false));
+        unionModel.setTableNameFunction(newFactory(closeCount, false));
+        root.setNestedModel(nested);
+        root.setUnionModel(unionModel);
+
+        SqlCodeGenerator.freeTableNameFunctionsForTesting(root, null);
+
+        Assert.assertEquals(3, closeCount.get());
+        Assert.assertNull(root.getTableNameFunction());
+        Assert.assertNull(nested.getTableNameFunction());
+        Assert.assertNull(unionModel.getTableNameFunction());
+
+        final QueryModel throwingModel = QueryModel.FACTORY.newInstance();
+        throwingModel.setTableNameFunction(newFactory(closeCount, true));
+        try {
+            SqlCodeGenerator.freeTableNameFunctionsForTesting(throwingModel, null);
+            Assert.fail("expected the close failure to reach the caller");
+        } catch (RuntimeException e) {
+            Assert.assertEquals("cleanup", e.getMessage());
+        }
+        Assert.assertEquals(4, closeCount.get());
+        // The field is cleared before the close runs, so even a close that fails leaves
+        // nothing else pointing at the factory.
+        Assert.assertNull(throwingModel.getTableNameFunction());
+    }
+
     private static RecordCursorFactory newFactory(AtomicInteger closeCount, boolean isThrowing) {
         return new RecordCursorFactory() {
             private final RecordMetadata metadata = new GenericRecordMetadata();

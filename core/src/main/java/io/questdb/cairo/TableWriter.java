@@ -186,6 +186,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
+    // Test hook: pauses an EXPIRE ROWS metadata rewrite after the change is marked pending but before the
+    // _meta/_txn swap, so a compiler on another thread can read the old policy while the change is in flight.
+    // Null in production; firing it is one volatile read and a null check.
+    @TestOnly
+    private static volatile Runnable expiryMetaSwapBarrier;
+    // Test hook: pauses an EXPIRE ROWS metadata rewrite after the _meta swap, where the new policy is already
+    // reader-visible, but before the _txn/_todo commit that can still fail. Lets a test drive the
+    // after-publication failure path. Null in production; firing it is one volatile read and a null check.
+    @TestOnly
+    private static volatile Runnable expiryMetaCommitBarrier;
+    // Test hook: pauses an EXPIRE ROWS metadata rewrite after the _meta/_txn swap but before the policy epoch
+    // counter ticks the second time, so a compiler on another thread can open a reader at the new metadata
+    // version while the counter still holds its old value. Null in production; firing it is one volatile read
+    // and a null check.
+    @TestOnly
+    private static volatile Runnable expiryPolicyPublishBarrier;
+    // Test seam: pauses a metadata rewrite after _meta and _txn publish the new metadata version but before
+    // MetadataCache hydration. Null in production; the fire site is a single volatile read and null check.
+    @TestOnly
+    private static volatile Runnable metadataVersionPublishedBarrier;
     /*
         The most recent logical partition is allowed to have up to cairo.o3.last.partition.max.splits (20 by default) splits.
         Any other partition is allowed to have cairo.o3.mid.partition.max.splits (1 by default) splits.
@@ -657,6 +677,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public static long getTimestampIndexValue(long timestampIndexAddr, long indexRow) {
         return Unsafe.getLong(timestampIndexAddr + indexRow * 16);
+    }
+
+    /**
+     * Installs a one-shot test barrier that fires after a metadata version becomes reader-visible and before
+     * the corresponding MetadataCache hydration. Pass null to uninstall.
+     */
+    @TestOnly
+    public static void setExpiryMetaSwapBarrier(@Nullable Runnable barrier) {
+        expiryMetaSwapBarrier = barrier;
+    }
+
+    /**
+     * Installs a one-shot test barrier that fires between the _meta swap and the _txn/_todo commit. Pass null
+     * to uninstall.
+     */
+    @TestOnly
+    public static void setExpiryMetaCommitBarrier(@Nullable Runnable barrier) {
+        expiryMetaCommitBarrier = barrier;
+    }
+
+    @TestOnly
+    public static void setExpiryPolicyPublishBarrier(@Nullable Runnable barrier) {
+        expiryPolicyPublishBarrier = barrier;
+    }
+
+    @TestOnly
+    public static void setMetadataVersionPublishedBarrier(@Nullable Runnable barrier) {
+        metadataVersionPublishedBarrier = barrier;
     }
 
     @Override
@@ -2472,6 +2520,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return designatedTimestampColumnName;
     }
 
+    @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return metadata.getExpiryCleanupIntervalMicros();
+    }
+
+    @Override
+    public String getExpiryPredicate() {
+        return metadata.getExpiryPredicate();
+    }
+
     public FilesFacade getFilesFacade() {
         return ff;
     }
@@ -3617,6 +3675,62 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
+    public void setMetaExpiry(String predicate, long cleanupIntervalMicros) {
+        commit();
+        if (predicate != null && !getTableToken().isMatView()) {
+            // Defense-in-depth: EXPIRE ROWS is materialized-view-only and the compiler enforces it. Never
+            // persist a policy onto a non-mat-view at apply time, even from a malformed/forged WAL alter.
+            // Skip rather than throw -- a throw during WAL apply would suspend the table; a clear
+            // (predicate == null) still proceeds below so DROP EXPIRE always works.
+            LOG.error().$("ignoring EXPIRE ROWS policy on non-materialized-view [table=")
+                    .$safe(getTableToken().getTableName()).I$();
+            return;
+        }
+        if (predicate != null) {
+            // Defense-in-depth backstop for the CREATE-vs-ALTER race: a dependent view -- materialized or
+            // live -- may have been registered against this base after alterTableSetExpire's compile-time
+            // dependents check passed, in the narrow window between OperationExecutor recompiling the stored
+            // ALTER and this apply, or via a forged WAL that skips recompile. A base carrying both a policy
+            // and a dependent leaks expired rows into that dependent on refresh (refresh reads the base
+            // raw). Skip rather than throw, matching the non-mat-view guard above: a throw during WAL apply
+            // would suspend the table. DROP EXPIRE (predicate == null) still proceeds so clearing works.
+            final ObjList<TableToken> dependents = new ObjList<>();
+            engine.getDependentViewGraph().getDependentViews(getTableToken(), dependents);
+            if (dependents.size() > 0) {
+                LOG.error().$("ignoring EXPIRE ROWS policy on a base with dependent views [table=")
+                        .$safe(getTableToken().getTableName())
+                        .$(", dependents=").$(dependents.size())
+                        .$(", firstDependent=").$safe(dependents.getQuick(0).getTableName())
+                        .I$();
+                return;
+            }
+        }
+
+        final MetadataCache metadataCache = engine.getMetadataCache();
+        final long expiryPolicyUpdateVersion = metadata.getMetadataVersion() + 1;
+        // Mark every transition, including replacement SET and DROP, before mutating metadata. Pending reads
+        // bypass the old cache entry, and the epoch makes a parser that already observed the old gate retry.
+        final long previousPendingExpiryVersion = metadataCache.markExpiryPolicyPossible(
+                getTableToken().getTableId(),
+                expiryPolicyUpdateVersion
+        );
+        try {
+            metadata.setExpiry(predicate, cleanupIntervalMicros);
+        } catch (Throwable th) {
+            // No authoritative metadata changed, so restore any earlier pending publication and close this epoch.
+            metadataCache.cancelExpiryPolicyUpdate(
+                    getTableToken().getTableId(),
+                    expiryPolicyUpdateVersion,
+                    previousPendingExpiryVersion
+            );
+            throw th;
+        }
+        // The expiry-aware overload advances the policy epoch when _meta/_txn publish, then hydrates the cache
+        // and clears the pending mark. It cancels only failures that occur before authoritative publication.
+        writeMetadataToDisk(true, expiryPolicyUpdateVersion, previousPendingExpiryVersion);
+    }
+
+    @Override
     public void setMetaTableFormat(int tableFormat) {
         if (tableFormat == TableUtils.TABLE_FORMAT_PARQUET) {
             if (!metadata.isWalEnabled()) {
@@ -4064,6 +4178,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 default:
                     nullers.add(NOOP);
             }
+        }
+    }
+
+    private static void fireExpiryMetaSwapBarrier() {
+        final Runnable barrier = expiryMetaSwapBarrier;
+        if (barrier != null) {
+            expiryMetaSwapBarrier = null;
+            barrier.run();
+        }
+    }
+
+    private static void fireExpiryMetaCommitBarrier() {
+        final Runnable barrier = expiryMetaCommitBarrier;
+        if (barrier != null) {
+            expiryMetaCommitBarrier = null;
+            barrier.run();
+        }
+    }
+
+    private static void fireExpiryPolicyPublishBarrier() {
+        final Runnable barrier = expiryPolicyPublishBarrier;
+        if (barrier != null) {
+            expiryPolicyPublishBarrier = null;
+            barrier.run();
+        }
+    }
+
+    private static void fireMetadataVersionPublishedBarrier() {
+        final Runnable barrier = metadataVersionPublishedBarrier;
+        if (barrier != null) {
+            metadataVersionPublishedBarrier = null;
+            barrier.run();
         }
     }
 
@@ -13782,6 +13928,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
+            // Trailing row-expiry policy section (kept symmetric with TableUtils.writeMetadata serializer).
+            ddlMem.putStr(metadata.getExpiryPredicate() == null ? "" : metadata.getExpiryPredicate());
+            ddlMem.putLong(metadata.getExpiryCleanupIntervalMicros());
+
             ddlMem.sync(false);
             return index;
         } catch (Throwable th) {
@@ -15262,10 +15412,50 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void writeMetadataToDisk() {
-        rewriteAndSwapMetadata(metadata);
-        clearTodoAndCommitMeta();
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(metadata);
+        writeMetadataToDisk(false, -1, -1);
+    }
+
+    private void writeMetadataToDisk(
+            boolean isExpiryPolicyUpdate,
+            long expiryPolicyUpdateVersion,
+            long previousPendingExpiryVersion
+    ) {
+        // rewriteAndSwapMetadata renames _meta.swp over _meta, so from that point on every reader that opens
+        // the table's metadata sees the new policy. That, not the _txn/_todo commit that follows, is what
+        // publishes the change, and the commit can still fail after it.
+        boolean isMetadataPublished = false;
+        try {
+            if (isExpiryPolicyUpdate) {
+                fireExpiryMetaSwapBarrier();
+            }
+            rewriteAndSwapMetadata(metadata);
+            isMetadataPublished = true;
+            if (isExpiryPolicyUpdate) {
+                fireExpiryMetaCommitBarrier();
+            }
+            clearTodoAndCommitMeta();
+            if (isExpiryPolicyUpdate) {
+                fireExpiryPolicyPublishBarrier();
+                // Publish the policy epoch in the same writer thread immediately after the authoritative metadata
+                // version. A compiler that parsed the previous version will observe the epoch change and retry.
+                engine.getMetadataCache().publishExpiryPolicyUpdate();
+            }
+            fireMetadataVersionPublishedBarrier();
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
+        } catch (Throwable th) {
+            if (isExpiryPolicyUpdate && !isMetadataPublished) {
+                // The cache still describes the authoritative version. Remove only this failed transition's mark.
+                engine.getMetadataCache().cancelExpiryPolicyUpdate(
+                        getTableToken().getTableId(),
+                        expiryPolicyUpdateVersion,
+                        previousPendingExpiryVersion
+                );
+            }
+            // After publication, retain the pending mark on failure. Reads then use authoritative metadata rather
+            // than the stale cache until a later successful hydration reconciles it.
+            throw th;
         }
     }
 

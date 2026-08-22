@@ -79,6 +79,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.IntLongHashMap;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.IntSortedList;
 import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
@@ -216,6 +217,11 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntSortedList orderingStack = new IntSortedList();
     private final Path path;
+    // Shared with SqlParser (wired by SqlCompilerImpl): for each table, the metadata version the parser read an
+    // EXPIRE ROWS policy at while a policy change was in flight. enumerateColumns rejects the compile when the
+    // reader opens a different version. Null when the optimiser has no paired parser (some unit tests); the
+    // check skips itself then.
+    private IntLongHashMap pendingExpiryReadVersions;
     private final LowerCaseCharSequenceHashSet pivotAliasMap = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceIntHashMap pivotAliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
     private final IntHashSet postFilterRemoved = new IntHashSet();
@@ -2447,6 +2453,251 @@ public class SqlOptimiser implements Mutable {
      *
      * @param model the starting model.
      */
+    // Rewrites `LATEST ON` over a `SELECT * FROM t [WHERE ...]` sub-query so it reads table `t`
+    // directly, dropping the sub-query wrapper. It returns the same rows in the same column order.
+    //
+    // The direct read reaches generateLatestByTableQuery, whose factories keep the table's DESIGNATED
+    // TIMESTAMP and emit in timestamp order. A sub-query base instead produces
+    // LatestByLightRecordCursorFactory, which emits one row per partition key in map-insertion order
+    // and therefore publishes no designated timestamp (see the comment on that class). Anything above
+    // that needs one - SAMPLE BY, ASOF/LT/SPLICE JOIN, ORDER BY-timestamp elision - cannot compile
+    // over the sub-query form and fails with "TIMESTAMP column is required but not provided". The
+    // rewrite is therefore a correctness-visible property of the plan and applies to every equivalent
+    // query, whatever the key type. For an indexed SYMBOL key it is also one index seek per key
+    // instead of a full scan.
+    //
+    // Applies only when the rewrite is provably equivalent:
+    //   - the LATEST ON model has no JOIN: with a join, LATEST ON applies to the join output, but the
+    //     rewritten form would apply it to the table before the join - a different result when the
+    //     join produces more than one row per key;
+    //   - the model nests a plain `SELECT * FROM t [WHERE ...]` and nothing else (no projection/rename,
+    //     join, aggregation, distinct, window, sampleBy, union, order by, limit, or its own LATEST ON);
+    //   - neither the LATEST ON model nor any layer under it declares its own timestamp(...): the direct
+    //     read publishes the table's designated timestamp, so a declared one would be dropped;
+    //   - LATEST ON is on the table's designated timestamp: the direct read always uses
+    //     metadata.getTimestampIndex(), so any other timestamp would give wrong results;
+    //   - every PARTITION BY column resolves to a column of the table.
+    // Every other query is left unchanged.
+    private void pushLatestByToTableModel(@Nullable IQueryModel model, SqlExecutionContext executionContext) {
+        if (model == null || !model.isOptimisable()) {
+            return;
+        }
+        if (model.getLatestByType() == IQueryModel.LATEST_BY_NEW
+                && model.getLatestBy().size() > 0
+                && model.getTableNameExpr() == null
+                && model.getJoinModels().size() < 2) {
+            final IQueryModel table = findHoistableTableModel(model.getNestedModel());
+            final ExpressionNode onTs = model.getTimestamp();
+            final ExpressionNode tableWhere = table != null ? table.getWhereClause() : null;
+            final ExpressionNode modelWhere = model.getWhereClause();
+            if (table != null
+                    && onTs != null
+                    // Skip if the table's WHERE has a qualified column like `x.v`: the rewrite drops the
+                    // sub-query that defined `x`, so the prefix no longer resolves and the query fails to
+                    // compile. (The LATEST ON model's own WHERE keeps its aliases, so it needs no such check.)
+                    && !hasDottedLiteral(tableWhere)
+                    // Skip a timestamp(...) the user wrote on the LATEST ON model itself, e.g.
+                    // `(SELECT * FROM t) x timestamp(ts2) LATEST ON ts PARTITION BY sym`. parseLatestByNew
+                    // overwrites the model's timestamp with the LATEST ON column, so the token here is the
+                    // designated one and condition (2) in isHoistValid - which walks the layers below this
+                    // model - never sees the override; only this flag still records it. The direct read
+                    // publishes the table's designated timestamp, so hoisting would let a SAMPLE BY or a
+                    // timestamp join above run on that column while the query asked for ts2. This is the
+                    // same shape condition (2) rejects one layer down.
+                    && !model.isExplicitTimestamp()
+                    && isHoistValid(model.getNestedModel(), table, onTs, model.getLatestBy(), executionContext)) {
+                // Move the table read into this model and drop the pass-through SELECT * layer(s) in
+                // between: LATEST ON now reads the table directly, keeping the table's designated
+                // timestamp, with the same output columns in the same order. The table's WHERE, if any,
+                // is ANDed with this model's WHERE.
+                model.setTableNameExpr(table.getTableNameExpr());
+                model.setTableId(table.getTableId());
+                model.setMetadataVersion(table.getMetadataVersion());
+                final ExpressionNode combinedWhere = tableWhere == null
+                        ? modelWhere
+                        : modelWhere == null
+                          ? tableWhere
+                          : concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, tableWhere, modelWhere);
+                model.setWhereClause(combinedWhere);
+                // The dropped layers include the one a view expanded into, and this model becomes the one
+                // reading the table. Carry the view names up with the table read, so the read still knows
+                // it goes through a view: AbstractPartitionFrameCursorFactory.authorizeSelect picks the
+                // view branch off viewNameExpr, and view-name collection walks originatingViewNameExpr.
+                final ExpressionNode originatingView = findOriginatingViewNameExpr(model.getNestedModel(), table);
+                model.setNestedModel(table.getNestedModel());
+                model.setSelectModelType(IQueryModel.SELECT_MODEL_NONE);
+                model.setOriginatingViewNameExpr(originatingView);
+                // setViewNameExpr also pushes the name down into the new nested model, the way the parser
+                // does when it expands a view.
+                model.setViewNameExpr(table.getViewNameExpr());
+            }
+        }
+        pushLatestByToTableModel(model.getNestedModel(), executionContext);
+        for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
+            pushLatestByToTableModel(model.getJoinModels().getQuick(i), executionContext);
+        }
+        pushLatestByToTableModel(model.getUnionModel(), executionContext);
+    }
+
+    // Finds the plain table read nested under a LATEST ON model, reachable only through pass-through
+    // SELECT * layers. Returns the `SELECT * FROM t [WHERE ...]` model, or null if any layer in between
+    // could change which rows are returned or their order. isHoistValid runs the stricter
+    // column-identity and column-count checks, which need the table metadata.
+    private IQueryModel findHoistableTableModel(IQueryModel m) {
+        while (m != null) {
+            if (!m.isOptimisable()
+                    || m.getJoinModels().size() > 1
+                    || m.getUnionModel() != null
+                    || m.getLatestBy().size() > 0
+                    || m.getGroupBy().size() > 0
+                    || m.getSampleBy() != null
+                    || m.getLimitLo() != null
+                    || m.getLimitHi() != null
+                    || m.getOrderBy().size() > 0
+                    || m.hasSharedRefs()) {
+                return null;
+            }
+            final int t = m.getSelectModelType();
+            if (t != IQueryModel.SELECT_MODEL_NONE && t != IQueryModel.SELECT_MODEL_CHOOSE) {
+                return null;
+            }
+            if (m.getTableNameExpr() != null) {
+                // the plain table read: no explicit projection, a real table (not a function)
+                if (m.getTableNameFunction() != null
+                        || m.getTableNameExpr().type == FUNCTION
+                        || m.getBottomUpColumns().size() != 0) {
+                    return null;
+                }
+                return m;
+            }
+            // a layer in between: must be a plain projection with no WHERE - a filter here would be
+            // lost when the layer is dropped. isHoistValid checks it is a full identity projection.
+            if (m.getWhereClause() != null) {
+                return null;
+            }
+            m = m.getNestedModel();
+        }
+        return null;
+    }
+
+    // Returns the view name expression of the outermost layer between `from` (inclusive) and `table`
+    // (inclusive) that a view expanded into, or null when no view is involved. Only the expansion root
+    // of a view carries originatingViewNameExpr, and the hoist drops the layers in between.
+    private ExpressionNode findOriginatingViewNameExpr(IQueryModel from, IQueryModel table) {
+        for (IQueryModel m = from; m != null; m = m.getNestedModel()) {
+            final ExpressionNode viewNameExpr = m.getOriginatingViewNameExpr();
+            if (viewNameExpr != null) {
+                return viewNameExpr;
+            }
+            if (m == table) {
+                break;
+            }
+        }
+        return null;
+    }
+
+    // True if any column reference in the tree is qualified with a table/alias prefix, like `x.v`
+    // (an unquoted '.' in a LITERAL token). A null tree returns false.
+    private boolean hasDottedLiteral(ExpressionNode node) {
+        sqlNodeStack.clear();
+        // pre-order iterative tree traversal
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.type == LITERAL && Chars.indexOfLastUnquoted(node.token, '.') != -1) {
+                    return true;
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    sqlNodeStack.add(node.args.getQuick(i));
+                }
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+        return false;
+    }
+
+    // Opens the table's metadata once and checks the four conditions the rewrite needs:
+    //   1) LATEST ON is on the table's designated timestamp. This is checked against the metadata, not
+    //      the model's timestamp token: a sub-query can set a different timestamp (e.g.
+    //      `(SELECT * FROM t timestamp(ts2))`), which leaves the token as ts2 while the direct table
+    //      read still uses the metadata's designated timestamp - rewriting there would break a valid
+    //      query;
+    //   2) no layer down to the table specifies its own timestamp(...). Such a layer sets a different
+    //      timestamp column for all the levels above it. The rewrite reads the table directly, so the
+    //      query then uses the timestamp column of the table. This changes the column that a SAMPLE BY
+    //      clause or an ASOF JOIN clause uses;
+    //   3) every PARTITION BY column resolves to a column of the table, so the direct read can
+    //      partition by it;
+    //   4) every projection layer between the LATEST ON model and the table exposes exactly the table's
+    //      columns, each as a plain un-aliased reference, so dropping those layers cannot change which
+    //      columns the query returns.
+    // Returns false (no rewrite) if the table or its metadata cannot be resolved.
+    private boolean isHoistValid(IQueryModel nested, IQueryModel table, ExpressionNode onTs, ObjList<ExpressionNode> latestBy, SqlExecutionContext executionContext) {
+        final ExpressionNode tableNameExpr = table.getTableNameExpr();
+        if (tableNameExpr == null) {
+            return false;
+        }
+        final TableToken tableToken = executionContext.getTableTokenIfExists(tableNameExpr.token);
+        if (tableToken == null) {
+            return false;
+        }
+        try (TableMetadata metadata = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
+            // (1) LATEST ON must be on the table's designated timestamp (per metadata, not model token)
+            final int tsIdx = metadata.getTimestampIndex();
+            if (tsIdx < 0 || !Chars.equalsIgnoreCase(onTs.token, metadata.getColumnName(tsIdx))) {
+                return false;
+            }
+            // (2) no layer changes the timestamp column
+            for (IQueryModel m = nested; m != null; m = m.getNestedModel()) {
+                final ExpressionNode modelTs = m.getTimestamp();
+                if (modelTs != null && !Chars.equalsIgnoreCase(modelTs.token, metadata.getColumnName(tsIdx))) {
+                    return false;
+                }
+                if (m == table) {
+                    break;
+                }
+            }
+            // (3) every PARTITION BY column resolves to a column of the table
+            for (int i = 0, n = latestBy.size(); i < n; i++) {
+                final ExpressionNode col = latestBy.getQuick(i);
+                if (col.type != ExpressionNode.LITERAL) {
+                    return false;
+                }
+                if (metadata.getColumnIndexQuiet(col.token) < 0) {
+                    return false;
+                }
+            }
+            // (4) each projection layer exposes exactly the table's columns, each a plain reference.
+            // A layer may list those columns in any order: the code generator builds the factory's
+            // metadata from the top-down columns of the model that survives (buildQueryMetadata), so
+            // the projected order reaches the result, not the table's storage order.
+            final int columnCount = metadata.getColumnCount();
+            for (IQueryModel m = nested; m != null && m != table; m = m.getNestedModel()) {
+                final ObjList<QueryColumn> cols = m.getBottomUpColumns();
+                if (cols.size() != columnCount) {
+                    return false;
+                }
+                for (int i = 0; i < columnCount; i++) {
+                    final QueryColumn qc = cols.getQuick(i);
+                    final ExpressionNode ast = qc.getAst();
+                    if (ast == null
+                            || ast.type != ExpressionNode.LITERAL
+                            || !Chars.equalsIgnoreCase(qc.getAlias(), ast.token)
+                            || metadata.getColumnIndexQuiet(ast.token) < 0) {
+                        return false;
+                    }
+                }
+            }
+        } catch (CairoException e) {
+            return false;
+        }
+        return true;
+    }
+
     private void collapseStackedChooseModels(@Nullable IQueryModel model) {
         if (model == null || !model.isOptimisable()) {
             return;
@@ -4199,7 +4450,20 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void enumerateColumns(IQueryModel model, TableRecordMetadata metadata) throws SqlException {
-        model.setMetadataVersion(metadata.getMetadataVersion());
+        final long boundMetadataVersion = metadata.getMetadataVersion();
+        // If the parser chose an EXPIRE ROWS keep-filter for this table from a metadata version that a racing
+        // policy change has already moved past, the reader here opens the newer version and that filter is
+        // stale. Reject the compile so it re-parses against the current policy. (The policy epoch counter can
+        // read the same value before and after the change, so it cannot catch this; the metadata version can.)
+        // The map is empty unless a policy change is running alongside this compile, so the size() check keeps
+        // the normal cost at zero.
+        if (pendingExpiryReadVersions != null && pendingExpiryReadVersions.size() > 0) {
+            final long parsedMetadataVersion = pendingExpiryReadVersions.get(metadata.getTableId());
+            if (parsedMetadataVersion != -1 && parsedMetadataVersion != boundMetadataVersion) {
+                throw ExpiryPolicyVersionChangedException.INSTANCE;
+            }
+        }
+        model.setMetadataVersion(boundMetadataVersion);
         model.setTableId(metadata.getTableId());
         copyColumnsFromMetadata(model, metadata);
         if (model.isUpdate()) {
@@ -5912,6 +6176,9 @@ public class SqlOptimiser implements Mutable {
         if (!model.isOptimisable()) {
             return;
         }
+        if (model.isExpiryWindowBarrier()) {
+            pushExpiryPartitionFiltersBelowWindow(model);
+        }
         if (
                 model.getSelectModelType() != IQueryModel.SELECT_MODEL_DISTINCT
                         // in theory, we could push down predicates as long as they align with ALL partition by clauses
@@ -6101,6 +6368,141 @@ public class SqlOptimiser implements Mutable {
         if (nested != null) {
             moveWhereInsideSubQueries(nested);
         }
+    }
+
+    private ExpressionNode cloneExpiryPartitionPredicate(ExpressionNode node, ExpressionNode semanticKey) {
+        final ExpressionNode clone = ExpressionNode.deepClone(expressionNodePool, node);
+        if (sameExpirySemanticExpression(node.lhs, semanticKey)) {
+            clone.lhs = ExpressionNode.deepClone(expressionNodePool, semanticKey);
+        } else {
+            clone.rhs = ExpressionNode.deepClone(expressionNodePool, semanticKey);
+        }
+        return clone;
+    }
+
+    private int expiryPartitionKeyIndex(ExpressionNode node, ObjList<ExpressionNode> semanticKeys) {
+        if (node.type != OPERATION || !Chars.equals(node.token, "=") || node.paramCount != 2) {
+            return -1;
+        }
+        final boolean isLhsValue = isExpiryPartitionValue(node.lhs);
+        final boolean isRhsValue = isExpiryPartitionValue(node.rhs);
+        if (isLhsValue == isRhsValue) {
+            return -1;
+        }
+        final ExpressionNode expression = isLhsValue ? node.rhs : node.lhs;
+        for (int i = 0, n = semanticKeys.size(); i < n; i++) {
+            if (sameExpirySemanticExpression(expression, semanticKeys.getQuick(i))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private IQueryModel findExpiryWindowInput(IQueryModel barrier) {
+        IQueryModel current = barrier;
+        IQueryModel tableModel = null;
+        while (current != null) {
+            if (current.getUnionModel() != null || current.getJoinModels().size() > 1) {
+                return null;
+            }
+            if (current.getTableNameExpr() != null) {
+                tableModel = current;
+            }
+            current = current.getNestedModel();
+        }
+        return tableModel;
+    }
+
+    private static boolean isExpiryPartitionValue(ExpressionNode node) {
+        return node != null && (node.type == CONSTANT || node.type == BIND_VARIABLE);
+    }
+
+    /**
+     * Clones a caller predicate below the synthetic expiry window only when every semantic partition key has
+     * an equality constraint to a constant (including NULL) or bind variable. The original predicates stay
+     * outside the window, preserving the public filter semantics. Exact expression trees qualify; a single
+     * table qualifier may be omitted or added by alias rewriting, but two different qualifiers never match.
+     *
+     * <p>OR predicates, ranges, IN lists, column-to-column/join predicates, partially constrained composite
+     * keys, global windows, shared CTE inputs, unions, and ambiguous nested joins stay whole-view. Raw policies
+     * expose semantic keys only when every window expression has the same non-empty PARTITION BY list.</p>
+     */
+    private void pushExpiryPartitionFiltersBelowWindow(IQueryModel model) {
+        final IQueryModel windowInput = findExpiryWindowInput(model);
+        final ObjList<ExpressionNode> semanticKeys = model.getExpiryWindowPartitionBy();
+        if (windowInput == null || windowInput.hasSharedRefs() || semanticKeys.size() == 0 || model.getWhereClause() == null) {
+            return;
+        }
+
+        final ObjList<ExpressionNode> predicates = model.parseWhereClause();
+        tempExprs.clear();
+        tempIntHashSet.clear();
+        for (int i = 0, n = predicates.size(); i < n; i++) {
+            final ExpressionNode predicate = predicates.getQuick(i);
+            final int keyIndex = expiryPartitionKeyIndex(predicate, semanticKeys);
+            if (keyIndex > -1) {
+                tempExprs.add(predicate);
+                tempIntHashSet.add(keyIndex);
+            }
+        }
+
+        if (tempIntHashSet.size() == semanticKeys.size()) {
+            for (int i = 0, n = tempExprs.size(); i < n; i++) {
+                final ExpressionNode predicate = tempExprs.getQuick(i);
+                final int keyIndex = expiryPartitionKeyIndex(predicate, semanticKeys);
+                addWhereNode(windowInput, cloneExpiryPartitionPredicate(predicate, semanticKeys.getQuick(keyIndex)));
+            }
+        }
+        predicates.clear();
+    }
+
+    private static boolean sameExpirySemanticExpression(ExpressionNode a, ExpressionNode b) {
+        if (a == null || b == null || a.type != b.type || a.paramCount != b.paramCount) {
+            return false;
+        }
+        if (a.type == LITERAL) {
+            if (!sameExpirySemanticLiteral(a.token, b.token)) {
+                return false;
+            }
+        } else if (a.type == FUNCTION) {
+            if (!Chars.equalsIgnoreCase(a.token, b.token)) {
+                return false;
+            }
+        } else if (!Chars.equals(a.token, b.token)) {
+            return false;
+        }
+        if (a.args.size() != b.args.size()) {
+            return false;
+        }
+        if (a.args.size() < 3) {
+            return sameExpirySemanticExpressionNullable(a.lhs, b.lhs)
+                    && sameExpirySemanticExpressionNullable(a.rhs, b.rhs);
+        }
+        for (int i = 0, n = a.args.size(); i < n; i++) {
+            if (!sameExpirySemanticExpression(a.args.getQuick(i), b.args.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean sameExpirySemanticExpressionNullable(ExpressionNode a, ExpressionNode b) {
+        return a == null ? b == null : b != null && sameExpirySemanticExpression(a, b);
+    }
+
+    private static boolean sameExpirySemanticLiteral(CharSequence a, CharSequence b) {
+        if (Chars.equalsIgnoreCase(a, b)) {
+            return true;
+        }
+        final int aDot = Chars.indexOfLastUnquoted(a, '.');
+        final int bDot = Chars.indexOfLastUnquoted(b, '.');
+        if (aDot > -1 && bDot > -1) {
+            return false;
+        }
+        if (aDot > -1) {
+            return Chars.equalsIgnoreCase(b, a, aDot + 1, a.length());
+        }
+        return bDot > -1 && Chars.equalsIgnoreCase(a, b, bDot + 1, b.length());
     }
 
     private ExpressionNode negate(ExpressionNode node) {
@@ -6385,7 +6787,10 @@ public class SqlOptimiser implements Mutable {
             return;
         }
         ExpressionNode where = model.getWhereClause();
-        if (where != null) {
+        // A row-expiry keep-filter is written as NOT (<predicate>) and has to stay that way: the inversion
+        // below turns NOT (v < 2.0) into v >= 2.0, and both spellings are false for a NULL v, so the
+        // inverted filter hides rows the policy keeps. See SqlParser.keepFilterWhereText.
+        if (where != null && !model.isExpiryKeepFilter()) {
             model.setWhereClause(optimiseBooleanNot(where, false));
         }
 
@@ -13133,6 +13538,9 @@ public class SqlOptimiser implements Mutable {
             rewriteTrivialGroupByExpressions(rewrittenModel);
             optimiseJoins(rewrittenModel);
             collapseStackedChooseModels(rewrittenModel);
+            if (configuration.isSqlLatestOnHoistEnabled()) {
+                pushLatestByToTableModel(rewrittenModel, sqlExecutionContext);
+            }
             rewriteCountDistinct(rewrittenModel);
             rewriteMultipleTermLimitedOrderByPart1(rewrittenModel);
             pushLimitFromChooseToNone(rewrittenModel, sqlExecutionContext);
@@ -13175,6 +13583,10 @@ public class SqlOptimiser implements Mutable {
 
         // And then generate plan for UPDATE top level QueryModel
         validateUpdateColumns(updateQueryModel, metadata, sqlExecutionContext);
+    }
+
+    void setPendingExpiryReadVersions(IntLongHashMap pendingExpiryReadVersions) {
+        this.pendingExpiryReadVersions = pendingExpiryReadVersions;
     }
 
     void validateUpdateColumns(

@@ -284,6 +284,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     IntHashSet getDependencies();
 
+    ObjList<ExpressionNode> getExpiryWindowPartitionBy();
+
     ObjList<ExpressionNode> getExpressionModels();
 
     ExpressionNode getFillFrom();
@@ -482,6 +484,15 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     boolean isExplicitTimestamp();
 
+    /**
+     * True for the query block the parser builds to hold a row-expiry keep-filter, i.e.
+     * {@code SELECT * FROM "t" WHERE NOT (<predicate>)}. {@code SqlOptimiser.optimiseBooleanNot} leaves
+     * such a block's WHERE alone; see {@code SqlParser.keepFilterWhereText} for why the NOT has to stay.
+     */
+    boolean isExpiryKeepFilter();
+
+    boolean isExpiryWindowBarrier();
+
     boolean isForceBackwardScan();
 
     boolean isLateralCountCoalesceRequired();
@@ -578,6 +589,10 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setDistinct(boolean distinct);
 
     void setExplicitTimestamp(boolean explicitTimestamp);
+
+    void setExpiryKeepFilter(boolean isExpiryKeepFilter);
+
+    void setExpiryWindowBarrier(boolean isExpiryWindowBarrier);
 
     void setFillFrom(ExpressionNode fillFrom);
 

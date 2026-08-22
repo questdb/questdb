@@ -297,6 +297,273 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByIndexedSubQueryFastPathSameResultAsSameLevel() throws Exception {
+        // R1: LATEST ON over a trivial identity-passthrough sub-query of an indexed-symbol table is
+        // relocated to the direct-table indexed fast path. It must return exactly the same rows (in the
+        // same designated-timestamp order) as the equivalent same-level query. The dataset is arranged
+        // so a wrong plan would be observable: key-insertion order (CC, BB) differs from latest-ts order.
+        assertMemoryLeak(() -> {
+            execute("create table x (a double, b symbol index, k timestamp) timestamp(k) partition by DAY");
+            execute("insert into x values (10.0,'CC','1970-01-01T00:00:00.000000Z'),"
+                    + "(20.0,'BB','1970-01-02T00:00:00.000000Z'),"
+                    + "(30.0,'BB','1970-01-03T00:00:00.000000Z'),"
+                    + "(40.0,'CC','1970-01-04T00:00:00.000000Z')");
+            // With an explicit projection, the relocated sub-query form must be byte-identical to the
+            // equivalent same-level form (which already uses the indexed fast path) - same rows, same
+            // column order, same designated timestamp. Compared cursor-to-cursor.
+            assertSqlCursors(
+                    "select a, b, k from x where b in ('BB','CC') and a > 0 latest on k partition by b order by b",
+                    "select a, b, k from (x where b in ('BB','CC')) where a > 0 latest on k partition by b order by b"
+            );
+            // Correct latest-per-key values (dataset arranged so key-order != latest-ts order).
+            assertQuery("select b, k, a from (x where b in ('BB','CC')) where a > 0 latest on k partition by b order by b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("b\tk\ta\n"
+                            + "BB\t1970-01-03T00:00:00.000000Z\t30.0\n"
+                            + "CC\t1970-01-04T00:00:00.000000Z\t40.0\n");
+        });
+    }
+
+    @Test
+    public void testLatestByNonIndexedSubQueryKeepsDesignatedTimestamp() throws Exception {
+        // The hoist also fires when the PARTITION BY key is a non-indexed symbol. There is no index to
+        // seek, so the gain is not speed: the direct table read is what carries the table's designated
+        // timestamp. LatestBy light, which a sub-query base would produce, emits in partition-key order
+        // and therefore publishes no timestamp, and a SAMPLE BY above it cannot compile. The dataset is
+        // arranged so key order (x, y) differs from latest-timestamp order.
+        assertMemoryLeak(() -> {
+            execute("create table nb (i int, s symbol, ts timestamp) timestamp(ts) partition by DAY");
+            execute("insert into nb values (1,'x','2024-01-01T00:00:00.000000Z'),"
+                    + "(2,'y','2024-01-02T00:00:00.000000Z'),"
+                    + "(3,'x','2024-01-03T00:00:00.000000Z')");
+            // Same rows as the equivalent same-level query, compared cursor to cursor.
+            assertSqlCursors(
+                    "select i, s, ts from nb latest on ts partition by s order by s",
+                    "select i, s, ts from (select * from nb) latest on ts partition by s order by s"
+            );
+            // The designated timestamp survives, so SAMPLE BY above the LATEST ON compiles and reads it.
+            assertQuery("select ts, count() c from (select * from nb) latest on ts partition by s sample by 1d")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\tc\n"
+                            + "2024-01-02T00:00:00.000000Z\t1\n"
+                            + "2024-01-03T00:00:00.000000Z\t1\n");
+        });
+    }
+
+    @Test
+    public void testLatestByIndexedSubQueryQualifiedFilterStaysCorrect() throws Exception {
+        // A LATEST ON over a `SELECT * FROM t WHERE ...` sub-query is normally rewritten to read table t
+        // directly (the indexed fast path). That rewrite must be skipped when the sub-query's WHERE
+        // qualifies a column with a table/alias prefix (x.v or tab.v): reading t directly drops the
+        // sub-query that gave the prefix its meaning, so the column no longer resolves and the query
+        // fails to compile. Skipped queries keep compiling on the LatestBy light plan and return the same
+        // rows as the query written without the sub-query. The fast path needs an indexed SYMBOL key, so
+        // the indexed table is what exercises this; the dataset puts key order (CC, BB) out of step with
+        // timestamp order.
+        assertMemoryLeak(() -> {
+            execute("create table tab (v double, sym symbol index, ts timestamp) timestamp(ts) partition by DAY");
+            execute("insert into tab values (10.0,'CC','1970-01-01T00:00:00.000000Z'),"
+                    + "(20.0,'BB','1970-01-02T00:00:00.000000Z'),"
+                    + "(30.0,'BB','1970-01-03T00:00:00.000000Z'),"
+                    + "(40.0,'CC','1970-01-04T00:00:00.000000Z')");
+            final String expected = "sym\tts\tv\n"
+                    + "BB\t1970-01-03T00:00:00.000000Z\t30.0\n"
+                    + "CC\t1970-01-04T00:00:00.000000Z\t40.0\n";
+            // explicit table alias, alias-qualified predicate (x.v)
+            assertQuery("select sym, ts, v from (select * from tab x where x.v > 0) latest on ts partition by sym order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestBy light")
+                    .returns(expected);
+            // no explicit alias, predicate qualified by the table's own name (tab.v)
+            assertQuery("select sym, ts, v from (select * from tab where tab.v > 0) latest on ts partition by sym order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestBy light")
+                    .returns(expected);
+            // A qualified column in the LATEST ON model's OWN WHERE (not the table's) does not prevent the
+            // rewrite: that WHERE stays put and `x.` still resolves, so this reaches the indexed fast path
+            // and returns the same rows.
+            assertQuery("select sym, ts, v from (select * from tab) x where x.v > 0 latest on ts partition by sym order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestByDeferredListValuesFiltered")
+                    .returns(expected);
+            // byte-identical to the same query written without the sub-query (which already uses the light plan)
+            assertSqlCursors(
+                    "select sym, ts, v from tab where v > 0 latest on ts partition by sym order by sym",
+                    "select sym, ts, v from (select * from tab x where x.v > 0) latest on ts partition by sym order by sym"
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByIndexedSubQueryReorderedProjectionKeepsColumnOrder() throws Exception {
+        // The relocation to the direct-table indexed fast path drops the projection layer that sits
+        // between LATEST ON and the table read. That layer is free to list the table's columns in an
+        // order of its own, so dropping it must not let the table's storage order reach the result. The
+        // dataset puts key order (CC, BB) out of step with timestamp order, and the storage order
+        // (sym, v, ts) out of step with every projection below.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table reord (sym symbol index, v double, ts #TIMESTAMP) timestamp(ts) partition by DAY",
+                    timestampType.getTypeName()
+            );
+            execute("insert into reord values ('CC',10.0,'1970-01-01T00:00:00.000000Z'),"
+                    + "('BB',20.0,'1970-01-02T00:00:00.000000Z'),"
+                    + "('BB',30.0,'1970-01-03T00:00:00.000000Z'),"
+                    + "('CC',40.0,'1970-01-04T00:00:00.000000Z')");
+            final String suffix = getTimestampSuffix(timestampType.getTypeName());
+            // (v, sym, ts) in, (v, sym, ts) out - not the table's (sym, v, ts)
+            assertQuery("select * from (select v, sym, ts from reord) latest on ts partition by sym order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestByAllIndexed")
+                    .returns("v\tsym\tts\n"
+                            + "30.0\tBB\t1970-01-03T00:00:00.000000" + suffix + "\n"
+                            + "40.0\tCC\t1970-01-04T00:00:00.000000" + suffix + "\n");
+            // an outer projection in a third order, over the reordered sub-query
+            assertQuery("select ts, sym, v from (select v, sym, ts from reord) latest on ts partition by sym order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestByAllIndexed")
+                    .returns("ts\tsym\tv\n"
+                            + "1970-01-03T00:00:00.000000" + suffix + "\tBB\t30.0\n"
+                            + "1970-01-04T00:00:00.000000" + suffix + "\tCC\t40.0\n");
+            // the sub-query's WHERE moves up with the table read; the reordering still holds
+            assertQuery("select * from (select v, sym, ts from reord where v > 15.0) latest on ts partition by sym order by sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestByDeferredListValuesFiltered")
+                    .returns("v\tsym\tts\n"
+                            + "30.0\tBB\t1970-01-03T00:00:00.000000" + suffix + "\n"
+                            + "40.0\tCC\t1970-01-04T00:00:00.000000" + suffix + "\n");
+            // same rows, same column order, same types as the equivalent same-level query
+            assertSqlCursors(
+                    "select v, sym, ts from reord latest on ts partition by sym order by sym",
+                    "select * from (select v, sym, ts from reord) latest on ts partition by sym order by sym"
+            );
+        });
+    }
+
+    @Test
+    public void testLatestBySubQueryContradictoryFilterReturnsEmpty() throws Exception {
+        // When the WHERE clauses of a LATEST ON query and its sub-query contradict each other, the
+        // intrinsic model collapses to FALSE and the table read becomes an empty factory. That factory
+        // stands in for the whole LATEST ON, so the latest-by node list must be handed over to it the
+        // same way the constant-false-filter branch does; otherwise generateLatestBy() runs on top of a
+        // table model that has no nested model and dereferences null.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE w (k SYMBOL INDEX, v DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    timestampType.getTypeName()
+            );
+            execute("INSERT INTO w VALUES ('A',1.0,'1970-01-01T00:00:00.000000Z'),"
+                    + "('B',2.0,'1970-01-02T00:00:00.000000Z')");
+            final String empty = "k\tv\tts\n";
+            // filter split across the two levels
+            assertQuery("SELECT * FROM (SELECT * FROM w WHERE k = 'A') WHERE k = 'B' LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Empty table")
+                    .returns(empty);
+            // both halves inside the sub-query
+            assertQuery("SELECT * FROM (SELECT * FROM w WHERE k = 'A' AND k = 'B') LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(empty);
+            // both halves outside the sub-query
+            assertQuery("SELECT * FROM (SELECT * FROM w) WHERE k = 'A' AND k = 'B' LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(empty);
+            // the same shape spelled as a CTE
+            assertQuery("WITH c AS (SELECT * FROM w WHERE k IN ('A','B')) SELECT * FROM c WHERE k = 'C' LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(empty);
+            // PARTITION BY a column the contradiction does not mention
+            assertQuery("SELECT * FROM (SELECT * FROM w WHERE k = 'A') WHERE k = 'B' LATEST ON ts PARTITION BY v")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(empty);
+            // the same query written at one level
+            assertQuery("SELECT * FROM w WHERE k = 'A' AND k = 'B' LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(empty);
+        });
+    }
+
+    @Test
+    public void testLatestByNonSymbolKeyKeepsIndexedSymbolFilter() throws Exception {
+        // A LATEST ON whose PARTITION BY key is not a SYMBOL reads the whole table and applies
+        // intrinsicModel.filter; it has no key column to seek, so intrinsicModel.keyColumn is ignored.
+        // A predicate on an indexed SYMBOL column must therefore stay in the filter - moving it into the
+        // key column drops it from the query, and rows the WHERE excludes come back.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE ix (s SYMBOL INDEX, k INT, v DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    timestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO ix VALUES
+                    ('A',1,10.0,'2024-01-01T00:00:00.000000Z'),
+                    ('B',1,20.0,'2024-01-01T00:00:01.000000Z'),
+                    ('A',2,30.0,'2024-01-01T00:00:02.000000Z'),
+                    ('B',2,40.0,'2024-01-01T00:00:03.000000Z')""");
+            final String suffix = getTimestampSuffix(timestampType.getTypeName());
+            final String latestOfA = "s\tk\tv\tts\n"
+                    + "A\t1\t10.0\t2024-01-01T00:00:00.000000" + suffix + "\n"
+                    + "A\t2\t30.0\t2024-01-01T00:00:02.000000" + suffix + "\n";
+            // matches nothing, so nothing comes back
+            assertQuery("SELECT * FROM ix WHERE s = 'ZZZ' LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("s\tk\tv\tts\n");
+            // the latest row per k among the 'A' rows, not the latest row per k overall
+            assertQuery("SELECT * FROM ix WHERE s = 'A' LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(latestOfA);
+            // the same query through the sub-query form the LATEST ON hoist rewrites
+            assertQuery("SELECT * FROM (SELECT * FROM ix WHERE s = 'A') LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(latestOfA);
+            // IN and != spellings of the same predicate
+            assertQuery("SELECT * FROM ix WHERE s IN ('A') LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(latestOfA);
+            assertQuery("SELECT * FROM ix WHERE s != 'B' LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(latestOfA);
+            // a second predicate on a non-indexed column, ANDed with the indexed one
+            assertQuery("SELECT * FROM ix WHERE s = 'A' AND v > 15.0 LATEST ON ts PARTITION BY k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("s\tk\tv\tts\n"
+                            + "A\t2\t30.0\t2024-01-01T00:00:02.000000" + suffix + "\n");
+            // a composite key that includes the indexed symbol keeps the predicate too
+            assertQuery("SELECT * FROM ix WHERE s = 'A' LATEST ON ts PARTITION BY s, k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(latestOfA);
+        });
+    }
+
+    @Test
     public void testLatestByLightSubQueryOrderByTimestampNotElided() throws Exception {
         // A LATEST ON ... over a derived sub-query compiles to LatestByLightRecordCursorFactory,
         // which emits one row per partition key in map order, NOT in designated-timestamp order.

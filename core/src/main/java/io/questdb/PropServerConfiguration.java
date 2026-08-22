@@ -396,6 +396,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewRefreshWorkerNapThreshold;
     private final long matViewRefreshWorkerSleepThreshold;
     private final long matViewRefreshWorkerYieldThreshold;
+    private final boolean matViewRowExpiryCleanupEnabled;
+    private final double matViewRowExpiryCleanupMinExpiredFraction;
     private final long matViewRowsPerQueryEstimate;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
@@ -1581,6 +1583,11 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
+            this.matViewRowExpiryCleanupEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_ENABLED, true);
+            this.matViewRowExpiryCleanupMinExpiredFraction = getDouble(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION, "0.5");
+            if (!(matViewRowExpiryCleanupMinExpiredFraction >= 0 && matViewRowExpiryCleanupMinExpiredFraction <= 1)) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION.getPropertyPath() + " must be between 0 and 1");
+            }
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshBusyRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 1000);
             this.matViewRefreshBusyRetryLimit = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT, 10);
@@ -4390,6 +4397,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public double getMatViewRowExpiryCleanupMinExpiredFraction() {
+            return matViewRowExpiryCleanupMinExpiredFraction;
+        }
+
+        @Override
         public long getMatViewRowsPerQueryEstimate() {
             return matViewRowsPerQueryEstimate;
         }
@@ -5467,6 +5479,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isMatViewRefreshMissingWalFilesFatal() {
             return matViewRefreshMissingWalFilesFatal;
+        }
+
+        @Override
+        public boolean isMatViewRowExpiryCleanupEnabled() {
+            return matViewRowExpiryCleanupEnabled;
         }
 
         @Override

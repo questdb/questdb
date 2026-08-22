@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.CharSequenceObjSortedHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -941,6 +942,50 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropClearsFailedHydrationPendingExpiryIdOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE alpha (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE bravo (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            cache.onStartupAsyncHydrator();
+            final TableToken alpha = engine.verifyTableName("alpha");
+            final TableToken bravo = engine.verifyTableName("bravo");
+            cache.markExpiryPolicyPossible(alpha.getTableId());
+            cache.markExpiryPolicyPossible(bravo.getTableId());
+
+            final File meta = metaFile("alpha");
+            final File hidden = new File(meta.getParentFile(), "_meta.hidden");
+            java.nio.file.Files.move(meta.toPath(), hidden.toPath());
+            try {
+                try (MetadataCacheWriter writer = cache.writeLock()) {
+                    Assert.assertThrows(CairoException.class, () -> writer.hydrateTable(alpha));
+                }
+                Assert.assertTrue(cache.mayTableHaveExpiryPolicy(alpha));
+                Assert.assertTrue(cache.mayTableHaveExpiryPolicy(bravo));
+
+                // The authoritative drop must clear alpha by table ID even though failed hydration removed its
+                // CairoTable. Bravo's independent pending ID must remain published.
+                try (MetadataCacheWriter writer = cache.writeLock()) {
+                    writer.dropTable(alpha);
+                }
+                Assert.assertFalse(cache.mayTableHaveExpiryPolicy(alpha));
+                Assert.assertTrue(cache.mayTableHaveExpiryPolicy(bravo));
+                Assert.assertTrue(cache.mayHaveExpiryPolicy());
+            } finally {
+                java.nio.file.Files.move(hidden.toPath(), meta.toPath());
+            }
+
+            try (MetadataCacheWriter writer = cache.writeLock()) {
+                writer.hydrateTable(bravo);
+            }
+            Assert.assertFalse(cache.mayTableHaveExpiryPolicy(bravo));
+            Assert.assertFalse(cache.mayHaveExpiryPolicy());
+        });
+    }
+
+    @Test
     public void testHydrateAllTablesShortCircuitsWhenCacheComplete() throws Exception {
         // hydrateAllTables() backs the tables()/all_tables() startup-race fix, but it
         // must be a no-op once the cache is known complete: from then on writers keep
@@ -999,6 +1044,11 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 }
                 cache.onStartupAsyncHydrator();
 
+                // Failed hydration must leave expiry lookups conservative. Otherwise the read-path gate can
+                // suppress the authoritative predicate lookup for the missing table.
+                Assert.assertTrue(cache.mayHaveExpiryPolicy());
+                Assert.assertTrue(cache.mayTableHaveExpiryPolicy(engine.getTableTokenIfExists("charlie")));
+
                 // alpha + bravo hydrated; charlie could not be read and is absent.
                 try (MetadataCacheReader ro = cache.readLock()) {
                     Assert.assertEquals(2, ro.getTableCount());
@@ -1013,10 +1063,255 @@ public class MetadataCacheTest extends AbstractCairoTest {
             // reconcile still runs and now picks charlie up. With the pre-fix
             // unconditional latch this short-circuited and charlie stayed hidden.
             cache.hydrateAllTables();
+            Assert.assertFalse("complete policy-free cache may close the global expiry gate", cache.mayHaveExpiryPolicy());
             try (MetadataCacheReader ro = cache.readLock()) {
                 Assert.assertEquals(3, ro.getTableCount());
                 Assert.assertNotNull(ro.getTable(engine.getTableTokenIfExists("charlie")));
             }
+        });
+    }
+
+    @Test
+    public void testExpirySnapshotRepublishSkipsUnrelatedTableDdl() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE bystander (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            cache.onStartupAsyncHydrator();
+            final TableToken mv = engine.verifyTableName("mv");
+            Assert.assertTrue(cache.mayTableHaveExpiryPolicy(mv));
+            // A definitive "no policy" verdict for the bystander proves fullyHydrated is latched,
+            // so the assertSame checks below exercise the narrowed gate rather than passing
+            // vacuously through the not-yet-hydrated publish skip.
+            Assert.assertFalse(cache.mayTableHaveExpiryPolicy(engine.verifyTableName("bystander")));
+
+            // DDL on a table outside the policy snapshot leaves the published snapshot object
+            // untouched: rebuilding it would make every DDL of any table O(all tables).
+            final Object snapshotBefore = cache.getExpiryPolicySnapshotIdentity();
+            execute("ALTER TABLE bystander ADD COLUMN y INT");
+            drainWalQueue();
+            Assert.assertSame(
+                    "hydration of a policy-less table must not rebuild the snapshot",
+                    snapshotBefore, cache.getExpiryPolicySnapshotIdentity()
+            );
+
+            try (MetadataCacheWriter writer = cache.writeLock()) {
+                writer.hydrateTable(engine.verifyTableName("bystander"));
+            }
+            Assert.assertSame(
+                    "re-hydration of a policy-less table must not rebuild the snapshot",
+                    snapshotBefore, cache.getExpiryPolicySnapshotIdentity()
+            );
+
+            execute("RENAME TABLE bystander TO onlooker");
+            drainWalQueue();
+            Assert.assertSame(
+                    "rename of a policy-less table must not rebuild the snapshot",
+                    snapshotBefore, cache.getExpiryPolicySnapshotIdentity()
+            );
+
+            try (MetadataCacheWriter writer = cache.writeLock()) {
+                writer.dropTable(engine.verifyTableName("onlooker"));
+            }
+            Assert.assertSame(
+                    "drop of a policy-less table must not rebuild the snapshot",
+                    snapshotBefore, cache.getExpiryPolicySnapshotIdentity()
+            );
+
+            // The policy gate and cleanup discovery still see the policied view.
+            Assert.assertTrue(cache.mayTableHaveExpiryPolicy(mv));
+            final ObjList<TableToken> tokens = new ObjList<>();
+            try (MetadataCacheReader ro = cache.readLock()) {
+                ro.collectPoliciedTables(tokens, new ObjList<>(), new LongList());
+            }
+            Assert.assertEquals(1, tokens.size());
+        });
+    }
+
+    @Test
+    public void testExpirySnapshotRepublishesForPolicyAffectingDdl() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            cache.onStartupAsyncHydrator();
+            final TableToken mv = engine.verifyTableName("mv");
+            Assert.assertTrue(cache.mayTableHaveExpiryPolicy(mv));
+
+            // Replacing the predicate republishes and cleanup discovery sees the new predicate.
+            final Object beforeReplace = cache.getExpiryPolicySnapshotIdentity();
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < 1");
+            drainWalQueue();
+            Assert.assertNotSame(beforeReplace, cache.getExpiryPolicySnapshotIdentity());
+            final ObjList<TableToken> tokens = new ObjList<>();
+            final ObjList<String> predicates = new ObjList<>();
+            try (MetadataCacheReader ro = cache.readLock()) {
+                ro.collectPoliciedTables(tokens, predicates, new LongList());
+            }
+            Assert.assertEquals(1, tokens.size());
+            TestUtils.assertContains(predicates.get(0), "v < 1");
+
+            // Re-hydration of the policied view republishes so the snapshot references the fresh CairoTable.
+            final Object beforeHydrate = cache.getExpiryPolicySnapshotIdentity();
+            try (MetadataCacheWriter writer = cache.writeLock()) {
+                writer.hydrateTable(mv);
+            }
+            Assert.assertNotSame(beforeHydrate, cache.getExpiryPolicySnapshotIdentity());
+
+            // DROP EXPIRE removes the id from the snapshot and discovery goes empty.
+            execute("ALTER MATERIALIZED VIEW mv DROP EXPIRE");
+            drainWalQueue();
+            Assert.assertFalse(cache.mayTableHaveExpiryPolicy(mv));
+            tokens.clear();
+            try (MetadataCacheReader ro = cache.readLock()) {
+                ro.collectPoliciedTables(tokens, new ObjList<>(), new LongList());
+            }
+            Assert.assertEquals(0, tokens.size());
+
+            // Dropping a policied view closes the gate as well.
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < 2");
+            drainWalQueue();
+            Assert.assertTrue(cache.mayTableHaveExpiryPolicy(mv));
+            execute("DROP MATERIALIZED VIEW mv");
+            drainWalQueue();
+            Assert.assertFalse(cache.mayTableHaveExpiryPolicy(mv));
+        });
+    }
+
+    @Test
+    public void testPendingExpiryPolicyCancellationPreservesActivePolicy() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            cache.onStartupAsyncHydrator();
+            final TableToken base = engine.verifyTableName("base");
+            final TableToken mv = engine.verifyTableName("mv");
+            Assert.assertTrue(cache.mayTableHaveExpiryPolicy(mv));
+            Assert.assertFalse(cache.isExpiryPolicyUpdatePending(mv));
+
+            final long beforeMark = cache.getExpiryPolicyVersion();
+            cache.markExpiryPolicyPossible(mv.getTableId());
+            Assert.assertTrue("replacement/drop must become pending even for an active ID", cache.isExpiryPolicyUpdatePending(mv));
+            Assert.assertTrue(cache.getExpiryPolicyVersion() > beforeMark);
+
+            // An unrelated snapshot rebuild must not reintroduce mv's old policy to cleanup discovery.
+            try (MetadataCacheWriter writer = cache.writeLock()) {
+                writer.dropTable(base);
+            }
+            final ObjList<TableToken> tokens = new ObjList<>();
+            try (MetadataCacheReader ro = cache.readLock()) {
+                ro.collectPoliciedTables(tokens, new ObjList<>(), new LongList());
+            }
+            Assert.assertEquals("cleanup must skip a policy while its replacement/drop is pending", 0, tokens.size());
+
+            final long beforeCancel = cache.getExpiryPolicyVersion();
+            cache.cancelExpiryPolicyUpdate(mv.getTableId());
+            Assert.assertTrue(cache.getExpiryPolicyVersion() > beforeCancel);
+            Assert.assertFalse(cache.isExpiryPolicyUpdatePending(mv));
+            Assert.assertTrue("failed replacement/drop must preserve the active policy", cache.mayTableHaveExpiryPolicy(mv));
+            try (MetadataCacheReader ro = cache.readLock()) {
+                ro.collectPoliciedTables(tokens, new ObjList<>(), new LongList());
+            }
+            Assert.assertEquals("cancellation must restore cleanup discovery", 1, tokens.size());
+        });
+    }
+
+    @Test
+    public void testPendingExpiryPolicySupersedingTransitionRejectsStaleHydration() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            cache.onStartupAsyncHydrator();
+            final TableToken mv = engine.verifyTableName("mv");
+            final long cachedMetadataVersion;
+            try (MetadataCacheReader ro = cache.readLock()) {
+                cachedMetadataVersion = ro.getTable(mv).getMetadataVersion();
+            }
+
+            final long firstUpdateVersion = cachedMetadataVersion + 1;
+            Assert.assertEquals(-1, cache.markExpiryPolicyPossible(mv.getTableId(), firstUpdateVersion));
+            final long secondUpdateVersion = cachedMetadataVersion + 2;
+            Assert.assertEquals(
+                    firstUpdateVersion,
+                    cache.markExpiryPolicyPossible(mv.getTableId(), secondUpdateVersion)
+            );
+
+            // Hydration that started before the second transition must not clear its newer pending mark.
+            try (MetadataCacheWriter writer = cache.writeLock()) {
+                writer.hydrateTable(mv);
+            }
+            Assert.assertTrue(cache.isExpiryPolicyUpdatePending(mv));
+
+            // A failed second transition restores the earlier pending target, which remains conservative because
+            // the cache only contains the still-older metadata version.
+            cache.cancelExpiryPolicyUpdate(mv.getTableId(), secondUpdateVersion, firstUpdateVersion);
+            Assert.assertTrue(cache.isExpiryPolicyUpdatePending(mv));
+            cache.cancelExpiryPolicyUpdate(mv.getTableId(), firstUpdateVersion, -1);
+            Assert.assertFalse(cache.isExpiryPolicyUpdatePending(mv));
+            Assert.assertTrue(cache.mayTableHaveExpiryPolicy(mv));
+        });
+    }
+
+    @Test
+    public void testPendingExpiryPolicySurvivesUnrelatedPublishAndFailedHydrate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE alpha (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE charlie (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            cache.onStartupAsyncHydrator();
+            Assert.assertFalse(cache.mayHaveExpiryPolicy());
+
+            final TableToken alpha = engine.verifyTableName("alpha");
+            final TableToken charlie = engine.verifyTableName("charlie");
+            cache.markExpiryPolicyPossible(charlie.getTableId());
+            Assert.assertTrue(cache.mayHaveExpiryPolicy());
+            Assert.assertTrue(cache.mayTableHaveExpiryPolicy(charlie));
+
+            // Force an unrelated active-snapshot publication between the conservative mark and charlie's
+            // authoritative hydration. The publication must preserve charlie's pending ID even though no
+            // hydrated table currently carries a policy.
+            try (MetadataCacheWriter writer = cache.writeLock()) {
+                writer.dropTable(alpha);
+            }
+            Assert.assertTrue(cache.mayHaveExpiryPolicy());
+            Assert.assertTrue(cache.mayTableHaveExpiryPolicy(charlie));
+
+            final File meta = metaFile("charlie");
+            final File hidden = new File(meta.getParentFile(), "_meta.hidden");
+            java.nio.file.Files.move(meta.toPath(), hidden.toPath());
+            try {
+                try (MetadataCacheWriter writer = cache.writeLock()) {
+                    Assert.assertThrows(CairoException.class, () -> writer.hydrateTable(charlie));
+                }
+                Assert.assertTrue("failed hydration must retain the conservative global gate", cache.mayHaveExpiryPolicy());
+                Assert.assertTrue("failed hydration must retain the pending table ID", cache.mayTableHaveExpiryPolicy(charlie));
+            } finally {
+                java.nio.file.Files.move(hidden.toPath(), meta.toPath());
+            }
+
+            // Successful authoritative hydration finds no real policy and clears the pending mark.
+            try (MetadataCacheWriter writer = cache.writeLock()) {
+                writer.hydrateTable(charlie);
+            }
+            Assert.assertFalse(cache.mayHaveExpiryPolicy());
+            Assert.assertFalse(cache.mayTableHaveExpiryPolicy(charlie));
         });
     }
 
@@ -1461,6 +1756,49 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     Assert.assertEquals(registeredTables, ro.getTableCount());
                 }
                 Assert.assertTrue(cache.isCacheComplete());
+            }
+        });
+    }
+
+    @Test
+    public void testGiveUpPublishesExpiryPolicySnapshot() throws Exception {
+        // After a reconcile give-up (an unhydratable table exhausts the budget), the policied views
+        // that DID hydrate must still reach the row-expiry cleanup job: its discovery reads only the
+        // published snapshot, and cacheComplete short-circuits every later hydrateAllTables() that
+        // could publish one. The give-up path publishes the snapshot itself; fullyHydrated stays
+        // false, so reads keep the conservative per-table policy gate.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            execute("CREATE TABLE stuck (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final File stuckMeta = metaFile("stuck");
+            final File stuckHidden = new File(stuckMeta.getParentFile(), "_meta.hidden");
+            java.nio.file.Files.move(stuckMeta.toPath(), stuckHidden.toPath());
+            try (MetadataCache cache = new MetadataCache(engine)) {
+                try {
+                    // Burn the give-up budget: every pass hydrates what it can, cannot confirm
+                    // completeness (stuck's _meta is unreadable), and spends one stuck round.
+                    for (int i = 0; i < 10 && !cache.isCacheComplete(); i++) {
+                        cache.hydrateAllTables();
+                    }
+                    Assert.assertTrue("give-up must have latched cacheComplete", cache.isCacheComplete());
+
+                    // The hydrated policied view is discoverable from the published snapshot.
+                    final ObjList<TableToken> tokens = new ObjList<>();
+                    final ObjList<String> predicates = new ObjList<>();
+                    final LongList intervals = new LongList();
+                    try (MetadataCacheReader ro = cache.readLock()) {
+                        ro.collectPoliciedTables(tokens, predicates, intervals);
+                    }
+                    Assert.assertEquals(1, tokens.size());
+                    Assert.assertEquals("mv", tokens.getQuick(0).getTableName());
+                    Assert.assertEquals("v < 0", predicates.getQuick(0));
+                } finally {
+                    java.nio.file.Files.move(stuckHidden.toPath(), stuckMeta.toPath());
+                }
             }
         });
     }

@@ -963,6 +963,51 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetOnMatViewWithRowExpiry() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('AAA', 1.0, '2024-01-05T00:00:00.000000Z'),
+                    ('BBB', 5.0, '2024-01-05T01:00:00.000000Z'),
+                    ('CCC', 0.5, '2024-01-05T02:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2.0");
+            drainWalAndMatViewQueues();
+
+            // The policy hides the two expired rows from every read of the view.
+            assertQuery("SELECT sym, v FROM mv")
+                    .noLeakCheck()
+                    .returns("""
+                            sym\tv
+                            BBB\t5.0
+                            """);
+
+            // The bare-table spelling of COPY must export the same rows the view returns.
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy mv to 'mv_expiry' with format parquet", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("status\nfinished\n");
+                        assertQuery("select sym, v from read_parquet('" + exportRoot + File.separator + "mv_expiry.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        sym\tv
+                                        BBB\t5.0
+                                        """);
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyParquetSyntaxErrorInvalidCompressionLevel() throws Exception {
         assertQuery("copy test_table to 'output' with format parquet compression_level 'invalid'")
                 .fails(66, "found [tok=''invalid'', len=9] bad integer");
