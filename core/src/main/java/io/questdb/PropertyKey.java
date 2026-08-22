@@ -616,6 +616,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_PARTITION_COMPACTION_TABLE_DEAD_PERCENT("cairo.partition.compaction.table.dead.percent"),
     CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_PERCENT("cairo.partition.compaction.table.dead.stop.percent"),
     CAIRO_PARTITION_COMPACTION_TABLE_DEAD_MAX_SIZE("cairo.partition.compaction.table.dead.max.size"),
+    CAIRO_PARTITION_COMPACTION_TABLE_DEAD_MIN_SIZE("cairo.partition.compaction.table.dead.min.size"),
     CAIRO_PARTITION_COMPACTION_MAX_ROWS_PER_COMMIT("cairo.partition.compaction.max.rows.per.commit"),
     CAIRO_PARTITION_COMPACTION_MAX_JOINS_PER_COMMIT("cairo.partition.compaction.max.joins.per.commit"),
     CAIRO_PARTITION_COMPACTION_TIME_BUDGET("cairo.partition.compaction.time.budget"),

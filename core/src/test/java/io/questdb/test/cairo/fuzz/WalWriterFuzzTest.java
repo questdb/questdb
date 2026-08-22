@@ -27,6 +27,7 @@ package io.questdb.test.cairo.fuzz;
 import io.questdb.PropertyKey;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -817,18 +818,39 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
      *     <li>{@code deadMinSize}: 100,000 to ~1,000,000,000,000 (1T) bytes, the floor below which the
      *     waste-ratio rule does not fire regardless of the ratio. Starts at 100K rather than single bytes
      *     so a tight draw still means "a meaningful stride of dead rows", not "one row".</li>
+     *     <li>{@code prefixMinPercent}: the shipped default (50) nine runs out of ten, so that value - the
+     *     one every production table actually runs under - stays the best-tested. The tenth run draws
+     *     uniformly from 1 to 40, comfortably under the front share a typical fuzz workload's narrow
+     *     backdated strides leave behind, so MOVE-TAIL wins over REWRITE close to every time a folder
+     *     qualifies instead of only when the default happens to clear the bar - giving MOVE-TAIL, and the
+     *     MAKE-PLAIN it immediately chains into, real odds of firing without dominating every run.</li>
+     *     <li>{@code tableDeadMinSize}: zero four runs in five, so the table-pressure rule keeps firing off
+     *     a mere handful of dead rows exactly like every fuzz run before this floor existed - fuzz tables
+     *     are small, and a floor anywhere near the 50MB shipped default would suppress table-pressure on
+     *     almost all of them, losing the coverage it currently gives REWRITE, MOVE-TAIL and MAKE-PLAIN.
+     *     The fifth run draws LOG-UNIFORM from 1 byte up to that 50MB default, covering both the
+     *     suppression itself and, at the top of the range, the value a production table actually runs
+     *     under.</li>
      * </ul>
      */
     private static void setRndPartitionCompactionProperties(Rnd rnd) {
         final int maxPieces = (int) Math.round(Math.pow(10, rnd.nextDouble() * 4));
         final int deadRowsRatio = (int) Math.round(Math.pow(10, rnd.nextDouble() * 3)) - 1;
         final long deadMinSize = Math.round(Math.pow(10, 5 + rnd.nextDouble() * 7));
+        final int prefixMinPercent = rnd.nextInt(10) == 0 ? 1 + rnd.nextInt(40) : 50;
+        final long tableDeadMinSize = rnd.nextInt(5) == 0
+                ? Math.round(Math.pow(10, rnd.nextDouble() * Math.log10(50 * Numbers.SIZE_1MB)))
+                : 0;
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, maxPieces);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, deadRowsRatio);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, deadMinSize);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PREFIX_MIN_PERCENT, prefixMinPercent);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_MIN_SIZE, tableDeadMinSize);
         LOG.info().$("partition compaction fuzz mode [maxPieces=").$(maxPieces)
                 .$(", deadRowsRatio=").$(deadRowsRatio)
                 .$(", deadMinSize=").$(deadMinSize)
+                .$(", prefixMinPercent=").$(prefixMinPercent)
+                .$(", tableDeadMinSize=").$(tableDeadMinSize)
                 .I$();
     }
 

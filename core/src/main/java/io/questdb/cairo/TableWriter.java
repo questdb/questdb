@@ -13429,10 +13429,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         continue;
                     }
                 }
+                // allowFreshIfMissing=true: columnTop < partitionSize falls through to here without the
+                // keyFileExists probe above ever running, so a column whose first real row is this very
+                // commit reaches this reopen the same way the O3 write path that just built its key file
+                // does - skip the redundant existence probe rather than let a lying/racing exists() throw
+                // over a file this session's own earlier step already created (see IndexWriter#of).
                 indexer.configureFollowerAndWriter(
                         path.trimTo(plen), colName, colNameTxn,
                         getPrimaryColumn(colIdx), columnTop,
-                        lastOpenPartitionTs, currentNameTxn
+                        lastOpenPartitionTs, currentNameTxn, true
                 );
                 configureCoveringIfNeeded(indexer, colIdx, lastOpenPartitionTs);
             }
@@ -14055,6 +14060,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (indexer == null) {
                     continue;
                 }
+                // A column whose top only just fell inside [0, partitionSize) can reach here right after
+                // the O3 write itself already created its key file - ADD COLUMN never wrote one for a
+                // partition it found row-less, and this commit is the first to add a row past that top,
+                // so the O3 write path is what built it moments ago, not some earlier commit.
+                // configureFollowerAndWriter's default reopen throws "index does not exist" whenever its
+                // own exists() probe says no, suspending the whole WAL table even though the file is
+                // right there. allowFreshIfMissing=true only skips that redundant probe in favor of the
+                // length() check PostingIndexWriter#of already runs next: a file this session really did
+                // just create reads back its real size regardless of what exists() claims, while a
+                // genuinely absent one still fails that size check and still throws - so this never masks
+                // a real loss, it only stops trusting a probe that is not the thing actually being relied
+                // on.
                 processed = true;
 
                 IntList coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
@@ -14069,7 +14086,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.configureFollowerAndWriter(
                                 path.trimTo(plen), colName, colNameTxn,
                                 getPrimaryColumn(colIdx), columnTop,
-                                partitionTimestamp, partitionNameTxn
+                                partitionTimestamp, partitionNameTxn, true
                         );
                         // REBUILD intermediate entry: getTxn()+1 keeps it
                         // invisible to T-pinned readers (it lacks a cover
@@ -14161,7 +14178,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     indexer.configureFollowerAndWriter(
                             path.trimTo(plen), colName, colNameTxn,
                             getPrimaryColumn(colIdx), columnTop,
-                            partitionTimestamp, partitionNameTxn
+                            partitionTimestamp, partitionNameTxn, true
                     );
                     try {
                         // Same getTxn()+1 convention as O3CopyJob and the

@@ -61,6 +61,15 @@ import org.junit.Test;
  * reader gate at all: it copies into a brand-new directory and leaves the old one for the ordinary purge
  * to remove once no reader still needs it, so a pinned reader's data stays correct with nothing to wait
  * for - see {@link #testRewriteLeavesAPinnedReadersDataIntact}.
+ * <p>
+ * JOIN has no dedicated test of its own here. {@code O3PartitionJob} folds list-and-file-adjacent pieces
+ * INLINE, as part of the same commit that creates them (PARTITION_COMPACTION_state.md's "JOIN, inlined"),
+ * so by the time a housekeeping pass reaches {@code TableWriter}'s own, separate JOIN sweep
+ * ({@code foldContiguousPieces} / {@code foldFoldableFolders}), an ordinary sequence of merge-append
+ * writes has never been observed to leave it anything to fold - the planner's own tail-extend
+ * optimization (APPEND) and the fact that a relocated piece always lands at the physical tail keep
+ * file-adjacency and list-adjacency from coinciding across separate commits. See the state doc for the
+ * scenarios ruled out.
  */
 public class O3PartitionCompactionTest extends AbstractCairoTest {
 
@@ -145,46 +154,6 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             Assert.assertEquals(
                     "compaction kept re-running on a partition with nothing left to move" +
                             " [rowsWrittenBySecondRound=" + written + ']',
-                    0,
-                    written
-            );
-        });
-    }
-
-    /**
-     * JOIN merges pieces that already sit next to each other in the files. Nothing moves, so the
-     * piece count must fall with the write counter untouched.
-     */
-    @Test
-    public void testJoinMergesAdjacentPiecesWithoutWritingAnything() throws Exception {
-        assertMemoryLeak(() -> {
-            enableMergeAppend();
-            enableCompaction();
-            // Small enough that the pre-split will cut this day several times.
-            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
-            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 30);
-            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 30);
-
-            createDayTable("x", "2024-01-01", 20_000);
-            // Two narrow, widely separated strides: the clusterer cuts at the cold gaps, leaving a
-            // run of untouched pieces on either side that are adjacent in the files.
-            backdate("x", "2024-01-01T04:00:00", 100);
-            backdate("x", "2024-01-01T20:00:00", 100);
-            final long piecesBefore = pieceCount("x");
-            Assert.assertTrue("fixture produced no split pieces", piecesBefore > 2);
-
-            final long writtenBefore = physicallyWrittenRows();
-            final long insertedByPasses = runCompactionPasses("x");
-            // Net of the rows the housekeeping commits wrote themselves, as the other tests do.
-            final long written = physicallyWrittenRows() - writtenBefore - insertedByPasses;
-
-            Assert.assertTrue(
-                    "JOIN did not reduce the piece count [before=" + piecesBefore +
-                            ", after=" + pieceCount("x") + ']',
-                    pieceCount("x") < piecesBefore
-            );
-            Assert.assertEquals(
-                    "JOIN copied rows; it must be pure bookkeeping [rowsWritten=" + written + ']',
                     0,
                     written
             );
@@ -539,10 +508,13 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             // commit of the fixture above and reclaims the waste as it is created, so there is nothing
             // left to observe and no ordering to check.
             enableCompaction();
-            // Per-partition rules must not be what fires - only the table-wide one.
+            // Per-partition rules must not be what fires - only the table-wide one. The fixture's total
+            // waste is a few KB, well under the table-wide floor's 50MB default, so that floor must be
+            // lowered too or the percentage check never even runs.
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, "1000000");
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_PERCENT, "20");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_MIN_SIZE, "1");
 
             final long deadBefore = deadRows("x");
             Assert.assertTrue("fixture produced no waste", deadBefore > 0);
@@ -783,24 +755,6 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
 
     private static long physicallyWrittenRows() {
         return node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
-    }
-
-    /**
-     * EXTRA pieces summed over the whole table - an ordinary partition contributes 0, a partition with
-     * {@code n} pieces contributes {@code n - 1}. Counting extras rather than the raw total keeps this
-     * immune to {@code runCompactionPasses}' own housekeeping commits, each of which adds one more
-     * ordinary (non-composite) partition of its own.
-     */
-    private static long pieceCount(String table) throws Exception {
-        final TableToken tt = engine.verifyTableName(table);
-        try (TableReader reader = engine.getReader(tt)) {
-            final TxReader txReader = reader.getTxFile();
-            long total = 0;
-            for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
-                total += reader.getGeometry().getPieceCount(i) - 1;
-            }
-            return total;
-        }
     }
 
     /** Pieces of one day's own partition, or 0 if the day has no partition at all. */

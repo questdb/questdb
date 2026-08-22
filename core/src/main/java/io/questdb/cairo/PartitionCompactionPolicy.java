@@ -229,8 +229,13 @@ public class PartitionCompactionPolicy implements Mutable {
         } else {
             // total == 0 (no composite partition seen yet) must never turn this on: 0 >= 0 would
             // otherwise satisfy the percentage check trivially, latching table pressure on from the
-            // very first commit of any table, well before there is any real waste to speak of.
-            tablePressureOn = (total > 0 && deadRowsTable * 100 >= total * configuration.getPartitionCompactionTableDeadPercent())
+            // very first commit of any table, well before there is any real waste to speak of. The
+            // dead.min.size floor guards the same percentage check the same way: a table with hardly any
+            // waste in absolute terms should not be forced through a copy just because it is nearly empty
+            // to begin with. getPartitionCompactionTableDeadMaxSize's own trigger is exempt - it already
+            // implies well more waste than the floor, by construction.
+            tablePressureOn = (total > 0 && deadBytes >= configuration.getPartitionCompactionTableDeadMinSize()
+                    && deadRowsTable * 100 >= total * configuration.getPartitionCompactionTableDeadPercent())
                     || deadBytes > configuration.getPartitionCompactionTableDeadMaxSize();
         }
 

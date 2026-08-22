@@ -1110,7 +1110,18 @@ public class PostingIndexWriter implements IndexWriter {
         of(path, name, columnNameTxn, false);
     }
 
+    @Override
+    public void of(Path path, CharSequence name, long columnNameTxn, long partitionTimestamp, long partitionNameTxn, boolean allowFreshIfMissing) {
+        this.partitionTimestamp = partitionTimestamp;
+        this.partitionNameTxn = partitionNameTxn;
+        of(path, name, columnNameTxn, false, allowFreshIfMissing);
+    }
+
     public void of(Path path, CharSequence name, long columnNameTxn, boolean isInit) {
+        of(path, name, columnNameTxn, isInit, false);
+    }
+
+    private void of(Path path, CharSequence name, long columnNameTxn, boolean isInit, boolean allowFreshIfMissing) {
         // close() releases resources but does NOT flush pending add() calls,
         // so the caller must have already committed or sealed. On the
         // TableWriter path this is guaranteed by commit() in switchPartition
@@ -1133,7 +1144,14 @@ public class PostingIndexWriter implements IndexWriter {
                 this.blockCapacity = BLOCK_CAPACITY;
                 initKeyMemory(keyMem);
             } else {
-                if (!ff.exists(keyFile)) {
+                // allowFreshIfMissing skips this exists() pre-check rather than falling back to a fresh,
+                // empty index: the caller has independently established this column had no data before
+                // the writer session now reopening it began, so any real content under this path is that
+                // same session's own earlier, already-committed-to-disk write - genuine, not something
+                // safe to discard. Trust the length() probe below instead: a file this session itself
+                // just created reads back its real size regardless of what exists() claims, while a
+                // truly-absent one still fails the size check just below and still throws.
+                if (!allowFreshIfMissing && !ff.exists(keyFile)) {
                     throw CairoException.critical(0).put("index does not exist [path=").put(path).put(']');
                 }
 

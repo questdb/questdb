@@ -122,9 +122,23 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
             long partitionTimestamp,
             long partitionNameTxn
     ) {
+        configureFollowerAndWriter(path, name, columnNameTxn, columnMem, columnTop, partitionTimestamp, partitionNameTxn, false);
+    }
+
+    @Override
+    public void configureFollowerAndWriter(
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            MemoryMA columnMem,
+            long columnTop,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            boolean allowFreshIfMissing
+    ) {
         this.columnTop = columnTop;
         try {
-            this.writer.of(path, name, columnNameTxn, partitionTimestamp, partitionNameTxn);
+            this.writer.of(path, name, columnNameTxn, partitionTimestamp, partitionNameTxn, allowFreshIfMissing);
             this.ff = columnMem.getFilesFacade();
             // we don't own the fd, it comes from column mem
             this.fd = columnMem.getFd();

@@ -225,6 +225,24 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     /**
+     * Same as {@link #of(Path, CharSequence, long, long, long)}, but for a caller that has already
+     * established the column had no data before the writer session now reopening it began - so any file
+     * really sitting under this path is that same session's own earlier, already-committed-to-disk
+     * write, not something an older commit left behind. {@code allowFreshIfMissing} lets such a caller
+     * skip the implementation's own key-file existence probe and rely on whatever weaker validity check
+     * it performs next instead (e.g. a length check) - it never fabricates content: a file this session
+     * genuinely just created is found and reopened as normal, while a truly absent one still fails
+     * that weaker check and still throws. Callers that cannot rule out an older, unrelated commit having
+     * left real content under this path must keep {@code false}.
+     *
+     * @param allowFreshIfMissing true to skip the key-file existence probe in favor of a weaker validity
+     *                            check when reopening; false preserves {@link #of(Path, CharSequence, long, long, long)}
+     */
+    default void of(Path path, CharSequence name, long columnNameTxn, long partitionTimestamp, long partitionNameTxn, boolean allowFreshIfMissing) {
+        of(path, name, columnNameTxn, partitionTimestamp, partitionNameTxn);
+    }
+
+    /**
      * Opens the index writer for the given column using file paths, optionally creating a new index.
      * <p>
      * The semantics of the last parameter varies by implementation:

@@ -548,6 +548,14 @@ public interface CairoConfiguration {
     long getPartitionCompactionTableDeadMaxSize();
 
     /**
+     * The table-pressure rule never turns on from the percentage check alone while the table's estimated
+     * dead BYTES stay below this floor - a handful of dead rows in an otherwise tiny table should not
+     * force a copy. The absolute-size check ({@link #getPartitionCompactionTableDeadMaxSize()}) ignores
+     * this floor, since it is itself already well above it.
+     */
+    long getPartitionCompactionTableDeadMinSize();
+
+    /**
      * The table-pressure rule turns on when the table's dead rows reach this percentage of its total.
      */
     int getPartitionCompactionTableDeadPercent();

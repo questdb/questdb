@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -65,6 +66,7 @@ import io.questdb.std.Os;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionTask;
@@ -650,6 +652,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 partitionTimestamp,
                 srcNameTxn
         );
+        final int partitionPathLen = partitionPath.size();
 
         final ObjList<O3CompositeMergeStrategy.Action> actions = plan.actions;
         final int actionCount = actions.size();
@@ -878,6 +881,27 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final int columnType = metadata.getColumnType(i);
                 if (columnType <= 0) {
                     continue;
+                }
+                if (metadata.isColumnIndexed(i) && IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                    long columnTop = transientVersions.getColumnTop(partitionTimestamp, i);
+                    // Row-less when this commit began (top already at-or-past the pre-commit extent): the
+                    // plan's own action loop above already opened this column under that same condition and
+                    // wrote whatever it needed to, so its key file, if this partition ever gets one, is this
+                    // commit's own fresh creation - not a pre-existing file this pass can rely on finding.
+                    // Confirm it is there before re-opening; a re-open a few lines down would otherwise
+                    // throw "index does not exist" out of a diagnostic-only length check and take the whole
+                    // WAL table down with it, for a column this loop has nothing left to verify on anyway.
+                    if (columnTop >= partitionE) {
+                        long columnNameTxn = transientVersions.getColumnNameTxn(partitionTimestamp, i);
+                        LPSZ keyFile = IndexFactory.keyFileName(
+                                metadata.getColumnIndexType(i), partitionPath.trimTo(partitionPathLen), metadata.getColumnName(i), columnNameTxn
+                        );
+                        boolean keyFileExists = ff.exists(keyFile);
+                        partitionPath.trimTo(partitionPathLen);
+                        if (!keyFileExists) {
+                            continue;
+                        }
+                    }
                 }
                 try (FrameColumn col = target.createColumn(i)) {
                     final long top = col.getColumnTop();

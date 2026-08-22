@@ -809,6 +809,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionCompactionTableDeadMinSize() {
+        return getDelegate().getPartitionCompactionTableDeadMinSize();
+    }
+
+    @Override
     public int getPartitionCompactionTableDeadPercent() {
         return getDelegate().getPartitionCompactionTableDeadPercent();
     }
