@@ -83,15 +83,15 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
         // the repair must still be correct, on the route it always took.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {
-            execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
-                    + "amt_txn double) timestamp(created_at) partition by hour wal");
+            execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                    + "amount double) timestamp(created_at) partition by hour wal");
             execute("insert into tx values " + seedThreeDays());
             drainWalQueue();
             execute("create live view lv flush every 100ms start from beginning as "
-                    + "select created_at, cod_acct_no, sum(amt_txn) over w as cumulative_sum, "
-                    + "sum(amt_txn) over (partition by cod_acct_no order by created_at "
+                    + "select created_at, account_id, sum(amount) over w as cumulative_sum, "
+                    + "sum(amount) over (partition by account_id order by created_at "
                     + "rows between 3 preceding and current row) as windowed_sum "
-                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                    + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 commit(row(5, 3, "acct-1"), job);
@@ -420,18 +420,18 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
         // charge of it.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {
-            execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
-                    + "amt_txn double) timestamp(created_at) partition by hour wal");
+            execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                    + "amount double) timestamp(created_at) partition by hour wal");
             // A day below the view's floor as well as the three the view holds, so the
             // correction below has real sub-floor history to reach into.
             execute("insert into tx values " + row(1, 1, "acct-1") + ", " + row(1, 2, "acct-2")
                     + ", " + seedThreeDays());
             drainWalQueue();
             execute("create live view lv flush every 100ms start from '2026-01-02T00:00:00.000000Z' as "
-                    + "select created_at, cod_acct_no, "
-                    + "sum(amt_txn) over w as cumulative_sum, "
-                    + "count(cod_acct_no) over w as cumulative_count "
-                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                    + "select created_at, account_id, "
+                    + "sum(amount) over w as cumulative_sum, "
+                    + "count(account_id) over w as cumulative_count "
+                    + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 commit(row(5, 1, "acct-1") + ", " + row(5, 2, "acct-2"), job);
@@ -608,12 +608,12 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
 
     private void assertBoundedViewMatchesRecompute() throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
-        final String recompute = "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over (partition by cod_acct_no, bucket order by created_at "
+        final String recompute = "select created_at, account_id, "
+                + "sum(amount) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_sum, "
-                + "sum(amt_txn) over (partition by cod_acct_no order by created_at "
+                + "sum(amount) over (partition by account_id order by created_at "
                 + "rows between 3 preceding and current row) as windowed_sum "
-                + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)";
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)";
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
@@ -661,15 +661,15 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     }
 
     private void createView(String seedRows) throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
-                + "amt_txn double) timestamp(created_at) partition by hour wal");
+        execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                + "amount double) timestamp(created_at) partition by hour wal");
         execute("insert into tx values " + seedRows);
         drainWalQueue();
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over w as cumulative_sum, "
-                + "count(cod_acct_no) over w as cumulative_count "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                + "select created_at, account_id, "
+                + "sum(amount) over w as cumulative_sum, "
+                + "count(account_id) over w as cumulative_count "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
     }
 
     /**
@@ -681,12 +681,12 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
         final String source = startFrom == null
                 ? "tx"
                 : "(select * from tx where created_at >= '" + startFrom + "'::timestamp)";
-        return "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over (partition by cod_acct_no, bucket order by created_at "
+        return "select created_at, account_id, "
+                + "sum(amount) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_sum, "
-                + "count(cod_acct_no) over (partition by cod_acct_no, bucket order by created_at "
+                + "count(account_id) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_count "
-                + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from " + source + ")";
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from " + source + ")";
     }
 
     private void restartCycle() {

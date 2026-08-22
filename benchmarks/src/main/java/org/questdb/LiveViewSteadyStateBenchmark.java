@@ -64,7 +64,7 @@ import java.util.Locale;
  * cost can be watched as retained window state grows - the shape of the reported
  * failure, where the view kept up early and fell progressively behind.
  * <p>
- * Same customer schema and live-view DDL, a brand-new {@code cod_acct_no} per row by
+ * Same customer schema and live-view DDL, a brand-new {@code account_id} per row by
  * default, and a forced checkpoint per batch so the seal is measured rather than skipped.
  * <p>
  * With the default {@code ANCHOR DAILY} every row of a run lands in one anchor bucket -
@@ -164,7 +164,7 @@ public class LiveViewSteadyStateBenchmark {
     // - and so lets a repair land in a closed partition the apply has to rewrite whole,
     // rather than in the head partition it can append to.
     private static final long DEFAULT_TS_STEP_MICROS = 444L;
-    private static final String VIEW_NAME = "mm_transaction_live_created_at_view";
+    private static final String VIEW_NAME = "payments_view";
 
     public static void main(String[] args) throws Exception {
         long seedRows = 1_000_000L;
@@ -206,7 +206,7 @@ public class LiveViewSteadyStateBenchmark {
         // the question is about - the WAL-lag append into the last partition, the
         // all-in-order single-segment block, and the SYMBOL dedup-key remap on apply -
         // are TableWriter's rather than the live view's, so the same schema on the base
-        // exercises the same code. Rows are unique in (created_at, cod_acct_no) by
+        // exercises the same code. Rows are unique in (created_at, account_id) by
         // construction unless --equal-ts-percent says otherwise, so nothing is deduped
         // away and the reading is the dedup path's own cost.
         boolean isBaseDeduped = false;
@@ -527,13 +527,13 @@ public class LiveViewSteadyStateBenchmark {
             final String capacity = isSymbolPreSized ? " capacity " + symbolCapacity(distinctAccounts) : "";
             final String indexClause = isIndexed ? " index capacity 4" : "";
             engine.execute(
-                    "create table mm_transaction_live_created_at ("
+                    "create table payments ("
                             + "created_at timestamp, "
-                            + "cod_acct_no " + partitionKeyType.columnDdl(capacity, indexClause) + ", "
-                            + "amt_txn double"
+                            + "account_id " + partitionKeyType.columnDdl(capacity, indexClause) + ", "
+                            + "amount double"
                             + sumColumnDdl(sumColumns)
                             + ") timestamp(created_at) partition by hour wal"
-                            + (isBaseDeduped ? " dedup upsert keys(created_at, cod_acct_no)" : ""),
+                            + (isBaseDeduped ? " dedup upsert keys(created_at, account_id)" : ""),
                     sqlCtx
             );
             engine.execute(insertSql(rowShape, 1, seedRows, 0, 0, 1, false), sqlCtx);
@@ -542,10 +542,10 @@ public class LiveViewSteadyStateBenchmark {
             engine.execute(
                     "create live view " + VIEW_NAME + " "
                             + "flush every 5s start from beginning as "
-                            + "select created_at, cod_acct_no, "
+                            + "select created_at, account_id, "
                             + selectShape.projections(sumColumns)
-                            + " from mm_transaction_live_created_at "
-                            + "window w as (partition by cod_acct_no order by created_at "
+                            + " from payments "
+                            + "window w as (partition by account_id order by created_at "
                             + anchorClause(anchorPeriod) + ")"
                             + selectShape.extraWindows(),
                     sqlCtx
@@ -716,7 +716,7 @@ public class LiveViewSteadyStateBenchmark {
                     final String repair = repairName(instance);
 
                     final long baseSeqTxn = engine.getTableSequencerAPI()
-                            .getTxnTracker(engine.getTableTokenIfExists("mm_transaction_live_created_at"))
+                            .getTxnTracker(engine.getTableTokenIfExists("payments"))
                             .getWriterTxn();
                     segments.sample();
                     System.out.printf(
@@ -1260,7 +1260,7 @@ public class LiveViewSteadyStateBenchmark {
                         + "view_symbol_capacity=%d view_symbol_cached=%s%n",
                 heapBytes / (1024.0 * 1024.0),
                 Unsafe.getMemUsed() / (1024.0 * 1024.0),
-                isSymbolKey ? dirBytes(viewPath, "cod_acct_no.") / (1024.0 * 1024.0) : 0.0,
+                isSymbolKey ? dirBytes(viewPath, "account_id.") / (1024.0 * 1024.0) : 0.0,
                 dirBytes(viewPath, null) / (1024.0 * 1024.0),
                 symbolCapacity,
                 isSymbolCached
@@ -1410,12 +1410,12 @@ public class LiveViewSteadyStateBenchmark {
                   + rowIndex + " - 1 else " + rowIndex + " end)"
                 : rowIndex;
         final String acct = shape.accountExpression(twinIndex);
-        final String amount = "(" + rowIndex + " % 2001 - 1000) * 0.01";
+        final String amountExpr = "(" + rowIndex + " % 2001 - 1000) * 0.01";
         // A NULL amount is what separates the two counters a fused group might otherwise
-        // look equivalent on: sum(amt_txn) skips the row and count(cod_acct_no) does not.
-        final String nullableAmount = shape.nullPercent > 0
-                ? "case when " + rowIndex + " % 100 < " + shape.nullPercent + " then null::double else " + amount + " end"
-                : amount;
+        // look equivalent on: sum(amount) skips the row and count(account_id) does not.
+        final String nullableAmountExpr = shape.nullPercent > 0
+                ? "case when " + rowIndex + " % 100 < " + shape.nullPercent + " then null::double else " + amountExpr + " end"
+                : amountExpr;
         final String position = "(" + START_TS + " + " + twinIndex + " * " + shape.tsStepMicros + ")";
         final long maxLagMicros = o3LagMicros + (long) (o3SpreadSteps - 1) * shape.anchorPeriodMicros;
         final String lag;
@@ -1437,10 +1437,10 @@ public class LiveViewSteadyStateBenchmark {
                 ? "case when " + rowIndex + " % " + o3EveryN + " = 0 and " + lateGate
                   + " then " + position + " - " + lag + " else " + position + " end"
                 : position;
-        final StringBuilder sql = new StringBuilder("insert into mm_transaction_live_created_at ")
+        final StringBuilder sql = new StringBuilder("insert into payments ")
                 .append("select (").append(timestamp).append(")::timestamp, ")
                 .append(acct).append(", ")
-                .append(nullableAmount);
+                .append(nullableAmountExpr);
         for (int i = 1; i <= shape.sumColumns; i++) {
             sql.append(", (").append(rowIndex).append(" % ").append(2000 + i).append(") * 0.01");
         }
@@ -1847,23 +1847,23 @@ public class LiveViewSteadyStateBenchmark {
 
         String extraWindows() {
             return this == MIXED
-                    ? ", r as (partition by cod_acct_no order by created_at rows between 63 preceding and current row)"
+                    ? ", r as (partition by account_id order by created_at rows between 63 preceding and current row)"
                     : "";
         }
 
         String projections(int sumColumns) {
             final StringBuilder select = new StringBuilder(switch (this) {
-                case DISPERSION -> "stddev_samp(amt_txn) over w as ss, stddev_pop(amt_txn) over w as sp, "
-                        + "var_samp(amt_txn) over w as vs, var_pop(amt_txn) over w as vp, "
-                        + "count(amt_txn) over w as c";
-                case MIXED -> "sum(amt_txn) over w as cumulative_sum, sum(amt_txn) over r as bounded_sum";
+                case DISPERSION -> "stddev_samp(amount) over w as ss, stddev_pop(amount) over w as sp, "
+                        + "var_samp(amount) over w as vs, var_pop(amount) over w as vp, "
+                        + "count(amount) over w as c";
+                case MIXED -> "sum(amount) over w as cumulative_sum, sum(amount) over r as bounded_sum";
                 case ROW_COUNT -> "count(*) over w as n, row_number() over w as rn";
-                case SINGLE_COUNT -> "count(cod_acct_no) over w as cumulative_count";
-                case SINGLE_SUM -> "sum(amt_txn) over w as cumulative_sum";
-                case SINGLE_SUM_UNFUSED -> "sum(amt_txn + 0.0) over w as cumulative_sum";
-                case SUM_AVG_COUNT -> "sum(amt_txn) over w as s, avg(amt_txn) over w as a, "
-                        + "count(amt_txn) over w as c";
-                case TARGET -> "sum(amt_txn) over w as cumulative_sum, count(cod_acct_no) over w as cumulative_count";
+                case SINGLE_COUNT -> "count(account_id) over w as cumulative_count";
+                case SINGLE_SUM -> "sum(amount) over w as cumulative_sum";
+                case SINGLE_SUM_UNFUSED -> "sum(amount + 0.0) over w as cumulative_sum";
+                case SUM_AVG_COUNT -> "sum(amount) over w as s, avg(amount) over w as a, "
+                        + "count(amount) over w as c";
+                case TARGET -> "sum(amount) over w as cumulative_sum, count(account_id) over w as cumulative_count";
             });
             for (int i = 1; i <= sumColumns; i++) {
                 select.append(", sum(q").append(i).append(") over w as qs").append(i);

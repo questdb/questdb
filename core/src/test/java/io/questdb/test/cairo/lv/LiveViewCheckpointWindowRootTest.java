@@ -302,10 +302,10 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
             // "One B-tree per window" is therefore one tree for the group plus its own
             // root for this.
             execute("create live view lv flush every 100ms start from beginning as "
-                    + "select created_at, cod_acct_no, sum(amt_txn) over w as s, "
-                    + "sum(amt_txn) over (partition by cod_acct_no order by created_at "
+                    + "select created_at, account_id, sum(amount) over w as s, "
+                    + "sum(amount) over (partition by account_id order by created_at "
                     + "rows between 3 preceding and current row) as b "
-                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                    + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 insertAccount(job, "2026-01-01T09:00:00.000000Z", "acct-1", 5.0);
@@ -433,9 +433,9 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
             // beside their sum, so the durable state is one 16-byte accumulator and the
             // fused entry is 24 bytes rather than the 32 two components would cost.
             execute("create live view lv flush every 100ms start from beginning as "
-                    + "select created_at, cod_acct_no, sum(amt_txn) over w as s, "
-                    + "avg(amt_txn) over w as a, count(amt_txn) over w as c "
-                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                    + "select created_at, account_id, sum(amount) over w as s, "
+                    + "avg(amount) over w as a, count(amount) over w as c "
+                    + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 insertAccount(job, "2026-01-01T09:00:00.000000Z", "acct-1", 5.0);
@@ -610,7 +610,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
 
     private static final byte[] DIRECT_KEY_SCHEMA = keySchema(ColumnType.STRING);
     private static final byte[] DIRECT_WINDOW_IDENTITY =
-            LiveViewWindowStatePlan.encodeWindowIdentity("w", "1:3:cod_acct_no;", "1:2:created_at:1;");
+            LiveViewWindowStatePlan.encodeWindowIdentity("w", "1:3:account_id;", "1:2:created_at:1;");
 
     private static void assertInvalid(ThrowingRunnable runnable, CharSequence message) {
         try {
@@ -815,7 +815,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
     }
 
     private static byte[] otherWindowIdentity() {
-        return LiveViewWindowStatePlan.encodeWindowIdentity("w2", "1:3:cod_acct_no;", "1:2:created_at:1;");
+        return LiveViewWindowStatePlan.encodeWindowIdentity("w2", "1:3:account_id;", "1:2:created_at:1;");
     }
 
     private static void putIntBe(byte[] target, int offset, int value) {
@@ -915,16 +915,16 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
      */
     private void assertDerivedViewMatchesRecompute() throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
-        final String frame = "over (partition by cod_acct_no, bucket order by created_at "
+        final String frame = "over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row)";
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(select created_at, cod_acct_no, "
-                        + "sum(amt_txn) " + frame + " as s, "
-                        + "avg(amt_txn) " + frame + " as a, "
-                        + "count(amt_txn) " + frame + " as c "
-                        + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)"
+                "(select created_at, account_id, "
+                        + "sum(amount) " + frame + " as s, "
+                        + "avg(amount) " + frame + " as a, "
+                        + "count(amount) " + frame + " as c "
+                        + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)"
                         + ") order by 2, 1",
                 "(lv) order by 2, 1",
                 LOG,
@@ -942,12 +942,12 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(select created_at, cod_acct_no, "
-                        + "sum(amt_txn) over (partition by cod_acct_no, bucket order by created_at "
+                "(select created_at, account_id, "
+                        + "sum(amount) over (partition by account_id, bucket order by created_at "
                         + "rows between unbounded preceding and current row) as cumulative_sum, "
-                        + "count(cod_acct_no) over (partition by cod_acct_no, bucket order by created_at "
+                        + "count(account_id) over (partition by account_id, bucket order by created_at "
                         + "rows between unbounded preceding and current row) as cumulative_count "
-                        + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)"
+                        + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)"
                         + ") order by 2, 1",
                 "(lv) order by 2, 1",
                 LOG,
@@ -979,16 +979,16 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
     }
 
     private void createBaseTable() throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no symbol, amt_txn double) "
+        execute("create table tx (created_at timestamp, account_id symbol, amount double) "
                 + "timestamp(created_at) partition by hour wal");
     }
 
     private void createTargetView() throws Exception {
         createBaseTable();
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, cod_acct_no, sum(amt_txn) over w as cumulative_sum, "
-                + "count(cod_acct_no) over w as cumulative_count "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                + "select created_at, account_id, sum(amount) over w as cumulative_sum, "
+                + "count(account_id) over w as cumulative_count "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
     }
 
     private int headFunctionRootCount() {

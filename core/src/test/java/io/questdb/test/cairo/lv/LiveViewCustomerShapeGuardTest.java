@@ -50,17 +50,20 @@ import org.junit.Test;
  * settled before a soak is allocated rather than discovered inside one. These cases settle
  * them.
  * <p>
- * The DDL below is the one the customer's own logs recorded for the ordered
- * {@code created_at} base and its view, at the column set the view reads. The fixture
- * changes exactly one production value: {@code cairo.live.view.checkpoint.rows}, so a
- * thousand-row fixture seals the roots a million-row cadence would not. That is a cadence
- * and not a price - every switch and every cost the route consults stays at its shipped
- * default, which is what makes the decisions these cases assert the production decisions.
+ * The DDL below carries the reported shape column for column - an ordered designated
+ * timestamp, an indexed SYMBOL key, a DOUBLE measure, hourly WAL partitioning and a daily
+ * anchor over a cumulative sum and count - under neutral table and column names. Only the
+ * names differ from the ones the reported logs recorded, and no guard reads a name. The
+ * fixture changes exactly one production value: {@code cairo.live.view.checkpoint.rows},
+ * so a thousand-row fixture seals the roots a million-row cadence would not. That is a
+ * cadence and not a price - every switch and every cost the route consults stays at its
+ * shipped default, which is what makes the decisions these cases assert the production
+ * decisions.
  */
 public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
 
     private static final int ACCOUNT_COUNT = 8;
-    private static final String BASE = "mm_transaction_live_created_at";
+    private static final String BASE = "payments";
     // The customer's second view anchors at 12:00, so the anchor segment and the calendar
     // day do not coincide: a segment runs 12:00 to 12:00.
     private static final String ANCHOR_TIME = "12:00";
@@ -71,7 +74,7 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
     // than the whole range, which is the crossover
     // testTheOpenSegmentCapSelectsWhatTheConfiguredPriceDeclines measures.
     private static final int ROWS_PER_ACCOUNT_PER_HOUR = 4;
-    private static final String VIEW = "mm_transaction_live_created_at_view";
+    private static final String VIEW = "payments_view";
 
     @Test
     public void testACustomerViewCreatedWithoutTheIdentityNeverArmsTheRoute() throws Exception {
@@ -403,12 +406,12 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
     private void assertViewMatchesRecompute() throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T" + ANCHOR_TIME
                 + ":00.000000Z'::timestamp)";
-        final String recompute = "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over (partition by cod_acct_no, bucket order by created_at "
+        final String recompute = "select created_at, account_id, "
+                + "sum(amount) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_sum, "
-                + "count(cod_acct_no) over (partition by cod_acct_no, bucket order by created_at "
+                + "count(account_id) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_count "
-                + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from " + BASE + ")";
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from " + BASE + ")";
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
@@ -432,12 +435,11 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
     }
 
     /**
-     * The customer's DDL, at the columns the view reads.
+     * The reported DDL, at the columns the view reads, under neutral names.
      *
-     * @param isKeyIndexed whether {@code cod_acct_no} carries the posting index the keyed
-     *                     read follows; the ordered {@code created_at} base the customer
-     *                     built for their second attempt does, and its DDL is the one the
-     *                     logs recorded
+     * @param isKeyIndexed whether {@code account_id} carries the posting index the keyed
+     *                     read follows; the ordered base the customer built for their
+     *                     second attempt does, and that is the shape the logs recorded
      * @param anchorTime   the daily anchor's wall time
      * @param anchorZone   the anchor's time zone, or null for the customer's second view,
      *                     which carries none
@@ -445,17 +447,17 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
     private void createCustomerShape(boolean isKeyIndexed, String anchorTime, String anchorZone) throws Exception {
         execute("create table " + BASE + " ("
                 + "created_at timestamp, "
-                + "cod_acct_no symbol nocache" + (isKeyIndexed ? " index capacity 4" : "") + ", "
-                + "amt_txn double"
+                + "account_id symbol nocache" + (isKeyIndexed ? " index capacity 4" : "") + ", "
+                + "amount double"
                 + ") timestamp(created_at) partition by hour wal");
         execute("insert into " + BASE + " values " + segmentRows(2) + ", " + segmentRows(3));
         drainWalQueue();
         execute("create live view " + VIEW + " flush every 5s start from beginning as "
-                + "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over w as cumulative_sum, "
-                + "count(cod_acct_no) over w as cumulative_count "
+                + "select created_at, account_id, "
+                + "sum(amount) over w as cumulative_sum, "
+                + "count(account_id) over w as cumulative_count "
                 + "from " + BASE + " "
-                + "window w as (partition by cod_acct_no order by created_at "
+                + "window w as (partition by account_id order by created_at "
                 + "anchor daily '" + anchorTime + "'" + (anchorZone != null ? " '" + anchorZone + "'" : "") + ")");
     }
 

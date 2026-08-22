@@ -51,10 +51,10 @@ public class LiveViewSegmentRepairEnvelopeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             createBase("symbol index capacity 4");
             execute("create live view lv flush every 100ms start from beginning as "
-                    + "select created_at, cod_acct_no, sum(amt_txn) over w as s, "
-                    + "sum(amt_txn) over (partition by cod_acct_no order by created_at "
+                    + "select created_at, account_id, sum(amount) over w as s, "
+                    + "sum(amount) over (partition by account_id order by created_at "
                     + "rows between 3 preceding and current row) as b "
-                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                    + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
             assertGates("bounded frame", "available");
         });
     }
@@ -65,13 +65,13 @@ public class LiveViewSegmentRepairEnvelopeTest extends AbstractLiveViewTest {
         // segment on a whole-segment replay, which costs the same write and only a larger
         // read - so the segment scope itself is untouched.
         assertMemoryLeak(() -> {
-            execute("create table tx (created_at timestamp, cod_acct_no symbol index capacity 4, "
-                    + "branch symbol, amt_txn double) timestamp(created_at) partition by hour wal");
+            execute("create table tx (created_at timestamp, account_id symbol index capacity 4, "
+                    + "branch symbol, amount double) timestamp(created_at) partition by hour wal");
             execute("insert into tx values ('2026-01-01T09:00:00.000000Z', 'acct-1', 'br-1', 1.5)");
             drainWalQueue();
             execute("create live view lv flush every 100ms start from beginning as "
-                    + "select created_at, cod_acct_no, branch, sum(amt_txn) over w as s "
-                    + "from tx window w as (partition by cod_acct_no, branch order by created_at "
+                    + "select created_at, account_id, branch, sum(amount) over w as s "
+                    + "from tx window w as (partition by account_id, branch order by created_at "
                     + "anchor daily '00:00')");
             assertGates("available", "compound key");
         });
@@ -89,10 +89,10 @@ public class LiveViewSegmentRepairEnvelopeTest extends AbstractLiveViewTest {
             createBase("symbol index capacity 4");
             assertException(
                     "create live view lv flush every 100ms start from beginning as "
-                            + "select created_at, cod_acct_no, sum(amt_txn) over w as s "
-                            + "from tx window w as (partition by concat(cod_acct_no, '-x') order by created_at "
+                            + "select created_at, account_id, sum(amount) over w as s "
+                            + "from tx window w as (partition by concat(account_id, '-x') order by created_at "
                             + "anchor daily '00:00')",
-                    153,
+                    151,
                     "live view ANCHOR currently requires PARTITION BY to reference base columns directly"
             );
         });
@@ -117,8 +117,8 @@ public class LiveViewSegmentRepairEnvelopeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             createBase("symbol index capacity 4");
             execute("create live view lv flush every 100ms start from beginning as "
-                    + "select created_at, cod_acct_no, sum(amt_txn) over "
-                    + "(partition by cod_acct_no order by created_at rows between 3 preceding and current row) as s "
+                    + "select created_at, account_id, sum(amount) over "
+                    + "(partition by account_id order by created_at rows between 3 preceding and current row) as s "
                     + "from tx");
             assertGates("no anchor plan", "no anchor plan");
         });
@@ -155,8 +155,8 @@ public class LiveViewSegmentRepairEnvelopeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             createBase("symbol index capacity 4");
             execute("create live view lv flush every 100ms start from beginning as "
-                    + "select created_at, sum(amt_txn) over w as s "
-                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                    + "select created_at, sum(amount) over w as s "
+                    + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
             assertGates("available", "key not projected");
         });
     }
@@ -187,8 +187,8 @@ public class LiveViewSegmentRepairEnvelopeTest extends AbstractLiveViewTest {
 
     private void createAnchoredView() throws Exception {
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, cod_acct_no, sum(amt_txn) over w as s "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                + "select created_at, account_id, sum(amount) over w as s "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
     }
 
     /**
@@ -197,7 +197,7 @@ public class LiveViewSegmentRepairEnvelopeTest extends AbstractLiveViewTest {
      * nothing to seed never reaches the compile, and every gate would read NULL.
      */
     private void createBase(String keyColumnDdl) throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no " + keyColumnDdl + ", amt_txn double) "
+        execute("create table tx (created_at timestamp, account_id " + keyColumnDdl + ", amount double) "
                 + "timestamp(created_at) partition by hour wal");
         execute("insert into tx values ('2026-01-01T09:00:00.000000Z', "
                 + (keyColumnDdl.startsWith("symbol") ? "'acct-1'" : "1") + ", 1.5)");

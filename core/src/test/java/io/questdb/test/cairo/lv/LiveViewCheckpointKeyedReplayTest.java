@@ -160,7 +160,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                         job.keyedReplayMergedRowsForTest()
                 );
                 TestUtils.assertEquals(before, dumpUnaffectedRowsOnTheSecond("acct-9"));
-                Assert.assertEquals(1, count("select count() from lv where cod_acct_no = 'acct-9'"));
+                Assert.assertEquals(1, count("select count() from lv where account_id = 'acct-9'"));
                 assertViewMatchesRecompute();
             }
         });
@@ -196,7 +196,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(rowsBefore + 1, count("select count() from lv"));
                 Assert.assertEquals(
                         ROWS_PER_ACCOUNT_PER_DAY + 1,
-                        count("select count() from lv where cod_acct_no is null"
+                        count("select count() from lv where account_id is null"
                                 + " and created_at >= '2026-01-02T00:00:00.000000Z'::timestamp"
                                 + " and created_at < '2026-01-03T00:00:00.000000Z'::timestamp")
                 );
@@ -540,10 +540,10 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
 
     private void assertViewMatchesRecompute() throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
-        final String recompute = "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over (partition by cod_acct_no, bucket order by created_at "
+        final String recompute = "select created_at, account_id, "
+                + "sum(amount) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_sum "
-                + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)";
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)";
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
@@ -576,14 +576,14 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     private void createView(String seedRows, boolean isKeyIndexed) throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache"
+        execute("create table tx (created_at timestamp, account_id symbol nocache"
                 + (isKeyIndexed ? " index capacity 8" : "") + ", "
-                + "amt_txn double) timestamp(created_at) partition by hour wal");
+                + "amount double) timestamp(created_at) partition by hour wal");
         execute("insert into tx values " + seedRows);
         drainWalQueue();
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, cod_acct_no, sum(amt_txn) over w as cumulative_sum "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                + "select created_at, account_id, sum(amount) over w as cumulative_sum "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
     }
 
     /**
@@ -596,7 +596,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 sqlExecutionContext,
                 "select * from lv where created_at >= '2026-01-02T00:00:00.000000Z'::timestamp"
                         + " and created_at < '2026-01-03T00:00:00.000000Z'::timestamp"
-                        + " and cod_acct_no != '" + correctedAccount + "' order by 2, 1",
+                        + " and account_id != '" + correctedAccount + "' order by 2, 1",
                 new StringSink()
         );
     }

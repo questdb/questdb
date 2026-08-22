@@ -185,7 +185,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     public void testAUniqueSegmentRepairPublishesOnlyTheKeysItRecomputed() throws Exception {
         // The route this stage exists for. A keyed repair of a dedup-keyed view whose
         // output names each pair once commits the rows it recomputed and nothing else,
-        // upserted onto (created_at, cod_acct_no): every other account's stored row stays
+        // upserted onto (created_at, account_id): every other account's stored row stays
         // exactly where it stands rather than being rewritten as itself, which is what a
         // REPLACE_RANGE over the same interval has to do.
         armSparseRepair();
@@ -227,7 +227,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     public void testARepeatedPairAbandonsTheSparseAttemptAndPublishesTheWholeRange() throws Exception {
         // The fallback, and the case that carries it. The repeated pair belongs to the
         // account the correction touches, so it is in the set a sparse commit would have
-        // carried - and an upsert on (created_at, cod_acct_no) would collapse it to one
+        // carried - and an upsert on (created_at, account_id) would collapse it to one
         // row. The repair abandons the attempt before it commits anything: the merge
         // writes the rows it had only counted and the whole range goes out as a
         // REPLACE_RANGE, which collapses nothing.
@@ -366,7 +366,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
             }
-            Assert.assertEquals("created_at,cod_acct_no", dedupKeysOf("lv"));
+            Assert.assertEquals("created_at,account_id", dedupKeysOf("lv"));
         });
     }
 
@@ -669,7 +669,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         // reach the view's table through a different drain from the three cases above.
         //
         // The base keeps both rows of the pair because its own dedup keys carry the amount;
-        // what repeats in the view's output is (created_at, cod_acct_no), which is the pair
+        // what repeats in the view's output is (created_at, account_id), which is the pair
         // the view's table deduplicates on and the one at risk. On a forward commit forced
         // back to the default mode this fails at expected:<50> but was:<49>.
         armSparsePublication();
@@ -711,7 +711,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         // The drift is produced the only way it can be produced without an unrelated
         // defect: the forward commit goes out at the default dedup mode - what the
         // ordinary path did before the mode was stamped - so the apply collapses the two
-        // output rows sharing (created_at, cod_acct_no) into the last one written. The
+        // output rows sharing (created_at, account_id) into the last one written. The
         // view emitted two rows and its table kept one, and nothing downstream would
         // notice: the seal would go on stamping the count the view emitted, and a ladder
         // whose positions overstate the output is not something a later restart can
@@ -863,13 +863,13 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                         rowsBefore + 1,
                         count("select count() from lv")
                 );
-                assertQuery("select created_at, cod_acct_no, cumulative_sum from lv"
-                        + " where cod_acct_no = 'acct-1'"
+                assertQuery("select created_at, account_id, cumulative_sum from lv"
+                        + " where account_id = 'acct-1'"
                         + " and created_at >= '2026-01-02T01:00:01.000000Z'::timestamp"
                         + " and created_at <= '2026-01-02T01:00:02.000000Z'::timestamp")
                         .noLeakCheck()
                         .timestamp("created_at")
-                        .returns("created_at\tcod_acct_no\tcumulative_sum\n"
+                        .returns("created_at\taccount_id\tcumulative_sum\n"
                                 + "2026-01-02T01:00:01.000000Z\tacct-1\t99.0\n"
                                 + "2026-01-02T01:00:02.000000Z\tacct-1\t98.0\n");
                 TestUtils.assertEquals(untouchedBefore, dumpRowsOf("acct-2"));
@@ -1140,10 +1140,10 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
 
     private void assertViewMatchesRecompute(String viewName) throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
-        final String recompute = "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over (partition by cod_acct_no, bucket order by created_at "
+        final String recompute = "select created_at, account_id, "
+                + "sum(amount) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_sum "
-                + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)";
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)";
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
@@ -1190,8 +1190,8 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
      * un-flushed lead.
      */
     private void createBase(String seedRows, String dedupClause) throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 8, "
-                + "amt_txn double) timestamp(created_at) partition by hour wal" + dedupClause);
+        execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 8, "
+                + "amount double) timestamp(created_at) partition by hour wal" + dedupClause);
         execute("insert into tx values " + seedRows);
         drainWalQueue();
     }
@@ -1213,13 +1213,13 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     /**
-     * The same view over a base that deduplicates on {@code (created_at, cod_acct_no, amt_txn)}.
+     * The same view over a base that deduplicates on {@code (created_at, account_id, amount)}.
      * The third key is what lets the base keep two rows at one instant for one account, which is
      * the pair the view's own output then repeats; keying on the first two alone would collapse
      * the case's input before the view ever saw it.
      */
     private void createDedupBaseView(String seedRows) throws Exception {
-        createBase(seedRows, " dedup upsert keys(created_at, cod_acct_no, amt_txn)");
+        createBase(seedRows, " dedup upsert keys(created_at, account_id, amount)");
         createViewOverBase("100ms");
     }
 
@@ -1230,8 +1230,8 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     private void createKeylessView(String seedRows) throws Exception {
         createBase(seedRows);
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, sum(amt_txn) over w as cumulative_sum "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                + "select created_at, sum(amount) over w as cumulative_sum "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
     }
 
     /**
@@ -1259,8 +1259,8 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
 
     private void createViewOverBase(String viewName, String flushEvery) throws Exception {
         execute("create live view " + viewName + " flush every " + flushEvery + " start from beginning as "
-                + "select created_at, cod_acct_no, sum(amt_txn) over w as cumulative_sum "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                + "select created_at, account_id, sum(amount) over w as cumulative_sum "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
     }
 
     /**
@@ -1307,7 +1307,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         return TestUtils.printSqlToString(
                 engine,
                 sqlExecutionContext,
-                "select created_at, cod_acct_no, cumulative_sum from " + viewName + " order by 1, 2, 3",
+                "select created_at, account_id, cumulative_sum from " + viewName + " order by 1, 2, 3",
                 new StringSink()
         );
     }
@@ -1320,7 +1320,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         return TestUtils.printSqlToString(
                 engine,
                 sqlExecutionContext,
-                "select * from lv where cod_acct_no = '" + account + "' order by 1, 3",
+                "select * from lv where account_id = '" + account + "' order by 1, 3",
                 new StringSink()
         );
     }
@@ -1367,7 +1367,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     /**
-     * The view's rows carrying one {@code (created_at, cod_acct_no)} pair, read through the view
+     * The view's rows carrying one {@code (created_at, account_id)} pair, read through the view
      * so an un-flushed lead row counts as one the view holds.
      */
     private long rowsAt(String timestamp, String account) throws Exception {
@@ -1375,7 +1375,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     private long rowsAt(String viewName, String timestamp, String account) throws Exception {
-        return count("select count() from " + viewName + " where cod_acct_no = '" + account + "'"
+        return count("select count() from " + viewName + " where account_id = '" + account + "'"
                 + " and created_at = '" + timestamp + "'::timestamp");
     }
 

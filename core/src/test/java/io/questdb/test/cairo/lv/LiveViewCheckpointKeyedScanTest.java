@@ -135,9 +135,9 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 commit(row(2, 3, "acct-1"), job);
 
                 final String indexed = "select count() from tx "
-                        + "where created_at in '2026-01-02' and cod_acct_no = 'acct-1'";
+                        + "where created_at in '2026-01-02' and account_id = 'acct-1'";
                 final String scanned = "select count() from tx "
-                        + "where created_at in '2026-01-02' and cod_acct_no::string = 'acct-1'";
+                        + "where created_at in '2026-01-02' and account_id::string = 'acct-1'";
                 Assert.assertEquals("the whole-scan oracle", 11, count(scanned));
                 Assert.assertEquals(
                         "an index-driven query after a priced repair must still find every row",
@@ -255,8 +255,8 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
         // one of the named ones, in the same order, over the same inclusive bounds - and the
         // other keys' rows not at all.
         assertMemoryLeak(() -> {
-            execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
-                    + "amt_txn double) timestamp(created_at) partition by hour wal");
+            execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                    + "amount double) timestamp(created_at) partition by hour wal");
             final StringBuilder rows = new StringBuilder();
             for (int hour = 0; hour < 12; hour++) {
                 for (int account = 1; account <= 4; account++) {
@@ -302,8 +302,8 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
 
             final StringSink expected = new StringSink();
             try (
-                    RecordCursorFactory factory = select("select created_at, cod_acct_no from tx "
-                            + "where cod_acct_no in ('acct-2', 'acct-4') "
+                    RecordCursorFactory factory = select("select created_at, account_id from tx "
+                            + "where account_id in ('acct-2', 'acct-4') "
                             + "and created_at between '2026-01-02T02:00:00.000000Z' "
                             + "and '2026-01-02T09:00:00.000000Z' order by created_at");
                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
@@ -380,10 +380,10 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
 
     private void assertViewMatchesRecompute() throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
-        final String recompute = "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over (partition by cod_acct_no, bucket order by created_at "
+        final String recompute = "select created_at, account_id, "
+                + "sum(amount) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_sum "
-                + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)";
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)";
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
@@ -402,14 +402,14 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
     }
 
     private void createView(String seedRows, boolean isKeyIndexed) throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache"
+        execute("create table tx (created_at timestamp, account_id symbol nocache"
                 + (isKeyIndexed ? " index capacity 4" : "") + ", "
-                + "amt_txn double) timestamp(created_at) partition by hour wal");
+                + "amount double) timestamp(created_at) partition by hour wal");
         execute("insert into tx values " + seedRows);
         drainWalQueue();
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, cod_acct_no, sum(amt_txn) over w as cumulative_sum "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                + "select created_at, account_id, sum(amount) over w as cumulative_sum "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
     }
 
     private LiveViewCheckpointKeyProjector keyProjector() {

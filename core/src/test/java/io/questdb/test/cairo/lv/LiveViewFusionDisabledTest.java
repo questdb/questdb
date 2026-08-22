@@ -288,12 +288,12 @@ public class LiveViewFusionDisabledTest extends AbstractLiveViewTest {
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(select created_at, cod_acct_no, "
-                        + "sum(amt_txn) over (partition by cod_acct_no, bucket order by created_at "
+                "(select created_at, account_id, "
+                        + "sum(amount) over (partition by account_id, bucket order by created_at "
                         + "rows between unbounded preceding and current row) as cumulative_sum, "
-                        + "count(cod_acct_no) over (partition by cod_acct_no, bucket order by created_at "
+                        + "count(account_id) over (partition by account_id, bucket order by created_at "
                         + "rows between unbounded preceding and current row) as cumulative_count "
-                        + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)"
+                        + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)"
                         + ") order by 2, 1",
                 "(lv) order by 2, 1",
                 LOG,
@@ -302,12 +302,12 @@ public class LiveViewFusionDisabledTest extends AbstractLiveViewTest {
     }
 
     private void createTargetView() throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no symbol, amt_txn double) "
+        execute("create table tx (created_at timestamp, account_id symbol, amount double) "
                 + "timestamp(created_at) partition by hour wal");
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, cod_acct_no, sum(amt_txn) over w as cumulative_sum, "
-                + "count(cod_acct_no) over w as cumulative_count "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                + "select created_at, account_id, sum(amount) over w as cumulative_sum, "
+                + "count(account_id) over w as cumulative_count "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
     }
 
     private void insertAccount(LiveViewRefreshJob job, String timestamp, String account, double amount)

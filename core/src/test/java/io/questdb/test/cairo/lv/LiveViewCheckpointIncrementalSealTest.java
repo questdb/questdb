@@ -2425,12 +2425,12 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     private void assertUnfusedAvgViewMatchesRecompute(String anchorTime) throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T"
                 + anchorTime + ":00.000000Z'::timestamp)";
-        final String recompute = "select created_at, cod_acct_no, "
-                + "avg(amt_txn + 0.0) over (partition by cod_acct_no, bucket order by created_at "
+        final String recompute = "select created_at, account_id, "
+                + "avg(amount + 0.0) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_avg, "
-                + "ksum(amt_txn + 0.0) over (partition by cod_acct_no, bucket order by created_at "
+                + "ksum(amount + 0.0) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_ksum "
-                + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)";
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)";
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
@@ -2449,10 +2449,10 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     private void assertUnfusedViewMatchesRecompute(String anchorTime) throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T"
                 + anchorTime + ":00.000000Z'::timestamp)";
-        final String recompute = "select created_at, cod_acct_no, "
-                + "sum(amt_txn + 0.0) over (partition by cod_acct_no, bucket order by created_at "
+        final String recompute = "select created_at, account_id, "
+                + "sum(amount + 0.0) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_sum "
-                + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)";
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)";
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
@@ -2537,15 +2537,15 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
      * and root the case reads - see {@link #createUnfusedView}.
      */
     private void createUnfusedAvgView(String anchorTime, String seedRows) throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
-                + "amt_txn double) timestamp(created_at) partition by hour wal");
+        execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                + "amount double) timestamp(created_at) partition by hour wal");
         execute("insert into tx values " + seedRows);
         drainWalQueue();
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, cod_acct_no, "
-                + "avg(amt_txn + 0.0) over w as cumulative_avg, "
-                + "ksum(amt_txn + 0.0) over w as cumulative_ksum "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '"
+                + "select created_at, account_id, "
+                + "avg(amount + 0.0) over w as cumulative_avg, "
+                + "ksum(amount + 0.0) over w as cumulative_ksum "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '"
                 + anchorTime + "')");
     }
 
@@ -2561,27 +2561,27 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
      * tombstone or eviction bit there describes a state nothing in that path reads.
      */
     private void createUnfusedView(String anchorTime, String seedRows) throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
-                + "amt_txn double) timestamp(created_at) partition by hour wal");
+        execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                + "amount double) timestamp(created_at) partition by hour wal");
         execute("insert into tx values " + seedRows);
         drainWalQueue();
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, cod_acct_no, "
-                + "sum(amt_txn + 0.0) over w as cumulative_sum "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '"
+                + "select created_at, account_id, "
+                + "sum(amount + 0.0) over w as cumulative_sum "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '"
                 + anchorTime + "')");
     }
 
     private void createView(String anchorTime, String seedRows) throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
-                + "amt_txn double) timestamp(created_at) partition by hour wal");
+        execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                + "amount double) timestamp(created_at) partition by hour wal");
         execute("insert into tx values " + seedRows);
         drainWalQueue();
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over w as cumulative_sum, "
-                + "count(cod_acct_no) over w as cumulative_count "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '"
+                + "select created_at, account_id, "
+                + "sum(amount) over w as cumulative_sum, "
+                + "count(account_id) over w as cumulative_count "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '"
                 + anchorTime + "')");
     }
 
@@ -2592,16 +2592,16 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
      * accounts a case asks for.
      */
     private void createViewWithGeneratedSeed(String anchorTime, int accounts) throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
-                + "amt_txn double) timestamp(created_at) partition by hour wal");
+        execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                + "amount double) timestamp(created_at) partition by hour wal");
         execute("INSERT INTO tx SELECT ('2026-01-01T11:00:00.000000Z'::timestamp + x * 1_000)::timestamp, "
                 + "('acct-' || x)::symbol, x * 1.0 FROM long_sequence(" + accounts + ")");
         drainWalQueue();
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over w as cumulative_sum, "
-                + "count(cod_acct_no) over w as cumulative_count "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '"
+                + "select created_at, account_id, "
+                + "sum(amount) over w as cumulative_sum, "
+                + "count(account_id) over w as cumulative_count "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '"
                 + anchorTime + "')");
     }
 
@@ -2740,12 +2740,12 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
     private String recompute(String anchorTime) {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T"
                 + anchorTime + ":00.000000Z'::timestamp)";
-        return "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over (partition by cod_acct_no, bucket order by created_at "
+        return "select created_at, account_id, "
+                + "sum(amount) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_sum, "
-                + "count(cod_acct_no) over (partition by cod_acct_no, bucket order by created_at "
+                + "count(account_id) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_count "
-                + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)";
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)";
     }
 
     private void restartCycle() {

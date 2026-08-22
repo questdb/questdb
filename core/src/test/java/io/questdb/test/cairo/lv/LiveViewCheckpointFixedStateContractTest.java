@@ -270,8 +270,8 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
         // One logical boundary per commit, so each commit below is its own seal.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {
-            execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
-                    + "amt_txn decimal(38,2)) timestamp(created_at) partition by hour wal");
+            execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                    + "amount decimal(38,2)) timestamp(created_at) partition by hour wal");
             execute("insert into tx values ('2026-01-01T11:00:00.000000Z', 'acct-1', 10.25::decimal(38,2))");
             drainWalQueue();
             // The widest DECIMAL accumulator the group has to answer for: sum keeps a
@@ -281,9 +281,9 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
             // leaf: 40 bytes fits the per-component budget, so the seal writes no data
             // page for either. The count over the same column does join the group.
             execute("create live view lv flush every 100ms start from beginning as "
-                    + "select created_at, cod_acct_no, sum(amt_txn) over w as s, "
-                    + "avg(amt_txn) over w as a, count(amt_txn) over w as c "
-                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                    + "select created_at, account_id, sum(amount) over w as s, "
+                    + "avg(amount) over w as a, count(amount) over w as c "
+                    + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
                 commit("('2026-01-01T11:00:10.000000Z', 'acct-1', 11.50::decimal(38,2))", job);
@@ -584,8 +584,8 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
     }
 
     private void createView() throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
-                + "amt_txn double) timestamp(created_at) partition by hour wal");
+        execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                + "amount double) timestamp(created_at) partition by hour wal");
         execute("insert into tx values "
                 + "('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0), "
                 + "('2026-01-01T11:00:01.000000Z', 'acct-2', 20.0), "
@@ -600,12 +600,12 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
      */
     private String recompute() {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
-        return "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over (partition by cod_acct_no, bucket order by created_at "
+        return "select created_at, account_id, "
+                + "sum(amount) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_sum, "
-                + "count(cod_acct_no) over (partition by cod_acct_no, bucket order by created_at "
+                + "count(account_id) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_count "
-                + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)";
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)";
     }
 
     private LiveViewInstance viewInstance() {
@@ -615,10 +615,10 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
     }
 
     private String viewSelect() {
-        return "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over w as cumulative_sum, "
-                + "count(cod_acct_no) over w as cumulative_count "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')";
+        return "select created_at, account_id, "
+                + "sum(amount) over w as cumulative_sum, "
+                + "count(account_id) over w as cumulative_count "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')";
     }
 
     /**

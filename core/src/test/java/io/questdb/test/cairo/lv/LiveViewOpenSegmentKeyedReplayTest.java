@@ -183,7 +183,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         // replays: the pair the publication upserts on has to name each recomputed row
         // once. Two base rows of one account at one instant produce two output rows
         // carrying different cumulative sums, and an upsert keyed on (created_at,
-        // cod_acct_no) would keep one of them.
+        // account_id) would keep one of them.
         //
         // What makes the fallback cheap here is that the arithmetic resume walked nothing
         // to reach this point: its boundary positions came from the durable ones plus the
@@ -353,13 +353,13 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         return TestUtils.printSqlToString(
                 engine,
                 sqlExecutionContext,
-                "select * from lv where cod_acct_no = '" + account + "' order by 1, 3",
+                "select * from lv where account_id = '" + account + "' order by 1, 3",
                 new StringSink()
         );
     }
 
     private long rowsAt(String timestamp, String account) throws Exception {
-        return count("select count() from lv where cod_acct_no = '" + account + "'"
+        return count("select count() from lv where account_id = '" + account + "'"
                 + " and created_at = '" + timestamp + "'::timestamp");
     }
 
@@ -371,10 +371,10 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
 
     private void assertViewMatchesRecompute() throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
-        final String recompute = "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over (partition by cod_acct_no, bucket order by created_at "
+        final String recompute = "select created_at, account_id, "
+                + "sum(amount) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_sum "
-                + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)";
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)";
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
@@ -418,14 +418,14 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     private void createView(String seedRows, boolean isKeyIndexed) throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache"
+        execute("create table tx (created_at timestamp, account_id symbol nocache"
                 + (isKeyIndexed ? " index capacity 4" : "") + ", "
-                + "amt_txn double) timestamp(created_at) partition by hour wal");
+                + "amount double) timestamp(created_at) partition by hour wal");
         execute("insert into tx values " + seedRows);
         drainWalQueue();
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, cod_acct_no, sum(amt_txn) over w as cumulative_sum "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                + "select created_at, account_id, sum(amount) over w as cumulative_sum "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
     }
 
     /**

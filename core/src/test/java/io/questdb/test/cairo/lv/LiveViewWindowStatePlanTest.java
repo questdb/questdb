@@ -61,8 +61,8 @@ import org.junit.Test;
  *     when their identities match outright, and a third folds onto that component when
  *     its whole image is provably a slice of it - but never across arguments or
  *     contribution predicates, whichever of the two relations is in play. The target
- *     shape is the required negative control: {@code count(cod_acct_no)} must not read
- *     the counter inside {@code sum(amt_txn)}, because the two disagree on every row
+ *     shape is the required negative control: {@code count(account_id)} must not read
+ *     the counter inside {@code sum(amount)}, because the two disagree on every row
  *     where exactly one column is null;</li>
  *     <li><b>the layout is deterministic.</b> Components are ordered by encoded
  *     identity, never by SELECT-list order, so reordering the projections of one view
@@ -1081,7 +1081,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         plan.getTotalInlineStateBytes() <= LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES
                 );
                 Assert.assertNotEquals(
-                        "count(cod_acct_no) must not bind to the counter in sum(amt_txn)",
+                        "count(account_id) must not bind to the counter in sum(amount)",
                         plan.getProjection(0).getComponentIndex(),
                         plan.getProjection(1).getComponentIndex()
                 );
@@ -1306,14 +1306,14 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
     @Test
     public void testTheAnchorWindowAdoptsThePlanForTheTargetShape() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 4, "
-                    + "amt_txn double) timestamp(created_at) partition by hour wal");
+            execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 4, "
+                    + "amount double) timestamp(created_at) partition by hour wal");
             execute("insert into tx values ('2026-01-01T11:00:00.000000Z', 'acct-1', 10.0)");
             drainWalQueue();
             execute("create live view lv flush every 100ms start from beginning as "
-                    + "select created_at, cod_acct_no, sum(amt_txn) over w as cumulative_sum, "
-                    + "count(cod_acct_no) over w as cumulative_count "
-                    + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                    + "select created_at, account_id, sum(amount) over w as cumulative_sum, "
+                    + "count(account_id) over w as cumulative_count "
+                    + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
                 execute("insert into tx values ('2026-01-01T11:00:10.000000Z', 'acct-2', 11.0)");

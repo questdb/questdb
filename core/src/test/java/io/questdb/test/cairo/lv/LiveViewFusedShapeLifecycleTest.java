@@ -736,8 +736,8 @@ public class LiveViewFusedShapeLifecycleTest extends AbstractLiveViewTest {
             @Override
             void assertMatchesRecompute() throws Exception {
                 assertMatchesRecompute(
-                        "sum(amt_txn) " + FRAME + " as s, avg(amt_txn) " + FRAME + " as a, "
-                                + "count(amt_txn) " + FRAME + " as c",
+                        "sum(amount) " + FRAME + " as s, avg(amount) " + FRAME + " as a, "
+                                + "count(amount) " + FRAME + " as c",
                         "s, a, c",
                         withRingResidual
                 );
@@ -745,14 +745,14 @@ public class LiveViewFusedShapeLifecycleTest extends AbstractLiveViewTest {
 
             @Override
             void createView() throws Exception {
-                execute("create table tx (created_at timestamp, cod_acct_no symbol, amt_txn decimal(38,2)) "
+                execute("create table tx (created_at timestamp, account_id symbol, amount decimal(38,2)) "
                         + "timestamp(created_at) partition by hour wal");
                 execute("create live view lv flush every 100ms start from beginning as "
-                        + "select created_at, cod_acct_no, sum(amt_txn) over w as s, "
-                        + "avg(amt_txn) over w as a, count(amt_txn) over w as c"
+                        + "select created_at, account_id, sum(amount) over w as s, "
+                        + "avg(amount) over w as a, count(amount) over w as c"
                         + (withRingResidual ? ", " + RING_PROJECTION : "")
                         + " from tx window w as "
-                        + "(partition by cod_acct_no order by created_at anchor daily '00:00')");
+                        + "(partition by account_id order by created_at anchor daily '00:00')");
             }
 
             @Override
@@ -1010,13 +1010,13 @@ public class LiveViewFusedShapeLifecycleTest extends AbstractLiveViewTest {
                     ddl.append(", q").append(i).append(" double");
                     projections.append(", sum(q").append(i).append(") over w as s").append(i);
                 }
-                execute("create table tx (created_at timestamp, cod_acct_no symbol, amt_txn double" + ddl + ") "
+                execute("create table tx (created_at timestamp, account_id symbol, amount double" + ddl + ") "
                         + "timestamp(created_at) partition by hour wal");
                 execute("create live view lv flush every 100ms start from beginning as "
-                        + "select created_at, cod_acct_no" + projections
+                        + "select created_at, account_id" + projections
                         + (withRingResidual ? ", " + RING_PROJECTION : "")
                         + " from tx window w as "
-                        + "(partition by cod_acct_no order by created_at anchor daily '00:00')");
+                        + "(partition by account_id order by created_at anchor daily '00:00')");
             }
 
             @Override
@@ -1044,12 +1044,12 @@ public class LiveViewFusedShapeLifecycleTest extends AbstractLiveViewTest {
      * create it, how to append a row, and what a from-base recompute of it looks like.
      */
     private abstract class Shape {
-        static final String FRAME = "over (partition by cod_acct_no, bucket order by created_at "
+        static final String FRAME = "over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row)";
         // A bounded RANGE frame keeps the live rows behind its scalar tail in its image,
         // so it is neither fixed width nor inlineable and stays page-backed - which is
         // what gives a case a data segment to compact or to tear.
-        static final String RING_PROJECTION = "sum(amt_txn) over (partition by cod_acct_no order by created_at "
+        static final String RING_PROJECTION = "sum(amount) over (partition by account_id order by created_at "
                 + "range between '30' second preceding and current row) as ring";
 
         abstract void assertMatchesRecompute() throws Exception;
@@ -1073,10 +1073,10 @@ public class LiveViewFusedShapeLifecycleTest extends AbstractLiveViewTest {
             TestUtils.assertSqlCursors(
                     engine,
                     sqlExecutionContext,
-                    "(select created_at, cod_acct_no, " + recomputed
+                    "(select created_at, account_id, " + recomputed
                             + (withRingResidual ? ", " + RING_PROJECTION : "")
                             + " from (select *, " + bucket + " as bucket from tx)) order by 2, 1",
-                    "(select created_at, cod_acct_no, " + selected
+                    "(select created_at, account_id, " + selected
                             + (withRingResidual ? ", ring" : "")
                             + " from lv) order by 2, 1",
                     LOG,

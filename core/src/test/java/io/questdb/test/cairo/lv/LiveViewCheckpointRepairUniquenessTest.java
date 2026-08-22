@@ -195,10 +195,10 @@ public class LiveViewCheckpointRepairUniquenessTest extends AbstractLiveViewTest
 
     private void assertViewMatchesRecompute() throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
-        final String recompute = "select created_at, cod_acct_no, "
-                + "sum(amt_txn) over (partition by cod_acct_no, bucket order by created_at "
+        final String recompute = "select created_at, account_id, "
+                + "sum(amount) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_sum "
-                + "from (select created_at, cod_acct_no, amt_txn, " + bucket + " as bucket from tx)";
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)";
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
@@ -235,8 +235,8 @@ public class LiveViewCheckpointRepairUniquenessTest extends AbstractLiveViewTest
     }
 
     private void createBase(String seedRows) throws Exception {
-        execute("create table tx (created_at timestamp, cod_acct_no symbol nocache index capacity 8, "
-                + "amt_txn double) timestamp(created_at) partition by hour wal");
+        execute("create table tx (created_at timestamp, account_id symbol nocache index capacity 8, "
+                + "amount double) timestamp(created_at) partition by hour wal");
         execute("insert into tx values " + seedRows);
         drainWalQueue();
     }
@@ -249,15 +249,15 @@ public class LiveViewCheckpointRepairUniquenessTest extends AbstractLiveViewTest
     private void createKeylessView(String seedRows) throws Exception {
         createBase(seedRows);
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, sum(amt_txn) over w as cumulative_sum "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                + "select created_at, sum(amount) over w as cumulative_sum "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
     }
 
     private void createView(String seedRows) throws Exception {
         createBase(seedRows);
         execute("create live view lv flush every 100ms start from beginning as "
-                + "select created_at, cod_acct_no, sum(amt_txn) over w as cumulative_sum "
-                + "from tx window w as (partition by cod_acct_no order by created_at anchor daily '00:00')");
+                + "select created_at, account_id, sum(amount) over w as cumulative_sum "
+                + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
     }
 
     /**
