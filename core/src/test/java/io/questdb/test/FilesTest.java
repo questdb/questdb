@@ -95,6 +95,40 @@ public class FilesTest {
     }
 
     @Test
+    public void testOpenFdDebugInfoRendersCachedPaths() throws Exception {
+        Assume.assumeTrue("the fd cache is disabled", Files.FS_CACHE_ENABLED);
+        assertMemoryLeak(() -> {
+            final File temp = temporaryFolder.newFile();
+            TestUtils.writeStringToFile(temp, "abcde");
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                final long cachedFd = Files.openRO(path.$());
+                Assert.assertTrue(cachedFd > -1);
+                try {
+                    // A leak report names the file that was left open; without the path the
+                    // report is a bare descriptor id the reader cannot act on.
+                    assertContains(Files.getOpenFdDebugInfo(), cachedFd + "=" + temp.getAbsolutePath());
+                } finally {
+                    Files.close(cachedFd);
+                }
+
+                final long uncachedFd = Files.openRW(path.$());
+                Assert.assertTrue(uncachedFd > -1);
+                try {
+                    // A non-cached descriptor carries no path, so it renders bare rather than
+                    // with a trailing separator.
+                    assertContains(Files.getOpenFdDebugInfo(), String.valueOf(uncachedFd));
+                    Assert.assertFalse(
+                            "a pathless descriptor must not render a separator",
+                            Chars.contains(Files.getOpenFdDebugInfo(), uncachedFd + "=")
+                    );
+                } finally {
+                    Files.close(uncachedFd);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAllocateConcurrent() throws IOException, InterruptedException {
         // This test allocates (but doesn't write to) potentially very large files
         // size of which will depend on free disk space of the host OS.
