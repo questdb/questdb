@@ -44,8 +44,6 @@ import org.jetbrains.annotations.Nullable;
 
 final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(PageFrameFiberTask.class);
-    boolean isPooled;
-    PageFrameFiberTask nextFree;
     private final SqlExecutionCircuitBreakerWrapper circuitBreaker;
     private final PageFrameReduceDispatcher dispatcher;
     private long orderedCursor = -1;

@@ -46,8 +46,6 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
-import io.questdb.mp.continuation.FiberTask;
-import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -60,6 +58,9 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.Closeable;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -148,39 +149,6 @@ public class WorkerPoolManagerTest {
             Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(30)));
         }
         Assert.assertEquals(1, closeOrder.get());
-    }
-
-    @Test
-    public void testBoundedManagerHaltIncludesLockWait() throws Exception {
-        final AtomicBoolean releaseHalt = new AtomicBoolean(false);
-        final AtomicReference<Throwable> haltFailure = new AtomicReference<>();
-        final SOCountDownLatch haltEntered = new SOCountDownLatch(1);
-        final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1);
-        workerPoolManager.getSharedPoolNetwork().setAfterClosedSignalForTesting(() -> {
-            haltEntered.countDown();
-            while (!releaseHalt.get()) {
-                Os.pause();
-            }
-        });
-        final Thread haltThread = new Thread(() -> {
-            try {
-                workerPoolManager.halt();
-            } catch (Throwable th) {
-                haltFailure.set(th);
-            }
-        });
-        haltThread.start();
-        try {
-            Assert.assertTrue(haltEntered.await(TimeUnit.SECONDS.toNanos(5)));
-            final long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(100);
-            Assert.assertFalse(workerPoolManager.haltBy(deadlineNanos));
-            Assert.assertTrue(System.nanoTime() - deadlineNanos < TimeUnit.SECONDS.toNanos(5));
-        } finally {
-            releaseHalt.set(true);
-            haltThread.join(TimeUnit.SECONDS.toMillis(5));
-        }
-        Assert.assertFalse(haltThread.isAlive());
-        Assert.assertNull(haltFailure.get());
     }
 
     @Test
@@ -353,127 +321,7 @@ public class WorkerPoolManagerTest {
         Assert.assertSame(ioPool, writerPool);
         ioPool.freeOnExit(new OrderedCloseJob(closeOrder, 0));
         writerPool.freeOnExit(new OrderedCloseJob(closeOrder, 1));
-        Assert.assertTrue(workerPoolManager.halt());
-        Assert.assertEquals(2, closeOrder.get());
-    }
-
-    @Test
-    public void testLineTcpSharedWriterPoolRetainedWhenIoPoolTimesOut() {
-        final AtomicInteger closeOrder = new AtomicInteger();
-        final AtomicInteger haltSignalCount = new AtomicInteger();
-        final AtomicBoolean releaseJob = new AtomicBoolean();
-        final SOCountDownLatch jobEntered = new SOCountDownLatch(1);
-        final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1);
-        final WorkerPool ioPool = workerPoolManager.getSharedPoolNetwork(
-                workerPoolConfiguration("line-io", 0),
-                WorkerPoolManager.Requester.LINE_TCP_IO
-        );
-        final WorkerPool writerPool = workerPoolManager.getSharedPoolWrite(
-                workerPoolConfiguration("line-writer", 0),
-                WorkerPoolManager.Requester.LINE_TCP_WRITER
-        );
-        Assert.assertSame(workerPoolManager.getSharedPoolNetwork(), ioPool);
-        Assert.assertNotSame(ioPool, writerPool);
-        ioPool.assign(workerContext -> {
-            jobEntered.countDown();
-            while (!releaseJob.get()) {
-                Os.pause();
-            }
-            return false;
-        });
-        writerPool.freeOnExit(new OrderedCloseJob(closeOrder, 0));
-        writerPool.setAfterClosedSignalForTesting(haltSignalCount::incrementAndGet);
-        workerPoolManager.start(null);
-        try {
-            Assert.assertTrue(jobEntered.await(TimeUnit.SECONDS.toNanos(30)));
-            Assert.assertFalse(workerPoolManager.haltBy(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1)));
-            Assert.assertEquals(0, closeOrder.get());
-            Assert.assertEquals(0, haltSignalCount.get());
-        } finally {
-            releaseJob.set(true);
-            Assert.assertTrue(workerPoolManager.haltBy(System.nanoTime() + TimeUnit.SECONDS.toNanos(30)));
-        }
-        Assert.assertEquals(1, closeOrder.get());
-        Assert.assertEquals(1, haltSignalCount.get());
-    }
-
-    @Test
-    public void testLineTcpWriterPoolAliasedToSharedNetworkWaitsForProducer() {
-        final AtomicInteger closeOrder = new AtomicInteger();
-        final AtomicBoolean releaseTask = new AtomicBoolean();
-        final SOCountDownLatch taskEntered = new SOCountDownLatch(1);
-        final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1);
-        final WorkerPool ioPool = workerPoolManager.getSharedPoolNetwork(
-                fiberWorkerPoolConfiguration("line-io", 1),
-                WorkerPoolManager.Requester.LINE_TCP_IO
-        );
-        final WorkerPool writerPool = workerPoolManager.getWorkerPool(
-                workerPoolConfiguration("shared-network", 0),
-                WorkerPoolManager.Requester.LINE_TCP_WRITER,
-                workerPoolManager.getSharedPoolNetwork()
-        );
-        Assert.assertSame(workerPoolManager.getSharedPoolNetwork(), writerPool);
-        ioPool.freeOnExit(new OrderedCloseJob(closeOrder, 0));
-        writerPool.freeOnExit(new OrderedCloseJob(closeOrder, 1));
-        workerPoolManager.start(null);
-        final FiberTask task = new FiberTask() {
-            @Override
-            protected boolean runStep() {
-                taskEntered.countDown();
-                while (!releaseTask.get()) {
-                    Os.pause();
-                }
-                return true;
-            }
-        };
-        try {
-            Assert.assertEquals(LaunchResult.LAUNCHED, ioPool.getFiberRuntime().launch(task));
-            Assert.assertTrue(taskEntered.await(TimeUnit.SECONDS.toNanos(30)));
-            Assert.assertFalse(workerPoolManager.haltBy(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1)));
-            Assert.assertEquals(0, closeOrder.get());
-        } finally {
-            releaseTask.set(true);
-            Assert.assertTrue(workerPoolManager.haltBy(System.nanoTime() + TimeUnit.SECONDS.toNanos(30)));
-        }
-        Assert.assertEquals(2, closeOrder.get());
-    }
-
-    @Test
-    public void testLineTcpWriterPoolRetainedWhileProducerPoolIsLive() {
-        final AtomicInteger closeOrder = new AtomicInteger();
-        final AtomicBoolean releaseTask = new AtomicBoolean();
-        final SOCountDownLatch taskEntered = new SOCountDownLatch(1);
-        final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1);
-        final WorkerPool ioPool = workerPoolManager.getSharedPoolNetwork(
-                fiberWorkerPoolConfiguration("line-io", 1),
-                WorkerPoolManager.Requester.LINE_TCP_IO
-        );
-        final WorkerPool writerPool = workerPoolManager.getSharedPoolWrite(
-                workerPoolConfiguration("line-writer", 1),
-                WorkerPoolManager.Requester.LINE_TCP_WRITER
-        );
-        ioPool.freeOnExit(new OrderedCloseJob(closeOrder, 0));
-        writerPool.freeOnExit(new OrderedCloseJob(closeOrder, 1));
-        workerPoolManager.start(null);
-        final FiberTask task = new FiberTask() {
-            @Override
-            protected boolean runStep() {
-                taskEntered.countDown();
-                while (!releaseTask.get()) {
-                    Os.pause();
-                }
-                return true;
-            }
-        };
-        try {
-            Assert.assertEquals(LaunchResult.LAUNCHED, ioPool.getFiberRuntime().launch(task));
-            Assert.assertTrue(taskEntered.await(TimeUnit.SECONDS.toNanos(30)));
-            Assert.assertFalse(workerPoolManager.haltBy(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1)));
-            Assert.assertEquals(0, closeOrder.get());
-        } finally {
-            releaseTask.set(true);
-            Assert.assertTrue(workerPoolManager.haltBy(System.nanoTime() + TimeUnit.SECONDS.toNanos(30)));
-        }
+        Assert.assertTrue(workerPoolManager.haltAndReportCompletion());
         Assert.assertEquals(2, closeOrder.get());
     }
 
@@ -487,10 +335,10 @@ public class WorkerPoolManagerTest {
                 workerPoolConfiguration("shared", 0),
                 WorkerPoolManager.Requester.OTHER
         ).freeOnExit(new OrderedCloseJob(closeOrder, 0));
-        Assert.assertTrue(workerPoolManager.halt());
+        Assert.assertTrue(workerPoolManager.haltAndReportCompletion());
         Assert.assertSame(failure, workerPoolManager.getHaltFailure());
         Assert.assertEquals(1, closeOrder.get());
-        Assert.assertTrue(workerPoolManager.halt());
+        Assert.assertTrue(workerPoolManager.haltAndReportCompletion());
         Assert.assertSame(failure, workerPoolManager.getHaltFailure());
         Assert.assertEquals(1, closeOrder.get());
     }
@@ -506,9 +354,54 @@ public class WorkerPoolManagerTest {
                 WorkerPoolManager.Requester.OTHER
         ).freeOnExit(new ThrowingCloseJob(writeFailure));
 
-        Assert.assertTrue(workerPoolManager.halt());
+        Assert.assertTrue(workerPoolManager.haltAndReportCompletion());
         Assert.assertSame(networkFailure, workerPoolManager.getHaltFailure());
         Assert.assertArrayEquals(new Throwable[]{writeFailure}, networkFailure.getSuppressed());
+    }
+
+    @Test
+    public void testPublicWorkerPoolApiCompatibility() throws Throwable {
+        final MethodHandles.Lookup lookup = MethodHandles.publicLookup();
+        final MethodHandle isLegacy = lookup.findVirtual(
+                WorkerPoolConfiguration.class,
+                "isLegacy",
+                MethodType.methodType(boolean.class)
+        );
+        final MethodHandle poolHalt = lookup.findVirtual(
+                WorkerPool.class,
+                "halt",
+                MethodType.methodType(void.class, long.class)
+        );
+        final MethodHandle managerHalt = lookup.findVirtual(
+                WorkerPoolManager.class,
+                "halt",
+                MethodType.methodType(void.class)
+        );
+
+        final WorkerPoolConfiguration legacyConfiguration = workerPoolConfiguration(WorkerPoolMode.LEGACY);
+        final WorkerPoolConfiguration fiberConfiguration = workerPoolConfiguration(WorkerPoolMode.FIBER_HOST);
+        Assert.assertTrue((boolean) isLegacy.invokeExact(legacyConfiguration));
+        Assert.assertFalse((boolean) isLegacy.invokeExact(fiberConfiguration));
+
+        final AtomicInteger poolCloseOrder = new AtomicInteger();
+        final WorkerPool pool = new WorkerPool(legacyConfiguration);
+        pool.freeOnExit(new OrderedCloseJob(poolCloseOrder, 0));
+        try {
+            poolHalt.invokeExact(pool, TimeUnit.SECONDS.toNanos(1));
+        } finally {
+            pool.halt();
+        }
+        Assert.assertEquals(1, poolCloseOrder.get());
+
+        final AtomicInteger managerCloseOrder = new AtomicInteger();
+        final WorkerPoolManager workerPoolManager = createWorkerPoolManager(0);
+        workerPoolManager.getSharedPoolNetwork().freeOnExit(new OrderedCloseJob(managerCloseOrder, 0));
+        try {
+            managerHalt.invokeExact(workerPoolManager);
+        } finally {
+            workerPoolManager.halt();
+        }
+        Assert.assertEquals(1, managerCloseOrder.get());
     }
 
     @Test
@@ -779,6 +672,20 @@ public class WorkerPoolManagerTest {
                 return true;
             }
         });
+    }
+
+    private static WorkerPoolConfiguration workerPoolConfiguration(WorkerPoolMode workerPoolMode) {
+        return new WorkerPoolConfiguration() {
+            @Override
+            public int getWorkerCount() {
+                return 0;
+            }
+
+            @Override
+            public WorkerPoolMode getWorkerPoolMode() {
+                return workerPoolMode;
+            }
+        };
     }
 
     private static final class NativeMemoryJob implements Job {

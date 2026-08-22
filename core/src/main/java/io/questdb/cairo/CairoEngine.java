@@ -3573,11 +3573,6 @@ public class CairoEngine implements Closeable, WriterSource {
         timerShards.shutdown();
     }
 
-    public boolean signalClose(long deadlineNanos) {
-        closing = true;
-        return timerShards.shutdown(deadlineNanos);
-    }
-
     public void snapshotCreate(SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
         checkpointAgent.checkpointCreate(circuitBreaker, true, false);
     }

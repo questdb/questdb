@@ -28,14 +28,12 @@ import io.questdb.Bootstrap;
 import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
-import io.questdb.WorkerPoolManager;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.view.ViewCompilerExecutionContext;
 import io.questdb.cairo.wal.QdbrWalLocker;
 import io.questdb.lifecycle.Component;
 import io.questdb.lifecycle.LifecycleContext;
-import io.questdb.lifecycle.LifecycleOrchestrator;
 import io.questdb.lifecycle.LifecycleStartupException;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.ObjList;
@@ -252,107 +250,6 @@ public class ServerMainHydrationEnvelopeTest extends AbstractBootstrapTest {
                         createViewCompilerContextCalls.get()
                 );
             }
-        });
-    }
-
-    @Test
-    public void testStartupRollbackDoesNotWaitUnboundedlyForViewCompilation() throws Exception {
-        assertMemoryLeak(() -> {
-            final SOCountDownLatch compileEntered = new SOCountDownLatch(1);
-            final SOCountDownLatch releaseCompile = new SOCountDownLatch(1);
-            final AtomicReference<Throwable> startFailure = new AtomicReference<>();
-            final Bootstrap bootstrap = new Bootstrap(new PropBootstrapConfiguration(), getServerMainArgs()) {
-                @Override
-                public CairoEngine newCairoEngine() {
-                    final CairoConfiguration configuration = getConfiguration().getCairoConfiguration();
-                    return new CairoEngine(configuration, new QdbrWalLocker(), true) {
-                        @Override
-                        public ViewCompilerExecutionContext createViewCompilerContext(int workerCount) {
-                            compileEntered.countDown();
-                            releaseCompile.await();
-                            return super.createViewCompilerContext(workerCount);
-                        }
-                    };
-                }
-            };
-            final ServerMain serverMain = new ServerMain(bootstrap) {
-                @Override
-                protected ObjList<Component> baseComponents() {
-                    final ObjList<Component> components = super.baseComponents();
-                    components.add(new Component() {
-                        private final ObjList<String> empty = new ObjList<>();
-                        private final ObjList<String> hardDeps = new ObjList<>();
-
-                        {
-                            hardDeps.add("hydration");
-                        }
-
-                        @Override
-                        public ObjList<String> hardRequiredDependencies() {
-                            return hardDeps;
-                        }
-
-                        @Override
-                        public String name() {
-                            return "post-hydration-failure";
-                        }
-
-                        @Override
-                        public ObjList<String> softDependencies() {
-                            return empty;
-                        }
-
-                        @Override
-                        public void start(LifecycleContext ctx) {
-                            if (!compileEntered.await(TimeUnit.SECONDS.toNanos(5))) {
-                                throw new AssertionError("view compilation did not start");
-                            }
-                            throw new IllegalStateException("startup failure");
-                        }
-
-                        @Override
-                        public void stop() {
-                        }
-                    });
-                    return components;
-                }
-
-                @Override
-                protected LifecycleOrchestrator newOrchestrator(
-                        io.questdb.log.Log log,
-                        WorkerPoolManager workerPoolManager,
-                        Object tokioRuntime
-                ) {
-                    return new LifecycleOrchestrator(log, workerPoolManager, tokioRuntime) {
-                        @Override
-                        public void closeBy(long deadlineNanos) {
-                            super.closeBy(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(10));
-                        }
-                    };
-                }
-            };
-            final Thread startThread = new Thread(() -> {
-                try {
-                    serverMain.start(false);
-                } catch (Throwable th) {
-                    startFailure.set(th);
-                } finally {
-                    Path.clearThreadLocals();
-                }
-            });
-            try {
-                startThread.start();
-                Assert.assertTrue(compileEntered.await(TimeUnit.SECONDS.toNanos(5)));
-                startThread.join(5_000);
-                Assert.assertFalse("startup rollback waited on view compilation", startThread.isAlive());
-                Assert.assertTrue(startFailure.get() instanceof LifecycleStartupException);
-                Assert.assertFalse(serverMain.isCloseComplete());
-            } finally {
-                releaseCompile.countDown();
-                startThread.join(5_000);
-                serverMain.close();
-            }
-            Assert.assertTrue(serverMain.isCloseComplete());
         });
     }
 

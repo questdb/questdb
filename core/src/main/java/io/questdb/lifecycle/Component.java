@@ -42,8 +42,7 @@ public interface Component {
      * Implementations must make this method non-blocking, idempotent, and safe to call concurrently
      * with {@link #start(LifecycleContext)} or a role switch. The request must remain visible to work
      * that publishes its cancellable resource after this method returns. This method only signals
-     * cancellation; {@link #stop()} or {@link #stop(long)} retains responsibility for waiting and
-     * releasing resources.
+     * cancellation; {@link #stop()} retains responsibility for waiting and releasing resources.
      */
     default void requestStop() {
     }
@@ -74,14 +73,4 @@ public interface Component {
      * a component that never reached READY.
      */
     void stop();
-
-    /**
-     * Attempts to stop this component using the supplied absolute {@link System#nanoTime()} deadline
-     * for every wait. Implementations must retain resources that are still in use when the deadline
-     * expires so a later stop attempt can retry safely. Implementations that do not wait may use the
-     * default.
-     */
-    default void stop(long deadlineNanos) {
-        stop();
-    }
 }

@@ -41,6 +41,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.GroupByShardingContext;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
@@ -65,6 +66,7 @@ import io.questdb.std.Os;
 import io.questdb.tasks.GroupByLongTopKTask;
 import io.questdb.tasks.GroupByMergeShardTask;
 import io.questdb.tasks.LatestByTask;
+import io.questdb.tasks.VectorAggregateTask;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
@@ -79,6 +81,179 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class QueryParallelFiberDispatcherTest extends AbstractTest {
+
+    @Test
+    public void testForeignLongTopKStealWakesParkedOwner() throws Exception {
+        assertForeignGroupByStealWakesParkedOwner(true);
+    }
+
+    @Test
+    public void testForeignLatestByCleanupStealWakesParkedOwner() throws Exception {
+        assertForeignLatestByStealWakesParkedOwner(true);
+    }
+
+    @Test
+    public void testForeignLatestByMainStealWakesParkedOwner() throws Exception {
+        assertForeignLatestByStealWakesParkedOwner(false);
+    }
+
+    @Test
+    public void testForeignMergeShardStealWakesParkedOwner() throws Exception {
+        assertForeignGroupByStealWakesParkedOwner(false);
+    }
+
+    @Test
+    public void testForeignVectorStealWakesParkedOwner() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public long getQueryContinuationWakeIntervalMillis() {
+                    return TimeUnit.HOURS.toMillis(1);
+                }
+
+                @Override
+                public int getSqlPageFrameMaxRows() {
+                    return 128;
+                }
+
+                @Override
+                public int getSqlPageFrameMinRows() {
+                    return 1;
+                }
+
+                @Override
+                public int getVectorAggregateQueueCapacity() {
+                    return 2;
+                }
+            };
+            try (CairoEngine engine = new CairoEngine(configuration);
+                 SqlCompiler compiler = engine.getSqlCompiler();
+                 SqlExecutionContext victimContext = TestUtils.createSqlExecutionCtx(engine, 2);
+                 SqlExecutionContext foreignContext = TestUtils.createSqlExecutionCtx(engine, 2);
+                 TestWorkerPool ownerPool = new TestWorkerPool(
+                         "foreign-vector-victim",
+                         1,
+                         Metrics.DISABLED,
+                         WorkerPoolMode.FIBER_HOST
+                 )) {
+                final FiberRuntime dispatcherRuntime = new FiberRuntime(1);
+                final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
+                        engine,
+                        engine.getMessageBus(),
+                        dispatcherRuntime
+                );
+                engine.getMessageBus().setQueryParallelFiberDispatcher(dispatcher);
+                final String sql = "select k, sum(v) from vector_foreign";
+                engine.execute(
+                        "create table vector_foreign as "
+                                + "(select (x % 17)::int k, x v from long_sequence(256))",
+                        foreignContext
+                );
+                try (RecordCursorFactory factory = compiler.compile(sql, foreignContext).getRecordCursorFactory()) {
+                    TestUtils.assertFactoryInTree(
+                            factory,
+                            io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory.class
+                    );
+                }
+
+                final FiberRuntime ownerRuntime = ownerPool.getFiberRuntime();
+                final AtomicReference<Throwable> ownerFailure = new AtomicReference<>();
+                final AtomicBoolean launched = new AtomicBoolean();
+                final AtomicInteger victimRows = new AtomicInteger();
+                final CountDownLatch victimDone = new CountDownLatch(1);
+                final FiberTask victimTask = new FiberTask() {
+                    @Override
+                    protected void onDone() {
+                        victimDone.countDown();
+                    }
+
+                    @Override
+                    protected void onError(Throwable th) {
+                        ownerFailure.compareAndSet(null, th);
+                        victimDone.countDown();
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        SuspensionScope.enterTimerShards(engine.getTimerShards());
+                        try {
+                            victimRows.set((int) drain(compiler, victimContext, sql));
+                        } catch (Exception e) {
+                            throw new AssertionError(e);
+                        }
+                        return true;
+                    }
+                };
+                ownerPool.assign(_ -> {
+                    if (launched.compareAndSet(false, true)) {
+                        final LaunchResult result = ownerRuntime.launch(victimTask);
+                        if (result != LaunchResult.LAUNCHED) {
+                            ownerFailure.compareAndSet(
+                                    null,
+                                    new AssertionError("victim launch failed [result=" + result + ']')
+                            );
+                            victimDone.countDown();
+                        }
+                        return true;
+                    }
+                    return false;
+                });
+
+                AsyncQueryProgressState victimProgress = null;
+                boolean ownerPoolStarted = false;
+                try {
+                    ownerPool.start(LOG);
+                    ownerPoolStarted = true;
+                    awaitParkedCount(ownerRuntime, 1, ownerFailure);
+
+                    final MessageBus messageBus = engine.getMessageBus();
+                    final MCSequence subSeq = messageBus.getVectorAggregateSubSeq();
+                    final long firstCursor = subSeq.next();
+                    Assert.assertTrue("victim did not publish a vector task", firstCursor > -1);
+                    final VectorAggregateTask firstTask = messageBus.getVectorAggregateQueue().get(firstCursor);
+                    victimProgress = firstTask.entry.getProgressState();
+                    firstTask.entry.run(-1, subSeq, firstCursor);
+
+                    final long observedVersion = victimProgress.getVersion();
+                    Assert.assertEquals(1, ownerRuntime.getParkedFiberCount());
+                    Assert.assertEquals(17, drain(compiler, foreignContext, sql));
+                    Assert.assertTrue(
+                            "foreign vector steal did not signal the victim",
+                            victimProgress.getVersion() > observedVersion
+                    );
+                    Assert.assertTrue(
+                            "victim did not resume before the continuation timer",
+                            victimDone.await(10, TimeUnit.SECONDS)
+                    );
+                    Assert.assertNull(ownerFailure.get());
+                    Assert.assertEquals(17, victimRows.get());
+                    awaitParkedCount(ownerRuntime, 0, ownerFailure);
+                    Assert.assertEquals(
+                            messageBus.getVectorAggregatePubSeq().current(),
+                            subSeq.current()
+                    );
+                    Assert.assertEquals(0, dispatcher.getVectorAggregateCreatedTaskCount());
+                    Assert.assertEquals(0, dispatcherRuntime.getOutstandingTaskCount());
+                } finally {
+                    if (victimDone.getCount() > 0) {
+                        victimContext.getCircuitBreaker().cancel();
+                        dispatcher.beginQuiesce();
+                        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                        while (victimDone.getCount() > 0 && System.nanoTime() < deadline) {
+                            dispatcher.progressQuiesce();
+                            victimDone.await(10, TimeUnit.MILLISECONDS);
+                        }
+                    }
+                    if (ownerPoolStarted) {
+                        ownerPool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+                    }
+                    engine.getMessageBus().setQueryParallelFiberDispatcher(null);
+                    Misc.free(dispatcher);
+                    closeRuntime(dispatcherRuntime);
+                }
+            }
+        });
+    }
 
     @Test
     public void testAdapterCreationFailureReleasesFiberReservation() throws Exception {
@@ -991,6 +1166,383 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 () -> Assert.assertEquals(17, drain(compiler, executionContext, "select k, sum(v) from vector_tab"))
         );
         Assert.assertTrue(runtime.getMountCount() > 1);
+    }
+
+    private static void assertForeignGroupByStealWakesParkedOwner(boolean longTopK) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public int getGroupByMergeShardQueueCapacity() {
+                    return 2;
+                }
+
+                @Override
+                public long getGroupByParallelTopKThreshold() {
+                    return 0;
+                }
+
+                @Override
+                public int getGroupByShardingThreshold() {
+                    return 1;
+                }
+
+                @Override
+                public int getGroupByTopKQueueCapacity() {
+                    return 2;
+                }
+
+                @Override
+                public long getQueryContinuationWakeIntervalMillis() {
+                    return TimeUnit.HOURS.toMillis(1);
+                }
+
+                @Override
+                public int getSqlPageFrameMaxRows() {
+                    return 128;
+                }
+
+                @Override
+                public int getSqlPageFrameMinRows() {
+                    return 1;
+                }
+            };
+            try (CairoEngine engine = new CairoEngine(configuration);
+                 SqlCompiler compiler = engine.getSqlCompiler();
+                 SqlExecutionContext victimContext = TestUtils.createSqlExecutionCtx(engine, 2);
+                 SqlExecutionContext foreignContext = TestUtils.createSqlExecutionCtx(engine, 2);
+                 TestWorkerPool ownerPool = new TestWorkerPool(
+                         longTopK ? "foreign-long-top-k-victim" : "foreign-merge-shard-victim",
+                         1,
+                         Metrics.DISABLED,
+                         WorkerPoolMode.FIBER_HOST
+                 )) {
+                final FiberRuntime dispatcherRuntime = new FiberRuntime(1);
+                final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
+                        engine,
+                        engine.getMessageBus(),
+                        dispatcherRuntime
+                );
+                engine.getMessageBus().setQueryParallelFiberDispatcher(dispatcher);
+                engine.execute(
+                        "create table group_by_foreign as "
+                                + "(select ('k' || x) key, x v from long_sequence(256))",
+                        foreignContext
+                );
+                final String sql = longTopK
+                        ? "select key, max(v) m from group_by_foreign order by m desc limit 10"
+                        : "select key, max(v) m from group_by_foreign";
+                try (RecordCursorFactory victimFactory = compiler.compile(sql, victimContext).getRecordCursorFactory()) {
+                    TestUtils.assertFactoryInTree(victimFactory, AsyncGroupByRecordCursorFactory.class);
+                    if (longTopK) {
+                        TestUtils.assertFactoryInTree(victimFactory, LongTopKRecordCursorFactory.class);
+                    }
+                    final AsyncGroupByAtom victimAtom = (AsyncGroupByAtom) TestUtils.findAtom(victimFactory, sql);
+                    final AsyncQueryProgressState victimProgress = victimAtom.getShardingContext().getProgressState();
+                    final AtomicBooleanCircuitBreaker taskBreaker = new AtomicBooleanCircuitBreaker(engine);
+                    final AtomicInteger taskStarted = new AtomicInteger();
+                    final AtomicInteger taskDone = new AtomicInteger();
+                    taskBreaker.cancel();
+
+                    final MessageBus messageBus = engine.getMessageBus();
+                    final MCSequence targetSubSeq;
+                    final MPSequence targetPubSeq;
+                    if (longTopK) {
+                        targetSubSeq = messageBus.getGroupByLongTopKSubSeq();
+                        targetPubSeq = messageBus.getGroupByLongTopKPubSeq();
+                        final long cursor = targetPubSeq.next();
+                        Assert.assertTrue("long top-K queue slot must be available", cursor > -1);
+                        messageBus.getGroupByLongTopKQueue().get(cursor).of(
+                                taskBreaker,
+                                taskStarted,
+                                taskDone::incrementAndGet,
+                                victimAtom,
+                                null,
+                                0,
+                                0,
+                                1
+                        );
+                        targetPubSeq.done(cursor);
+                    } else {
+                        targetSubSeq = messageBus.getGroupByMergeShardSubSeq();
+                        targetPubSeq = messageBus.getGroupByMergeShardPubSeq();
+                        final long cursor = targetPubSeq.next();
+                        Assert.assertTrue("merge-shard queue slot must be available", cursor > -1);
+                        messageBus.getGroupByMergeShardQueue().get(cursor).of(
+                                taskBreaker,
+                                taskStarted,
+                                taskDone::incrementAndGet,
+                                victimAtom.getShardingContext(),
+                                0
+                        );
+                        targetPubSeq.done(cursor);
+                    }
+
+                    final FiberRuntime ownerRuntime = ownerPool.getFiberRuntime();
+                    final AtomicReference<Throwable> ownerFailure = new AtomicReference<>();
+                    final CountDownLatch victimDone = new CountDownLatch(1);
+                    final AtomicBoolean launched = new AtomicBoolean();
+                    final FiberTask victimTask = new FiberTask() {
+                        @Override
+                        protected void onDone() {
+                            victimDone.countDown();
+                        }
+
+                        @Override
+                        protected void onError(Throwable th) {
+                            ownerFailure.compareAndSet(null, th);
+                            victimDone.countDown();
+                        }
+
+                        @Override
+                        protected boolean runStep() {
+                            SuspensionScope.enterTimerShards(engine.getTimerShards());
+                            while (victimProgress.getVersion() == 0) {
+                                dispatcher.awaitProgress(
+                                        victimProgress,
+                                        victimProgress.getVersion(),
+                                        dispatcher.getProgressVersion(),
+                                        SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
+                                );
+                            }
+                            return true;
+                        }
+                    };
+                    ownerPool.assign(_ -> {
+                        if (launched.compareAndSet(false, true)) {
+                            final LaunchResult result = ownerRuntime.launch(victimTask);
+                            if (result != LaunchResult.LAUNCHED) {
+                                ownerFailure.compareAndSet(
+                                        null,
+                                        new AssertionError("victim launch failed [result=" + result + ']')
+                                );
+                                victimDone.countDown();
+                            }
+                            return true;
+                        }
+                        return false;
+                    });
+
+                    boolean ownerPoolStarted = false;
+                    try {
+                        ownerPool.start(LOG);
+                        ownerPoolStarted = true;
+                        awaitParkedCount(ownerRuntime, 1, ownerFailure);
+
+                        Assert.assertEquals(longTopK ? 10 : 256, drain(compiler, foreignContext, sql));
+                        Assert.assertTrue(
+                                longTopK
+                                        ? "foreign long top-K steal did not signal the victim"
+                                        : "foreign merge-shard steal did not signal the victim",
+                                victimProgress.getVersion() > 0
+                        );
+                        Assert.assertTrue(
+                                "victim did not resume before the continuation timer",
+                                victimDone.await(10, TimeUnit.SECONDS)
+                        );
+                        Assert.assertNull(ownerFailure.get());
+                        Assert.assertEquals(1, taskStarted.get());
+                        Assert.assertEquals(1, taskDone.get());
+                        awaitParkedCount(ownerRuntime, 0, ownerFailure);
+                        Assert.assertEquals(targetPubSeq.current(), targetSubSeq.current());
+                        Assert.assertEquals(
+                                0,
+                                longTopK
+                                        ? dispatcher.getLongTopKCreatedTaskCount()
+                                        : dispatcher.getMergeShardCreatedTaskCount()
+                        );
+                        Assert.assertEquals(0, dispatcherRuntime.getOutstandingTaskCount());
+                    } finally {
+                        if (victimDone.getCount() > 0) {
+                            dispatcher.signalProgress(victimProgress);
+                            victimDone.await(10, TimeUnit.SECONDS);
+                        }
+                        dispatcher.beginQuiesce();
+                        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                        while (!dispatcher.isQuiesced() && System.nanoTime() < deadline) {
+                            dispatcher.progressQuiesce();
+                            Os.pause();
+                        }
+                        Assert.assertTrue(dispatcher.isQuiesced());
+                        if (ownerPoolStarted) {
+                            ownerPool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+                        }
+                        engine.getMessageBus().setQueryParallelFiberDispatcher(null);
+                        Misc.free(dispatcher);
+                        closeRuntime(dispatcherRuntime);
+                    }
+                }
+            }
+        });
+    }
+
+    private static void assertForeignLatestByStealWakesParkedOwner(boolean cleanupPath) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public int getLatestByQueueCapacity() {
+                    return 2;
+                }
+
+                @Override
+                public long getQueryContinuationWakeIntervalMillis() {
+                    return TimeUnit.HOURS.toMillis(1);
+                }
+            };
+            try (CairoEngine engine = new CairoEngine(configuration);
+                 SqlCompiler compiler = engine.getSqlCompiler();
+                 SqlExecutionContext setupContext = TestUtils.createSqlExecutionCtx(engine, 1);
+                 SqlExecutionContext victimContext = TestUtils.createSqlExecutionCtx(engine, 1);
+                 TestWorkerPool ownerPool = new TestWorkerPool(
+                         cleanupPath ? "foreign-latest-by-cleanup-victim" : "foreign-latest-by-main-victim",
+                         1,
+                         Metrics.DISABLED,
+                         WorkerPoolMode.FIBER_HOST
+                 )) {
+                final AtomicBooleanCircuitBreaker foreignBreaker = new AtomicBooleanCircuitBreaker(engine) {
+                    @Override
+                    public void statefulThrowExceptionIfTrippedTimeThrottled() {
+                        if (cleanupPath) {
+                            cancel();
+                        }
+                        statefulThrowExceptionIfTrippedNoThrottle();
+                    }
+                };
+                try (SqlExecutionContext foreignContext = TestUtils.createSqlExecutionCtx(engine, 1).with(foreignBreaker)) {
+                    final FiberRuntime dispatcherRuntime = new FiberRuntime(1);
+                    final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
+                            engine,
+                            engine.getMessageBus(),
+                            dispatcherRuntime
+                    );
+                    engine.getMessageBus().setQueryParallelFiberDispatcher(dispatcher);
+                    final String sql = "select * from latest_foreign latest on ts partition by sym";
+                    engine.execute(
+                            "create table latest_foreign as ("
+                                    + "select (x * 1000000L)::timestamp ts, "
+                                    + "('k' || (x % 64))::symbol sym, x value "
+                                    + "from long_sequence(512)"
+                                    + "), index(sym) timestamp(ts)",
+                            setupContext
+                    );
+                    try (RecordCursorFactory factory = compiler.compile(sql, setupContext).getRecordCursorFactory()) {
+                        TestUtils.assertFactoryInTree(factory, LatestByAllIndexedRecordCursorFactory.class);
+                    }
+
+                    final FiberRuntime ownerRuntime = ownerPool.getFiberRuntime();
+                    final AtomicReference<Throwable> ownerFailure = new AtomicReference<>();
+                    final AtomicInteger victimRows = new AtomicInteger();
+                    final CountDownLatch victimDone = new CountDownLatch(1);
+                    final AtomicBoolean launched = new AtomicBoolean();
+                    final FiberTask victimTask = new FiberTask() {
+                        @Override
+                        protected void onDone() {
+                            victimDone.countDown();
+                        }
+
+                        @Override
+                        protected void onError(Throwable th) {
+                            ownerFailure.compareAndSet(null, th);
+                            victimDone.countDown();
+                        }
+
+                        @Override
+                        protected boolean runStep() {
+                            SuspensionScope.enterTimerShards(engine.getTimerShards());
+                            try {
+                                victimRows.set((int) drain(compiler, victimContext, sql));
+                            } catch (Exception e) {
+                                throw new AssertionError(e);
+                            }
+                            return true;
+                        }
+                    };
+                    ownerPool.assign(_ -> {
+                        if (launched.compareAndSet(false, true)) {
+                            final LaunchResult result = ownerRuntime.launch(victimTask);
+                            if (result != LaunchResult.LAUNCHED) {
+                                ownerFailure.compareAndSet(
+                                        null,
+                                        new AssertionError("victim launch failed [result=" + result + ']')
+                                );
+                                victimDone.countDown();
+                            }
+                            return true;
+                        }
+                        return false;
+                    });
+
+                    AsyncQueryProgressState victimProgress = null;
+                    boolean ownerPoolStarted = false;
+                    try {
+                        final MessageBus messageBus = engine.getMessageBus();
+                        final MPSequence pubSeq = messageBus.getLatestByPubSeq();
+                        final MCSequence subSeq = messageBus.getLatestBySubSeq();
+                        final long cursorBefore = pubSeq.current();
+
+                        ownerPool.start(LOG);
+                        ownerPoolStarted = true;
+                        awaitParkedCount(ownerRuntime, 1, ownerFailure);
+                        final long victimCursor = pubSeq.current();
+                        Assert.assertEquals(cursorBefore + 1, victimCursor);
+                        Assert.assertEquals(cursorBefore, subSeq.current());
+                        victimProgress = messageBus.getLatestByQueue().get(victimCursor).getProgressState();
+                        Assert.assertNotNull(victimProgress);
+                        final long observedVersion = victimProgress.getVersion();
+
+                        if (cleanupPath) {
+                            try {
+                                drain(compiler, foreignContext, sql);
+                                Assert.fail("expected foreign latest-by cancellation");
+                            } catch (CairoException e) {
+                                Assert.assertTrue(e.isInterruption());
+                                Assert.assertEquals(
+                                        SqlExecutionCircuitBreaker.STATE_CANCELLED,
+                                        e.getInterruptionReason()
+                                );
+                            }
+                        } else {
+                            Assert.assertEquals(64, drain(compiler, foreignContext, sql));
+                        }
+                        Assert.assertTrue(
+                                cleanupPath
+                                        ? "foreign latest-by cleanup steal did not signal the victim"
+                                        : "foreign latest-by main steal did not signal the victim",
+                                victimProgress.getVersion() > observedVersion
+                        );
+                        Assert.assertTrue(
+                                "victim did not resume before the continuation timer",
+                                victimDone.await(10, TimeUnit.SECONDS)
+                        );
+                        Assert.assertNull(ownerFailure.get());
+                        Assert.assertEquals(64, victimRows.get());
+                        awaitParkedCount(ownerRuntime, 0, ownerFailure);
+                        Assert.assertEquals(pubSeq.current(), subSeq.current());
+                        Assert.assertEquals(0, dispatcher.getLatestByCreatedTaskCount());
+                        Assert.assertEquals(0, dispatcherRuntime.getOutstandingTaskCount());
+                    } finally {
+                        if (victimDone.getCount() > 0) {
+                            victimContext.getCircuitBreaker().cancel();
+                            foreignBreaker.cancel();
+                            if (victimProgress != null) {
+                                dispatcher.signalProgress(victimProgress);
+                            }
+                            dispatcher.beginQuiesce();
+                            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                            while (victimDone.getCount() > 0 && System.nanoTime() < deadline) {
+                                dispatcher.progressQuiesce();
+                                victimDone.await(10, TimeUnit.MILLISECONDS);
+                            }
+                        }
+                        if (ownerPoolStarted) {
+                            ownerPool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+                        }
+                        engine.getMessageBus().setQueryParallelFiberDispatcher(null);
+                        Misc.free(dispatcher);
+                        closeRuntime(dispatcherRuntime);
+                    }
+                }
+            }
+        });
     }
 
     // A fiber owner parks on the dispatcher instead of stealing, so every published task is left

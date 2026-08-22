@@ -167,60 +167,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testCloseByDeadlineIncludesLifecycleLockWait() throws Exception {
-        assertMemoryLeak(() -> {
-            final SOCountDownLatch closeEntered = new SOCountDownLatch(1);
-            final SOCountDownLatch releaseClose = new SOCountDownLatch(1);
-            final AtomicReference<Throwable> closeFailure = new AtomicReference<>();
-            final ServerMain serverMain = new ServerMain(getServerMainArgs()) {
-                @Override
-                protected io.questdb.lifecycle.LifecycleOrchestrator newOrchestrator(
-                        io.questdb.log.Log log,
-                        WorkerPoolManager workerPoolManager,
-                        Object tokioRuntime
-                ) {
-                    return new io.questdb.lifecycle.LifecycleOrchestrator(log, workerPoolManager, tokioRuntime) {
-                        @Override
-                        public void close() {
-                            if (!isStopComplete()) {
-                                closeEntered.countDown();
-                                releaseClose.await();
-                            }
-                            super.close();
-                        }
-                    };
-                }
-            };
-            final Thread closeThread = new Thread(() -> {
-                try {
-                    serverMain.close();
-                } catch (Throwable th) {
-                    closeFailure.set(th);
-                }
-            });
-            try {
-                serverMain.start();
-                closeThread.start();
-                Assert.assertTrue(closeEntered.await(TimeUnit.SECONDS.toNanos(10)));
-
-                final long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(100);
-                Assert.assertFalse(serverMain.closeBy(deadlineNanos));
-                Assert.assertTrue(System.nanoTime() - deadlineNanos < TimeUnit.SECONDS.toNanos(5));
-                Assert.assertFalse(serverMain.isCloseComplete());
-            } finally {
-                releaseClose.countDown();
-                closeThread.join(10_000L);
-                if (!closeThread.isAlive() && !serverMain.isCloseComplete()) {
-                    serverMain.close();
-                }
-            }
-            Assert.assertFalse(closeThread.isAlive());
-            Assert.assertNull(closeFailure.get());
-            Assert.assertTrue(serverMain.isCloseComplete());
-        });
-    }
-
-    @Test
     public void testCloseDeregistersShutdownHook() throws Exception {
         assertMemoryLeak(() -> {
             final Thread hook;
@@ -245,7 +191,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
     @Test
     public void testCloseDispatchesTerminalLifecycleStop() throws Exception {
         assertMemoryLeak(() -> {
-            final AtomicInteger boundedCloseCount = new AtomicInteger();
             final AtomicInteger terminalCloseCount = new AtomicInteger();
             final ServerMain serverMain = new ServerMain(getServerMainArgs()) {
                 @Override
@@ -262,12 +207,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                             }
                             super.close();
                         }
-
-                        @Override
-                        public void closeBy(long deadlineNanos) {
-                            boundedCloseCount.incrementAndGet();
-                            super.closeBy(deadlineNanos);
-                        }
                     };
                 }
             };
@@ -275,7 +214,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 serverMain.start();
                 serverMain.close();
 
-                Assert.assertEquals(0, boundedCloseCount.get());
                 Assert.assertEquals(1, terminalCloseCount.get());
                 Assert.assertTrue(serverMain.isCloseComplete());
                 Assert.assertTrue(serverMain.hasBeenClosed());

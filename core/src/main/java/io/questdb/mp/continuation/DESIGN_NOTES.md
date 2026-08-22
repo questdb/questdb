@@ -16,6 +16,26 @@ Only `Fiber` mounts a continuation. Production code must not wrap a
 gateways. Code outside a mounted fiber receives no implicit suspension
 permission.
 
+## Java API migration
+
+Direct Java integrations must rebuild against this scheduler generation.
+`WorkerPoolConfiguration.isLegacy()` remains a deprecated read alias, but
+custom configurations must override `getWorkerPoolMode()` to select a mode.
+
+The removed `getContinuationSink()`, `ContinuationSink`,
+`WorkerContinuation`, `ContinuationQueue`, `TimerCont`, and `TxnWaiter` API
+family has no binary-compatible adapter. Replace custom continuation work
+with a `FiberTask` launched through `WorkerPool.getFiberRuntime().launch(...)`
+on a `FIBER_HOST` pool, or use a `LEGACY` pool for ordinary jobs.
+
+`WorkerPool.halt(long)` remains a deprecated relative-duration bridge to
+`haltWithin(long)`. `WorkerPoolManager.halt()` retains its void descriptor;
+callers that need the unbounded attempt's completion result use
+`haltAndReportCompletion()`. `haltWithin(long)` is the only bounded-shutdown
+entry point; it takes a relative nanosecond budget and reports whether the
+pool released its object graph, so a caller that times out retries with a
+fresh budget.
+
 ```mermaid
 flowchart TB
     subgraph P["FIBER_HOST WorkerPool"]

@@ -210,8 +210,8 @@ public class WorkerPool implements Closeable {
     /**
      * Closes the pool by waiting without a deadline for all workers and hosted fibers to stop,
      * then releases the pool-owned object graph. This terminal operation never releases resources
-     * while a live worker or fiber may still access them. Use {@link #haltWithin(long)} or
-     * {@link #haltBy(long)} when the caller needs a retryable bounded wait.
+     * while a live worker or fiber may still access them. Use {@link #haltWithin(long)} when the
+     * caller needs a retryable bounded wait.
      */
     @Override
     public void close() {
@@ -274,31 +274,23 @@ public class WorkerPool implements Closeable {
     /**
      * Halts the pool, waiting without a deadline for all workers and hosted fibers to stop before
      * releasing the pool-owned object graph. Use {@link #haltWithin(long)} for a relative wait
-     * budget or {@link #haltBy(long)} for an absolute {@link System#nanoTime()} deadline.
+     * budget.
      */
     public void halt() {
         isHaltComplete(false, 0, false);
     }
 
+    /**
+     * @deprecated use {@link #haltWithin(long)} and inspect its completion result
+     */
+    @Deprecated
+    public void halt(long timeoutNanos) {
+        haltWithin(timeoutNanos);
+    }
+
     @TestOnly
     public void haltAndAssertCleanForTest(long timeoutNanos) {
         isHaltComplete(true, System.nanoTime() + Math.max(0, timeoutNanos), true);
-    }
-
-    /**
-     * Halts the pool using an absolute {@link System#nanoTime()} deadline for shutdown waits.
-     * When a wait reaches the deadline, shutdown has begun but the pool retains resources that a
-     * live worker or fiber may still access. The caller may retry with another deadline.
-     * The deadline bounds this call's return, not thread termination: a fiber-host pool's
-     * non-daemon workers keep running until the fiber runtime drains, so a timed-out halt can
-     * leave them alive past the deadline and keep the JVM from exiting.
-     *
-     * @param deadlineNanos absolute deadline for shutdown waits
-     * @return true when the pool released all owned resources, false when it retained its live
-     * object graph after the deadline
-     */
-    public boolean haltBy(long deadlineNanos) {
-        return isHaltComplete(true, deadlineNanos, false);
     }
 
     /**

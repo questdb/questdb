@@ -46,7 +46,6 @@ import org.junit.Test;
 import org.junit.rules.Timeout;
 
 import java.lang.reflect.Field;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -136,52 +135,6 @@ public class ServerMainProtocolEnvelopePartialInitTest extends AbstractBootstrap
                                 + "(actual value: " + leakedTcp + ")",
                         leakedTcp
                 );
-            }
-        });
-    }
-
-    @Test
-    public void minHttpStopHonorsDeadlineAndRetries() throws Exception {
-        assertMemoryLeak(() -> {
-            final CountDownLatch releaseWorker = new CountDownLatch(1);
-            final CountDownLatch workerEntered = new CountDownLatch(1);
-            try (ServerMain server = new ServerMain(getServerMainArgs()) {
-                @Override
-                protected Services services() {
-                    return new Services() {
-                        @Override
-                        public HttpServer createMinHttpServer(
-                                HttpServerConfiguration configuration,
-                                WorkerPool workerPool
-                        ) {
-                            workerPool.assign(workerContext -> {
-                                workerEntered.countDown();
-                                try {
-                                    releaseWorker.await();
-                                } catch (InterruptedException e) {
-                                    Thread.currentThread().interrupt();
-                                }
-                                return false;
-                            });
-                            return null;
-                        }
-                    };
-                }
-            }) {
-                server.testInitForEnvelopeTests();
-                final Component envelope = server.testNewMinHttpEnvelope();
-                envelope.start(newDetachedContext(server, envelope.name()));
-                Assert.assertTrue(workerEntered.await(5, TimeUnit.SECONDS));
-
-                try {
-                    envelope.stop(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(10));
-                    Assert.fail("expected http-min halt timeout");
-                } catch (IllegalStateException e) {
-                    Assert.assertEquals("http-min worker pool did not halt", e.getMessage());
-                } finally {
-                    releaseWorker.countDown();
-                }
-                envelope.stop(System.nanoTime() + TimeUnit.SECONDS.toNanos(5));
             }
         });
     }

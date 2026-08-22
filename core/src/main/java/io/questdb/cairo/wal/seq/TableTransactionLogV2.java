@@ -212,12 +212,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         if (cursor == null) {
             cursor = new TransactionLogCursorImpl(ff, configuration.getBypassWalFdCache(), txnLo, path, partTransactionCount);
             if (cursorPool != null) {
-                try {
-                    cursorPool.setTransactionLogCursor(WAL_SEQUENCER_FORMAT_VERSION_V2, cursor);
-                } catch (Throwable th) {
-                    cursor.close();
-                    throw th;
-                }
+                cursorPool.registerTransactionLogCursor(WAL_SEQUENCER_FORMAT_VERSION_V2, cursor);
             } else {
                 tlTransactionLogCursor.set(cursor);
             }

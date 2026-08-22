@@ -27,10 +27,12 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -97,6 +99,34 @@ public class SqlExecutionContextFiberRandomTest extends AbstractCairoTest {
                 }
                 Assert.assertTrue(runtime.awaitClosed(deadline));
                 runtime.closeAfterDrained();
+            }
+        });
+    }
+
+    @Test
+    public void testUnmountedFiberRandomAccessThrows() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(AllowAllSecurityContext.INSTANCE)) {
+                Assert.assertNull(Fiber.current());
+                Assert.assertFalse(Fiber.isMounted());
+
+                final SuspensionScope.Mode previousMode = SuspensionScope.enter(SuspensionScope.Mode.FIBER);
+                try {
+                    final IllegalStateException asyncException = Assert.assertThrows(
+                            IllegalStateException.class,
+                            executionContext::getAsyncRandom
+                    );
+                    Assert.assertEquals("fiber async random requires a mounted fiber", asyncException.getMessage());
+
+                    final IllegalStateException exception = Assert.assertThrows(
+                            IllegalStateException.class,
+                            executionContext::getRandom
+                    );
+                    Assert.assertEquals("fiber random requires a mounted fiber", exception.getMessage());
+                } finally {
+                    SuspensionScope.restore(previousMode);
+                }
             }
         });
     }

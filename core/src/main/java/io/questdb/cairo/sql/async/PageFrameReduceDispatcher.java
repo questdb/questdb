@@ -263,7 +263,12 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                 if (cursor > -1) {
                     final PageFrameReduceTask reduceTask = queue.get(cursor);
                     final PageFrameSequence<?> frameSequence = reduceTask.getFrameSequence();
-                    fiberTask = taskPool.acquireLeased();
+                    try {
+                        fiberTask = taskPool.acquireLeased();
+                    } catch (Throwable th) {
+                        completeFailedOrderedAcquisition(subSeq, cursor, reduceTask, frameSequence, th);
+                        throw th;
+                    }
                     fiberTask.ofOrdered(
                             workerId,
                             queue,
@@ -333,7 +338,12 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                                 .I$();
                         return false;
                     }
-                    fiberTask = taskPool.acquireLeased();
+                    try {
+                        fiberTask = taskPool.acquireLeased();
+                    } catch (Throwable th) {
+                        completeFailedUnorderedAcquisition(frameSequence, th);
+                        throw th;
+                    }
                     fiberTask.ofUnordered(workerId, queue, subSeq, frameIndex, frameSequence);
                     hasLaunchOwnership = false;
                     launch(fiber, reservationEpoch, fiberTask, workerId > -1);
@@ -461,6 +471,12 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
 
     private static IllegalStateException launchFailed(LaunchResult result) {
         return new IllegalStateException("page frame fiber launch failed [result=" + result + ']');
+    }
+
+    private static void suppressCleanupFailure(Throwable failure, Throwable cleanupFailure) {
+        if (failure != cleanupFailure) {
+            failure.addSuppressed(cleanupFailure);
+        }
     }
 
     private int awaitProgress(
@@ -628,6 +644,61 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             } else {
                 return cursor == -1;
             }
+        }
+    }
+
+    private void completeFailedOrderedAcquisition(
+            MCSequence subSeq,
+            long cursor,
+            PageFrameReduceTask reduceTask,
+            PageFrameSequence<?> frameSequence,
+            Throwable failure
+    ) {
+        try {
+            if (frameSequence.isReducerFailureReportable(failure)) {
+                reduceTask.setErrorMsg(failure);
+                frameSequence.cancelOnReducerError(failure);
+            }
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+        try {
+            subSeq.done(cursor);
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+        try {
+            frameSequence.getReduceFinishedCounter().incrementAndGet();
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+        try {
+            signalProgress(frameSequence);
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+    }
+
+    private void completeFailedUnorderedAcquisition(
+            UnorderedPageFrameSequence<?> frameSequence,
+            Throwable failure
+    ) {
+        try {
+            if (frameSequence.isReducerFailureReportable(failure)) {
+                frameSequence.setError(failure);
+            }
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+        try {
+            frameSequence.getDoneLatch().countDown();
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
+        }
+        try {
+            frameSequence.signalProgress();
+        } catch (Throwable cleanupFailure) {
+            suppressCleanupFailure(failure, cleanupFailure);
         }
     }
 

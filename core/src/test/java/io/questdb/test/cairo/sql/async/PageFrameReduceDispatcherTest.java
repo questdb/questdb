@@ -47,6 +47,7 @@ import io.questdb.cairo.sql.async.UnorderedPageFrameReduceJob;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceTask;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
@@ -76,9 +77,13 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -106,6 +111,281 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             } finally {
                 close(runtime);
                 Misc.free(dispatcher);
+            }
+        });
+    }
+
+    @Test
+    public void testOrderedProducerDoesNotEnterTaskPoolMonitor() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final RingQueue<PageFrameReduceTask> queue = new RingQueue<>(
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1
+            );
+            final MPSequence pubSeq = new MPSequence(queue.getCycle());
+            final ClaimNotifyingMCSequence subSeq = new ClaimNotifyingMCSequence(queue.getCycle());
+            pubSeq.then(subSeq).then(pubSeq);
+            final PageFrameSequence<StatefulAtom> frameSequence = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    engine.getMessageBus(),
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _) -> {
+                    },
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1,
+                    PageFrameReduceTask.TYPE_FILTER
+            ) {
+                @Override
+                public SqlExecutionCircuitBreaker getCircuitBreaker() {
+                    return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+                }
+            };
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    runtime
+            );
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final CountDownLatch consumerDone = new CountDownLatch(1);
+            final Thread consumer = new Thread(() -> {
+                try {
+                    Assert.assertFalse(dispatcher.consumeOrdered(-1, queue, subSeq, null));
+                } catch (Throwable th) {
+                    failure.set(th);
+                } finally {
+                    consumerDone.countDown();
+                }
+            });
+            try {
+                final long cursor = pubSeq.next();
+                Assert.assertTrue(cursor > -1);
+                queue.get(cursor).of(frameSequence, 0, false);
+                pubSeq.done(cursor);
+
+                final Field taskPoolField = PageFrameReduceDispatcher.class.getDeclaredField("taskPool");
+                taskPoolField.setAccessible(true);
+                final Object taskPool = taskPoolField.get(dispatcher);
+                synchronized (taskPool) {
+                    consumer.start();
+                    Assert.assertTrue("consumer did not claim the cursor", subSeq.awaitClaim());
+                    Assert.assertTrue(
+                            "ordered producer entered the task-pool monitor after claiming the cursor",
+                            consumerDone.await(5, TimeUnit.SECONDS)
+                    );
+                }
+                consumer.join(5_000);
+                Assert.assertFalse("consumer did not return", consumer.isAlive());
+                Assert.assertNull(failure.get());
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertEquals(1, frameSequence.getReduceFinishedCounter().get());
+            } finally {
+                consumer.join(5_000);
+                runtime.drain(8);
+                close(runtime);
+                Misc.free(dispatcher);
+                Misc.free(frameSequence);
+                Misc.free(queue);
+            }
+        });
+    }
+
+    @Test
+    public void testOrderedTaskCreationFailureCompletesOwnership() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final RingQueue<PageFrameReduceTask> queue = new RingQueue<>(
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1
+            );
+            final MPSequence pubSeq = new MPSequence(queue.getCycle());
+            final MCSequence subSeq = new MCSequence(queue.getCycle());
+            pubSeq.then(subSeq).then(pubSeq);
+            final PageFrameSequence<StatefulAtom> frameSequence = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    engine.getMessageBus(),
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _) -> {
+                    },
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1,
+                    PageFrameReduceTask.TYPE_FILTER
+            ) {
+                @Override
+                public SqlExecutionCircuitBreaker getCircuitBreaker() {
+                    return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+                }
+            };
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    runtime
+            );
+            final RuntimeException injected = new RuntimeException("injected page-frame task creation failure");
+            try {
+                circuitBreakerConfiguration = failingCircuitBreakerConfiguration(injected);
+                try {
+                    runOrdered(dispatcher, frameSequence, pubSeq, queue, subSeq);
+                    Assert.fail("expected injected task creation failure");
+                } catch (RuntimeException th) {
+                    Assert.assertSame(injected, th);
+                } finally {
+                    circuitBreakerConfiguration = null;
+                }
+
+                Assert.assertEquals(0, subSeq.current());
+                Assert.assertEquals(1, frameSequence.getReduceFinishedCounter().get());
+                Assert.assertEquals(0, dispatcher.getCreatedTaskCount());
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                final Fiber fiber = runtime.tryReserveFiber();
+                Assert.assertNotNull(fiber);
+                runtime.releaseReservedFiber(fiber, fiber.getReservationEpoch());
+
+                runOrdered(dispatcher, frameSequence, pubSeq, queue, subSeq);
+                Assert.assertEquals(1, dispatcher.getCreatedTaskCount());
+                Assert.assertEquals(2, frameSequence.getReduceFinishedCounter().get());
+            } finally {
+                circuitBreakerConfiguration = null;
+                close(runtime);
+                Misc.free(dispatcher);
+                Misc.free(frameSequence);
+                Misc.free(queue);
+            }
+        });
+    }
+
+    @Test
+    public void testUnorderedTaskCreationFailureCompletesOwnership() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final RingQueue<UnorderedPageFrameReduceTask> queue = new RingQueue<>(
+                    UnorderedPageFrameReduceTask::new,
+                    1
+            );
+            final MPSequence pubSeq = new MPSequence(queue.getCycle());
+            final MCSequence subSeq = new MCSequence(queue.getCycle());
+            pubSeq.then(subSeq).then(pubSeq);
+            final UnorderedPageFrameSequence<StatefulAtom> frameSequence = new UnorderedPageFrameSequence<>(
+                    engine,
+                    configuration,
+                    engine.getMessageBus(),
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _, _) -> {
+                    },
+                    1
+            ) {
+                @Override
+                public SqlExecutionCircuitBreaker getCircuitBreaker() {
+                    return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+                }
+            };
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    runtime
+            );
+            final RuntimeException injected = new RuntimeException("injected page-frame task creation failure");
+            try {
+                final long doneBefore = frameSequence.getDoneLatch().getCount();
+                circuitBreakerConfiguration = failingCircuitBreakerConfiguration(injected);
+                try {
+                    runUnordered(dispatcher, frameSequence, pubSeq, queue, subSeq);
+                    Assert.fail("expected injected task creation failure");
+                } catch (RuntimeException th) {
+                    Assert.assertSame(injected, th);
+                } finally {
+                    circuitBreakerConfiguration = null;
+                }
+
+                Assert.assertEquals(0, subSeq.current());
+                Assert.assertEquals(doneBefore - 1, frameSequence.getDoneLatch().getCount());
+                Assert.assertEquals(0, dispatcher.getCreatedTaskCount());
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                final Fiber fiber = runtime.tryReserveFiber();
+                Assert.assertNotNull(fiber);
+                runtime.releaseReservedFiber(fiber, fiber.getReservationEpoch());
+
+                runUnordered(dispatcher, frameSequence, pubSeq, queue, subSeq);
+                Assert.assertEquals(1, dispatcher.getCreatedTaskCount());
+                Assert.assertEquals(doneBefore - 2, frameSequence.getDoneLatch().getCount());
+            } finally {
+                circuitBreakerConfiguration = null;
+                close(runtime);
+                Misc.free(dispatcher);
+                Misc.free(frameSequence);
+                Misc.free(queue);
+            }
+        });
+    }
+
+    @Test
+    public void testTaskPoolReleaseRacingCloseDoesNotRetainTask() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 128; i++) {
+                final FiberRuntime runtime = new FiberRuntime(1);
+                final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                        engine,
+                        engine.getMessageBus(),
+                        runtime
+                );
+                try {
+                    final Field taskPoolField = PageFrameReduceDispatcher.class.getDeclaredField("taskPool");
+                    taskPoolField.setAccessible(true);
+                    final Object taskPool = taskPoolField.get(dispatcher);
+                    final Method tryLease = taskPool.getClass().getDeclaredMethod("tryLease");
+                    final Method acquireLeased = taskPool.getClass().getDeclaredMethod("acquireLeased");
+                    tryLease.setAccessible(true);
+                    acquireLeased.setAccessible(true);
+                    Assert.assertEquals(Boolean.TRUE, tryLease.invoke(taskPool));
+                    final Object task = acquireLeased.invoke(taskPool);
+                    final Method release = taskPool.getClass().getDeclaredMethod("release", task.getClass());
+                    final Method close = taskPool.getClass().getDeclaredMethod("close");
+                    release.setAccessible(true);
+                    close.setAccessible(true);
+
+                    final CountDownLatch start = new CountDownLatch(1);
+                    final AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+                    final AtomicReference<Throwable> releaseFailure = new AtomicReference<>();
+                    final Thread closeThread = new Thread(() -> {
+                        try {
+                            start.await();
+                            close.invoke(taskPool);
+                        } catch (Throwable th) {
+                            closeFailure.set(unwrapInvocationFailure(th));
+                        }
+                    });
+                    final Thread releaseThread = new Thread(() -> {
+                        try {
+                            start.await();
+                            release.invoke(taskPool, task);
+                        } catch (Throwable th) {
+                            releaseFailure.set(unwrapInvocationFailure(th));
+                        }
+                    });
+                    closeThread.start();
+                    releaseThread.start();
+                    start.countDown();
+                    closeThread.join(5_000);
+                    releaseThread.join(5_000);
+
+                    Assert.assertFalse("task-pool close did not return", closeThread.isAlive());
+                    Assert.assertFalse("task release did not return", releaseThread.isAlive());
+                    Assert.assertNull(releaseFailure.get());
+                    if (closeFailure.get() != null) {
+                        Assert.assertTrue(closeFailure.get() instanceof IllegalStateException);
+                        TestUtils.assertContains(closeFailure.get().getMessage(), "closed with leased tasks");
+                    }
+                    Assert.assertEquals(0, dispatcher.getCreatedTaskCount());
+                    Assert.assertEquals(Boolean.FALSE, tryLease.invoke(taskPool));
+                } finally {
+                    close(runtime);
+                    Misc.free(dispatcher);
+                }
             }
         });
     }
@@ -3502,6 +3782,28 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
         runtime.closeAfterDrained();
     }
 
+    private static DefaultSqlExecutionCircuitBreakerConfiguration failingCircuitBreakerConfiguration(
+            RuntimeException failure
+    ) {
+        final AtomicBoolean isArmed = new AtomicBoolean(true);
+        return new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public int getCircuitBreakerThrottle() {
+                if (isArmed.compareAndSet(true, false)) {
+                    throw failure;
+                }
+                return super.getCircuitBreakerThrottle();
+            }
+        };
+    }
+
+    private static Throwable unwrapInvocationFailure(Throwable failure) {
+        if (failure instanceof InvocationTargetException && failure.getCause() != null) {
+            return failure.getCause();
+        }
+        return failure;
+    }
+
     private static void park(FiberWalWaitQueue waitQueue) {
         final Fiber fiber = Objects.requireNonNull(Fiber.current());
         final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
@@ -3614,6 +3916,27 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
         }
         if (dispatcher.consumeUnordered(0, queue, subSeq, null)) {
             throw new IllegalStateException("test dispatcher did not consume the task");
+        }
+    }
+
+    private static final class ClaimNotifyingMCSequence extends MCSequence {
+        private final CountDownLatch cursorClaimed = new CountDownLatch(1);
+
+        private ClaimNotifyingMCSequence(int cycle) {
+            super(cycle);
+        }
+
+        @Override
+        public long next() {
+            final long cursor = super.next();
+            if (cursor > -1) {
+                cursorClaimed.countDown();
+            }
+            return cursor;
+        }
+
+        private boolean awaitClaim() throws InterruptedException {
+            return cursorClaimed.await(5, TimeUnit.SECONDS);
         }
     }
 

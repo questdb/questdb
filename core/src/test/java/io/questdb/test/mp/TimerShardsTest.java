@@ -457,7 +457,7 @@ public class TimerShardsTest {
             );
             Assert.assertTrue(shutdownReturned.await(5, TimeUnit.SECONDS));
             Assert.assertTrue(shutdownFailure.get() instanceof IllegalStateException);
-            Assert.assertTrue(shards.shutdown(System.nanoTime() + TimeUnit.SECONDS.toNanos(5)));
+            shards.shutdown();
         } finally {
             shards.shutdown();
         }
@@ -484,41 +484,6 @@ public class TimerShardsTest {
             Assert.assertTrue(Thread.currentThread().isInterrupted());
         } finally {
             Thread.interrupted();
-            shards.shutdown();
-        }
-    }
-
-    @Test
-    public void testShutdownTimeoutRetainsThreadsForRetry() throws InterruptedException {
-        TimerShards shards = new TimerShards(1, "test-timer", LOG);
-        CountDownLatch entered = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
-        AtomicInteger expired = new AtomicInteger();
-        shards.start();
-        try {
-            Assert.assertSame(
-                    SourceRegistrationResult.ACCEPTED,
-                    shards.register(new TestEntry(System.currentTimeMillis(), () -> {
-                        entered.countDown();
-                        try {
-                            release.await();
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                        }
-                        expired.incrementAndGet();
-                    }, null))
-            );
-            Assert.assertTrue(entered.await(5, TimeUnit.SECONDS));
-            Assert.assertFalse(shards.shutdown(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1)));
-            Assert.assertEquals(1, shards.size());
-            Assert.assertFalse(shards.shutdown(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1)));
-            Assert.assertEquals(1, shards.size());
-            Assert.assertEquals(0, expired.get());
-            release.countDown();
-            Assert.assertTrue(shards.shutdown(System.nanoTime() + TimeUnit.SECONDS.toNanos(5)));
-            Assert.assertEquals(1, expired.get());
-        } finally {
-            release.countDown();
             shards.shutdown();
         }
     }

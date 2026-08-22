@@ -80,7 +80,6 @@ public class LogFactory implements Closeable {
     public static final String DEFAULT_CONFIG_NAME = "log.conf";
     // placeholder that can be used in log.conf to point to $root/log/ dir
     public static final String LOG_DIR_VAR = "${log.dir}";
-    private static final int CLOSE_ATTEMPTS = 3;
     private static final String DEFAULT_CONFIG = "/io/questdb/site/conf/" + DEFAULT_CONFIG_NAME;
     private static final int DEFAULT_LOG_LEVEL = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
     private static final int DEFAULT_MSG_SIZE = 4 * 1024;
@@ -102,8 +101,6 @@ public class LogFactory implements Closeable {
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
     private final StringSink sink = new StringSink();
     private boolean configured = false;
-    @TestOnly
-    private volatile boolean isHaltRefusedForTesting;
     private boolean isThreadHaltComplete;
     private boolean isThreadHaltStarted;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
@@ -139,17 +136,11 @@ public class LogFactory implements Closeable {
     }
 
     public static synchronized void closeInstance() {
-        closeInstanceWithin(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
-    }
-
-    public static synchronized void closeInstanceWithin(long timeoutNanos) {
         final LogFactory logFactory = INSTANCE;
         if (logFactory == null) {
             return;
         }
-        if (!logFactory.closeWithin(true, timeoutNanos)) {
-            throw new IllegalStateException("logging worker pool did not halt");
-        }
+        logFactory.close(true);
         INSTANCE = null;
     }
 
@@ -210,8 +201,8 @@ public class LogFactory implements Closeable {
 
     public static synchronized void haltInstance() {
         LogFactory logFactory = INSTANCE;
-        if (logFactory != null && !logFactory.haltThread()) {
-            throw new IllegalStateException("logging worker pool did not halt");
+        if (logFactory != null) {
+            logFactory.haltThread();
         }
     }
 
@@ -259,9 +250,7 @@ public class LogFactory implements Closeable {
     }
 
     public void close(boolean flush) {
-        if (!closeWithin(flush, WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
-            throw new IllegalStateException("logging worker pool did not halt");
-        }
+        closeInternal(flush);
     }
 
     public Log create(Class<?> clazz) {
@@ -396,16 +385,6 @@ public class LogFactory implements Closeable {
         deferredLoggers.clear();
 
         startThread();
-    }
-
-    @TestOnly
-    public boolean isClosed() {
-        return closed.get();
-    }
-
-    @TestOnly
-    public void setHaltRefusedForTesting(boolean isHaltRefusedForTesting) {
-        this.isHaltRefusedForTesting = isHaltRefusedForTesting;
     }
 
     public void startThread() {
@@ -576,15 +555,12 @@ public class LogFactory implements Closeable {
         }
     }
 
-    private synchronized boolean closeInternal(boolean flush, long haltTimeoutNanos) {
+    private synchronized void closeInternal(boolean flush) {
         if (!closed.compareAndSet(false, true)) {
-            return true;
+            return;
         }
         try {
-            if (!haltThread(haltTimeoutNanos)) {
-                closed.set(false);
-                return false;
-            }
+            haltThread();
         } catch (Throwable th) {
             closed.set(false);
             throw th;
@@ -610,19 +586,6 @@ public class LogFactory implements Closeable {
         for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
             Misc.free(scopeConfigs.getQuick(i));
         }
-        return true;
-    }
-
-    private synchronized boolean closeWithin(boolean flush, long timeoutNanos) {
-        final long deadline = System.nanoTime() + timeoutNanos;
-        for (int i = 0; i < CLOSE_ATTEMPTS; i++) {
-            final int remainingAttempts = CLOSE_ATTEMPTS - i;
-            final long remainingNanos = Math.max(1, deadline - System.nanoTime());
-            if (closeInternal(flush, Math.max(1, remainingNanos / remainingAttempts))) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private void configure(InputStream fis, String rootDir) throws IOException {
@@ -763,24 +726,14 @@ public class LogFactory implements Closeable {
         return scopeConfigMap.get(k);
     }
 
-    private boolean haltThread() {
-        return haltThread(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
-    }
-
-    private boolean haltThread(long timeoutNanos) {
+    private void haltThread() {
         if (isThreadHaltComplete) {
-            return true;
-        }
-        if (isHaltRefusedForTesting) {
-            return false;
+            return;
         }
         isThreadHaltStarted = true;
         running.set(false);
-        if (!loggingWorkerPool.haltWithin(timeoutNanos)) {
-            return false;
-        }
+        loggingWorkerPool.halt();
         isThreadHaltComplete = true;
-        return true;
     }
 
     @TestOnly

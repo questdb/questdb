@@ -106,52 +106,6 @@ public class LogFactoryTest {
     }
 
     @Test
-    public void testCloseInstanceRetainsSingletonAfterHaltRefusal() throws Exception {
-        final Field instanceField = LogFactory.class.getDeclaredField("INSTANCE");
-        instanceField.setAccessible(true);
-        final LogFactory isolated = new LogFactory();
-        synchronized (LogFactory.class) {
-            final LogFactory original = (LogFactory) instanceField.get(null);
-            try (isolated) {
-                try {
-                    instanceField.set(null, isolated);
-                    isolated.setHaltRefusedForTesting(true);
-                    final IllegalStateException exception = Assert.assertThrows(
-                            IllegalStateException.class,
-                            () -> LogFactory.closeInstanceWithin(1)
-                    );
-                    Assert.assertEquals("logging worker pool did not halt", exception.getMessage());
-                    Assert.assertSame(isolated, instanceField.get(null));
-                    Assert.assertFalse(isolated.isClosed());
-
-                    isolated.setHaltRefusedForTesting(false);
-                    LogFactory.closeInstance();
-                    Assert.assertNull(instanceField.get(null));
-                    Assert.assertTrue(isolated.isClosed());
-                } finally {
-                    isolated.setHaltRefusedForTesting(false);
-                }
-            } finally {
-                instanceField.set(null, original);
-            }
-        }
-    }
-
-    @Test
-    public void testCloseReportsHaltRefusalAndCanRetry() {
-        try (LogFactory factory = new LogFactory()) {
-            factory.setHaltRefusedForTesting(true);
-            final IllegalStateException exception = Assert.assertThrows(IllegalStateException.class, factory::close);
-            TestUtils.assertContains(exception.getMessage(), "logging worker pool did not halt");
-            Assert.assertFalse(factory.isClosed());
-
-            factory.setHaltRefusedForTesting(false);
-            factory.close();
-            Assert.assertTrue(factory.isClosed());
-        }
-    }
-
-    @Test
     public void testConsecutiveAbandonedRecordsDoNotBlockProductionQueue() throws Exception {
         File javaExecutable = new File(new File(System.getProperty("java.home"), "bin"), "java");
         if (!javaExecutable.exists()) {

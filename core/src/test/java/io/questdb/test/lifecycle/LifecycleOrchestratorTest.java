@@ -23,7 +23,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class LifecycleOrchestratorTest {
@@ -86,176 +85,7 @@ public class LifecycleOrchestratorTest {
     }
 
     @Test
-    public void testCloseByDeadlineIncludesOwnershipWait() throws Exception {
-        final CountDownLatch boundedReturned = new CountDownLatch(1);
-        final CountDownLatch releaseStop = new CountDownLatch(1);
-        final CountDownLatch stopEntered = new CountDownLatch(1);
-        final AtomicReference<Throwable> boundedError = new AtomicReference<>();
-        final AtomicReference<Throwable> terminalError = new AtomicReference<>();
-        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
-        orch.register(new ProbeComponent("a") {
-            @Override
-            public void stop() {
-                stopEntered.countDown();
-                try {
-                    releaseStop.await();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-                super.stop();
-            }
-        });
-        orch.run();
-
-        final Thread terminalClose = new Thread(() -> {
-            try {
-                orch.close();
-            } catch (Throwable th) {
-                terminalError.set(th);
-            }
-        });
-        final Thread boundedClose = new Thread(() -> {
-            try {
-                orch.closeBy(System.nanoTime());
-            } catch (Throwable th) {
-                boundedError.set(th);
-            } finally {
-                boundedReturned.countDown();
-            }
-        });
-        terminalClose.start();
-        try {
-            Assert.assertTrue(stopEntered.await(10, TimeUnit.SECONDS));
-            boundedClose.start();
-            Assert.assertTrue(
-                    "closeBy() exceeded its deadline while waiting for close ownership",
-                    boundedReturned.await(1, TimeUnit.SECONDS)
-            );
-        } finally {
-            releaseStop.countDown();
-            terminalClose.join(TimeUnit.SECONDS.toMillis(10));
-            if (boundedClose.getState() != Thread.State.NEW) {
-                boundedClose.join(TimeUnit.SECONDS.toMillis(10));
-            }
-            orch.close();
-        }
-        Assert.assertNull(boundedError.get());
-        Assert.assertNull(terminalError.get());
-    }
-
-    @Test
-    public void testCloseByDispatchesBoundedComponentStop() {
-        final AtomicInteger boundedStopCount = new AtomicInteger();
-        final AtomicInteger terminalStopCount = new AtomicInteger();
-        final AtomicLong observedDeadline = new AtomicLong(Long.MIN_VALUE);
-        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
-        orch.register(new ProbeComponent("a") {
-            @Override
-            public void stop() {
-                terminalStopCount.incrementAndGet();
-                super.stop();
-            }
-
-            @Override
-            public void stop(long deadlineNanos) {
-                boundedStopCount.incrementAndGet();
-                observedDeadline.set(deadlineNanos);
-                super.stop();
-            }
-        });
-        orch.run();
-        final long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-
-        orch.closeBy(deadlineNanos);
-
-        Assert.assertEquals(1, boundedStopCount.get());
-        Assert.assertEquals(0, terminalStopCount.get());
-        Assert.assertEquals(deadlineNanos, observedDeadline.get());
-        Assert.assertTrue(orch.isStopComplete());
-    }
-
-    @Test
-    public void testCloseByRestoresInterruptAfterOwnershipTimeout() throws Exception {
-        final CountDownLatch boundedReturned = new CountDownLatch(1);
-        final CountDownLatch releaseStop = new CountDownLatch(1);
-        final CountDownLatch stopEntered = new CountDownLatch(1);
-        final AtomicBoolean isBoundedInterrupted = new AtomicBoolean();
-        final AtomicReference<Throwable> boundedError = new AtomicReference<>();
-        final AtomicReference<Throwable> terminalError = new AtomicReference<>();
-        final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
-        orch.register(new ProbeComponent("a") {
-            @Override
-            public void stop() {
-                stopEntered.countDown();
-                try {
-                    releaseStop.await();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-                super.stop();
-            }
-        });
-        orch.run();
-
-        final Thread terminalClose = new Thread(() -> {
-            try {
-                orch.close();
-            } catch (Throwable th) {
-                terminalError.set(th);
-            }
-        });
-        final Thread boundedClose = new Thread(() -> {
-            try {
-                Thread.currentThread().interrupt();
-                orch.closeBy(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(50));
-                isBoundedInterrupted.set(Thread.currentThread().isInterrupted());
-            } catch (Throwable th) {
-                boundedError.set(th);
-            } finally {
-                boundedReturned.countDown();
-            }
-        });
-        terminalClose.start();
-        try {
-            Assert.assertTrue(stopEntered.await(10, TimeUnit.SECONDS));
-            boundedClose.start();
-            Assert.assertTrue(boundedReturned.await(10, TimeUnit.SECONDS));
-        } finally {
-            releaseStop.countDown();
-            terminalClose.join(TimeUnit.SECONDS.toMillis(10));
-            if (boundedClose.getState() != Thread.State.NEW) {
-                boundedClose.join(TimeUnit.SECONDS.toMillis(10));
-            }
-            orch.close();
-        }
-        Assert.assertTrue(isBoundedInterrupted.get());
-        Assert.assertNull(boundedError.get());
-        Assert.assertNull(terminalError.get());
-    }
-
-    @Test
-    public void testCloseByRetainsComponentsWhileExecutorIsLiveWhenLoggingFails() {
-        final AtomicBoolean isExecutorTerminated = new AtomicBoolean();
-        final LifecycleOrchestrator orch = new LifecycleOrchestrator(new CapturingLog(true), null, null) {
-            @Override
-            protected boolean awaitInFlightWork(long deadlineNanos) {
-                return isExecutorTerminated.get();
-            }
-        };
-        final ProbeComponent component = new ProbeComponent("a");
-        orch.register(component);
-        orch.run();
-        orch.closeBy(System.nanoTime());
-        Assert.assertFalse(orch.isStopComplete());
-        Assert.assertEquals(-1, component.getStopSeq());
-        isExecutorTerminated.set(true);
-        orch.close();
-        Assert.assertTrue(orch.isStopComplete());
-        Assert.assertTrue(component.getStopSeq() > -1);
-    }
-
-    @Test
-    public void testCloseByRetriesFailedComponentStopWhenLoggingFails() {
+    public void testCloseRetriesFailedComponentStopWhenLoggingFails() {
         final AtomicInteger stopAttempts = new AtomicInteger();
         final LifecycleOrchestrator orch = new LifecycleOrchestrator(new CapturingLog(true), null, null);
         final ProbeComponent independent = new ProbeComponent("independent");
@@ -275,7 +105,7 @@ public class LifecycleOrchestratorTest {
         orch.register(dependency);
         orch.register(component);
         orch.run();
-        orch.closeBy(System.nanoTime() + TimeUnit.SECONDS.toNanos(10));
+        orch.close();
         Assert.assertFalse(orch.isStopComplete());
         Assert.assertEquals(State.READY, orch.stateOf("a"));
         Assert.assertEquals(State.STOPPING, orch.stateOf("b"));
@@ -292,7 +122,8 @@ public class LifecycleOrchestratorTest {
     }
 
     @Test
-    public void testCloseByStopsSafeComponentsAfterPreStopHookAndLoggingFailure() {
+    public void testCloseStopsSafeComponentsAfterPreStopHookAndLoggingFailure() {
+        final AtomicInteger hookAttempts = new AtomicInteger();
         final LifecycleOrchestrator orch = new LifecycleOrchestrator(new CapturingLog(true), null, null);
         final ProbeComponent audit = new ProbeComponent(
                 "audit",
@@ -334,12 +165,14 @@ public class LifecycleOrchestratorTest {
         orch.register(audit);
         orch.register(auditConsumer);
         orch.register(requestHandler);
-        orch.setPreStopHookWithDeadline(ignored -> {
-            throw new IllegalStateException("worker pool halt failed");
+        orch.setPreStopHook(() -> {
+            if (hookAttempts.getAndIncrement() == 0) {
+                throw new IllegalStateException("worker pool halt failed");
+            }
         });
         orch.run();
 
-        orch.closeBy(System.nanoTime() + TimeUnit.SECONDS.toNanos(10));
+        orch.close();
 
         Assert.assertFalse(orch.isStopComplete());
         Assert.assertEquals(State.READY, orch.stateOf("audit"));
@@ -355,6 +188,7 @@ public class LifecycleOrchestratorTest {
 
         orch.close();
 
+        Assert.assertEquals(2, hookAttempts.get());
         Assert.assertTrue(orch.isStopComplete());
         Assert.assertEquals(State.STOPPED, orch.stateOf("audit"));
         Assert.assertEquals(State.STOPPED, orch.stateOf("audit-consumer"));
@@ -384,7 +218,6 @@ public class LifecycleOrchestratorTest {
 
         orch.close();
         orch.close();
-        orch.closeBy(System.nanoTime());
 
         Assert.assertEquals(1, stopRequests.get());
         Assert.assertTrue(orch.isStopComplete());
@@ -392,7 +225,6 @@ public class LifecycleOrchestratorTest {
 
     @Test
     public void testCloseDispatchesTerminalComponentStop() {
-        final AtomicInteger boundedStopCount = new AtomicInteger();
         final AtomicInteger terminalStopCount = new AtomicInteger();
         final LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
         orch.register(new ProbeComponent("a") {
@@ -401,18 +233,11 @@ public class LifecycleOrchestratorTest {
                 terminalStopCount.incrementAndGet();
                 super.stop();
             }
-
-            @Override
-            public void stop(long deadlineNanos) {
-                boundedStopCount.incrementAndGet();
-                super.stop();
-            }
         });
         orch.run();
 
         orch.close();
 
-        Assert.assertEquals(0, boundedStopCount.get());
         Assert.assertEquals(1, terminalStopCount.get());
         Assert.assertTrue(orch.isStopComplete());
     }
@@ -443,7 +268,7 @@ public class LifecycleOrchestratorTest {
         });
         final Thread closer = new Thread(() -> {
             try {
-                orch.closeBy(System.nanoTime() + TimeUnit.SECONDS.toNanos(10));
+                orch.close();
             } catch (Throwable th) {
                 closeFailure.set(th);
             }
@@ -668,7 +493,7 @@ public class LifecycleOrchestratorTest {
         runner.start();
         try {
             Assert.assertTrue(entered.await(10, TimeUnit.SECONDS));
-            orch.closeBy(System.nanoTime());
+            orch.close();
             Assert.assertEquals(1, stopRequests.get());
         } finally {
             release.countDown();
@@ -727,7 +552,7 @@ public class LifecycleOrchestratorTest {
         });
         final Thread closer = new Thread(() -> {
             try {
-                orch.closeBy(System.nanoTime() + TimeUnit.SECONDS.toNanos(10));
+                orch.close();
             } catch (Throwable th) {
                 closeFailure.set(th);
             }
@@ -797,7 +622,7 @@ public class LifecycleOrchestratorTest {
         runner.start();
         try {
             Assert.assertTrue(entered.await(10, TimeUnit.SECONDS));
-            orch.closeBy(System.nanoTime() + TimeUnit.SECONDS.toNanos(10));
+            orch.close();
             runner.join(10_000L);
         } finally {
             cancel.countDown();
@@ -1179,7 +1004,7 @@ public class LifecycleOrchestratorTest {
         });
         final Thread closer = new Thread(() -> {
             try {
-                orch.closeBy(System.nanoTime() + TimeUnit.SECONDS.toNanos(10));
+                orch.close();
             } catch (Throwable th) {
                 closeFailure.set(th);
             }

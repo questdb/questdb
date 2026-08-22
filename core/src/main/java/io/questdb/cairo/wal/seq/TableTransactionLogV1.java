@@ -175,12 +175,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         if (cursor == null) {
             cursor = new TransactionLogCursorImpl(configuration, txnLo, path);
             if (cursorPool != null) {
-                try {
-                    cursorPool.setTransactionLogCursor(WAL_SEQUENCER_FORMAT_VERSION_V1, cursor);
-                } catch (Throwable th) {
-                    cursor.close();
-                    throw th;
-                }
+                cursorPool.registerTransactionLogCursor(WAL_SEQUENCER_FORMAT_VERSION_V1, cursor);
             } else {
                 tlTransactionLogCursor.set(cursor);
             }

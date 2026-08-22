@@ -530,48 +530,6 @@ public class FiberWorkerPoolTest {
     }
 
     @Test
-    public void testHaltByBoundsConcurrentHaltLockWait() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final CountDownLatch haltEntered = new CountDownLatch(1);
-            final CountDownLatch releaseHalt = new CountDownLatch(1);
-            final AtomicReference<Boolean> firstHaltResult = new AtomicReference<>();
-            final AtomicReference<Throwable> firstHaltFailure = new AtomicReference<>();
-            final TestWorkerPool pool = new TestWorkerPool(1, WorkerPoolMode.LEGACY);
-            pool.setAfterClosedSignalForTesting(() -> {
-                haltEntered.countDown();
-                try {
-                    releaseHalt.await();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new AssertionError(e);
-                }
-            });
-            final Thread firstHalt = new Thread(() -> {
-                try {
-                    firstHaltResult.set(pool.haltWithin(TimeUnit.SECONDS.toNanos(10)));
-                } catch (Throwable th) {
-                    firstHaltFailure.set(th);
-                }
-            });
-            firstHalt.start();
-            try {
-                Assert.assertTrue(haltEntered.await(10, TimeUnit.SECONDS));
-                final long startNanos = System.nanoTime();
-                Assert.assertFalse(pool.haltBy(startNanos + TimeUnit.MILLISECONDS.toNanos(1)));
-                Assert.assertTrue(System.nanoTime() - startNanos < TimeUnit.SECONDS.toNanos(5));
-            } finally {
-                releaseHalt.countDown();
-                firstHalt.join(10_000L);
-                pool.setAfterClosedSignalForTesting(null);
-                pool.haltWithin(TimeUnit.SECONDS.toNanos(10));
-            }
-            Assert.assertFalse(firstHalt.isAlive());
-            Assert.assertNull(firstHaltFailure.get());
-            Assert.assertEquals(Boolean.TRUE, firstHaltResult.get());
-        });
-    }
-
-    @Test
     public void testHaltDrainsFiberRuntimeAfterWorkersExit() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String poolName = "fiber-dead-worker-halt-test";

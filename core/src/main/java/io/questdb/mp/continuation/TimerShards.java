@@ -152,24 +152,6 @@ public final class TimerShards {
         }
     }
 
-    public boolean shutdown(long deadlineNanos) {
-        synchronized (this) {
-            if (isShutdownComplete) {
-                return true;
-            }
-            requestShutdown();
-        }
-        if (!isJoinComplete(deadlineNanos)) {
-            return false;
-        }
-        synchronized (this) {
-            if (!isShutdownComplete) {
-                finishShutdown();
-            }
-        }
-        return true;
-    }
-
     /**
      * Sum of pending entries across all shards. For metrics/tests; not load-bearing.
      */
@@ -268,46 +250,6 @@ public final class TimerShards {
             Thread.currentThread().interrupt();
         }
         return true;
-    }
-
-    private synchronized boolean isJoinComplete(long deadlineNanos) {
-        if (isCurrentThreadAShard()) {
-            return false;
-        }
-        boolean isInterrupted = false;
-        boolean isJoined = true;
-        for (int i = 0, n = threads.size(); i < n; i++) {
-            final Thread t = getThread(i);
-            if (t == null) {
-                continue;
-            }
-            while (t.isAlive()) {
-                final long remainingNanos = deadlineNanos - System.nanoTime();
-                if (remainingNanos <= 0) {
-                    isJoined = false;
-                    break;
-                }
-                try {
-                    t.join(
-                            remainingNanos / 1_000_000L,
-                            (int) (remainingNanos % 1_000_000L)
-                    );
-                } catch (InterruptedException e) {
-                    isInterrupted = true;
-                }
-            }
-            if (!t.isAlive()) {
-                synchronized (this) {
-                    if (threads.getQuick(i) == t) {
-                        threads.setQuick(i, null);
-                    }
-                }
-            }
-        }
-        if (isInterrupted) {
-            Thread.currentThread().interrupt();
-        }
-        return isJoined;
     }
 
     private void requestShutdown() {

@@ -68,6 +68,15 @@ public final class TableSequencerCursorPool implements Closeable {
         };
     }
 
+    void registerTransactionLogCursor(int formatVersion, TransactionLogCursor cursor) {
+        try {
+            setTransactionLogCursor(formatVersion, cursor);
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
+        }
+    }
+
     void setMetadataChangeLog(TableMetadataChangeLog metadataChangeLog) {
         if (this.metadataChangeLog != null && this.metadataChangeLog != metadataChangeLog) {
             throw new IllegalStateException("table metadata change cursor is already configured");
