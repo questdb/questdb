@@ -53,7 +53,8 @@ import org.jetbrains.annotations.Nullable;
  * this session holds, and no timeline generation names the staged roots.
  *
  * <h2>What the session owns, and when</h2>
- * The overlay, the descriptor, the boundary schedule and the plan belong to the
+ * The overlay, the descriptor, the boundary schedule, the plan and - for a repair that is
+ * one segment of a multi-segment loop - the loop position belong to the
  * session for the whole repair - the executing turn reaches them through it. The
  * three resources a turn actively uses - the pinned base reader, the live-view
  * {@link WalWriter} carrying the uncommitted replacement, and the staged
@@ -81,9 +82,19 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LiveViewCheckpointRepairSession.class);
     private final ObjList<LiveViewCheckpointTimelineEntry> boundaries = new ObjList<>();
     private final LiveViewCheckpointRepairState descriptor;
+    // Whether the qualifying output this repair has emitted so far holds two rows with
+    // the same (timestamp, projected key) pair. It travels with the loop position for the
+    // reason the domain does: a duplicate whose two rows sit on either side of a park is
+    // still a duplicate, and the worker's own detector is re-armed by the next repair it
+    // classifies.
+    private final LiveViewCheckpointOutputUniqueness outputUniqueness = new LiveViewCheckpointOutputUniqueness();
     private final LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay();
+    private final LiveViewCheckpointSealCarryover sealCarryover = new LiveViewCheckpointSealCarryover();
     private final LiveViewRefreshJob owner;
     private final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+    // Where the multi-segment loop that started this repair had got to, for a repair that
+    // is one segment of one. Empty for a repair that stands on its own.
+    private final LiveViewCheckpointSegmentLoop segmentLoop = new LiveViewCheckpointSegmentLoop();
     // The compiled factory whose window functions the replay is standing part-way
     // through. Identity only - the session never calls it - so a later turn can refuse
     // a runtime that drifted out from under the candidate. See getWindowFactory().
@@ -166,7 +177,13 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         descriptor.discard();
         Misc.free(descriptor);
         Misc.free(overlay);
+        // Abandoned rather than settled, so nothing published a generation the parked
+        // baselines could name. Dropping them leaves every target on the complete freeze
+        // the wipe left it owing, which is the safe direction.
+        Misc.free(sealCarryover);
         boundaries.clear();
+        segmentLoop.clear();
+        outputUniqueness.clear();
         isSuspended = false;
     }
 
@@ -212,6 +229,10 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         functions = null;
         anchorWindow = null;
         overlay.clear();
+        // The dirty sets name keys of partition maps a recompile has already freed, and
+        // the baseline names a root the rebuilt factory never froze. Both go with the
+        // state they describe.
+        sealCarryover.clear();
     }
 
     /**
@@ -272,6 +293,15 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      * @return the in-RAM copy of the window state the repair took aside before
      * replaying over it
      */
+    /**
+     * @return the {@code (timestamp, projected key)} uniqueness of the output emitted
+     * across every turn of this repair so far, for the turn that resumes it to continue
+     * checking against
+     */
+    public LiveViewCheckpointOutputUniqueness getOutputUniqueness() {
+        return outputUniqueness;
+    }
+
     public LiveViewCheckpointScratchOverlay getOverlay() {
         return overlay;
     }
@@ -337,6 +367,28 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     }
 
     /**
+     * @return where the multi-segment loop that started this repair had got to: the
+     * segments it has not reached, the coordinates they are planned against, and the
+     * residual it still owes once they are done. The loop owns one pinned base snapshot
+     * across every segment it takes, so a replay that parks parks the rest of the loop with
+     * it, and the turn that resumes the replay is the turn that finishes the loop.
+     * {@link LiveViewCheckpointSegmentLoop#isOpen()} is false for a repair that is not part
+     * of one
+     */
+    public LiveViewCheckpointSegmentLoop getSegmentLoop() {
+        return segmentLoop;
+    }
+
+    /**
+     * @return the incremental-seal bookkeeping this repair holds aside while its replay
+     * runs through the compiled factory. Captured before the retire that resets the
+     * batch-minimum window, and handed back in the repair's single runtime exchange
+     */
+    public LiveViewCheckpointSealCarryover getSealCarryover() {
+        return sealCarryover;
+    }
+
+    /**
      * @return how many turns this repair has spent; 1 for a repair that never
      * yielded
      */
@@ -345,9 +397,11 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     }
 
     /**
-     * @return the compiled factory the replay is standing part-way through. A turn that
-     * finds the view holding a different one is looking at a runtime rebuilt since the
-     * capture, and must abandon the candidate rather than continue in it.
+     * @return the compiled factory the replay is standing part-way through - the isolated
+     * repair runtime's for a converging repair, the primary one for a repair that replays
+     * through it. A turn that would replay through a different one is looking at a runtime
+     * rebuilt since the capture, or at an operator who declined the isolated runtime
+     * mid-repair, and must abandon the candidate rather than continue in it.
      */
     public WindowRecordCursorFactory getWindowFactory() {
         return windowFactory;
@@ -426,6 +480,9 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      * @param scanRows           base rows read so far
      * @param replayMinTs        lowest output timestamp so far, or {@link Numbers#LONG_NULL}
      * @param replayMaxTs        highest output timestamp so far, or {@link Numbers#LONG_NULL}
+     * @param outputUniqueness   the pairs the replay has emitted so far, copied aside so
+     *                           the turn that resumes compares against them rather than
+     *                           starting the check over
      */
     public void suspend(
             @NotNull TableReader baseReader,
@@ -437,7 +494,8 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
             long appendedRows,
             long scanRows,
             long replayMinTs,
-            long replayMaxTs
+            long replayMaxTs,
+            @NotNull LiveViewCheckpointOutputUniqueness outputUniqueness
     ) {
         this.baseReader = baseReader;
         this.walWriter = walWriter;
@@ -449,6 +507,7 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         this.scanRows = scanRows;
         this.replayMinTs = replayMinTs;
         this.replayMaxTs = replayMaxTs;
+        this.outputUniqueness.copyFrom(outputUniqueness);
         this.isSuspended = true;
         this.turns++;
     }

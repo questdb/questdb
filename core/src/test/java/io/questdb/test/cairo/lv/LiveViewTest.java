@@ -2464,10 +2464,15 @@ public class LiveViewTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, price, ts, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+            // upsertKey is true on the designated timestamp and the projected partition key,
+            // which is the identity a sparse repair publication upserts on. A live view
+            // created while cairo.live.view.checkpoint.repair.sparse.publication.enabled is
+            // true carries them in its own _meta from CREATE, so SHOW COLUMNS reports them
+            // like it would for any other deduplicating table.
             assertQuery("SHOW COLUMNS FROM lv").noLeakCheck().noRandomAccess().returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
-                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\t0\tfalse\tfalse\t\t\n" +
+                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\t0\tfalse\ttrue\t\t\n" +
                     "price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
-                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t\n" +
                     "rn\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n");
             // A live view is a physical WAL table that owns its symbol maps, so SHOW COLUMNS
             // opens a reader on the LV table itself and reports the real symbol table size.
@@ -2483,9 +2488,9 @@ public class LiveViewTest extends AbstractLiveViewTest {
                 driveRefreshToQuiescence(job);
             }
             assertQuery("SHOW COLUMNS FROM lv").noLeakCheck().noRandomAccess().returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
-                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\t\t\n" +
+                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\ttrue\t\t\n" +
                     "price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
-                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t\n" +
                     "rn\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n");
             execute("DROP LIVE VIEW lv");
         });

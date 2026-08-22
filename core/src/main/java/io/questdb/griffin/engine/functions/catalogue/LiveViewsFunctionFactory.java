@@ -31,6 +31,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.lv.LiveViewSegmentRepairEnvelope;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
@@ -137,6 +138,27 @@ import io.questdb.std.ObjList;
  *     interval. So a view reporting a {@code rows} plan beside a
  *     {@code boundary rebuild} / {@code dedup} pair is one whose SQL admits a bound
  *     that its base denies at every refresh.</li>
+ *     <li>Scoped repair of closed anchor segments - {@code checkpoint_segment_repair_gate}
+ *     and {@code checkpoint_keyed_scan_gate}. Both describe the view's SQL rather
+ *     than any repair. The first reads {@code available} when a correction landing in a
+ *     closed anchor segment can be repaired over that segment alone, and otherwise names
+ *     the gate standing in the way - most commonly {@code bounded frame}, a ROWS or
+ *     RANGE window declared beside the anchored one whose frame keeps sliding across the
+ *     segment boundary. The second reads {@code available} when such a repair's replay
+ *     could follow the affected keys' rows through the base's posting index rather than
+ *     reading every row of the segment, and otherwise names why not - {@code key not
+ *     indexed} and {@code expression key} being the two an operator can act on. A
+ *     rejected key is not a denial: the segment falls back to a whole-segment replay,
+ *     which costs the same write and only a larger read. Both are NULL until the view
+ *     compiles its SELECT.</li>
+ *     <li>Whether the view's own bookkeeping still describes its output -
+ *     {@code checkpoint_row_count_mismatches}. Every timeline root carries the rows the
+ *     view has emitted as its cumulative row position, so a seal compares that count
+ *     against the rows the view's table actually holds before it stamps one. Zero is the
+ *     only healthy value: a bump means the two disagreed, that the seal declined rather
+ *     than writing a ladder no reader could detect, and that the timeline was retired -
+ *     so the view keeps serving while a restart or an out-of-order correction rebuilds
+ *     the recovery state from the base.</li>
  * </ul>
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
@@ -197,6 +219,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
     private static class LiveViewsCursorFactory implements RecordCursorFactory {
         private static final int COLUMN_APPLIED_WATERMARK = 17;
+        private static final int COLUMN_SEGMENT_REPAIR_GATE = 53;
+        private static final int COLUMN_KEYED_SCAN_GATE = 54;
         private static final int COLUMN_BASE_TABLE_NAME = 2;
         private static final int COLUMN_BELOW_LOWER_BOUND_COUNT = 13;
         private static final int COLUMN_CHECKPOINT_DATA_SEGMENT_COUNT = 33;
@@ -218,6 +242,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_CHECKPOINT_REPAIR_PLAN = 49;
         private static final int COLUMN_CHECKPOINT_REPAIR_RESUMES = 47;
         private static final int COLUMN_CHECKPOINT_REPAIR_ROOTS_VERSIONED = 45;
+        private static final int COLUMN_CHECKPOINT_ROW_COUNT_MISMATCHES = 55;
         private static final int COLUMN_CHECKPOINT_SEAL_FAILURES = 52;
         private static final int COLUMN_CHECKPOINT_TIMELINE_ENTRIES = 26;
         private static final int COLUMN_CHECKPOINT_TIMELINE_GENERATION = 25;
@@ -548,6 +573,15 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // above; a WHERE filter makes scan exceed emit). In-memory
                         // counter, resets on restart.
                         case COLUMN_O3_REPLAY_SCAN_ROWS -> instance.getO3ReplayScanRows();
+                        // Seals refused because the rows the view emitted and the rows
+                        // its table holds disagreed. Zero is the only healthy value:
+                        // any bump means rows never reached the table (or reached it
+                        // without being emitted), that the seal declined to stamp the
+                        // drifted count into a root, and that the timeline was retired
+                        // rather than extended over it. The view keeps serving, and a
+                        // restart or an O3 correction rebuilds from the base.
+                        // In-memory counter, resets on restart.
+                        case COLUMN_CHECKPOINT_ROW_COUNT_MISMATCHES -> instance.getCheckpointRowCountMismatches();
                         // START FROM BEGINNING has no lower bound and persists
                         // LONG_NULL, which passes through as NULL.
                         case COLUMN_VIEW_LOWER_BOUND_TIMESTAMP -> toMicros(definition.getViewLowerBoundTimestamp());
@@ -630,6 +664,16 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_CHECKPOINT_REPAIR_LAST_DENIAL -> LiveViewCheckpointRepairPlan.denialReasonName(
                                 instance.getCheckpointRepairLastDenialReason()
                         );
+                        // Whether the view's SQL admits deferring a correction that lands
+                        // in a closed anchor segment, and whether such a repair's replay
+                        // could follow the affected keys' rows rather than the whole
+                        // segment. Both describe the definition rather than any repair,
+                        // and neither changes what a repair does today. NULL until the
+                        // view compiles one.
+                        case COLUMN_SEGMENT_REPAIR_GATE ->
+                                LiveViewSegmentRepairEnvelope.gateName(instance.getSegmentScopeGate());
+                        case COLUMN_KEYED_SCAN_GATE ->
+                                LiveViewSegmentRepairEnvelope.gateName(instance.getKeyedScanGate());
                         default -> null;
                     };
                 }
@@ -727,6 +771,9 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("checkpoint_repair_last_disposition", ColumnType.STRING)); // 50
             metadata.add(new TableColumnMetadata("checkpoint_repair_last_denial", ColumnType.STRING));      // 51
             metadata.add(new TableColumnMetadata("checkpoint_seal_failures", ColumnType.LONG));            // 52
+            metadata.add(new TableColumnMetadata("checkpoint_segment_repair_gate", ColumnType.STRING));          // 53
+            metadata.add(new TableColumnMetadata("checkpoint_keyed_scan_gate", ColumnType.STRING));      // 54
+            metadata.add(new TableColumnMetadata("checkpoint_row_count_mismatches", ColumnType.LONG));    // 55
             METADATA = metadata;
         }
     }

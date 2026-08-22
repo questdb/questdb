@@ -324,7 +324,15 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long liveViewCheckpointCompactionInterval;
     private final long liveViewCheckpointMaxDurationMicros;
     private final long liveViewCheckpointPurgeInterval;
+    private final int liveViewCheckpointRepairMaxChainedBoundaries;
+    private final boolean liveViewCheckpointRepairIsolatedRuntimeEnabled;
+    private final boolean liveViewCheckpointRepairPerSegmentEnabled;
+    private final boolean liveViewCheckpointRepairKeyedReplayEnabled;
+    private final boolean liveViewCheckpointRepairOpenSegmentKeyedReplayEnabled;
+    private final boolean liveViewCheckpointRepairSegmentYieldEnabled;
+    private final boolean liveViewCheckpointRepairSparsePublicationEnabled;
     private final long liveViewCheckpointRepairReplayMaxRows;
+    private final long liveViewCheckpointRepairKeyedScanIndexOpenRows;
     private final long liveViewCheckpointRepairScanMaxKeys;
     private final long liveViewCheckpointRepairScanMaxRows;
     private final long liveViewCheckpointRows;
@@ -334,6 +342,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long liveViewInMemoryBufferGrowthBytes;
     private final long liveViewInMemoryBufferInitialBytes;
     private final long liveViewInMemoryMaxMicros;
+    private final int liveViewPartitionCompactStalePercent;
     private final int liveViewPartitionCompactThreshold;
     private final long liveViewRefreshMemoryLimitBytes;
     private final WorkerPoolConfiguration liveViewRefreshPoolConfiguration = new PropLiveViewRefreshPoolConfiguration();
@@ -1546,7 +1555,15 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.liveViewCheckpointCompactionInterval = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_COMPACTION_INTERVAL, 0L);
             this.liveViewCheckpointMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 5L * Micros.MINUTE_MICROS);
             this.liveViewCheckpointPurgeInterval = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, 1L);
+            this.liveViewCheckpointRepairMaxChainedBoundaries = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 256);
+            this.liveViewCheckpointRepairIsolatedRuntimeEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_ISOLATED_RUNTIME_ENABLED, true);
+            this.liveViewCheckpointRepairPerSegmentEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, true);
             this.liveViewCheckpointRepairReplayMaxRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1_000_000L);
+            this.liveViewCheckpointRepairKeyedReplayEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED, true);
+            this.liveViewCheckpointRepairOpenSegmentKeyedReplayEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, true);
+            this.liveViewCheckpointRepairSegmentYieldEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SEGMENT_YIELD_ENABLED, true);
+            this.liveViewCheckpointRepairSparsePublicationEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, true);
+            this.liveViewCheckpointRepairKeyedScanIndexOpenRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 256L);
             this.liveViewCheckpointRepairScanMaxKeys = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 100_000L);
             this.liveViewCheckpointRepairScanMaxRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS, 1_000_000L);
             this.liveViewCheckpointRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000L);
@@ -1563,6 +1580,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             // failing the start. The minValue overload rejects zero and negatives at parse time.
             this.liveViewInMemoryBufferInitialBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES, 64L * 1024L, 1);
             this.liveViewInMemoryMaxMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_MAX, 60L * Micros.MINUTE_MICROS);
+            // The share of an anchored live view's partition map a frontier sweep must be able
+            // to reclaim before it fires. At the 50 default a sweep evicts at least half the
+            // map, which makes it rare and large; lowering it trades more frequent sweeps for a
+            // smaller eviction set each time, which is what bounds the checkpoint dirty set's
+            // peak. 0 turns this arm off and leaves the two count arms above to decide.
+            this.liveViewPartitionCompactStalePercent = getIntPercentage(properties, env, PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_STALE_PERCENT, 50);
             this.liveViewPartitionCompactThreshold = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 100_000);
             this.liveViewRefreshTurnMaxCommits = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 64);
             this.liveViewRefreshTurnMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS, 50_000L);
@@ -4250,6 +4273,46 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getLiveViewCheckpointRepairMaxChainedBoundaries() {
+            return liveViewCheckpointRepairMaxChainedBoundaries;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairIsolatedRuntimeEnabled() {
+            return liveViewCheckpointRepairIsolatedRuntimeEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairPerSegmentEnabled() {
+            return liveViewCheckpointRepairPerSegmentEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairKeyedReplayEnabled() {
+            return liveViewCheckpointRepairKeyedReplayEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled() {
+            return liveViewCheckpointRepairOpenSegmentKeyedReplayEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairSegmentYieldEnabled() {
+            return liveViewCheckpointRepairSegmentYieldEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairSparsePublicationEnabled() {
+            return liveViewCheckpointRepairSparsePublicationEnabled;
+        }
+
+        @Override
+        public long getLiveViewCheckpointRepairKeyedScanIndexOpenRows() {
+            return liveViewCheckpointRepairKeyedScanIndexOpenRows;
+        }
+
+        @Override
         public long getLiveViewCheckpointRepairScanMaxKeys() {
             return liveViewCheckpointRepairScanMaxKeys;
         }
@@ -4287,6 +4350,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getLiveViewInMemoryMaxMicros() {
             return liveViewInMemoryMaxMicros;
+        }
+
+        @Override
+        public int getLiveViewPartitionCompactStalePercent() {
+            return liveViewPartitionCompactStalePercent;
         }
 
         @Override

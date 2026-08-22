@@ -354,6 +354,12 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
 
     @Test
     public void testTruncateReclaimsTheBoundaryMetadataOfTheEntriesItDrops() throws Exception {
+        // The truncate is the fallback an out-of-order repair takes when it may not keep
+        // the ladder, so the budget that governs that is what puts this case on it. Zero
+        // declines the chain for every repair, whatever its depth - which is what a
+        // correction deeper than the budget reaches organically, and the shortest way to
+        // hold the truncate's own reclamation to its contract.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
         assertMemoryLeak(() -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -366,11 +372,11 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
                 final Set<Long> beforeBoundaries = boundarySegmentIds(instance);
                 final Set<Long> beforeKeys = timelineKeys(instance);
 
-                // A correction deep enough that the repair cannot classify a
-                // converged suffix has no tail worth keeping, so it truncates above
-                // the repair floor and re-seals a fresh head over the surviving
-                // prefix. Every dropped entry releases its whole closure in one
-                // reference transaction.
+                // A correction deep enough that the repair cannot classify a converged
+                // suffix has no tail it can splice, and the budget above denies it the
+                // chain, so it truncates above the repair floor and re-seals a fresh head
+                // over the surviving prefix. Every dropped entry releases its whole
+                // closure in one reference transaction.
                 setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
                 execute("INSERT INTO base (ts, sym, x) VALUES ('" + timestamp(65) + "', 'k2', 900)");
                 drainWalQueue();
@@ -382,7 +388,8 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
                         instance.getO3BoundaryReplayRows() + instance.getO3ResumeReplayRows() > 0
                 );
                 // The discriminator against the splice case: a truncate is the only
-                // publication that drops a logical key rather than re-versioning it.
+                // publication that drops a logical key rather than re-versioning it. It
+                // is also what proves the budget above actually took effect.
                 final Set<Long> dropped = new HashSet<>(beforeKeys);
                 dropped.removeAll(timelineKeys(instance));
                 Assert.assertFalse(

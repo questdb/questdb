@@ -380,7 +380,94 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     @Test
-    public void testEofRepairPreservesThePrefixInsteadOfRetiring() throws Exception {
+    public void testEofRepairKeepsTheWholeLadderInsteadOfTruncatingIt() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final long generationBefore = generation(instance);
+                Assert.assertEquals("the epoch allocated one id per seal", SEALS, nextCheckpointId(instance));
+                final LongList idsBefore = logicalCheckpointIds(instance);
+
+                // Five seconds under the head, so the correction's influence reaches the
+                // runtime frontier instead of converging under it. There is no proven
+                // converged suffix to keep untouched, but every root above the repair
+                // floor describes output the replay is about to reproduce - so the repair
+                // re-versions them in place rather than dropping them.
+                correct(job, instance, SEALS * 10 - 5, 800);
+
+                // Preserved, not retired: the generation advances rather than restarting
+                // at 1, and the checkpoint id space carries forward rather than resetting.
+                Assert.assertTrue(
+                        "an EOF repair must preserve the timeline, not reset its generation [generation="
+                                + generation(instance) + ']',
+                        generation(instance) > generationBefore
+                );
+
+                // The ladder is what the next correction resumes from, so the repair has
+                // to leave it standing. Every id survives, in place: a splice re-versions
+                // a boundary's payload and keeps its logical coordinate, where the
+                // truncate this replaced dropped every entry above the repair floor and
+                // left the newest usable anchor pinned wherever the last in-order commit
+                // had put it.
+                final LongList ids = logicalCheckpointIds(instance);
+                Assert.assertEquals("the repair must drop no logical entry", idsBefore.size(), ids.size());
+                for (int i = 0, n = ids.size(); i < n; i++) {
+                    Assert.assertEquals("the ladder keeps its ids in place", idsBefore.getQuick(i), ids.getQuick(i));
+                }
+                // A splice appends no root, and the replay stops at the end of the base
+                // table - which is the newest boundary it just re-versioned - so nothing
+                // above it needs sealing and no fresh id is minted.
+                Assert.assertEquals(
+                        "a splice that reaches its own newest root mints no boundary [nextCheckpointId="
+                                + nextCheckpointId(instance) + ']',
+                        SEALS,
+                        nextCheckpointId(instance)
+                );
+
+                // The oldest boundary keeps the exact coordinate it was sealed at, which
+                // is what makes an old O3 row's predecessor lookup a search rather than a
+                // fallback to the view boundary.
+                final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
+                Assert.assertTrue(
+                        "the oldest boundary must survive the near-head repair",
+                        findsEntry(instance, ts(timestamp(10)), 0, entry)
+                );
+                assertViewMatchesRecompute();
+
+                // A subsequent, deeper O3 correction reuses one of the surviving
+                // predecessors: it localizes against them (a splice that re-versions in
+                // place and mints no new boundary) instead of falling back to a full
+                // rebuild from the view boundary, which a retired timeline would have
+                // forced.
+                final long generationBeforeDeep = generation(instance);
+                final long nextIdBeforeDeep = nextCheckpointId(instance);
+                correct(job, instance, 103, 700); // between the 100 and 110 groups
+                Assert.assertTrue(
+                        "the deeper repair must advance the generation",
+                        generation(instance) > generationBeforeDeep
+                );
+                Assert.assertEquals(
+                        "a localized repair reusing the preserved prefix mints no new boundary",
+                        nextIdBeforeDeep,
+                        nextCheckpointId(instance)
+                );
+                Assert.assertTrue(
+                        "the preserved prefix stays addressable after the deeper repair",
+                        findsEntry(instance, ts(timestamp(10)), 0, entry)
+                );
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testEofRepairTruncatesThePrefixWhenTheChainIsDeclined() throws Exception {
+        // The budget that governs how many boundaries one repair may re-version. Zero
+        // declines the chain outright, which is the fallback a correction deeper than the
+        // budget takes in the field - and the only way left to reach the truncate, since
+        // an ordinary EOF correction now keeps its ladder.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
         assertMemoryLeak(() -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -388,16 +475,13 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                 final long generationBefore = generation(instance);
                 Assert.assertEquals("the epoch allocated one id per seal", SEALS, nextCheckpointId(instance));
 
-                // Five seconds under the head, so the correction's influence reaches the
-                // runtime frontier instead of converging under it. There is no proven
-                // converged suffix, but the roots below the repair floor are still
-                // correct, so a truncate preserves the prefix and re-seals a fresh head.
                 correct(job, instance, SEALS * 10 - 5, 800);
 
-                // Preserved, not retired: the generation advances rather than restarting
-                // at 1, and the checkpoint id space carries forward rather than resetting.
+                // Preserved, not retired: the roots below the repair floor are still
+                // correct whatever happens above them, so the truncate keeps them and the
+                // generation and id space carry forward rather than restarting.
                 Assert.assertTrue(
-                        "an EOF repair must preserve the timeline, not reset its generation [generation="
+                        "a truncating repair must preserve the prefix, not reset its generation [generation="
                                 + generation(instance) + ']',
                         generation(instance) > generationBefore
                 );
@@ -417,10 +501,19 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                 for (int i = 0, n = ids.size() - 1; i < n; i++) {
                     Assert.assertEquals("the preserved prefix is contiguous from zero", i, ids.getQuick(i));
                 }
+                // The head the truncate re-sealed takes the next free id, and the run
+                // below it stops one short of it - which is the entry the truncate
+                // dropped, and the discriminator against the splice this case exists to
+                // avoid taking.
                 Assert.assertEquals(
                         "the sealed head takes the preserved next id",
                         SEALS,
                         ids.getQuick(ids.size() - 1)
+                );
+                Assert.assertEquals(
+                        "the truncate must have dropped the tail it rewrote",
+                        SEALS - 1,
+                        ids.getQuick(ids.size() - 2) + 1
                 );
 
                 // The oldest boundary keeps the exact coordinate it was sealed at, which
@@ -429,29 +522,6 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                 final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
                 Assert.assertTrue(
                         "the oldest boundary must survive the near-head repair",
-                        findsEntry(instance, ts(timestamp(10)), 0, entry)
-                );
-                assertViewMatchesRecompute();
-
-                // A subsequent, deeper O3 correction reuses one of the preserved
-                // predecessors: it localizes against the surviving roots (a splice that
-                // re-versions in place and mints no new boundary) instead of falling back
-                // to a full rebuild from the view boundary, which a retired timeline
-                // would have forced.
-                final long generationBeforeDeep = generation(instance);
-                final long nextIdBeforeDeep = nextCheckpointId(instance);
-                correct(job, instance, 103, 700); // between the 100 and 110 groups
-                Assert.assertTrue(
-                        "the deeper repair must advance the generation",
-                        generation(instance) > generationBeforeDeep
-                );
-                Assert.assertEquals(
-                        "a localized repair reusing the preserved prefix mints no new boundary",
-                        nextIdBeforeDeep,
-                        nextCheckpointId(instance)
-                );
-                Assert.assertTrue(
-                        "the preserved prefix stays addressable after the deeper repair",
                         findsEntry(instance, ts(timestamp(10)), 0, entry)
                 );
                 assertViewMatchesRecompute();

@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
@@ -846,6 +847,25 @@ public class WindowAccumulatorPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTheGenericAndLiveViewPlansAgreeOnTheAnchoredShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            // The two builders decide the same things from the same descriptor tables, and
+            // step 5 makes the live-view one compose this plan rather than repeat it. Until
+            // then, the drift these compare is what a persisted manifest would move: same
+            // components, same canonical order, same folds, same contributor - with the
+            // live-view layout shifted by the anchor slots its own value carries.
+            //
+            // The anchor clause is what makes the shape a live view's and contributes
+            // nothing to the component identities, so the two SELECTs below differ only in
+            // the frame's spelling.
+            assertPlansAgree("sum(x) over w, count(k) over w");
+            assertPlansAgree("sum(x) over w, avg(x) over w, count(x) over w");
+            assertPlansAgree("count(*) over w, row_number() over w, count(k) over w");
+        });
+    }
+
+    @Test
     public void testTheWelfordFamilyIsOneComponent() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTable();
@@ -934,6 +954,44 @@ public class WindowAccumulatorPlanTest extends AbstractCairoTest {
     }
 
     /**
+     * Compiles {@code outputs} twice - once as an ordinary streaming query and once as the
+     * live view whose fused state plan is the reference implementation - and requires the
+     * two to describe the same components in the same order, with the same folds and the
+     * same contributors.
+     */
+    private static void assertPlansAgree(String outputs) throws Exception {
+        final String[] generic = new String[1];
+        assertPlans(
+                "select ts, " + outputs + " from base " + window(),
+                plans -> generic[0] = layout(onlyPlan(plans))
+        );
+        sqlExecutionContext.setLiveViewCompile(true);
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+             RecordCursorFactory factory = select(
+                     compiler,
+                     "select ts, " + outputs + " from base "
+                             + "window w as (partition by k order by ts anchor daily '00:00')",
+                     sqlExecutionContext
+             )) {
+            RecordCursorFactory root = factory;
+            while (root != null && !(root instanceof WindowRecordCursorFactory)) {
+                root = root.getBaseFactory();
+            }
+            Assert.assertNotNull(outputs, root);
+            final WindowRecordCursorFactory windowFactory = (WindowRecordCursorFactory) root;
+            // Belt and braces on the exclusion: a live-view compile produces the fused plan
+            // and no generic group, which is also what testALiveViewCompileProducesNoGroup
+            // asserts on its own.
+            Assert.assertNull(windowFactory.getWindowAccumulatorPlans());
+            final LiveViewWindowStatePlan plan = windowFactory.getCheckpointWindowStatePlan();
+            Assert.assertNotNull(outputs, plan);
+            Assert.assertEquals(outputs, generic[0], liveViewLayout(plan));
+        } finally {
+            sqlExecutionContext.setLiveViewCompile(false);
+        }
+    }
+
+    /**
      * Renders the layout alone - the components in canonical order with their slot bases -
      * which is the part that must not depend on the SELECT list. Deliberately a rendering
      * rather than a field-by-field walk: a part of the decision added later and not
@@ -987,6 +1045,51 @@ public class WindowAccumulatorPlanTest extends AbstractCairoTest {
                     .append('\n');
         }
         return sink.toString();
+    }
+
+    /**
+     * The same rendering off the live-view plan, whose projections wrap the runtime ones and
+     * whose slot bases carry the anchor prefix this subtracts back out.
+     */
+    private static String liveViewLayout(LiveViewWindowStatePlan plan) {
+        final StringBuilder sink = new StringBuilder();
+        final int prefix = LiveViewWindowStatePlan.WINDOW_VALUE_SLOT_COUNT;
+        for (int i = 0, n = plan.getComponentCount(); i < n; i++) {
+            sink.append("component ").append(i)
+                    .append(" family=").append(plan.getComponent(i).getFamily())
+                    .append(" contribution=").append(plan.getComponent(i).getContributionKind())
+                    .append(" arg=").append(plan.getComponent(i).getArgumentColumnIndex())
+                    .append(':').append(plan.getComponent(i).getArgumentColumnType())
+                    .append(" slotBase=").append(plan.getComponentSlotBase(i) - prefix)
+                    .append(" slots=").append(plan.getComponent(i).getSlotCount())
+                    .append('\n');
+        }
+        for (int i = 0, n = plan.getComponentCount(); i < n; i++) {
+            sink.append("contributor on ").append(i)
+                    .append(" out=").append(contributorOutputPosition(plan, i))
+                    .append('\n');
+        }
+        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+            final WindowAccumulatorProjection projection = plan.getProjection(i).getRuntime();
+            sink.append("projection out=").append(projection.getOutputPosition())
+                    .append(" kind=").append(projection.getKind())
+                    .append(" component=").append(projection.getComponentIndex())
+                    .append(" derived=").append(projection.isDerived())
+                    .append(" guarded=").append(projection.isPartitionKeyGuarded())
+                    .append(" functionSlot=").append(projection.getFunctionSlotBase() - prefix)
+                    .append('\n');
+        }
+        return sink.toString();
+    }
+
+    private static int contributorOutputPosition(LiveViewWindowStatePlan plan, int componentIndex) {
+        for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
+            if (plan.getProjection(i).getComponentIndex() == componentIndex
+                    && plan.getProjectionFunction(i) == plan.getContributor(componentIndex)) {
+                return plan.getProjection(i).getRuntime().getOutputPosition();
+            }
+        }
+        throw new AssertionError("no contributing projection on component " + componentIndex);
     }
 
     private static WindowAccumulatorPlan onlyPlan(ObjList<WindowAccumulatorPlan> plans) {

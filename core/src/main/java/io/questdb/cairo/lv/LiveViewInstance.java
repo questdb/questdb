@@ -106,6 +106,19 @@ public class LiveViewInstance implements QuietCloseable {
     };
     private static final long[] EMPTY_HEAD_CHECKPOINT = {Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL};
     private final LiveViewDefinition definition;
+    // Whether this view's own table carries dedup keys - (designated timestamp, projected
+    // partition key), the identity a sparse repair publication upserts on. Resolved where
+    // the instance is built, off the table's own metadata, because that is where the flags
+    // live: the sequencer metadata a WalWriter reads does not carry them, and the current
+    // configuration cannot answer it either - a view CREATEd with the identity keeps it
+    // however the switch moves afterwards. False for every view created without it, which
+    // is every view today.
+    private final boolean isDedupKeyed;
+    // The non-timestamp half of that identity: the output column the table deduplicates
+    // on, or LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN. A sparse publication has to
+    // upsert on the same pair a repair proves unique, and "the table deduplicates" alone
+    // does not name the column it deduplicates by.
+    private final int dedupKeyColumnIndex;
     // Cancellation flag the refresh worker binds into its execution context's circuit
     // breaker for the duration of a cycle over this view. DROP and invalidation set it,
     // so a scan already inside the compiled cursor unwinds instead of running to
@@ -124,6 +137,19 @@ public class LiveViewInstance implements QuietCloseable {
     // Built once from anchorFunction + the compiled SELECT's window functions. Drives the
     // per-row resetPartition dispatch when the LV has an anchored named WINDOW.
     private LiveViewWindow anchorWindow;
+    // The view's SELECT compiled a second time, holding the window state a converging
+    // out-of-order repair replays into so the primary's is never wiped. Built on the first
+    // repair that can use it and freed with the primary factory, whose shape it mirrors.
+    private LiveViewRepairRuntime repairRuntime;
+    // Compiled full scan of the view's OWN table, and the copier that puts one of its rows
+    // back into the view's WAL. A keyed repair publishes the segment's unaffected keys
+    // from the view's stored output rather than from the base, and this is what reads it;
+    // null until the first such repair compiles it. Freed with the view's other compiled
+    // artifacts, because the copier's cache key is the view's WAL metadata version and a
+    // recompile that changes the view's own schema moves it.
+    private RecordCursorFactory storedRowScanFactory;
+    private RecordToRowCopier storedRowCopier;
+    private long storedRowCopierMetadataVersion = -1;
     // Base seqTxn the deferred cycle waited on when it armed applyLagDeferUntilUs. The pre-latch
     // guard clears the floor early once the base applies past this point, so a caught-up view
     // converges without waiting out the wall-clock floor (which a frozen clock never crosses).
@@ -230,6 +256,16 @@ public class LiveViewInstance implements QuietCloseable {
     // via live_views().checkpoint_last_lookup_depth, where the property worth
     // watching is that it tracks log(checkpoint count), not the count itself.
     private volatile long checkpointLastLookupDepth = Numbers.LONG_NULL;
+    // Which of the two halves of a scoped, keyed repair this view's SQL admits, as
+    // LiveViewSegmentRepairEnvelope GATE_* codes: whether a correction in a closed anchor
+    // segment can be repaired over that segment alone, and whether that repair's replay
+    // could follow the affected keys' rows rather than the whole segment. Both are
+    // properties of the compiled SELECT, and they exist so a view that would never take
+    // the cheaper route is legible before a late row reaches it. The refresh worker
+    // settles them when it compiles the factory; volatile for the catalogue thread.
+    // GATE_UNKNOWN until then.
+    private volatile int segmentScopeGate = LiveViewSegmentRepairEnvelope.GATE_UNKNOWN;
+    private volatile int keyedScanGate = LiveViewSegmentRepairEnvelope.GATE_UNKNOWN;
     // Bounds of the localized repair currently suspended across refresh turns:
     // {inProgress, C, L, H}. Packed into one immutable long[] published by
     // volatile store so the catalogue never pairs one repair's floor with
@@ -268,6 +304,14 @@ public class LiveViewInstance implements QuietCloseable {
     private volatile long checkpointRepairOutcome;
     private volatile long checkpointRepairResumes;
     private volatile long checkpointRepairRootsVersioned;
+    // Seals this view has refused because the rows it emitted and the rows its
+    // table holds disagreed. Every timeline root carries lvRowsTotal as its
+    // cumulative lvRowPosition, so a counter that has drifted from the durable
+    // output writes a ladder no reader can detect and a restart can only fail on.
+    // The seal that finds the drift re-seats the counter, retires the timeline and
+    // bumps this. Bumped only on the refresh worker; volatile for the catalogue
+    // thread. In-memory only - it resets on restart, like the counters above.
+    private volatile long checkpointRowCountMismatches;
     // Cadence seals this view has failed, counted for the whole process lifetime
     // rather than per streak. A permanently failing seal is otherwise invisible:
     // the refresh job swallows the fault, the view keeps serving correct results,
@@ -633,9 +677,16 @@ public class LiveViewInstance implements QuietCloseable {
     // live_views().writer_stall_micros for operator visibility.
     private volatile long writerStallStartUs = Numbers.LONG_NULL;
 
-    public LiveViewInstance(LiveViewDefinition definition, TableToken liveViewToken) {
+    public LiveViewInstance(
+            LiveViewDefinition definition,
+            TableToken liveViewToken,
+            boolean isDedupKeyed,
+            int dedupKeyColumnIndex
+    ) {
         this.definition = definition;
         this.liveViewToken = liveViewToken;
+        this.isDedupKeyed = isDedupKeyed;
+        this.dedupKeyColumnIndex = dedupKeyColumnIndex;
         this.stubState = null;
     }
 
@@ -651,6 +702,8 @@ public class LiveViewInstance implements QuietCloseable {
     public LiveViewInstance(TableToken liveViewToken, LiveViewLifecycleState stubState) {
         this.definition = null;
         this.liveViewToken = liveViewToken;
+        this.isDedupKeyed = false;
+        this.dedupKeyColumnIndex = LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
         this.stubState = stubState;
     }
 
@@ -826,6 +879,24 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Non-monotonic restore of {@link #getMinSeenTsSinceCheckpoint()}, used by a
+     * converging out-of-order repair to put the batch-minimum window back where the
+     * pre-repair runtime left it.
+     * <p>
+     * The repair's replay reads down to its own scan floor and every row it feeds lowers
+     * this value, but the runtime the repair puts back afterwards holds none of those
+     * rows - it is the state the replay was taken aside from. So the value has to go back
+     * up, which {@link #setLatestSeenTs} cannot express. Travels with
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointSealCarryover}, which restores it only
+     * alongside the dirty sets whose keys describe the same batch. Bypassing the
+     * monotonic clamp is intentional and unsafe in any other context, hence the explicit
+     * name.
+     */
+    public void forceSetMinSeenTsSinceCheckpoint(long ts) {
+        minSeenTsSinceCheckpoint = ts;
+    }
+
+    /**
      * Releases the base-table snapshot pinned across the seed sweep (see
      * {@link #getSeedBaseReader()}). The reader is borrowed, not detached, so
      * {@code close()} returns it to the pool from any thread. Idempotent (null-safe).
@@ -856,6 +927,26 @@ public class LiveViewInstance implements QuietCloseable {
         return applyLagDeferUntilUs;
     }
 
+    /**
+     * @return the {@code LiveViewSegmentRepairEnvelope.GATE_*} code naming whether this
+     * view's SQL admits repairing a correction that lands in a closed anchor segment over
+     * that segment alone, or {@code GATE_UNKNOWN} before the view compiles its SELECT. See
+     * {@link #segmentScopeGate}
+     */
+    public int getSegmentScopeGate() {
+        return segmentScopeGate;
+    }
+
+    /**
+     * @return the {@code LiveViewSegmentRepairEnvelope.GATE_*} code naming whether a
+     * replay of one closed anchor segment could follow the affected keys' rows rather than
+     * every row of the segment, or {@code GATE_UNKNOWN} before the view compiles its
+     * SELECT. See {@link #keyedScanGate}
+     */
+    public int getKeyedScanGate() {
+        return keyedScanGate;
+    }
+
     public long getBelowLowerBoundCount() {
         return belowLowerBoundCount;
     }
@@ -871,6 +962,20 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public LiveViewCompiledPlan getCompiledPlan() {
         return compiledPlan;
+    }
+
+    /**
+     * The output column beside the designated timestamp that this view's own table
+     * deduplicates on, or {@link LiveViewCheckpointOutputUniqueness#NO_KEY_COLUMN}.
+     * <p>
+     * A repair publishing sparsely upserts on {@code (designated timestamp, this column)}
+     * and proves that pair unique first, so the two have to be the same column: a repair
+     * that proved one identity and published on another would collapse rows nothing
+     * checked. Resolved off the table's own metadata where the instance is built, for the
+     * reason {@link #isDedupKeyed()} gives.
+     */
+    public int getDedupKeyColumnIndex() {
+        return dedupKeyColumnIndex;
     }
 
     public long getDedupRawWalCleanCycles() {
@@ -1011,6 +1116,17 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getCheckpointRepairRootsVersioned() {
         return checkpointRepairRootsVersioned;
+    }
+
+    /**
+     * @return seals this view has refused because its emitted-row counter and its
+     * durable row count disagreed. Any non-zero value means rows the view emitted
+     * never reached its table - or rows it never emitted did - and that the
+     * timeline was retired rather than extended over the drift; see
+     * {@link #checkpointRowCountMismatches}
+     */
+    public long getCheckpointRowCountMismatches() {
+        return checkpointRowCountMismatches;
     }
 
     /**
@@ -1277,6 +1393,30 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return the isolated runtime a converging out-of-order repair replays through, or
+     * null before the first such repair built one. See {@link LiveViewRepairRuntime}.
+     */
+    public LiveViewRepairRuntime getRepairRuntime() {
+        return repairRuntime;
+    }
+
+    /**
+     * @return the compiled full scan of the view's own table a keyed repair reads its
+     * unaffected keys' rows through, or null before one compiled it
+     */
+    public RecordCursorFactory getStoredRowScanFactory() {
+        return storedRowScanFactory;
+    }
+
+    public RecordToRowCopier getStoredRowCopier() {
+        return storedRowCopier;
+    }
+
+    public long getStoredRowCopierMetadataVersion() {
+        return storedRowCopierMetadataVersion;
+    }
+
+    /**
      * @return the designated timestamp of the newest seed boundary, or
      * {@link Numbers#LONG_NULL} when the sweep has sealed none. See
      * {@link #seedCheckpointMaxTs}.
@@ -1364,6 +1504,18 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long incrementAndGetSealsSincePurge() {
         return ++sealsSincePurge;
+    }
+
+    /**
+     * Whether this view's own table carries the {@code (designated timestamp, projected
+     * partition key)} dedup keys a sparse repair publication upserts on.
+     * <p>
+     * The forward path reads it to keep its own commits off those keys - see
+     * {@code WalWriter.commitLiveViewWithoutDedup} - which is what lets a view whose output
+     * legitimately repeats a pair carry the identity a repair would publish on.
+     */
+    public boolean isDedupKeyed() {
+        return isDedupKeyed;
     }
 
     public boolean isDropped() {
@@ -1587,6 +1739,8 @@ public class LiveViewInstance implements QuietCloseable {
         // through the old factory's column layout.
         recordToRowCopier = null;
         recordRowCopierMetadataVersion = -1;
+        storedRowCopier = null;
+        storedRowCopierMetadataVersion = -1;
     }
 
     /**
@@ -1676,6 +1830,14 @@ public class LiveViewInstance implements QuietCloseable {
     public void recordCheckpointRepairSplice(long rootsVersioned, long newBytes) {
         checkpointRepairRootsVersioned += rootsVersioned;
         checkpointRepairNewBytes += newBytes;
+    }
+
+    /**
+     * Records one seal refused because the emitted-row counter and the durable row
+     * count disagreed. See {@link #checkpointRowCountMismatches}.
+     */
+    public void recordCheckpointRowCountMismatch() {
+        checkpointRowCountMismatches++;
     }
 
     /**
@@ -1871,6 +2033,16 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setApplyLagDeferUntilUs(long applyLagDeferUntilUs) {
         this.applyLagDeferUntilUs = applyLagDeferUntilUs;
+    }
+
+    /**
+     * Records which halves of a scoped, keyed repair this view's SQL admits. The refresh
+     * worker calls this every time it compiles the factory, beside
+     * {@link #setCheckpointRepairDependencyPlans(int)}. See {@link #segmentScopeGate}
+     */
+    public void setSegmentRepairGates(int segmentScopeGate, int keyedScanGate) {
+        this.segmentScopeGate = segmentScopeGate;
+        this.keyedScanGate = keyedScanGate;
     }
 
     /**
@@ -2074,6 +2246,33 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setSeedBaseReader(TableReader seedBaseReader) {
         this.seedBaseReader = seedBaseReader;
+    }
+
+    /**
+     * Adopts the isolated repair runtime, freeing whatever this view held before. Called
+     * under the refresh latch, by the worker that built it.
+     */
+    public void setRepairRuntime(@Nullable LiveViewRepairRuntime repairRuntime) {
+        if (this.repairRuntime != repairRuntime) {
+            Misc.free(this.repairRuntime);
+            this.repairRuntime = repairRuntime;
+        }
+    }
+
+    /**
+     * Adopts the compiled scan of the view's own table, freeing whatever this view held
+     * before. Called under the refresh latch, by the worker that built it.
+     */
+    public void setStoredRowScanFactory(@Nullable RecordCursorFactory storedRowScanFactory) {
+        if (this.storedRowScanFactory != storedRowScanFactory) {
+            Misc.free(this.storedRowScanFactory);
+            this.storedRowScanFactory = storedRowScanFactory;
+        }
+    }
+
+    public void setStoredRowCopier(RecordToRowCopier copier, long metadataVersion) {
+        this.storedRowCopier = copier;
+        this.storedRowCopierMetadataVersion = metadataVersion;
     }
 
     public void setSeedDataOffset(long seedDataOffset) {
@@ -2403,6 +2602,14 @@ public class LiveViewInstance implements QuietCloseable {
         compiledPlan = null;
         anchorWindow = Misc.free(anchorWindow);
         anchorFunction = Misc.free(anchorFunction);
+        // The isolated repair runtime mirrors the primary's shape, so it dies with it: a
+        // repair replaying through functions compiled against the old base metadata would
+        // stage roots the rebuilt view cannot read. The parked-repair guard in the refresh
+        // job turns that into a discarded candidate rather than a continued replay.
+        repairRuntime = Misc.free(repairRuntime);
+        // The scan of the view's own table names its columns by the schema the compiled
+        // SELECT produced, so it dies with that SELECT for the same reason.
+        storedRowScanFactory = Misc.free(storedRowScanFactory);
         // The head's root was frozen from the window state those artifacts own, and
         // that state dies with them. A head still claiming a root over state nothing
         // holds must not outlive them: whoever rebuilds re-seals, and only that seal

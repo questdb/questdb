@@ -527,6 +527,46 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getLiveViewCheckpointRepairMaxChainedBoundaries() {
+        return 256;
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairIsolatedRuntimeEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairPerSegmentEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairKeyedReplayEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairSegmentYieldEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairSparsePublicationEnabled() {
+        return true;
+    }
+
+    @Override
+    public long getLiveViewCheckpointRepairKeyedScanIndexOpenRows() {
+        return 256;
+    }
+
+    @Override
     public long getLiveViewCheckpointRepairScanMaxKeys() {
         return 100_000L;
     }
@@ -564,6 +604,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getLiveViewInMemoryMaxMicros() {
         return 60L * Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public int getLiveViewPartitionCompactStalePercent() {
+        return 50;
     }
 
     @Override

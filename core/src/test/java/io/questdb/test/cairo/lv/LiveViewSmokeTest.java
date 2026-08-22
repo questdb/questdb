@@ -1105,6 +1105,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns(expectedRows);
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                // The subject here is the function's own snapshot codec, and a function the
+                // fused plan groups no longer runs it - the window owns that state and the
+                // private map below is closed. Hand it back first, exactly as
+                // assertStatefulAnchorRoundTrip does: the codec is still what a residual
+                // function and the legacy-head upgrade adapter both go through, and
+                // declining migrates the accumulators into the private maps rather than
+                // dropping them.
+                lv.getAnchorWindow().bindCheckpointWindowStatePlan(null);
                 WindowFunction fn = lv.getAnchorWindow().getFunctions().getQuick(0);
                 Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
@@ -1405,6 +1413,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 assertNoRefreshFaults("lv");
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                // The subject here is the function's own snapshot codec, and a function
+                // the fused plan groups no longer runs it - the window owns that state.
+                // Hand it back first: the codec is still what a residual function and the
+                // legacy-head upgrade adapter both go through, and declining migrates the
+                // accumulators into the private maps rather than dropping them. A no-op
+                // for every shape the plan does not group.
+                lv.getAnchorWindow().bindCheckpointWindowStatePlan(null);
                 WindowFunction fn = lv.getAnchorWindow().getFunctions().getQuick(0);
                 Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
@@ -1591,7 +1606,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
      * so a case there says nothing a case at 25 or 50 has not already said. One of eight and
      * seven of eight are what put each endpoint on its own side of a boundary.
      */
-    private void assertFrontierSweepTrigger(
+    private void assertFrontierSweepStalePercentTrigger(
             int dayTwoSymCount,
             int compactThreshold,
             long expectedSweeps,
@@ -1640,7 +1655,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 LiveViewWindow window = engine.getLiveViewRegistry().getViewInstance("lv").getAnchorWindow();
                 Assert.assertNotNull(window);
                 Assert.assertEquals(
-                        "the half-the-map arm decides whether " + (8 - dayTwoSymCount) + " of eight is enough",
+                        "the stale-percent arm decides whether " + (8 - dayTwoSymCount) + " of eight is enough",
                         expectedSweeps,
                         window.getCompactionCount()
                 );
@@ -13199,22 +13214,61 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testFrontierSweepFiresOnANearlyWhollyStaleMap() throws Exception {
-        // Seven of eight partitions stale, which clears the half-the-map arm, so the sweep
-        // drops all seven and leaves the one partition still following the frontier. The
-        // contrast to the case below, which holds at three of eight: the pair is what makes
-        // either assertion about the arm rather than about the frontier accounting, since a
-        // change to the accounting would move both numbers together and break both.
-        assertFrontierSweepTrigger(1, 2, 1L, 1L);
+    public void testFrontierSweepStalePercentBelowTheDefaultFiresEarlier() throws Exception {
+        // The same commits as testFrontierSweepStalePercentDefaultHoldsBelowHalfTheMap, with the
+        // stale-percent arm lowered to 25. Three of eight is 37.5%, so the arm now passes and the
+        // sweep drops the three day-1-only partitions. The pair is what makes either assertion
+        // about the arm rather than about the frontier accounting: a change to the accounting
+        // would move both numbers together and break both tests.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_STALE_PERCENT, 25);
+        assertFrontierSweepStalePercentTrigger(5, 2, 1L, 5L);
     }
 
     @Test
-    public void testFrontierSweepHoldsBelowHalfTheMap() throws Exception {
+    public void testFrontierSweepStalePercentDefaultFiresOnANearlyWhollyStaleMap() throws Exception {
+        // The contrast the 100 case needs. Seven of eight is 87.5%, which the 50 default
+        // accepts, so the sweep drops all seven and leaves the one partition still following
+        // the frontier. Without this, the 100 case below would only be repeating what the
+        // default already refuses at three of eight.
+        assertFrontierSweepStalePercentTrigger(1, 2, 1L, 1L);
+    }
+
+    @Test
+    public void testFrontierSweepStalePercentDefaultHoldsBelowHalfTheMap() throws Exception {
         // Eight day-1 partitions, five of which follow the frontier into day 2. The day-3 row
         // then leaves stalePartitionCount at 3 against an eight-entry map, which clears the
-        // absolute threshold (2) and leaves the half-the-map arm alone to decide. Three of
-        // eight is not half, so no sweep fires.
-        assertFrontierSweepTrigger(5, 2, 0L, 8L);
+        // absolute threshold (2) and leaves the stale-percent arm alone to decide. At the 50
+        // default 3/8 is not enough and no sweep fires.
+        assertFrontierSweepStalePercentTrigger(5, 2, 0L, 8L);
+    }
+
+    @Test
+    public void testFrontierSweepStalePercentHundredHoldsBelowAWhollyStaleMap() throws Exception {
+        // The upper endpoint. At 100 the arm reads stalePartitionCount >= mapSize, so a map
+        // one entry short of wholly stale still does not sweep - the same seven of eight the
+        // default fires on above. That pair is what makes this about the endpoint: every
+        // setting up to 87 compacts this workload and only 88 upwards refuses it.
+        //
+        // The share is in fact unreachable: the row that reaches the trigger has just put its
+        // own partition in the current bucket, and the map is the three buckets added up, so
+        // stalePartitionCount is at most mapSize - 1 whenever the arm is read and 100 disables
+        // the sweep outright. The case pins the refusal either way, which is what the setting
+        // has to mean.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_STALE_PERCENT, 100);
+        assertFrontierSweepStalePercentTrigger(1, 2, 0L, 8L);
+    }
+
+    @Test
+    public void testFrontierSweepStalePercentZeroLeavesTheCountArmsToDecide() throws Exception {
+        // The lower endpoint, at the thinnest stale share the fixture can produce: one of
+        // eight, 12.5%, which every setting from 13 upwards refuses. At 0 the arm reads
+        // stalePartitionCount * 100 >= 0, which no stale count can fail, so the two count
+        // arms - the absolute threshold, dropped to 1 here, and a non-empty stale set - are
+        // all that remains between a frontier move and a sweep, and the one stale partition
+        // goes. That a *zero* stale count still does not sweep is the threshold arm's doing,
+        // not this one's, so that half of "the gate is removed" is not observable here.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_STALE_PERCENT, 0);
+        assertFrontierSweepStalePercentTrigger(7, 1, 1L, 7L);
     }
 
     @Test
@@ -14790,7 +14844,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // generation's shape, collection, cost, and localized repair. The last
         // block ends on the three that describe a repair's shape rather than one
         // repair's progress: checkpoint_repair_plan for what the view's SQL
-        // admits, then the last repair's effective disposition and denial.
+        // admits, then the last repair's effective disposition and denial. The
+        // checkpoint_segment_repair_gate and checkpoint_keyed_scan_gate follow:
+        // they describe the SQL as well.
+        // checkpoint_row_count_mismatches closes the set - the one column that
+        // says the view's own bookkeeping stopped describing its output.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
@@ -14816,7 +14874,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "checkpoint_repair_roots_versioned\tcheckpoint_repair_new_bytes\t"
                         + "checkpoint_repair_resumes\tcheckpoint_repair_failures\t"
                         + "checkpoint_repair_plan\tcheckpoint_repair_last_disposition\t"
-                        + "checkpoint_repair_last_denial\tcheckpoint_seal_failures\n");
+                        + "checkpoint_repair_last_denial\tcheckpoint_seal_failures\t"
+                        + "checkpoint_segment_repair_gate\tcheckpoint_keyed_scan_gate\t"
+                        + "checkpoint_row_count_mismatches\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }
@@ -16560,7 +16620,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     // Sanity-check the documented payload prefix:
                     //   STR windowName (INT len + len * CHAR), INT keyCount=1,
                     //   INT keyType=STRING, INT anchorValueType=TIMESTAMP,
-                    //   LONG partitionCount=2.
+                    //   INT componentStateBytes, LONG partitionCount=2.
+                    // componentStateBytes is what the fused group's accumulators add per
+                    // entry, and 8 here: the view's one sum(x) is a (sum, nonNullCount)
+                    // component the window owns.
                     // The persisted key column type is STRING (not SYMBOL):
                     // LiveViewWindow.build rewrites SYMBOL partition columns as
                     // STRING in the anchor map's key types so cross-WAL-segment
@@ -16576,6 +16639,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     Assert.assertEquals("key column is STRING (SYMBOL columns route through resolved STRING)", ColumnType.STRING, sink.getInt(off));
                     off += Integer.BYTES;
                     Assert.assertEquals("anchor value type is TIMESTAMP", ColumnType.TIMESTAMP, sink.getInt(off));
+                    off += Integer.BYTES;
+                    Assert.assertEquals(
+                            "the fused (sum, nonNullCount) component rides in the payload",
+                            Double.BYTES + Long.BYTES,
+                            sink.getInt(off)
+                    );
                     off += Integer.BYTES;
                     Assert.assertEquals("partition count is 2", 2L, sink.getLong(off));
 
@@ -17490,6 +17559,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         "2026-08-01T01:00:00.000000Z\tb\t2\n");
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                // row_number() joins the fused row-count component, so the window owns
+                // the counters and this function keeps no map. Hand them back: the codec
+                // under test is the function's own, which the legacy-head upgrade adapter
+                // still reads every partition through.
+                lv.getAnchorWindow().bindCheckpointWindowStatePlan(null);
                 WindowFunction rnFunc = lv.getAnchorWindow().getFunctions().getQuick(0);
                 Assert.assertTrue(rnFunc.supportsCheckpointState());
                 Map fnMap = rnFunc.getPartitionMap();
@@ -17588,6 +17662,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             );
             Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
 
+            // The restore filled the window's fused value; handing the plan back lowers
+            // each counter into the map row_number owns outside a group, which is where
+            // this case reads them and what the same numbers coming out proves.
+            reloaded.getAnchorWindow().bindCheckpointWindowStatePlan(null);
             Map fnMap = reloaded.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap();
             Assert.assertEquals("row_number's partition map rehydrates its partition count", 2L, fnMap.size());
             MapRecordCursor mc = fnMap.getCursor();

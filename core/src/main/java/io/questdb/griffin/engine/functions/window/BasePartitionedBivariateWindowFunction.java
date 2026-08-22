@@ -109,7 +109,11 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
     }
 
     @Override
-    public void markPartitionAlive(Record record) {
+    public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
+        // The flag goes unread on purpose: this override keeps no checkpoint dirty
+        // set, so every seal full-scans it. See BasePartitionedWindowFunction's
+        // markCheckpointPartitionDirty - naming some of a cadence's keys and not the
+        // rest is the one outcome that is worse than naming none.
         if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
             return;
         }

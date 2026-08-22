@@ -34,6 +34,7 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
+import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness;
 import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -502,6 +503,18 @@ public class CairoEngine implements Closeable, WriterSource {
             throw SqlException.$(position, "live view checkpoint compiler metadata is missing for window function ")
                     .put(f.getName()).put("()");
         }
+        final int fixedStateLength = f.checkpointStateFixedLength();
+        if (fixedStateLength != -1
+                && (fixedStateLength <= 0 || !f.supportsCheckpointState() || f.supportsCheckpointRingState())) {
+            // Defensive: a declared fixed width is what a leaf-inlined entry is sized by, so
+            // only a positive width on a whole-state function says anything. A ring-shaped
+            // function's root entry names chunk pages instead of a whole-state image, a
+            // stateless one freezes nothing to measure, and a zero width is the one shape an
+            // empty scalar cannot be told apart from.
+            throw SqlException.$(position, "live view window function ")
+                    .put(f.getName())
+                    .put("() declares an invalid fixed checkpoint state width");
+        }
     }
 
     /**
@@ -894,7 +907,20 @@ public class CairoEngine implements Closeable, WriterSource {
                                     baseTableToken,
                                     metadata
                             );
-                            LiveViewInstance instance = new LiveViewInstance(definition, tableToken);
+                            // The dedup flags live in the table's own _meta, and the copy
+                            // above carries them column for column, so the identity a repair
+                            // could publish on is known before the view refreshes once.
+                            // Deliberately not derived from the configuration: a view
+                            // CREATEd with the identity keeps it however the switch moves
+                            // afterwards, and a forward commit that read the switch instead
+                            // of the schema would deduplicate a view it was never meant to.
+                            LiveViewInstance instance = new LiveViewInstance(
+                                    definition,
+                                    tableToken,
+                                    metadata.getTimestampIndex() > -1
+                                            && metadata.isDedupKey(metadata.getTimestampIndex()),
+                                    dedupKeyColumnIndexOf(metadata)
+                            );
                             // _lv is written before _txn and _lv.s after it, so a definition with no
                             // state is the shape a CREATE that crashed mid-way leaves behind (and,
                             // equally, an _lv.s lost out of band). Either way there is no resume
@@ -1435,6 +1461,11 @@ public class CairoEngine implements Closeable, WriterSource {
         // emits a plain FilteredRecordCursorFactory shape that the incremental refresh
         // path can handle.
         GenericRecordMetadata metadata;
+        // The output column a sparse repair publication would upsert on, beside the
+        // designated timestamp, or NO_KEY_COLUMN where the view carries no such key or the
+        // configuration declines the identity. Resolved here because it is a CREATE-time
+        // schema decision: the flags land in the view table's own _meta and stay there.
+        int sparsePublicationKeyColumnIndex = LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
         // Base-column names the SELECT's filter + window inputs + designated ts
         // depend on. ApplyWal2TableJob's schema-change hook narrows invalidation
         // using this set: only changes that touch one of these columns mark the
@@ -1472,6 +1503,16 @@ public class CairoEngine implements Closeable, WriterSource {
                 final LiveViewCompiledPlan plan = validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
                 metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
                 validateLiveViewTimestamp(metadata, baseTimestampName, op.getViewNamePosition());
+
+                // The identity a repair could publish sparsely on. Resolved through the
+                // same helper the repair's own uniqueness check reads, so the pair the
+                // table deduplicates on and the pair a repair proves unique are the same
+                // pair; a view whose output carries no such key gets no dedup keys, and
+                // the repair counts itself unchecked for the same reason.
+                if (configuration.isLiveViewCheckpointRepairSparsePublicationEnabled()) {
+                    sparsePublicationKeyColumnIndex =
+                            LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex(plan);
+                }
 
                 // Capture each base-column name the SELECT projects. Resolving
                 // against the base table here also catches the rare case of an LV
@@ -1666,8 +1707,15 @@ public class CairoEngine implements Closeable, WriterSource {
                 partitionBy,
                 metadata,
                 definition,
-                outputSymbolCacheFlags
+                outputSymbolCacheFlags,
+                sparsePublicationKeyColumnIndex
         );
+        if (sparsePublicationKeyColumnIndex != LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN) {
+            LOG.info().$("live view carries sparse publication dedup keys [view=").$(op.getViewName())
+                    .$(", timestamp=").$(metadata.getColumnName(metadata.getTimestampIndex()))
+                    .$(", key=").$(metadata.getColumnName(sparsePublicationKeyColumnIndex))
+                    .I$();
+        }
         try (
                 MemoryMARW mem = Vm.getCMARWInstance();
                 BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
@@ -1748,7 +1796,12 @@ public class CairoEngine implements Closeable, WriterSource {
                 );
 
                 // _lv is written by TableUtils.createTable, before _txn - see the note there.
-                LiveViewInstance instance = new LiveViewInstance(definition, liveViewToken);
+                LiveViewInstance instance = new LiveViewInstance(
+                        definition,
+                        liveViewToken,
+                        sparsePublicationKeyColumnIndex != LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN,
+                        sparsePublicationKeyColumnIndex
+                );
                 instance.setSubscribeFromSeqTxn(subscribeFromSeqTxn);
                 instance.setLastProcessedSeqTxn(subscribeFromSeqTxn - 1);
                 instance.setAppliedWatermark(-1L);
@@ -3745,6 +3798,33 @@ public class CairoEngine implements Closeable, WriterSource {
         if (vd.getSeqTxn() != expectedTxn) {
             throw TableReferenceOutOfDateException.ofOutdatedView(tableToken, expectedTxn, vd.getSeqTxn());
         }
+    }
+
+    /**
+     * The non-timestamp dedup key of a live view's own table, or
+     * {@link LiveViewCheckpointOutputUniqueness#NO_KEY_COLUMN} when it carries none.
+     * <p>
+     * The catalogue load a restart runs has to rediscover the identity a repair publishes
+     * sparsely on, and the table's {@code _meta} is the only place it lives: the current
+     * configuration cannot answer it, because a view CREATEd with the identity keeps it
+     * however the switch moves. CREATE resolves the same column through
+     * {@code LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex}, and a table that
+     * carries more than one such flag is refused a key rather than given the first one -
+     * a repair upserting on a pair that is not the table's whole key would collapse rows
+     * it never checked.
+     */
+    private static int dedupKeyColumnIndexOf(RecordMetadata metadata) {
+        int keyColumnIndex = LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (i == metadata.getTimestampIndex() || !metadata.isDedupKey(i)) {
+                continue;
+            }
+            if (keyColumnIndex != LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN) {
+                return LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
+            }
+            keyColumnIndex = i;
+        }
+        return keyColumnIndex;
     }
 
     private static TableReader checkReaderVersion(TableToken tableToken, long metadataVersion, TableReader reader) {

@@ -184,7 +184,7 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                 checkpointsDir(dir);
                 final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
                 try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                             writer.beginRepair(dir, null, tracker)) {
+                             writer.beginRepair(dir, null, tracker, false)) {
                     final ObjList<LiveViewCheckpointTimelineEntry> boundaries = new ObjList<>();
                     capture.collectBoundaries(0, 1_500_000, boundaries);
                     Assert.assertEquals(1, boundaries.size());
@@ -225,7 +225,7 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                 checkpointsDir(dir);
                 final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
                 try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                             writer.beginRepair(dir, null, tracker)) {
+                             writer.beginRepair(dir, null, tracker, false)) {
                     final ObjList<LiveViewCheckpointTimelineEntry> boundaries = new ObjList<>();
                     capture.collectBoundaries(0, 1_500_000, boundaries);
                     Assert.assertEquals(1, boundaries.size());

@@ -291,6 +291,12 @@ public final class LiveViewCheckpointRepairPlan {
      * and replays only the tail above it.
      */
     public static final int DISPOSITION_RESUME_FROM_ANCHOR = 2;
+    /**
+     * The anchor source a per-segment plan is derived against: none. A resume runs to
+     * end-of-frame, so letting one win the price comparison would put back the union
+     * range the decomposition exists to avoid.
+     */
+    private static final AnchorSource NO_ANCHORS = (ceilTs, out) -> false;
     private long anchorCheckpointId;
     // Scratch the anchor searches read into. Worker-owned, overwritten by every
     // lookup; only the two identity fields around it survive a plan.
@@ -298,6 +304,11 @@ public final class LiveViewCheckpointRepairPlan {
     private long anchorMaxTs;
     private long applyAheadMinTs;
     private long changeMaxTs;
+    // The base seqTxn this repair commits at and advances its watermarks to. The
+    // pinned snapshot's own seqTxn for a repair that materialises the whole change
+    // set, and the pre-repair watermark for a per-segment repair, which corrects one
+    // closed segment and leaves the rest of the change set unconsumed.
+    private long commitSeqTxn;
     private long correctionTs;
     // Why this repair reads the whole view history, or resumed instead of rebuilding:
     // one DENIAL_* code, DENIAL_NONE when nothing was denied. Localization is decided
@@ -403,6 +414,7 @@ public final class LiveViewCheckpointRepairPlan {
         this.anchorMaxTs = other.anchorMaxTs;
         this.applyAheadMinTs = other.applyAheadMinTs;
         this.changeMaxTs = other.changeMaxTs;
+        this.commitSeqTxn = other.commitSeqTxn;
         this.correctionTs = other.correctionTs;
         this.denialReason = other.denialReason;
         this.disposition = other.disposition;
@@ -461,12 +473,20 @@ public final class LiveViewCheckpointRepairPlan {
 
     /**
      * @return the base {@code seqTxn} the repair commits at and advances its
-     * watermarks to. Always the pinned snapshot's {@code seqTxn}: the replay
-     * materialises everything that snapshot holds, including any transaction
-     * apply raced past the trigger.
+     * watermarks to. The pinned snapshot's {@code seqTxn} for a repair that
+     * materialises the whole change set, because the replay reads everything that
+     * snapshot holds, including any transaction apply raced past the trigger.
+     * <p>
+     * A per-segment repair ({@link #ofSegment}) commits at the pre-repair watermark
+     * instead. It corrects one closed segment and leaves every other part of the
+     * change set unconsumed, so advancing over the snapshot would declare base
+     * transactions whose output the view does not hold. Leaving the watermark where it
+     * was makes the segment repair idempotent: a crash before the residual repair
+     * finishes replays the same change set, and re-running a whole-segment recompute
+     * over the same base produces the same rows.
      */
     public long getCommitSeqTxn() {
-        return pinnedSeqTxn;
+        return commitSeqTxn;
     }
 
     /**
@@ -793,6 +813,9 @@ public final class LiveViewCheckpointRepairPlan {
         denialReason = DENIAL_NONE;
         this.triggerSeqTxn = triggerSeqTxn;
         this.pinnedSeqTxn = pinnedSeqTxn;
+        // The whole change set is materialised from the pinned snapshot, so the
+        // watermark advances over it. ofSegment overwrites this afterwards.
+        this.commitSeqTxn = pinnedSeqTxn;
         this.changeMaxTs = changeMaxTs;
         // H starts pinned to end-of-frame and is lowered only by deriveHighBound
         // below, which runs after the floors and only for a localized rebuild. A
@@ -910,6 +933,93 @@ public final class LiveViewCheckpointRepairPlan {
             anchorCheckpointId = Numbers.LONG_NULL;
             anchorMaxTs = Numbers.LONG_NULL;
         }
+    }
+
+    /**
+     * Classifies one <b>closed anchor segment</b> of an already-decomposed change set,
+     * rather than the change set as a whole.
+     * <p>
+     * The union range a whole-change-set plan derives is what makes a deep correction
+     * expensive: {@code changeMaxTs} is the highest timestamp anything in the change set
+     * touched, so a commit carrying rows at the head and rows a month back puts {@code H}
+     * at the end of <i>today's</i> segment - above the runtime frontier, which denies the
+     * localization outright - and the resume that replaces it replays and rewrites the
+     * whole month. Neither is a property of the correction: under a pure fixed-anchor plan
+     * the anchor resets every stateful function at the segment boundary, so the rows in
+     * one old segment reach that segment's output and nothing else.
+     * <p>
+     * So the bounds come out of the same derivation with the segment's own extremes
+     * standing in for the change set's: {@code L} at the segment's start, {@code H} at its
+     * end, and a replacement covering that range alone. Two inputs are deliberately
+     * withheld:
+     * <ul>
+     *     <li><b>the anchor source.</b> A resume reads {@code [anchorMaxTs + 1, EOF)} -
+     *     its high bound is end-of-frame - so winning the price comparison would put the
+     *     union range back. A segment repair is the localized rebuild or it is nothing;
+     *     the caller falls back to the whole-change-set plan when this returns false.</li>
+     *     <li><b>the apply-ahead range.</b> The caller classified the whole range
+     *     {@code (fromSeqTxn, E]} row by row to produce the decomposition, so the ahead
+     *     range's rows are already in the segment they belong to. Re-deriving its scalar
+     *     minimum here would drop the retire floor back to the deepest row in the whole
+     *     change set and widen every segment's bounds into the union again.</li>
+     * </ul>
+     * {@code viewLowerBoundTimestamp} still clamps the correction floor, but the
+     * {@code DENIAL_VIEW_START_FLOOR} guard behind it cannot fire the way it does for a
+     * RANGE or ROWS shape: a floor landing on {@code S} leaves those reading the whole view
+     * history, while a segment repair still reads one segment. It is left in place because
+     * a floor at {@code S} also means the segment arithmetic and the view's boundary
+     * disagree about where this repair starts, and the caller's fallback is cheap.
+     *
+     * @param segmentMinTs            the lowest in-view timestamp the change set touched
+     *                                inside this segment, already clamped above the view's
+     *                                {@code START FROM} boundary by the decomposition
+     * @param segmentMaxTs            the highest in-view timestamp the change set touched
+     *                                inside this segment
+     * @param viewLowerBoundTimestamp the view's {@code START FROM} boundary {@code S}
+     * @param pinnedSeqTxn            {@code seqTxn} of the pinned base reader ({@code E}),
+     *                                the snapshot the replay reads from
+     * @param commitSeqTxn            the watermark this repair commits at - the pre-repair
+     *                                value, since the rest of the change set stays
+     *                                unconsumed. See {@link #getCommitSeqTxn()}
+     * @param anchorPlan              the view's fixed anchor segment; never null, because a
+     *                                change set only decomposes for a view that has one
+     * @param durableOutputMaxTs      the highest designated timestamp the live-view table
+     *                                durably holds
+     * @param runtimeFrontierTs       the highest designated timestamp the runtime window
+     *                                state has incorporated
+     * @return true when the segment came back localized behind a finite convergence
+     * boundary, which is the only shape a per-segment repair may run in
+     */
+    public boolean ofSegment(
+            long segmentMinTs,
+            long segmentMaxTs,
+            long viewLowerBoundTimestamp,
+            long pinnedSeqTxn,
+            long commitSeqTxn,
+            @NotNull LiveViewCheckpointAnchorPlan anchorPlan,
+            long durableOutputMaxTs,
+            long runtimeFrontierTs
+    ) throws SqlException {
+        of(
+                NO_ANCHORS,
+                segmentMinTs,
+                viewLowerBoundTimestamp,
+                // Trigger and pin quoted as the same value so no apply-ahead
+                // classification is required: the caller already did it row by row.
+                pinnedSeqTxn,
+                pinnedSeqTxn,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL,
+                null,
+                anchorPlan,
+                true,
+                durableOutputMaxTs,
+                segmentMaxTs,
+                runtimeFrontierTs,
+                null
+        );
+        this.commitSeqTxn = commitSeqTxn;
+        return localized && highBoundTag == HighBoundTag.FINITE;
     }
 
     /**

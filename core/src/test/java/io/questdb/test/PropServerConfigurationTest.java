@@ -916,6 +916,7 @@ public class PropServerConfigurationTest {
         // ignored key or a getter wired to the wrong field would go unnoticed there.
         CairoConfiguration cairo = newPropServerConfiguration(new Properties()).getCairoConfiguration();
 
+        Assert.assertTrue(cairo.isLiveViewCheckpointRepairIsolatedRuntimeEnabled());
         Assert.assertEquals(5 * Micros.MINUTE_MICROS, cairo.getLiveViewCheckpointMaxDurationMicros());
         Assert.assertEquals(1_000_000L, cairo.getLiveViewCheckpointRows());
         Assert.assertTrue(cairo.isLiveViewEnabled());
@@ -924,6 +925,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(16L * 1024 * 1024, cairo.getLiveViewInMemoryBufferGrowthBytes());
         Assert.assertEquals(64L * 1024, cairo.getLiveViewInMemoryBufferInitialBytes());
         Assert.assertEquals(60 * Micros.MINUTE_MICROS, cairo.getLiveViewInMemoryMaxMicros());
+        Assert.assertEquals(50, cairo.getLiveViewPartitionCompactStalePercent());
         Assert.assertEquals(100_000, cairo.getLiveViewPartitionCompactThreshold());
         Assert.assertEquals(0L, cairo.getLiveViewRefreshMemoryLimitBytes());
         Assert.assertEquals(64, cairo.getLiveViewRefreshTurnMaxCommits());
@@ -988,6 +990,37 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testLiveViewPartitionCompactStalePercentAcceptsBothEndpoints() throws Exception {
+        // 0 and 100 are the two values the trigger gives their own meaning to - 0 leaves the
+        // percentage arm satisfied by anything, 100 satisfies it only when every entry in the
+        // map is stale - so both have to survive parse time. Only the values outside the range
+        // are rejected, and the sibling case below is what pins that.
+        for (String value : new String[]{"0", "100"}) {
+            final Properties properties = new Properties();
+            properties.setProperty("cairo.live.view.partition.compact.stale.percent", value);
+            final CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+            Assert.assertEquals(Integer.parseInt(value), cairo.getLiveViewPartitionCompactStalePercent());
+        }
+    }
+
+    @Test
+    public void testLiveViewPartitionCompactStalePercentRejectsOutOfRange() throws Exception {
+        // It is a share of the anchor map and stalePartitionCount counts entries of that same
+        // map, so only 0..100 means anything. Parse time is where a value outside the range
+        // fails, with the key named, rather than reaching the trigger.
+        for (String value : new String[]{"-1", "101"}) {
+            final Properties properties = new Properties();
+            properties.setProperty("cairo.live.view.partition.compact.stale.percent", value);
+            try {
+                newPropServerConfiguration(properties);
+                Assert.fail("expected rejection for stale.percent=" + value);
+            } catch (ServerConfigurationException e) {
+                TestUtils.assertContains(e.getMessage(), "cairo.live.view.partition.compact.stale.percent");
+            }
+        }
+    }
+
+    @Test
     public void testLiveViewMalformedDurationRejected() throws Exception {
         // A duration key that cannot be parsed must fail the server start with a message
         // naming the offending key, not fall back to the default.
@@ -1016,6 +1049,7 @@ public class PropServerConfigurationTest {
         properties.setProperty("cairo.live.view.in.memory.buffer.growth.bytes", "32M");
         properties.setProperty("cairo.live.view.in.memory.buffer.initial.bytes", "128k");
         properties.setProperty("cairo.live.view.in.memory.max", "45m");
+        properties.setProperty("cairo.live.view.partition.compact.stale.percent", "25");
         properties.setProperty("cairo.live.view.partition.compact.threshold", "333000");
         properties.setProperty("cairo.live.view.refresh.turn.max.commits", "128");
         properties.setProperty("cairo.live.view.refresh.turn.max.duration.micros", "250ms");
@@ -1030,6 +1064,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(32L * 1024 * 1024, cairo.getLiveViewInMemoryBufferGrowthBytes());
         Assert.assertEquals(128L * 1024, cairo.getLiveViewInMemoryBufferInitialBytes());
         Assert.assertEquals(45 * Micros.MINUTE_MICROS, cairo.getLiveViewInMemoryMaxMicros());
+        Assert.assertEquals(25, cairo.getLiveViewPartitionCompactStalePercent());
         Assert.assertEquals(333_000, cairo.getLiveViewPartitionCompactThreshold());
         Assert.assertEquals(128, cairo.getLiveViewRefreshTurnMaxCommits());
         Assert.assertEquals(250_000L, cairo.getLiveViewRefreshTurnMaxDurationMicros());
