@@ -49,6 +49,7 @@ inside `PartitionGeometry`, the planner, the executor and the two frame cursors 
 | 15 | Merge that reads below a column top | **BUILT** - top-aware kernels, both sides |
 | 16 | Interval scan over a composite partition | **BUILT** - `CompositeTimestampFinder` |
 | 17 | `ALTER TABLE ... ALTER COLUMN TYPE` over a composite partition | **BUILT** - the conversion spans `E` |
+| 18 | `UPDATE` over a composite partition | **BUILT** - collect/merge two-phase rewrite, physical-row addressed |
 
 With the flag off - the default - nothing above is reachable and the tree behaves exactly as master.
 

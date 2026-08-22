@@ -124,7 +124,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
 
         // The DIRECTORY's whole shared frame, not one piece's rows: a rebuild recreates the single index
         // its pieces all read, so a rebuild over one piece drops every sibling's rows out of it.
-        final long partitionSize = tableWriter.getPartitionFileRowCount(partitionIndex);
+        final long partitionSize = tableWriter.getPartitionPhysicalRowCount(partitionIndex);
 
         long partitionNameTxn = txReader.getPartitionNameTxn(partitionIndex);
         currentTableTxn = txReader.getTxn();
