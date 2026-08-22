@@ -66,6 +66,21 @@ public interface TxnScoreboard extends QuietCloseable {
 
     boolean isRangeAvailable(long fromTxn, long toTxn);
 
+    /**
+     * As {@link #isRangeAvailable(long, long)}, but ignores the durable-epoch pins.
+     * <p>
+     * ONLY for deciding whether a partition may be squashed by COPY. Every other caller of
+     * {@link #isRangeAvailable(long, long)} is a purge -- it is about to DELETE bytes a recovery
+     * rewind may still need -- and must keep the epoch protection. A copy squash deletes nothing:
+     * it writes a new partition version and merely queues the old one, whose actual removal goes
+     * back through the epoch-protected predicate.
+     * <p>
+     * Needed because the epoch pin sits at the last cut, which is always BEHIND the txn the squash
+     * gate asks about, so under ADAPTIVE the gate would otherwise never open -- at any epoch
+     * cadence.
+     */
+    boolean isRangeAvailableIgnoringEpochPins(long fromTxn, long toTxn);
+
     boolean isTxnAvailable(long txn);
 
     long releaseTxn(int id, long txn);

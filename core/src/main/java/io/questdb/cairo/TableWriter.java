@@ -5782,10 +5782,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private boolean canSquashOverwritePartitionTail(int partitionIndex) {
+        return txnScoreboard.isRangeAvailable(
+                squashRangeFromTxn(partitionIndex),
+                squashRangeToTxn(partitionIndex)
+        );
+    }
+
+    /**
+     * True when the ONLY thing holding the squash range is a durable-epoch pin -- no reader, no
+     * checkpoint. Such a partition cannot be squashed by OVERWRITE (the epoch cut still describes
+     * its current contents, and a recovery rewind to that cut would read whatever we wrote over
+     * them), but it CAN be squashed by COPY: that writes a new partition version and only queues
+     * the old one, whose real removal goes back through the epoch-protected predicate.
+     * <p>
+     * Without this, ADAPTIVE never squashes a split partition at all. The epoch pin sits at the
+     * last cut, and the last cut is always at least one txn behind the {@code toTxn} the gate asks
+     * about, so the pin is permanently inside the range -- proven at every epoch cadence, including
+     * epoch-every-batch, where the pin merely tracks one txn behind instead of standing still.
+     */
+    private boolean canSquashCopyPartitionTail(int partitionIndex) {
+        return txnScoreboard.isRangeAvailableIgnoringEpochPins(
+                squashRangeFromTxn(partitionIndex),
+                squashRangeToTxn(partitionIndex)
+        );
+    }
+
+    private long squashRangeFromTxn(int partitionIndex) {
         long fromTxn = txWriter.getPartitionNameTxn(partitionIndex);
-        if (fromTxn < 0) {
-            fromTxn = 0;
-        }
+        return fromTxn < 0 ? 0 : fromTxn;
+    }
+
+    private long squashRangeToTxn(int partitionIndex) {
         long toTxn = txWriter.getTxn();
         if (partitionIndex + 1 < txWriter.getPartitionCount()) {
             // If the next partition is a split partition part of same logical partition
@@ -5793,11 +5820,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // then if there are no readers between transaction range [0, 3) the partition is unlocked to append.
             if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex)) ==
                     txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1))) {
-                toTxn = Math.max(fromTxn + 1, getPartitionNameTxn(partitionIndex + 1) + 1);
+                toTxn = Math.max(squashRangeFromTxn(partitionIndex) + 1, getPartitionNameTxn(partitionIndex + 1) + 1);
             }
         }
-
-        return txnScoreboard.isRangeAvailable(fromTxn, toTxn);
+        return toTxn;
     }
 
     private void cancelRowAndBump() {
@@ -15320,7 +15346,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int targetPartitionIndex = partitionIndexLo;
         for (int n = partitionIndexHi - 1; targetPartitionIndex < n; targetPartitionIndex++) {
             boolean canOverwrite = canSquashOverwritePartitionTail(targetPartitionIndex);
-            if (canOverwrite || force) {
+            // A durable-epoch pin blocks the overwrite but not the copy. Squashing by copy here
+            // keeps ADAPTIVE's partition layout the same as every other mode's; skipping would
+            // leave the split standing forever, because that pin never leaves the range.
+            // Deliberately NOT reached for a reader or checkpoint pin: those keep the existing
+            // deferral, so a busy table still waits rather than copying under every scan.
+            if (canOverwrite || force || canSquashCopyPartitionTail(targetPartitionIndex)) {
                 targetPartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex);
                 copyTargetFrame = !canOverwrite;
                 break;
@@ -15343,7 +15374,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Whether the squash target is the partition this writer currently holds
         // open. Captured before the append: the column append memories we may have
         // to re-sync afterwards are the ones positioned at this point.
-        final boolean targetIsOpenPartition = lastOpenPartitionTs == targetPartition && !copyTargetFrame;
+        // NOT "&& !copyTargetFrame". Either route leaves the writer's column memories for this
+        // partition stale: the overwrite route grows the files behind them, and the copy route
+        // moves the partition to a NEW version directory, leaving the memories pointed at the old
+        // one that _txn no longer names and that is now a remove candidate. Both need the close
+        // WITHOUT truncating plus a re-open of the target, which openPartition below does at
+        // whatever name txn the partition now carries.
+        final boolean targetIsOpenPartition = lastOpenPartitionTs == targetPartition;
         int squashCount = Math.min(partitionIndexHi - targetPartitionIndex - 1, partitionIndexHi - partitionIndexLo - optimalPartitionCount);
 
         if (squashCount <= 0) {

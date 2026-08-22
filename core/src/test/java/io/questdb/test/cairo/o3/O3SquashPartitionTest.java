@@ -1214,7 +1214,14 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         // squashing commit and still open when it returns -- is what discriminates. It counts
         // opens rather than comparing fd numbers: the OS is free to hand the same number back
         // after a close.
+        // The squash target's own "i.d", whichever route the squash took. The overwrite route
+        // appends in place so the directory keeps its bare name; the copy route -- which is what a
+        // durable-epoch pin forces, and so the ADAPTIVE default -- publishes a NEW partition
+        // version, giving the directory a ".<txn>" suffix. Both ARE the target. The split,
+        // "2020-02-04T200000-...", is not, and matches neither form: a 'T' follows the date there,
+        // not a separator or a dot.
         final String targetDataFile = "2020-02-04" + Files.SEPARATOR + "i.d";
+        final String targetDataFileVersioned = "2020-02-04.";
         final LongHashSet openTargetFds = new LongHashSet();
         final LongHashSet openedSinceMark = new LongHashSet();
         final AtomicInteger splitDirOpens = new AtomicInteger();
@@ -1231,7 +1238,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             @Override
             public long openRW(LPSZ name, int opts) {
                 long fd = super.openRW(name, opts);
-                if (fd > -1 && Utf8s.endsWithAscii(name, targetDataFile)) {
+                if (fd > -1 && Utf8s.endsWithAscii(name, "i.d")
+                        && (Utf8s.endsWithAscii(name, targetDataFile) || Utf8s.containsAscii(name, targetDataFileVersioned))) {
                     synchronized (openTargetFds) {
                         openTargetFds.add(fd);
                         openedSinceMark.add(fd);

@@ -47,6 +47,10 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     // Bumping this from 1->3 added the two ping-pong EPOCH slots; the +3 below still covers the two
     // header longs (active reader count, max) plus one slot of slack after the scanned region.
     private static final int VIRTUAL_ID_COUNT = 3;
+    // Derived from the map above, NOT hard-coded independently of it: if a virtual id is ever added
+    // or reordered these follow, and isRangeAvailableIgnoringEpochPins keeps skipping the right two.
+    private static final int EPOCH_A_INTERNAL_ID = TxnScoreboard.EPOCH_ID_A + VIRTUAL_ID_COUNT;
+    private static final int EPOCH_B_INTERNAL_ID = TxnScoreboard.EPOCH_ID_B + VIRTUAL_ID_COUNT;
     private static final int RESERVED_ID_COUNT = VIRTUAL_ID_COUNT + 3;
     private final int bitmapCount;
     private final int entryScanCount;
@@ -236,6 +240,21 @@ public class TxnScoreboardV2 implements TxnScoreboard {
 
     @Override
     public boolean isRangeAvailable(long fromTxn, long toTxn) {
+        return isRangeAvailable0(fromTxn, toTxn, false);
+    }
+
+    @Override
+    public boolean isRangeAvailableIgnoringEpochPins(long fromTxn, long toTxn) {
+        return isRangeAvailable0(fromTxn, toTxn, true);
+    }
+
+    /**
+     * @param ignoreEpochPins when true, the two ping-pong durable-epoch slots (EPOCH_ID_A,
+     *                        EPOCH_ID_B) do not hold the range. CHECKPOINT_ID still does -- a
+     *                        checkpoint is reading those files right now, so it blocks a squash
+     *                        exactly as a reader does.
+     */
+    private boolean isRangeAvailable0(long fromTxn, long toTxn, boolean ignoreEpochPins) {
         // Push max txn to the latest, to avoid races with acquireTxn()
         // but don't stop checking if it's not the max.
         updateMax(toTxn);
@@ -255,6 +274,10 @@ public class TxnScoreboardV2 implements TxnScoreboard {
                 final long lowestBit = Long.lowestOneBit(bitmap);
                 final int bit = Long.numberOfTrailingZeros(lowestBit);
                 int internalId = base + bit;
+                if (ignoreEpochPins && (internalId == EPOCH_B_INTERNAL_ID || internalId == EPOCH_A_INTERNAL_ID)) {
+                    bitmap ^= lowestBit;
+                    continue;
+                }
                 long lockedTxn = Unsafe.getLongVolatile(entriesMem + (long) internalId * Long.BYTES);
                 if (lockedTxn > UNLOCKED && lockedTxn >= fromTxn && lockedTxn < toTxn) {
                     return false;
