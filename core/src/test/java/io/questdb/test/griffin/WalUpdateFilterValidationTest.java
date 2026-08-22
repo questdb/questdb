@@ -77,9 +77,10 @@ import java.util.Collection;
  * who does not run EXPLAIN or the equivalent SELECT first.
  * <p>
  * Nothing refuses it, in either mode, and that is deliberate - {@code NarrowIntArithmetic} guards
- * the two consumers that never show the value they used, and an UPDATE shows it twice over:
- * {@code EXPLAIN UPDATE ...} prints the wrapped bound and the identical SELECT returns the rows the
- * UPDATE will rewrite. Both are asserted, so the justification stays checked rather than remembered.
+ * the three consumers that never show the value they used - a partition filter, a window frame
+ * width and a SAMPLE BY interval - and an UPDATE shows it twice over: {@code EXPLAIN UPDATE ...}
+ * prints the wrapped bound and the identical SELECT returns the rows the UPDATE will rewrite. Both
+ * are asserted, so the justification stays checked rather than remembered.
  * <p>
  * {@link #testLegacySegmentStillSuspendsAtApply()} pins what the fix deliberately does NOT change: a
  * statement sequenced by an older build, still unapplied across an upgrade, is re-compiled at apply
@@ -222,13 +223,14 @@ public class WalUpdateFilterValidationTest extends AbstractCairoTest {
      * at all. Whoever reddens this test by restoring 64-bit recomputation is reversing a documented
      * breaking change, not repairing a bug in the pin.
      * <p>
-     * It is deliberately not guarded. {@code NarrowIntArithmetic} guards two consumers - a
-     * {@code DROP / DETACH / CONVERT PARTITION ... WHERE} clause and a window frame width - and it
-     * guards them because neither ever shows the value it used. An UPDATE's bound is shown, and the
-     * first two assertions here are that showing, not decoration: the statement's own plan prints
-     * the wrapped bound, and the identical SELECT returns exactly the rows the UPDATE goes on to
-     * rewrite. They are what justifies leaving this path un-guarded, so if either stops holding this
-     * test reddens and the decision has to be taken again rather than inherited.
+     * It is deliberately not guarded. {@code NarrowIntArithmetic} guards three consumers - a
+     * {@code DROP / DETACH / CONVERT PARTITION ... WHERE} clause, a window frame width and a
+     * {@code SAMPLE BY} interval - and it guards them because none of the three ever shows the
+     * value it used. An UPDATE's bound is shown, and the first two assertions here are that
+     * showing, not decoration: the statement's own plan prints the wrapped bound, and the identical
+     * SELECT returns exactly the rows the UPDATE goes on to rewrite. They are what justifies leaving
+     * this path un-guarded, so if either stops holding this test reddens and the decision has to be
+     * taken again rather than inherited.
      * <p>
      * The remedy is {@link #testWidenedNonDesignatedBoundTouchesOnlyTheTail()}: widen an operand. On
      * a DATE column the multiplier differs, because DATE is milliseconds - see

@@ -602,6 +602,79 @@ mod tests {
     }
 
     #[test]
+    fn no_skip_is_null_when_writer_undercounts_nulls() -> ParquetResult<()> {
+        // The `_pm` twin of
+        // parquet_read::tests::no_skip_row_group_is_null_char_with_stored_zero, for the
+        // CONVERT PARTITION TO PARQUET path. A CHAR NULL is `(char) 0` and a FLOAT/DOUBLE infinity
+        // is an ordinary value; the writer counts neither, so null_count == 0 does not mean the row
+        // group holds no NULL. See ParquetDecoder::writer_undercounts_nulls.
+        //
+        // This test is the guard's only coverage on this arm. PushdownFilterExtractor
+        // .isNullOpPushable refuses IS NULL for these three types, so no SQL query reaches it.
+        let (parquet_meta, fo) = build_long_parquet_meta(&[(100, 0, 10, 200, true)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
+
+        // The arm answers from the null count alone and returns before it reads the column
+        // descriptor, so the INT64 chunk above carries these QuestDB types faithfully here.
+        for tag in [
+            ColumnTypeTag::Char,
+            ColumnTypeTag::Float,
+            ColumnTypeTag::Double,
+        ] {
+            let filter = make_filter(0, 0, FILTER_OP_IS_NULL, 0, tag as i32);
+            assert!(
+                !can_skip_row_group(&reader, 0, &[filter], 0)?,
+                "{tag:?}: IS NULL must not skip on a count blind to the type's own NULL"
+            );
+        }
+
+        // BYTE has no NULL at all, so a zero count is the truth for it and the skip still fires -
+        // skip_is_null_when_no_nulls carries the LONG control.
+        let filter = make_filter(0, 0, FILTER_OP_IS_NULL, 0, ColumnTypeTag::Byte as i32);
+        assert!(
+            can_skip_row_group(&reader, 0, &[filter], 0)?,
+            "BYTE has every NULL counted, so IS NULL should still skip"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn no_skip_is_not_null_over_column_top_of_null_free_type() -> ParquetResult<()> {
+        // The `_pm` twin of
+        // parquet_read::tests::no_skip_row_group_is_not_null_over_column_top_of_null_free_type.
+        // A row group lying wholly inside a BOOLEAN, BYTE or SHORT column top reports
+        // null_count == num_values, yet those rows decode back as 0/false and `IS NOT NULL` is a
+        // constant TRUE over them. See ParquetDecoder::is_null_free_type.
+        //
+        // This test is the guard's only coverage on this arm. PushdownFilterExtractor
+        // .isNullOpPushable refuses IS NOT NULL for these three types, so no SQL query reaches it.
+        let (parquet_meta, fo) = build_long_parquet_meta(&[(100, 100, 0, 0, true)])?;
+        let reader = ParquetMetaReader::from_file_size(&parquet_meta, fo)?;
+
+        for tag in [
+            ColumnTypeTag::Boolean,
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+        ] {
+            let filter = make_filter(0, 0, FILTER_OP_IS_NOT_NULL, 0, tag as i32);
+            assert!(
+                !can_skip_row_group(&reader, 0, &[filter], 0)?,
+                "{tag:?}: IS NOT NULL must not skip a group lying wholly inside a column top"
+            );
+        }
+
+        // CHAR shares the zero decoding, but `(char) 0` genuinely IS its NULL, so an all-null group
+        // really does hold no matching row - skip_is_not_null_when_all_nulls carries the LONG
+        // control.
+        let filter = make_filter(0, 0, FILTER_OP_IS_NOT_NULL, 0, ColumnTypeTag::Char as i32);
+        assert!(
+            can_skip_row_group(&reader, 0, &[filter], 0)?,
+            "a CHAR column top IS a NULL, so IS NOT NULL should still skip"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn skip_eq_outside_min_max() -> ParquetResult<()> {
         // Range [100, 200], search for 300.
         let (parquet_meta, fo) = build_long_parquet_meta(&[(1000, 0, 100, 200, true)])?;

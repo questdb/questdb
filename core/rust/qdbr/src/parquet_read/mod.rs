@@ -1086,6 +1086,65 @@ mod tests {
     }
 
     #[test]
+    fn no_skip_row_group_is_not_null_over_column_top_of_null_free_type() -> ParquetResult<()> {
+        // BOOLEAN, BYTE and SHORT carry no NULL sentinel, so `IS NOT NULL` is a constant TRUE over
+        // them: a column-top row decodes back as 0/false and native storage returns it. The writer
+        // still records that row at definition level 0, so a row group lying wholly inside a column
+        // top reports null_count == num_values, which this arm otherwise reads as "every value is
+        // null" and skips. See ParquetDecoder::is_null_free_type.
+        //
+        // This test is the guard's only coverage on this arm - ParquetDecoder::can_skip_row_group,
+        // the one read_parquet() takes. Its twin in parquet_metadata::skip, which a CONVERT
+        // PARTITION TO PARQUET table reads, carries its own guard coverage in
+        // parquet_metadata::skip::tests::no_skip_is_not_null_over_column_top_of_null_free_type.
+        // PushdownFilterExtractor.isNullOpPushable refuses a null op for these three types, so no
+        // SQL query reaches the guard - see its doc comment for why opening that gate would recover
+        // nothing.
+        let data: Vec<i64> = vec![];
+        let def_levels: Vec<i16> = vec![0, 0, 0]; // 3 rows, all column top
+        let buf = gen_nullable_i64_parquet(&data, &def_levels)?;
+        let decoder = read_decoder(&buf)?;
+
+        // The arm answers from the null count alone and returns before it reads the physical type,
+        // so an INT64 file carries these narrower QuestDB types faithfully for this branch.
+        for tag in [
+            ColumnTypeTag::Boolean,
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+        ] {
+            let filters = [make_filter_with_op_and_type(
+                0,
+                0,
+                0,
+                FILTER_OP_IS_NOT_NULL,
+                tag as i32,
+            )];
+            assert!(
+                !decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+                "{tag:?}: IS NOT NULL must not skip a group lying wholly inside a column top"
+            );
+        }
+
+        // CHAR shares the zero decoding, but `(char) 0` genuinely IS its NULL, and every other type
+        // reaches definition level 0 only for a real NULL. The skip stays right for all of them, so
+        // the guard costs only the pruning that was wrong.
+        for tag in [ColumnTypeTag::Char, ColumnTypeTag::Int, ColumnTypeTag::Long] {
+            let filters = [make_filter_with_op_and_type(
+                0,
+                0,
+                0,
+                FILTER_OP_IS_NOT_NULL,
+                tag as i32,
+            )];
+            assert!(
+                decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+                "{tag:?}: an all-null group should still skip for IS NOT NULL"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn skip_row_group_string_range() -> ParquetResult<()> {
         let data = vec!["alice", "bob", "charlie"];
         let buf = gen_string_parquet_with_bloom(&data)?;

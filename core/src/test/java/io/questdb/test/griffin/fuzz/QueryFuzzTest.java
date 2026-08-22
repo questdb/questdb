@@ -184,14 +184,24 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // measured per-arm fire rates run 49-88% by type, so at a pessimistic 30% it takes 20 arms for
     // an all-miss run to drop below 1e-3. See the guard in runFuzz.
     private static final int MIN_FAULT_QUERIES_PER_TYPE_FOR_FIRE_FLOOR = 20;
+    // Differential queries a run needs before runFuzz asserts that a shape it could draw generated
+    // at least one query. The rarest such shape takes ~4% of the differential queries, so at this
+    // sample size an all-miss run sits below 1e-8; under it a zero is small-sample noise and
+    // runFuzz only logs. FuzzConfig's default budget leaves ~850 differential queries after fault
+    // injection takes its cut, so CI always guards. This floor is about the budget only: a shape
+    // whose per-run precondition the run never met is exempt whatever the budget, which
+    // describeUngeneratableShape decides.
+    private static final int MIN_QUERIES_FOR_ZERO_GUARD = 500;
     // Differential queries a shape needs before runFuzz holds it to MIN_ACCEPTED_PCT_PER_SHAPE.
     // Below this count the accepted rate is too noisy to assert on. FuzzConfig's default budget is
-    // sized so every shape clears this on the run CI executes - at the old 100-query default only
-    // SAMPLE_BY did, leaving the guard dormant for the other eight shapes (POSTING did not even
-    // generate). runFuzz logs any shape that still falls short, so a generator that goes rare
-    // cannot silently stop being guarded; it is logged rather than asserted because the rarest
-    // shape draws ~3.4% of a run, which at the default budget dips under the floor often enough
-    // by chance alone to make an assertion flaky.
+    // sized so every shape the run can draw clears this - at the old 100-query default only
+    // SAMPLE_BY did, leaving the guard dormant for the other eight shapes. runFuzz logs any shape
+    // that still falls short, so a generator that goes rare cannot silently stop being guarded; it
+    // is logged rather than asserted because the rarest shape draws ~3.4% of a run, which at the
+    // default budget dips under the floor often enough by chance alone to make an assertion flaky.
+    // A shape that generated nothing at all is a different case and MIN_QUERIES_FOR_ZERO_GUARD
+    // guards it: no budget lifts POSTING off zero, because it needs the run's random schema to
+    // carry a posting-indexed SYMBOL.
     private static final int MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR = 25;
     // Per-query chance, in percent, of generating a bind-variable variant.
     private static final int QUERY_BIND_PROBABILITY_PCT = 20;
@@ -640,6 +650,68 @@ public class QueryFuzzTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Names why {@code shape} could not have generated a single query in this run, or returns
+     * {@code null} when the run's tables and knobs allow it. runFuzz asserts a zero-query shape only
+     * in the {@code null} case, so a deliberately disabled shape - or one whose per-run precondition
+     * the random draw never met - cannot fail the run.
+     * <p>
+     * The switch covers {@link QueryShape} exhaustively on purpose: adding a shape stops the test
+     * compiling until whoever adds it declares whether a zero-query run is legitimate for it.
+     */
+    private static String describeUngeneratableShape(QueryShape shape, FuzzConfig config, ObjList<FuzzTable> tables) {
+        return switch (shape) {
+            case GROUP_BY, SAMPLE_BY, SIMPLE -> null;
+            case HORIZON_JOIN -> config.isHorizonJoinEnabled()
+                    ? describeMissingJoinTables(tables)
+                    : "-D" + FuzzConfig.HORIZON_JOIN_PROP + "=false";
+            case LATEST_ON -> config.isLatestOnEnabled()
+                    ? null
+                    : "-D" + FuzzConfig.LATEST_ON_PROP + "=false";
+            case POSTING -> hasPostingIndexedSymbol(tables)
+                    ? null
+                    : "the run's random schema drew no posting-indexed SYMBOL, so PostingClause.tryGenerate returns null on every draw";
+            case TEMPORAL_JOIN -> describeMissingJoinTables(tables);
+            case WINDOW -> config.isWindowEnabled()
+                    ? null
+                    : "-D" + FuzzConfig.WINDOW_PROP + "=false";
+            case WINDOW_JOIN -> config.isWindowJoinEnabled()
+                    ? describeMissingJoinTables(tables)
+                    : "-D" + FuzzConfig.WINDOW_JOIN_PROP + "=false";
+        };
+    }
+
+    /**
+     * QueryGenerator gates its whole join band on two or more tables, so with fewer than that every
+     * join shape legitimately generates nothing. FuzzConfig draws at least two, so this normally
+     * returns {@code null}; it exists so lowering that floor cannot turn the zero guard flaky.
+     */
+    private static String describeMissingJoinTables(ObjList<FuzzTable> tables) {
+        return tables.size() >= 2
+                ? null
+                : "the run drew " + tables.size() + " table(s) and QueryGenerator gates the join band on two or more";
+    }
+
+    /**
+     * Says whether any of the run's tables carries a posting-indexed SYMBOL column, which is what
+     * PostingClause.tryGenerate needs to emit anything at all. FuzzTableFactory.assignIndexes draws
+     * the index kind per SYMBOL column per run - half the SYMBOL columns get an index and a quarter
+     * of those draw BITMAP - so a run can draw a schema with none, and 7 of 40 measured runs did.
+     * On those runs POSTING reports 0/0 with a perfectly working generator, whatever the budget.
+     */
+    private static boolean hasPostingIndexedSymbol(ObjList<FuzzTable> tables) {
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            final FuzzTable t = tables.getQuick(i);
+            for (int j = 0, m = t.getColumnCount(); j < m; j++) {
+                final FuzzIndex index = t.getColumn(j).getIndex();
+                if (index != null && index.isPosting()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private static void logSchema(FuzzTable t) {
         StringBuilder sb = new StringBuilder("fuzz schema ").append(t.getName())
                 .append(" (parquet=").append(t.getParquetMode());
@@ -879,11 +951,41 @@ public class QueryFuzzTest extends AbstractCairoTest {
         if (failures.size() > 0) {
             throw buildFailure(failures);
         }
-        // Guard each generator against emitting SQL the engine cannot compile. A shape whose
-        // generator drifts out of step with the engine's rules still leaves the run green: every
-        // query it emits raises an expected error, gets counted as skipped, and asserts nothing.
+        // Guard each generator against emitting SQL the engine cannot compile, and against emitting
+        // nothing at all. A shape whose generator drifts out of step with the engine's rules still
+        // leaves the run green: every query it emits raises an expected error, gets counted as
+        // skipped, and asserts nothing. A shape whose dispatch in QueryGenerator has gone
+        // unreachable is worse - it reports zero generated, and the accepted-rate floor below reads
+        // a zero as "too small a sample" and skips it.
+        int differentialGen = 0;
+        for (QueryShape shape : QueryShape.values()) {
+            differentialGen += generatedByShape[shape.ordinal()];
+        }
         for (QueryShape shape : QueryShape.values()) {
             final int generated = generatedByShape[shape.ordinal()];
+            if (generated == 0) {
+                // Zero is legitimate for a shape this run could never draw: its -D toggle is off,
+                // or - for POSTING - the run's random schema carries no posting-indexed SYMBOL.
+                // Assert only when the run's tables and knobs allow the shape, so the guard cannot
+                // fail a working generator on an unlucky seed.
+                final String reason = describeUngeneratableShape(shape, config, tables);
+                if (reason != null) {
+                    LOG.info().$("fuzz shape cannot generate this run, NOT guarded: ")
+                            .$(shape.name()).$(" (").$safe(reason).$(')')
+                            .$();
+                    continue;
+                }
+                if (differentialGen < MIN_QUERIES_FOR_ZERO_GUARD) {
+                    LOG.info().$("fuzz shape generated nothing but the run is too small to guard it: ")
+                            .$(shape.name()).$(", ").$(differentialGen).$('/').$(MIN_QUERIES_FOR_ZERO_GUARD)
+                            .$(" differential queries; raise -D").$(FuzzConfig.QUERIES_PROP).$(" to guard it")
+                            .$();
+                    continue;
+                }
+                Assert.fail("the " + shape.name() + " generator emitted no query across "
+                        + differentialGen + " differential queries, though this run's tables and knobs"
+                        + " allow the shape; QueryGenerator no longer reaches that generator");
+            }
             if (generated < MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
                 // Not enough queries to hold this shape to the floor. Say so out loud: a shape that
                 // quietly stops generating (or goes rare) is otherwise indistinguishable from one

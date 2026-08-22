@@ -184,8 +184,8 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
             }
             Assert.assertEquals(
                     ColumnType.nameOf(tag),
-                    RecordValueSinkFactory.isSupportedColumnType(tag),
-                    isSinkGenerated
+                    isSinkGenerated,
+                    RecordValueSinkFactory.isSupportedColumnType(tag)
             );
         }
     }

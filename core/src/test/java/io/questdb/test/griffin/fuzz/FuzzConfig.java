@@ -45,16 +45,24 @@ public final class FuzzConfig {
     public static final String WINDOW_JOIN_PROP = "questdb.fuzz.windowjoin";
     public static final String WINDOW_PROP = "questdb.fuzz.window";
     // Queries per run when nothing overrides it, i.e. what CI executes. Sized so that every query
-    // shape clears MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR (QueryFuzzTest) and the "this generator has
-    // stopped compiling" guard actually holds each of them. Measured queries per shape:
+    // shape the run can draw clears MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR (QueryFuzzTest) and the
+    // "this generator has stopped compiling" guard actually holds it. Measured queries per shape,
+    // on one seed that drew a posting-indexed SYMBOL:
     //
     //   budget | GROUP_BY SAMPLE_BY SIMPLE WINDOW LATEST_ON POSTING HORIZON_JOIN TEMPORAL_JOIN WINDOW_JOIN
     //      100 |       16        31     11      7         7       0            3             3           6
     //     1000 |      187       178    124    134        43      75           42            39          34
     //
-    // At 100 only SAMPLE_BY reached the floor of 25, so the guard was dormant for eight of the nine
-    // shapes - every join shape among them - and POSTING generated nothing at all. At 1000 all nine
-    // clear it, for ~2s more (1.7s -> 3.8s), which is noise next to the build it rides on.
+    // At 100 only SAMPLE_BY reached the floor of 25, so the guard was dormant for the other eight
+    // shapes - every join shape among them. At 1000 all nine clear it on this seed, for ~2s more
+    // (1.7s -> 3.8s), which is noise next to the build it rides on.
+    //
+    // Read POSTING's 0 -> 75 as conditional on the seed: PostingClause generates only when the
+    // run's random schema draw put a posting-indexed SYMBOL on some table, which
+    // FuzzTableFactory.assignIndexes decides per SYMBOL column. On a run that drew none - 7 of the
+    // 40 measured - no budget lifts POSTING off zero and it reports 0/0 whatever the budget.
+    // QueryFuzzTest checks that precondition before it asserts a shape generated anything, so those
+    // runs stay green instead of failing a working generator.
     private static final int DEFAULT_NUM_QUERIES = 1_000;
 
     private final boolean isDiffJitEnabled;

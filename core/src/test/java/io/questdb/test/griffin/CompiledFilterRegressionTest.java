@@ -4771,7 +4771,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitScalarAndVectorMatchJava("select rn from z where s > 0.99999998 and rn <= 3", "rn\n1\n2\n3\n");
 
             // An INT BIND VARIABLE is a leaf like the column, and reads the bound the same way.
-            bindVariableService.setInt("bv", 16777217);
+            bindVariableService.setInt("bv", 16_777_217);
             assertJitScalarAndVectorMatchJava("select rn from z where :bv > 16777216.0 and rn <= 2", "rn\n1\n2\n");
             assertJitScalarAndVectorMatchJavaOnEmptyResult("select rn from z where :bv < 1.00000003 and rn <= 2", "rn\n");
 

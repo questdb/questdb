@@ -6450,7 +6450,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             // handles included. Closing it here instead would double-free
                                             // the base, which master would point at.
                                             collectColumnIndexes(sqlNodeStack, filterFactory.getBaseFactory().getMetadata(), masterFilterExpr, masterFilterUsedColumnIndexes);
-                                            // Commit the steal. Nothing between these two lines can throw.
+                                            // Commit the steal. halfClose() CAN throw - it rethrows
+                                            // whatever its own cleanup failed with - and then the steal
+                                            // simply does not happen, while the cleanup contract holds:
+                                            // isFilterStolen is still false, so the catch below leaves
+                                            // the four handles to their owner, and master still points
+                                            // at filterFactory, so the outer catch closes that whole
+                                            // factory exactly once - handles included, nothing
+                                            // double-freed. That close re-runs the cleanup halfClose()
+                                            // had already half-done, which is idempotent - see
+                                            // AsyncFilteredRecordCursorFactoryCleanupTest, which
+                                            // repeats the same cleanup after a failure under
+                                            // assertMemoryLeak. The two statements after the call - the
+                                            // master reassignment and setting isFilterStolen - cannot
+                                            // throw, so once halfClose() returns the steal commits in
+                                            // full.
                                             filterFactory.halfClose();
                                             master = filterFactory.getBaseFactory();
                                             isFilterStolen = true;

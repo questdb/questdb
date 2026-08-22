@@ -246,6 +246,19 @@ public class PushdownFilterExtractor implements Mutable {
      * This gates on the column's <em>metadata</em> type; soundness also needs the file's stored
      * type to agree, which {@link ParquetRowGroupFilter} enforces separately by dropping any
      * condition whose parquet column type differs, before it reaches the null-op branch.
+     * <p>
+     * Relaxing either arm would recover no pruning, so the two {@code false} answers cost nothing.
+     * The native side declines the same skips independently: {@code writer_undercounts_nulls}
+     * refuses the {@code null_count == 0} skip for CHAR, FLOAT and DOUBLE, and
+     * {@code is_null_free_type} refuses the {@code null_count == num_values} skip for BOOLEAN, BYTE
+     * and SHORT, both in {@code parquet_read::row_groups} and its {@code parquet_metadata::skip}
+     * twin. A newly pushed condition would therefore prune nothing and merely mark pushdown active,
+     * which costs the page frame cursor its up-front {@code size()}. For BOOLEAN, BYTE and SHORT it
+     * would also reopen the {@code filter == null} alongside active pushdown state that
+     * {@code ParquetRowGroupPruningTest.testLimitOverConstantFoldedByteNullFilter} pins closed,
+     * because {@code b IS NOT NULL} folds to a constant TRUE the code generator drops. The
+     * remaining pair - IS NULL over those three - folds to a constant FALSE that
+     * {@code SqlCodeGenerator} replaces with an empty factory, so no scan runs there to prune.
      */
     private static boolean isNullOpPushable(int columnType, int opType) {
         return switch (ColumnType.tagOf(columnType)) {

@@ -3240,6 +3240,17 @@ impl ParquetDecoder {
     /// the value paths. CHAR belongs here but not there, because a stored `(char) 0` is an ordinary
     /// value that lands in the min/max statistics like any other, so the value loops already see it;
     /// only `null_count` is blind to it. See that method for the other half.
+    ///
+    /// No SQL query reaches this branch today. `PushdownFilterExtractor.isNullOpPushable` refuses
+    /// to emit `OP_IS_NULL` for CHAR, FLOAT and DOUBLE, and its two emitters are the only ones -
+    /// `read_parquet()` runs through the same extractor. Relaxing that gate would recover no
+    /// pruning either, because this guard declines the skip for exactly the pairs it would newly
+    /// push; it would only cost the page frame cursor its up-front `size()`. So treat this as
+    /// defence in depth for a future emitter, and read its coverage as
+    /// `parquet_read::tests::no_skip_row_group_is_null_char_with_stored_zero` and
+    /// `parquet_metadata::skip::tests::no_skip_is_null_when_writer_undercounts_nulls`, not as any
+    /// Java test - `ParquetRowGroupPruningTest`'s IS NULL arms pin the Java gate above and pass
+    /// whether or not this guard exists.
     pub(crate) fn writer_undercounts_nulls(qdb_column_type: i32) -> bool {
         let tag = qdb_column_type & 0xFF;
         tag == ColumnTypeTag::Float as i32
@@ -3296,6 +3307,18 @@ impl ParquetDecoder {
     /// the two are independent: this one governs the `IS NOT NULL` skip, which reads
     /// `null_count == num_values` and stays sound under an undercount, while that one governs the
     /// `IS NULL` skip and `has_nulls`, which read `null_count == 0` and do not.
+    ///
+    /// No SQL query reaches this branch today either: `PushdownFilterExtractor.isNullOpPushable`
+    /// refuses to emit `OP_IS_NOT_NULL` for BOOLEAN, BYTE and SHORT. Relaxing that gate would
+    /// recover no pruning - this guard declines the skip for exactly those three types - and would
+    /// reopen the `filter == null` alongside active pushdown state that
+    /// `ParquetRowGroupPruningTest.testLimitOverConstantFoldedByteNullFilter` pins closed, because
+    /// `b IS NOT NULL` folds to a constant TRUE the code generator drops. So treat this as defence
+    /// in depth for a future emitter, and read its coverage as
+    /// `parquet_read::tests::no_skip_row_group_is_not_null_over_column_top_of_null_free_type` and
+    /// `parquet_metadata::skip::tests::no_skip_is_not_null_over_column_top_of_null_free_type`, not
+    /// as any Java test - `testByteColumnTopRowsSurviveIsNotNullPruning` pins the Java gate above
+    /// and passes whether or not this guard exists.
     pub(crate) fn is_null_free_type(qdb_column_type: i32) -> bool {
         let tag = qdb_column_type & 0xFF;
         tag == ColumnTypeTag::Boolean as i32

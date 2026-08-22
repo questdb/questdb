@@ -1352,11 +1352,18 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testByteColumnTopRowsSurviveIsNotNullPruning() throws Exception {
         // The same family as testByteAndShortColumnTopRowsSurvivePruning, on the fourth pruning
-        // path. BYTE and SHORT have no NULL sentinel, so "b IS NOT NULL" is a constant TRUE over
-        // them - a column-top row reads as 0 and 0 IS NOT NULL. The parquet writer marks those rows
-        // definition-level 0 though, so a row group lying wholly inside the column top reports
-        // null_count == num_values, which the decoders take as "every value is null" and skip. The
-        // rows vanish. Only a partition entirely predating the ADD COLUMN shows it.
+        // path. BYTE, SHORT and BOOLEAN have no NULL sentinel, so "b IS NOT NULL" is a constant
+        // TRUE over them - a column-top row reads as 0/false and 0 IS NOT NULL. The parquet writer
+        // marks those rows definition-level 0 though, so a row group lying wholly inside the column
+        // top reports null_count == num_values, which a decoder reading that count as "every value
+        // is null" would skip, and the rows would vanish. Only a partition entirely predating the
+        // ADD COLUMN produces that shape.
+        //
+        // What the assertions below pin is the JAVA half of the defence: isNullOpPushable() refuses
+        // to emit a null op for these three types, so nothing reaches the row group pruner at all.
+        // They do NOT cover the native ParquetDecoder::is_null_free_type guard - with no condition
+        // pushed down there is nothing for it to gate, so they pass whether or not it exists. Its
+        // coverage lives in the Rust tests its doc comment names.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE z (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -1411,6 +1418,10 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         // is_nan() alone. An infinity is therefore written as an ordinary value and left out of
         // null_count, so the IS_NULL pushdown skipped the whole row group on "null_count == 0" and
         // dropped a row native storage returns.
+        //
+        // isNullOpPushable() now refuses IS NULL for DOUBLE, so the IS NULL arm below pins that
+        // gate rather than the native writer_undercounts_nulls guard, which nothing pushes a
+        // condition to any more. The "d > 1e308" and IS NOT NULL arms are the live pushdown here.
         //
         // The infinity has to arrive through a NON-CONSTANT expression: FunctionParser folds a
         // constant one through DoubleConstant#newInstance, which maps every non-finite value onto
@@ -1540,6 +1551,10 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         // top reaches null_count for CHAR, so a row group whose NULLs were all stored as values
         // reports null_count == 0, and the IS NULL pushdown skipped it on that count and dropped
         // every row native storage returns.
+        //
+        // isNullOpPushable() now refuses IS NULL for CHAR, so the IS NULL arm below pins that gate
+        // rather than the native writer_undercounts_nulls guard. The "c = null::char" arm is the
+        // live pushdown, and it is what the closing assertion exercises.
         //
         // This is the shape the sibling testCharColumnTopRowsSurviveEqualityPruning does NOT cover:
         // its NULLs come from a column top, which IS counted, which is why IS NULL survived there.
@@ -5682,17 +5697,25 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         // test-configuration default.
         final int configJitMode = configuration.getSqlJitMode();
         final int contextJitMode = sqlExecutionContext.getJitMode();
-        testDoubleColumnNearToleranceMagnitudePushdownNotFalsePruned();
-        Assert.assertEquals(
-                "the tolerance test must not change the configured JIT mode",
-                configJitMode,
-                configuration.getSqlJitMode()
-        );
-        Assert.assertEquals(
-                "the tolerance test must restore the JIT mode on the execution context",
-                contextJitMode,
-                sqlExecutionContext.getJitMode()
-        );
+        // The assertions belong in a finally, because the path that leaves the mode switched is
+        // exactly the path where the callee threw - asserting after an unguarded call would skip
+        // the check on the only run that needs it. Nothing is lost by letting an assertion here
+        // replace the callee's exception: the callee is a @Test of its own, so JUnit reports that
+        // failure under its own name either way.
+        try {
+            testDoubleColumnNearToleranceMagnitudePushdownNotFalsePruned();
+        } finally {
+            Assert.assertEquals(
+                    "the tolerance test must not change the configured JIT mode",
+                    configJitMode,
+                    configuration.getSqlJitMode()
+            );
+            Assert.assertEquals(
+                    "the tolerance test must restore the JIT mode on the execution context",
+                    contextJitMode,
+                    sqlExecutionContext.getJitMode()
+            );
+        }
     }
 
     @Test
