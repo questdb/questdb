@@ -5266,15 +5266,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * fallback for everything else, copies every live row into a fresh directory and puts the old one on
      * the remove-candidate list.
      * <p>
-     * TRIM-FILES (PARTITION_COMPACTION.md Sec.5) is not implemented - see PARTITION_COMPACTION_state.md
-     * for why - so a MAKE-PLAIN'd partition's files stay at their old, now-oversized length; only REWRITE
-     * (a later pass, once this one is no longer composite and MAKE-PLAIN cannot pick it again) actually
-     * shortens anything, by copying into a fresh directory. Nothing JOIN, MOVE-TAIL or REWRITE do writes
-     * below {@code E} or shortens any file, which is why none of the three needs a reader check: new rows
-     * only ever go into a directory no committed {@code _txn} has ever named, and a directory REWRITE
-     * retires is unlinked by the ordinary purge, under its own check. MAKE-PLAIN is the one exception - it
-     * is the only one of the four that changes what a PINNED reader's own, already-resolved geometry
-     * record means, so it is the only one gated on {@link #txnScoreboard}.
+     * TRIM-FILES (PARTITION_COMPACTION.md Sec.5) folds into MAKE-PLAIN's own commit - see
+     * {@link #makePartitionPlain}'s javadoc for why physically shortening the files needs no reader wait
+     * beyond the one MAKE-PLAIN already does. Nothing JOIN, MOVE-TAIL or REWRITE do writes below
+     * {@code E} or shortens any file, which is why none of the three needs a reader check: new rows only
+     * ever go into a directory no committed {@code _txn} has ever named, and a directory REWRITE retires
+     * is unlinked by the ordinary purge, under its own check. MAKE-PLAIN is the one exception among the
+     * four that changes what a PINNED reader's own, already-resolved geometry record means, so it is the
+     * one gated on {@link #txnScoreboard}.
      *
      * @return {@link #COMPACTION_NONE}, {@link #COMPACTION_JOINED}, {@link #COMPACTION_MOVED_TAIL},
      * {@link #COMPACTION_MADE_PLAIN} or {@link #COMPACTION_REWRITTEN}
@@ -8409,9 +8408,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * {@link PartitionGeometry#getE} falls back to the live row count directly. Dropping the geometry
      * pointer - {@link #NO_GEOMETRY_REF} - and leaving {@code _txn}'s own row count untouched (it was
      * already the live count, {@code E} was the only thing composite about this shape) IS lowering
-     * {@code E} to the row count; there is no separate field to write. No bytes move and no file
-     * shortens - that is TRIM-FILES's job, not implemented in this pass (see
-     * PARTITION_COMPACTION_state.md) - so unlike TRIM-FILES this needs no SECOND reader wait of its own.
+     * {@code E} to the row count; there is no separate field to write.
+     * <p>
+     * TRIM-FILES (physically shortening every column file down to the live row count) folds into this
+     * SAME commit rather than needing a second, later reader wait of its own: a reader only ever maps a
+     * column up to the row count its own resolved view reports (see {@code TableReader#mappedRowCount} -
+     * {@code E} while still composite, the live row count once plain), never up to the file's raw byte
+     * length. The scoreboard check above already rules out every reader that could still resolve this
+     * partition as composite (and therefore still map it up to the old, larger {@code E}); every reader
+     * from this commit onward - including one that opens for the first time an instant after this method
+     * returns - resolves the now-plain shape and never maps past the live row count regardless of how
+     * large the file physically still is. Shortening the file to that same boundary right here cannot
+     * shrink it out from under any mapping a live reader depends on.
      *
      * @return true if the partition was made plain this call; false if a reader still resolves the
      * geometry record this shape came from - the caller's own decline/backoff bookkeeping (same path any
@@ -8430,17 +8438,111 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
         final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         final long liveRows = txWriter.getPartitionSize(partitionIndex);
         final long deadRows = geometry.getE(partitionIndex) - liveRows;
         txWriter.setPartitionGeometryRef(partitionTs, NO_GEOMETRY_REF);
         LOG.info().$("compacting composite partition, MAKE-PLAIN: dropping dead space above the single" +
                         " piece at row 0 [table=").$(tableToken)
-                .$(", dir=").$(formatPartitionForTimestamp(partitionTs, txWriter.getPartitionNameTxn(partitionIndex)))
+                .$(", dir=").$(formatPartitionForTimestamp(partitionTs, partitionNameTxn))
                 .$(", liveRows=").$(liveRows)
                 .$(", deadRows=").$(deadRows)
                 .I$();
         commitTxWriterAndPublishPendingPostingSealPurges();
+        // Best-effort and strictly after the commit above: the partition is already correctly plain and
+        // durable regardless of whether this succeeds. A failure here (or a crash before it even runs)
+        // leaves some dead bytes physically in place - wasted disk, nothing more - since nothing ever
+        // reads past liveRows for a plain partition. POSTING index files (.pk/.pv) are deliberately left
+        // untouched: their size tracks seal/generation history, not the partition's live row count, and
+        // they already reclaim old generations through PostingSealPurgeJob independently of this.
+        try {
+            trimPartitionFiles(partitionTs, partitionNameTxn, liveRows);
+        } catch (Throwable th) {
+            LOG.error().$("TRIM-FILES failed after MAKE-PLAIN, dead space left in place [table=").$(tableToken)
+                    .$(", dir=").$(formatPartitionForTimestamp(partitionTs, partitionNameTxn))
+                    .$(", e=").$(th)
+                    .I$();
+        }
         return true;
+    }
+
+    /**
+     * TRIM-FILES (PARTITION_COMPACTION.md Sec.5): shortens every real column's primary file - and, for a
+     * var-size column, its aux file too - down to exactly {@code liveRows} worth of bytes. Called only
+     * from {@link #makePartitionPlain}, strictly after that method's own commit lands - see its javadoc
+     * for why no separate reader wait is needed here.
+     */
+    private void trimPartitionFiles(long partitionTs, long partitionNameTxn, long liveRows) {
+        path.trimTo(pathSize);
+        setPathForNativePartition(path, timestampType, partitionBy, partitionTs, partitionNameTxn);
+        final int plen = path.size();
+        try {
+            for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                final int columnType = metadata.getColumnType(colIdx);
+                if (columnType <= 0) {
+                    continue;
+                }
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTs, colIdx);
+                if (columnTop == -1) {
+                    // Column added after this partition - no file exists here at all.
+                    continue;
+                }
+                final long columnRows = liveRows - columnTop;
+                if (columnRows <= 0) {
+                    // Row-less in this partition (added after every live row here, columnTop == liveRows) -
+                    // nothing to shorten.
+                    continue;
+                }
+                final CharSequence colName = metadata.getColumnName(colIdx);
+                final long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTs, colIdx);
+                if (ColumnType.isVarSize(columnType)) {
+                    final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                    final long auxFd = openRW(ff, iFile(path.trimTo(plen), colName, colNameTxn), LOG, configuration.getWriterFileOpenOpts());
+                    try {
+                        // The data file's target length depends on reading the aux file's own (still
+                        // untrimmed) entry for the last live row, so aux trims only after that read.
+                        final long targetDataBytes = driver.getDataVectorSizeAtFromFd(ff, auxFd, columnRows - 1);
+                        trimFileTo(auxFd, driver.getAuxVectorSize(columnRows));
+                        final long dataFd = openRW(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG, configuration.getWriterFileOpenOpts());
+                        try {
+                            trimFileTo(dataFd, targetDataBytes);
+                        } finally {
+                            ff.close(dataFd);
+                        }
+                    } finally {
+                        ff.close(auxFd);
+                    }
+                } else {
+                    final long dataFd = openRW(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG, configuration.getWriterFileOpenOpts());
+                    try {
+                        trimFileTo(dataFd, columnRows << ColumnType.pow2SizeOf(columnType));
+                    } finally {
+                        ff.close(dataFd);
+                    }
+                }
+            }
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
+    /**
+     * Shortens an open file to exactly {@code targetBytes}, or does nothing if it is already that size or
+     * smaller. Never grows a file: an undersized file here is a pre-existing bug elsewhere, not something
+     * for a trim step to paper over by extending it.
+     */
+    private void trimFileTo(long fd, long targetBytes) {
+        final long currentBytes = ff.length(fd);
+        if (currentBytes <= targetBytes) {
+            return;
+        }
+        if (!ff.truncate(fd, targetBytes)) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not trim file [path=").put(path)
+                    .put(", from=").put(currentBytes)
+                    .put(", to=").put(targetBytes)
+                    .put(']');
+        }
     }
 
     /**
@@ -8604,9 +8706,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Unlike REWRITE, the front's {@code E} is deliberately left unchanged here - its remaining dead space
      * (the old tail pieces' abandoned bytes, still counted in {@code E}) is what {@link #makePartitionPlain}
      * reclaims later, in its own transaction, once no reader still resolves the geometry record this
-     * commit is about to publish. TRIM-FILES, the reference's OTHER in-place-shrink step - which would
-     * additionally cut the front's files down to their now-true length - is not implemented in this pass;
-     * see PARTITION_COMPACTION_state.md for why.
+     * commit is about to publish - {@code makePartitionPlain} is also where TRIM-FILES then cuts the
+     * front's files down to their now-true length, in that same later transaction.
      *
      * @return {@link #COMPACTION_NONE} or {@link #COMPACTION_MOVED_TAIL}
      */
