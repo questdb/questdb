@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.griffin.engine.table.GroupByShardingContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -33,6 +34,7 @@ import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
 import io.questdb.tasks.GroupByMergeShardTask;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -43,9 +45,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeShardTask> {
     private static final Log LOG = LogFactory.getLog(GroupByMergeShardJob.class);
+    private final MessageBus messageBus;
 
     public GroupByMergeShardJob(MessageBus messageBus) {
         super(messageBus.getGroupByMergeShardQueue(), messageBus.getGroupByMergeShardSubSeq());
+        this.messageBus = messageBus;
     }
 
     public static void run(
@@ -64,9 +68,20 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         task.clear();
         subSeq.done(cursor);
 
-        startedCounter.incrementAndGet();
-
         final boolean owner = stealingCtx != null && stealingCtx == ctx;
+        runDetached(carrierId, circuitBreaker, startedCounter, doneLatch, ctx, shardIndex, owner);
+    }
+
+    public static void runDetached(
+            int carrierId,
+            AtomicBooleanCircuitBreaker circuitBreaker,
+            AtomicInteger startedCounter,
+            CountDownLatchSPI doneLatch,
+            GroupByShardingContext ctx,
+            int shardIndex,
+            boolean owner
+    ) {
+        startedCounter.incrementAndGet();
         try {
             final int slotId = ctx.maybeAcquire(carrierId, owner, circuitBreaker);
             try {
@@ -83,6 +98,14 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         } finally {
             doneLatch.countDown();
         }
+    }
+
+    @Override
+    public boolean run(@NotNull WorkerContext workerContext) {
+        final QueryParallelFiberDispatcher dispatcher = messageBus.getQueryParallelFiberDispatcher();
+        return dispatcher != null
+                ? !dispatcher.consumeMergeShard(workerContext.carrierId())
+                : super.run(workerContext);
     }
 
     @Override

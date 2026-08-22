@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
@@ -41,6 +40,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -161,7 +161,7 @@ public class ParallelLatestByTest extends AbstractTest {
             ) {
                 try {
                     if (pool != null) {
-                        pool.assign(new LatestByAllIndexedJob(engine.getMessageBus()));
+                        TestUtils.setupWorkerPool(pool, engine);
                         pool.start(LOG);
                     }
 
@@ -191,7 +191,7 @@ public class ParallelLatestByTest extends AbstractTest {
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 };
 
-                WorkerPool pool = new WorkerPool(() -> workerCount);
+                WorkerPool pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
                 execute(pool, runnable, configuration);
             } else {
                 // we need to create entire engine

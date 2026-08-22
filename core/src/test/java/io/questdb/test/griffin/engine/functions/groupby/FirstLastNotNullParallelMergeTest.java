@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
@@ -191,7 +192,7 @@ public class FirstLastNotNullParallelMergeTest extends AbstractCairoTest {
         final String query = "SELECT " + counts + " FROM (SELECT g, " + aggregates + " FROM tab)";
 
         assertMemoryLeak(() -> {
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (ignore, compiler, ctx) -> {
                     execute(compiler, createSql, ctx);
                     // A type whose cast silently widens turns its case into a duplicate of another

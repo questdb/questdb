@@ -29,6 +29,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactory;
+import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
+import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -40,6 +43,48 @@ public class CoveringIndexFilterCompilationLeakTest extends AbstractCairoTest {
     public void setUp() {
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         super.setUp();
+    }
+
+    @Test
+    public void testThreadUnsafeCoveringFilterStaysOnAsyncPath() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tab (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (s),
+                        s STRING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'A', 'aa'),
+                        ('2024-01-01T01:00:00.000000Z', 'B', 'bbb'),
+                        ('2024-01-02T00:00:00.000000Z', 'A', ''),
+                        ('2024-01-02T01:00:00.000000Z', 'A', NULL),
+                        ('2024-01-02T02:00:00.000000Z', 'A', 'cccc')
+                    """);
+            engine.releaseAllWriters();
+
+            // (s)::symbol is thread-unsafe rather than non-parallel: the async filter keeps it and
+            // compileWorkerFiltersConditionally() hands each worker its own copy.
+            for (String residualFilter : new String[]{"length(s) > 0", "length((s)::symbol) > 0"}) {
+                try (RecordCursorFactory factory = select(
+                        "SELECT s FROM tab WHERE sym = 'A' AND " + residualFilter
+                )) {
+                    Assert.assertTrue(residualFilter, containsFactory(factory, CoveringIndexRecordCursorFactory.class));
+                    Assert.assertTrue(residualFilter, containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
+                    Assert.assertFalse(residualFilter, containsFactory(factory, FilteredRecordCursorFactory.class));
+                }
+            }
+
+            assertQuery("SELECT s FROM tab WHERE sym = 'A' AND length((s)::symbol) > 0")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            aa
+                            cccc
+                            """);
+        });
     }
 
     @Test
@@ -95,5 +140,15 @@ public class CoveringIndexFilterCompilationLeakTest extends AbstractCairoTest {
             // residual filter leaks and this would be 1.
             Assert.assertEquals(2, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
         });
+    }
+
+    private static boolean containsFactory(RecordCursorFactory factory, Class<?> factoryClass) {
+        while (factory != null) {
+            if (factoryClass.isInstance(factory)) {
+                return true;
+            }
+            factory = factory.getBaseFactory();
+        }
+        return false;
     }
 }

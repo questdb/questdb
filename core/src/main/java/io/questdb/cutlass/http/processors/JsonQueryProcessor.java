@@ -665,7 +665,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
      * build 241196 caught).
      * <p>
      * The retry path (retryQueryExecution) needs no second fence: it only awaits the already-submitted
-     * future and never re-invokes op.execute(), so the fence span is this in-method execute+await only.
+     * future and never re-invokes op.execute(). The operation's async apply path acquires the same fence,
+     * so this method releases its read hold before waiting for the future.
      */
     private int executeDdlFenced(
             SqlExecutionContextImpl sqlExecutionContext,
@@ -679,6 +680,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             throw CairoException.readOnlyAccess();
         }
         final Lock lock = engine.getRoleSwitchReadLock();
+        final OperationFuture future;
         lock.lock();
         try {
             // Authoritative in-lock re-check against the role flip, which holds the WRITE side of this
@@ -688,11 +690,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                     && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, op, engine.getConfiguration())) {
                 throw CairoException.readOnlyAccess();
             }
-            try (OperationFuture fut = op.execute(sqlExecutionContext, eventSubSequence)) {
-                return fut.await(awaitTimeout);
-            }
+            future = op.execute(sqlExecutionContext, eventSubSequence);
         } finally {
             lock.unlock();
+        }
+        try (future) {
+            return future.await(awaitTimeout);
         }
     }
 

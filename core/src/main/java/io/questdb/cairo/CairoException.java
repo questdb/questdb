@@ -103,7 +103,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private static final int FLAG_CACHEABLE = 1 << 1;
     private static final int FLAG_CANCELLATION = 1 << 2; // query was explicitly cancelled by the user
     private static final int FLAG_HOUSEKEEPING = 1 << 3;
-    private static final int FLAG_INTERRUPTION = 1 << 4; // query timed out
+    private static final int FLAG_INTERRUPTION = 1 << 4; // query execution was interrupted
     private static final int FLAG_MALFORMED_UTF8 = 1 << 5; // rejected value, not a broken writer
     private static final int FLAG_OUT_OF_MEMORY = 1 << 6;
     private static final int FLAG_PREFERENCES_OUT_OF_DATE_ERROR = 1 << 7;
@@ -113,6 +113,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     protected final StringSink nativeBacktrace = new StringSink();
     protected int errno;
     private int flags;
+    private int interruptionReason;
     private int messagePosition;
 
     public static CairoException authorization() {
@@ -216,7 +217,9 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException queryCancelled(long fd) {
-        CairoException exception = nonCritical().put("cancelled by user").setInterruption(true).setCancellation(true);
+        CairoException exception = nonCritical()
+                .put("cancelled by user")
+                .setInterruptionReason(SqlExecutionCircuitBreaker.STATE_CANCELLED);
         if (fd > -1) {
             exception.put(" [fd=").put(fd).put(']');
         }
@@ -224,7 +227,17 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException queryCancelled() {
-        return nonCritical().put("cancelled by user").setInterruption(true).setCancellation(true);
+        return nonCritical()
+                .put("cancelled by user")
+                .setInterruptionReason(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+    }
+
+    public static CairoException queryDisconnected(long fd) {
+        CairoException exception = nonCritical().put("remote disconnected, query aborted");
+        if (fd > -1) {
+            exception.put(" [fd=").put(fd).put(']');
+        }
+        return exception.setInterruptionReason(SqlExecutionCircuitBreaker.STATE_BROKEN_CONNECTION);
     }
 
     public static CairoException queryTimedOut(long fd, long runtime, long timeout) {
@@ -232,11 +245,13 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put("timeout, query aborted [fd=").put(fd)
                 .put(", runtime=").put(runtime).put("ms")
                 .put(", timeout=").put(timeout).put("ms")
-                .put(']').setInterruption(true);
+                .put(']').setInterruptionReason(SqlExecutionCircuitBreaker.STATE_TIMEOUT);
     }
 
     public static CairoException queryTimedOut() {
-        return nonCritical().put("timeout, query aborted").setInterruption(true);
+        return nonCritical()
+                .put("timeout, query aborted")
+                .setInterruptionReason(SqlExecutionCircuitBreaker.STATE_TIMEOUT);
     }
 
     /**
@@ -346,13 +361,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public int getInterruptionReason() {
-        if (isCancellation()) {
-            return SqlExecutionCircuitBreaker.STATE_CANCELLED;
-        } else if (isInterruption()) {
-            return SqlExecutionCircuitBreaker.STATE_TIMEOUT;
-        } else {
-            return SqlExecutionCircuitBreaker.STATE_OK;
-        }
+        return interruptionReason;
     }
 
     @Override
@@ -534,6 +543,13 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public CairoException setCancellation(boolean cancellation) {
         setFlag(FLAG_CANCELLATION, cancellation);
+        if (cancellation) {
+            interruptionReason = SqlExecutionCircuitBreaker.STATE_CANCELLED;
+        } else if (interruptionReason == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
+            interruptionReason = isInterruption()
+                    ? SqlExecutionCircuitBreaker.STATE_TIMEOUT
+                    : SqlExecutionCircuitBreaker.STATE_OK;
+        }
         return this;
     }
 
@@ -543,6 +559,35 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public CairoException setInterruption(boolean interruption) {
         setFlag(FLAG_INTERRUPTION, interruption);
+        if (interruption) {
+            if (!isCancellation() && interruptionReason == SqlExecutionCircuitBreaker.STATE_OK) {
+                interruptionReason = SqlExecutionCircuitBreaker.STATE_TIMEOUT;
+            }
+        } else if (!isCancellation()) {
+            interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
+        }
+        return this;
+    }
+
+    public CairoException setInterruptionReason(int interruptionReason) {
+        switch (interruptionReason) {
+            case SqlExecutionCircuitBreaker.STATE_OK -> {
+                setFlag(FLAG_CANCELLATION, false);
+                setFlag(FLAG_INTERRUPTION, false);
+            }
+            case SqlExecutionCircuitBreaker.STATE_TIMEOUT, SqlExecutionCircuitBreaker.STATE_BROKEN_CONNECTION -> {
+                setFlag(FLAG_CANCELLATION, false);
+                setFlag(FLAG_INTERRUPTION, true);
+            }
+            case SqlExecutionCircuitBreaker.STATE_CANCELLED -> {
+                setFlag(FLAG_CANCELLATION, true);
+                setFlag(FLAG_INTERRUPTION, true);
+            }
+            default -> throw new IllegalArgumentException(
+                    "invalid interruption reason [reason=" + interruptionReason + ']'
+            );
+        }
+        this.interruptionReason = interruptionReason;
         return this;
     }
 
@@ -638,6 +683,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         // flyweight through this method (e.g. LineProtocolException via ThreadLocal): without a full
         // reset a stale flag would leak onto the next exception built on the same flyweight.
         flags = 0;
+        interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
         messagePosition = 0;
     }
 }

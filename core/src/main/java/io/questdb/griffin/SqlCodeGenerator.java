@@ -6344,7 +6344,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 final boolean parallelWindowJoinEnabled = executionContext.isParallelWindowJoinEnabled();
                                 final boolean masterSupportsPageFrames = master.supportsPageFrameCursor()
                                         || (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor());
-                                if (parallelWindowJoinEnabled && masterSupportsPageFrames && slaveToFree.supportsTimeFrameCursor()) {
+                                if (parallelWindowJoinEnabled
+                                        && masterSupportsPageFrames
+                                        && GroupByUtils.isParallelismSupported(groupByFunctions)
+                                        && slaveToFree.supportsTimeFrameCursor()) {
                                     // try to steal master filter
                                     CompiledFilter compiledFilter = null;
                                     MemoryCARW bindVarMemory = null;
@@ -6501,6 +6504,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                     executionContext.storeTelemetry(TelemetryEvent.PARALLEL_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
                                 } else if (slaveToFree.supportsTimeFrameCursor()) {
+                                    // The serial factories adopt the functions inside their constructors and
+                                    // free them on a constructor throw, so hand ownership over before the call.
+                                    final ObjList<GroupByFunction> ownedGroupByFunctions = groupByFunctions;
+                                    groupByFunctions = null;
                                     if (leftSymbolIndex != -1 && !isDynamicWindow) {
                                         master = new WindowJoinFastRecordCursorFactory(
                                                 asm,
@@ -6513,7 +6520,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 context.isIncludePrevailing(),
                                                 lo,
                                                 hi,
-                                                groupByFunctions,
+                                                ownedGroupByFunctions,
                                                 valueTypes,
                                                 rightSymbolIndex,
                                                 leftSymbolIndex,
@@ -6539,7 +6546,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 loTimeUnit,
                                                 hiTimeUnit,
                                                 isDynamicWindow ? timestampDriver : null,
-                                                groupByFunctions,
+                                                ownedGroupByFunctions,
                                                 valueTypes,
                                                 joinFilter
                                         );
@@ -6707,14 +6714,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // check if there are post-filters
                 ExpressionNode filterExpr = slaveModel.getPostJoinWhereClause();
                 if (filterExpr != null) {
-                    // Compile the post-join filter ONCE, then branch on its runtime-constant-ness.
-                    // From here on `filter` must be freed on every path that does not hand it to a
-                    // retained factory. The enclosing join-loop catch frees `joinFilter`/`master`,
-                    // not this filter, so a throw from any pre-adoption step below (argument
-                    // evaluation or a factory constructor) would otherwise leak it. Adoption is the
-                    // terminal statement of each branch, so on success the catch is never reached
-                    // and cannot double-free an already-owned filter.
-                    final Function filter = compileJoinFilter(filterExpr, master.getMetadata(), executionContext);
+                    Function filter = compileJoinFilter(
+                            filterExpr,
+                            master.getMetadata(),
+                            executionContext
+                    );
                     try {
                         if (filter.isRuntimeConstant()) {
                             // The whole post-join filter is a runtime constant (e.g. a scalar
@@ -6731,33 +6735,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             IntHashSet filterUsedColumnIndexes = new IntHashSet();
                             collectColumnIndexes(sqlNodeStack, master.getMetadata(), filterExpr, filterUsedColumnIndexes);
 
-                            master = new AsyncFilteredRecordCursorFactory(
-                                    executionContext.getCairoEngine(),
-                                    configuration,
-                                    executionContext.getMessageBus(),
-                                    master,
-                                    filter,
-                                    filterUsedColumnIndexes,
-                                    reduceTaskFactory,
-                                    compileWorkerFiltersConditionally(
-                                            executionContext,
-                                            filter,
-                                            executionContext.getSharedQueryWorkerCount(),
-                                            filterExpr,
-                                            master.getMetadata()
-                                    ),
-                                    deepClone(expressionNodePool, filterExpr),
-                                    null,
-                                    0,
-                                    executionContext.getSharedQueryWorkerCount(),
-                                    SqlHints.hasEnablePreTouchHint(model, masterAlias)
-                            );
+                            ObjList<Function> workerFilters = null;
+                            try {
+                                workerFilters = compileWorkerFiltersConditionally(
+                                        executionContext,
+                                        filter,
+                                        executionContext.getSharedQueryWorkerCount(),
+                                        filterExpr,
+                                        master.getMetadata()
+                                );
+                                master = new AsyncFilteredRecordCursorFactory(
+                                        executionContext.getCairoEngine(),
+                                        configuration,
+                                        executionContext.getMessageBus(),
+                                        master,
+                                        filter,
+                                        filterUsedColumnIndexes,
+                                        reduceTaskFactory,
+                                        workerFilters,
+                                        deepClone(expressionNodePool, filterExpr),
+                                        null,
+                                        0,
+                                        executionContext.getSharedQueryWorkerCount(),
+                                        SqlHints.hasEnablePreTouchHint(model, masterAlias)
+                                );
+                                workerFilters = null;
+                            } finally {
+                                Misc.freeObjList(workerFilters);
+                            }
                         } else {
                             master = new FilteredRecordCursorFactory(master, filter);
                         }
-                    } catch (Throwable e) {
+                        filter = null;
+                    } finally {
                         Misc.free(filter);
-                        throw e;
                     }
                 }
             }
@@ -6781,21 +6792,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ExpressionNode constFilterExpr = model.getConstWhereClause();
             if (constFilterExpr != null) {
                 Function filter = functionParser.parseFunction(constFilterExpr, null, executionContext);
-                if (!isBoolean(filter.getType())) {
-                    // a scalar boolean sub-query used directly as a predicate evaluates once per execution
-                    final Function coerced = BooleanSubQueryFunction.maybeWrap(filter, constFilterExpr.position);
-                    if (coerced == null) {
-                        Misc.free(filter);
-                        throw SqlException.position(constFilterExpr.position).put("boolean expression expected");
-                    }
-                    filter = coerced;
-                }
-                // From here on `filter` must be freed on every path that does not hand it to a
-                // retained/returned factory. The enclosing catch only frees `master`, so a throw
-                // from filter.init() (or any pre-adoption step below) would otherwise leak the
-                // filter. Null out `filter` once it is freed or adopted so this catch never
-                // double-frees an already-freed or now-owned filter.
                 try {
+                    if (!isBoolean(filter.getType())) {
+                        // a scalar boolean sub-query used directly as a predicate evaluates once per execution
+                        final Function coerced = BooleanSubQueryFunction.maybeWrap(filter, constFilterExpr.position);
+                        if (coerced == null) {
+                            throw SqlException.position(constFilterExpr.position).put("boolean expression expected");
+                        }
+                        filter = coerced;
+                    }
                     filter.init(null, executionContext);
                     if (filter.isConstant()) {
                         boolean filterValue = filter.getBool(null);
@@ -6819,35 +6824,41 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             IntHashSet filterUsedColumnIndexes = new IntHashSet();
                             collectColumnIndexes(sqlNodeStack, master.getMetadata(), constFilterExpr, filterUsedColumnIndexes);
 
-                            master = new AsyncFilteredRecordCursorFactory(
-                                    executionContext.getCairoEngine(),
-                                    configuration,
-                                    executionContext.getMessageBus(),
-                                    master,
-                                    filter,
-                                    filterUsedColumnIndexes,
-                                    reduceTaskFactory,
-                                    compileWorkerFiltersConditionally(
-                                            executionContext,
-                                            filter,
-                                            executionContext.getSharedQueryWorkerCount(),
-                                            constFilterExpr,
-                                            master.getMetadata()
-                                    ),
-                                    deepClone(expressionNodePool, constFilterExpr),
-                                    null,
-                                    0,
-                                    executionContext.getSharedQueryWorkerCount(),
-                                    SqlHints.hasEnablePreTouchHint(model, masterAlias)
-                            );
+                            ObjList<Function> workerFilters = null;
+                            try {
+                                workerFilters = compileWorkerFiltersConditionally(
+                                        executionContext,
+                                        filter,
+                                        executionContext.getSharedQueryWorkerCount(),
+                                        constFilterExpr,
+                                        master.getMetadata()
+                                );
+                                master = new AsyncFilteredRecordCursorFactory(
+                                        executionContext.getCairoEngine(),
+                                        configuration,
+                                        executionContext.getMessageBus(),
+                                        master,
+                                        filter,
+                                        filterUsedColumnIndexes,
+                                        reduceTaskFactory,
+                                        workerFilters,
+                                        deepClone(expressionNodePool, constFilterExpr),
+                                        null,
+                                        0,
+                                        executionContext.getSharedQueryWorkerCount(),
+                                        SqlHints.hasEnablePreTouchHint(model, masterAlias)
+                                );
+                                workerFilters = null;
+                            } finally {
+                                Misc.freeObjList(workerFilters);
+                            }
                         } else {
                             master = new FilteredRecordCursorFactory(master, filter);
                         }
                         filter = null;
                     }
-                } catch (Throwable e) {
+                } finally {
                     Misc.free(filter);
-                    throw e;
                 }
             }
             return master;
@@ -8263,6 +8274,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // We need the ORDER BY clause in the Markout Horizon Join optimization, but it's stored
         // several levels up from the model that holds the join clause.
         boolean pushed = false;
+        final ExpressionNode originatingViewNameExpr = model.getOriginatingViewNameExpr();
+        final int previousExecutionRequirementPosition = originatingViewNameExpr != null
+                ? functionParser.enterExecutionRequirementPosition(originatingViewNameExpr.position)
+                : -1;
         final IQueryModel savedOrderByModel = lastSeenOrderByModel;
         try {
             final ObjList<ExpressionNode> orderBy = model.getOrderBy();
@@ -8284,6 +8299,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             return factory;
         } finally {
+            if (originatingViewNameExpr != null) {
+                functionParser.restoreExecutionRequirementPosition(previousExecutionRequirementPosition);
+            }
             lastSeenOrderByModel = savedOrderByModel;
             if (pushed) {
                 executionContext.popTimestampRequiredFlag();

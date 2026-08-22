@@ -37,7 +37,9 @@ import org.junit.Test;
 import java.lang.reflect.Field;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Exact-equivalence (TDD oracle) tests for the O(genCount) covered-frame metadata
@@ -128,196 +130,102 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
     }
 
     /**
-     * Null prefix where {@code entryMaxValue < columnTop} and the queried frame extends past
-     * {@code entryMaxValue}: the cheap-path null bound MUST come from the UNCLAMPED caller max,
-     * not the entryMaxValue-folded clamp. Key 0 has clean postings 0..10 (all within the lowered
-     * clamp); key 1 has dirty rows 11..49 that {@code setMaxValue(10)} marks past the entry's
-     * coverage, so {@code entryMaxValue == 10 < columnTop == 20}. Over a frame rowHi=50
-     * (callerHiInclusive=49, clampedMax=min(49,10)=10), the real NullCursor emits
-     * {@code nullCount = min(columnTop=20, callerMax+1=50) = 20} null rows 0..19, then key 0's 11
-     * clean index postings 0..10 — 31 rows total. The cheap primitives must reproduce that EXACTLY:
-     * the null prefix is bounded by the unclamped caller max (50 -> 20 nulls), only the gen walk by
-     * the clamp (10). Before the fix the null prefix was bounded by clampedMax (=> only 11 nulls),
-     * dropping rows 11..19 (under-count 22 vs 31) and returning WRONG row ids for k in the dropped
-     * null band.
+     * An early gen whose postings for the key are ENTIRELY below minValue must be skipped
+     * by the cheap path (it contributes 0, exactly as the cursor skips it), NOT trip the
+     * MIXED bail. Layout: key 0 has gen 0 at rows 0,2,..,98 (all &lt; 1000) and gen 1 at rows
+     * 1000,1002,..,1098 (all &gt;= 1000). For any minValue in (98, 1000] the early gen is fully
+     * below and the late gen is fully covered, so selectKthMatch/countMatchesClamped must
+     * equal the cursor exactly (NON-sentinel). Before the fully-below optimization this
+     * returned the LONG_NULL sentinel and forced the whole partition onto the O(rows) traverse.
      */
     @Test
-    public void testNullPrefixUnclampedWhenEntryMaxBelowColumnTop() throws Exception {
+    public void testEarlyGenFullyBelowMinValueUsesCheapPath() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
-                final String name = "skm_nullprefix_dirty";
+                final String name = "skm_below_min";
                 final int plen = path.size();
-                final long columnTop = 20;
-                final long callerHiInclusive = 49; // frame rowHi = 50
-                final long loweredMax = 10;        // entryMaxValue after the dirty shrink
 
                 try (PostingIndexWriter writer = new PostingIndexWriter(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
-                    // Key 0: clean postings 0..10, entirely within the lowered clamp.
-                    for (long row = 0; row <= loweredMax; row++) {
-                        writer.add(0, row);
+                    // Gen 0: rows 0..99, key = row % 2 -> key 0 at 0,2,..,98 (all < 1000).
+                    for (long rowId = 0; rowId < 100; rowId++) {
+                        writer.add((int) (rowId % 2), rowId);
                     }
-                    // Key 1: dirty rows 11..49, evicted by lowering MAX_VALUE below them.
-                    for (long row = loweredMax + 1; row <= callerHiInclusive; row++) {
-                        writer.add(1, row);
-                    }
-                    writer.setMaxValue(callerHiInclusive);
+                    writer.setMaxValue(99);
                     writer.commit();
-                    // Lower MAX_VALUE in place: rows 11..49 become dirty; key 0's gen stays clean.
-                    writer.setMaxValue(loweredMax);
+                    // Gen 1: rows 1000..1099, key = row % 2 -> key 0 at 1000,1002,..,1098.
+                    for (long rowId = 1000; rowId < 1100; rowId++) {
+                        writer.add((int) (rowId % 2), rowId);
+                    }
+                    writer.setMaxValue(1099);
+                    writer.commit();
                 }
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, columnTop)) {
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
                     reader.reloadConditionally();
-                    assertEquals("dirty shrink must leave entryMaxValue below columnTop",
-                            loweredMax, entryMaxValue(reader));
+                    final long clamp = entryMaxValue(reader);
 
-                    // Ground truth: drain the REAL forward cursor over [0, 49]. NullCursor emits
-                    // min(columnTop=20, 50)=20 nulls (0..19) then key 0's clean index rows 0..10.
-                    LongList gt = drain(reader, 0, 0, callerHiInclusive);
-                    assertEquals("cursor must emit 20 nulls + 11 index rows", 31, gt.size());
-                    for (int k = 0; k < 20; k++) {
-                        assertEquals("null prefix row " + k, k, gt.getQuick(k));
-                    }
-                    for (int k = 20; k < 31; k++) {
-                        assertEquals("index row at k=" + k, k - 20, gt.getQuick(k));
+                    // Sweep minValues where the early gen (max 98) is fully below and the late
+                    // gen (1000..1098, within clamp) is fully covered: 0 (no skip) plus
+                    // interior values that skip only the early gen. Each must match the cursor
+                    // exactly and NEVER produce the sentinel. (minValue > clamp is a separate,
+                    // pre-existing empty-range bail and is not what this optimization touches.)
+                    for (long minValue : new long[]{0, 200, 500, 999, 1000}) {
+                        assertSelectMatchesCursor(reader, 0, minValue, Long.MAX_VALUE);
                     }
 
-                    final long clampedMax = loweredMax;          // min(49, 10)
-                    final long nullMaxValue = callerHiInclusive;  // unclamped caller max
-
-                    // countMatchesClamped must equal the cursor's drained count.
-                    assertEquals("countMatchesClamped must use unclamped null bound",
-                            gt.size(),
-                            reader.countMatchesClamped(0, 0, nullMaxValue, clampedMax));
-
-                    // selectKthMatch must match the cursor at every k: the full null prefix
-                    // (esp. k=11..19, the previously-dropped nulls), the null->index boundary
-                    // (k=19 last null, k=20 first index), and the index tail.
-                    for (int k = 0; k < gt.size(); k++) {
-                        assertEquals("selectKthMatch != cursor at k=" + k,
-                                gt.getQuick(k),
-                                reader.selectKthMatch(0, 0, nullMaxValue, clampedMax, k));
-                    }
-                    // One past the end is the sentinel.
-                    assertEquals("k == N must be the sentinel",
-                            Numbers.LONG_NULL,
-                            reader.selectKthMatch(0, 0, nullMaxValue, clampedMax, gt.size()));
+                    // Loud, explicit teeth: at minValue=500 the cheap path must SUCCEED with the
+                    // exact count (50: rows 1000,1002,..,1098), not bail to the sentinel.
+                    assertNotEquals("fully-below early gen must not force the sentinel",
+                            Numbers.LONG_NULL, reader.countMatchesClamped(0, 500, Long.MAX_VALUE, clamp));
+                    assertEquals("cheap-path count must equal the cursor's drained count",
+                            50L, reader.countMatchesClamped(0, 500, Long.MAX_VALUE, clamp));
+                    assertEquals("first match at minValue=500 must be row 1000",
+                            1000L, reader.selectKthMatch(0, 500, Long.MAX_VALUE, clamp, 0));
+                    assertEquals("last match at minValue=500 must be row 1098",
+                            1098L, reader.selectKthMatch(0, 500, Long.MAX_VALUE, clamp, 49));
                 }
             }
         });
     }
 
     /**
-     * Single-gen EF layout: one key, many strictly-increasing gapped rowids across two
-     * committed gens then sealed into one dense gen. The high-value-to-count ratio drives
-     * the adaptive encoder to Elias-Fano. Asserts selectKthMatch == cursor ground truth at
-     * k = 0, 1, interior, and N-1, including a chunk-boundary interior index.
+     * A gen that STRADDLES minValue (some postings below, some at/above) must still bail to
+     * the sentinel — the full per-gen count would over-count the below-minValue postings the
+     * cursor filters out. This guards the precision of the fully-below optimization: only a
+     * gen entirely below minValue may be skipped, never a straddling one.
      */
     @Test
-    public void testSingleGenEfMatchesCursor() throws Exception {
+    public void testGenStraddlingMinValueStillBailsToSentinel() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
-                final String name = "skm_ef";
+                final String name = "skm_straddle";
                 final int plen = path.size();
-                final int totalRows = 4_000;
-                long[] rowIds = new long[totalRows];
-                long pos = 0;
-                for (int i = 0; i < totalRows; i++) {
-                    pos += 1 + ((i * 0x9E3779B1L) & 0x7F); // gapped, strictly increasing
-                    rowIds[i] = pos;
-                }
-                long maxRow = rowIds[totalRows - 1];
+
                 try (PostingIndexWriter writer = new PostingIndexWriter(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
-                    int half = totalRows / 2;
-                    for (int i = 0; i < half; i++) {
-                        writer.add(0, rowIds[i]);
+                    // Single gen: key 0 at rows 0,2,..,98.
+                    for (long rowId = 0; rowId < 100; rowId++) {
+                        writer.add((int) (rowId % 2), rowId);
                     }
-                    writer.setMaxValue(rowIds[half - 1]);
+                    writer.setMaxValue(99);
                     writer.commit();
-                    for (int i = half; i < totalRows; i++) {
-                        writer.add(0, rowIds[i]);
-                    }
-                    writer.setMaxValue(maxRow);
-                    writer.commit();
-                    writer.seal();
                 }
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
                     reader.reloadConditionally();
-                    assertSelectMatchesCursor(reader, 0, 0, Long.MAX_VALUE);
-                }
-            }
-        });
-    }
+                    final long clamp = entryMaxValue(reader);
 
-    /**
-     * Single-gen dense FLAT layout: many keys, few rows per key (stride-wide FoR after seal).
-     * Asserts selectKthMatch == cursor ground truth for several keys across strides.
-     */
-    @Test
-    public void testSingleGenFlatMatchesCursor() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final String name = "skm_flat";
-                final int plen = path.size();
-                final int keyCount = 300; // > DENSE_STRIDE (256): exercises multiple strides
-                final int rowsPerKey = 3;
-                final int totalRows = keyCount * rowsPerKey;
-                try (PostingIndexWriter writer = new PostingIndexWriter(
-                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
-                    for (int row = 0; row < totalRows; row++) {
-                        writer.add(row % keyCount, row);
-                    }
-                    writer.setMaxValue(totalRows - 1);
-                    writer.commit();
-                    writer.seal();
-                }
-
-                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
-                    reader.reloadConditionally();
-                    // Probe keys in the first stride, the stride boundary, and the last stride.
-                    for (int key : new int[]{0, 1, 7, 255, 256, 257, 299}) {
-                        assertSelectMatchesCursor(reader, key, 0, Long.MAX_VALUE);
-                    }
-                }
-            }
-        });
-    }
-
-    /**
-     * Single-gen DELTA layout: few keys, many consecutive rows per key (multi-block delta-FoR,
-     * BLOCK_CAPACITY=64). Exercises the delta-blob select's block locate + in-block accumulate,
-     * including indices past a block boundary.
-     */
-    @Test
-    public void testSingleGenDeltaMatchesCursor() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final String name = "skm_delta";
-                final int plen = path.size();
-                final int keyCount = 5;
-                final int rowsPerKey = 200; // > 64 -> multiple delta blocks per key
-                final int totalRows = keyCount * rowsPerKey;
-                try (PostingIndexWriter writer = new PostingIndexWriter(
-                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
-                    for (int row = 0; row < totalRows; row++) {
-                        writer.add(row % keyCount, row);
-                    }
-                    writer.setMaxValue(totalRows - 1);
-                    writer.commit();
-                    writer.seal();
-                }
-
-                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
-                    reader.reloadConditionally();
-                    for (int key = 0; key < keyCount; key++) {
-                        assertSelectMatchesCursor(reader, key, 0, Long.MAX_VALUE);
+                    // minValue=50 lands inside the gen (postings 0..48 below, 50..98 at/above):
+                    // a genuine straddle -> the metadata count diverges from the cursor, so the
+                    // cheap path MUST return the sentinel and let the caller traverse.
+                    assertEquals("a gen straddling minValue must still yield the fallback sentinel",
+                            Numbers.LONG_NULL, reader.countMatchesClamped(0, 50, Long.MAX_VALUE, clamp));
+                    for (int k = 0; k < 25; k++) {
+                        assertEquals("straddling gen must yield the sentinel for every k (k=" + k + ")",
+                                Numbers.LONG_NULL, reader.selectKthMatch(0, 50, Long.MAX_VALUE, clamp, k));
                     }
                 }
             }
@@ -424,6 +332,88 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
                     assertSelectMatchesCursor(reader, 0, 3, Long.MAX_VALUE);
                     // A key without a null prefix (key != 0) is index-only.
                     assertSelectMatchesCursor(reader, 1, 0, Long.MAX_VALUE);
+                }
+            }
+        });
+    }
+
+    /**
+     * Null prefix where {@code entryMaxValue < columnTop} and the queried frame extends past
+     * {@code entryMaxValue}: the cheap-path null bound MUST come from the UNCLAMPED caller max,
+     * not the entryMaxValue-folded clamp. Key 0 has clean postings 0..10 (all within the lowered
+     * clamp); key 1 has dirty rows 11..49 that {@code setMaxValue(10)} marks past the entry's
+     * coverage, so {@code entryMaxValue == 10 < columnTop == 20}. Over a frame rowHi=50
+     * (callerHiInclusive=49, clampedMax=min(49,10)=10), the real NullCursor emits
+     * {@code nullCount = min(columnTop=20, callerMax+1=50) = 20} null rows 0..19, then key 0's 11
+     * clean index postings 0..10 — 31 rows total. The cheap primitives must reproduce that EXACTLY:
+     * the null prefix is bounded by the unclamped caller max (50 -> 20 nulls), only the gen walk by
+     * the clamp (10). Before the fix the null prefix was bounded by clampedMax (=> only 11 nulls),
+     * dropping rows 11..19 (under-count 22 vs 31) and returning WRONG row ids for k in the dropped
+     * null band.
+     */
+    @Test
+    public void testNullPrefixUnclampedWhenEntryMaxBelowColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "skm_nullprefix_dirty";
+                final int plen = path.size();
+                final long columnTop = 20;
+                final long callerHiInclusive = 49; // frame rowHi = 50
+                final long loweredMax = 10;        // entryMaxValue after the dirty shrink
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Key 0: clean postings 0..10, entirely within the lowered clamp.
+                    for (long row = 0; row <= loweredMax; row++) {
+                        writer.add(0, row);
+                    }
+                    // Key 1: dirty rows 11..49, evicted by lowering MAX_VALUE below them.
+                    for (long row = loweredMax + 1; row <= callerHiInclusive; row++) {
+                        writer.add(1, row);
+                    }
+                    writer.setMaxValue(callerHiInclusive);
+                    writer.commit();
+                    // Lower MAX_VALUE in place: rows 11..49 become dirty; key 0's gen stays clean.
+                    writer.setMaxValue(loweredMax);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, columnTop)) {
+                    reader.reloadConditionally();
+                    assertEquals("dirty shrink must leave entryMaxValue below columnTop",
+                            loweredMax, entryMaxValue(reader));
+
+                    // Ground truth: drain the REAL forward cursor over [0, 49]. NullCursor emits
+                    // min(columnTop=20, 50)=20 nulls (0..19) then key 0's clean index rows 0..10.
+                    LongList gt = drain(reader, 0, 0, callerHiInclusive);
+                    assertEquals("cursor must emit 20 nulls + 11 index rows", 31, gt.size());
+                    for (int k = 0; k < 20; k++) {
+                        assertEquals("null prefix row " + k, k, gt.getQuick(k));
+                    }
+                    for (int k = 20; k < 31; k++) {
+                        assertEquals("index row at k=" + k, k - 20, gt.getQuick(k));
+                    }
+
+                    final long clampedMax = loweredMax;          // min(49, 10)
+                    final long nullMaxValue = callerHiInclusive;  // unclamped caller max
+
+                    // countMatchesClamped must equal the cursor's drained count.
+                    assertEquals("countMatchesClamped must use unclamped null bound",
+                            gt.size(),
+                            reader.countMatchesClamped(0, 0, nullMaxValue, clampedMax));
+
+                    // selectKthMatch must match the cursor at every k: the full null prefix
+                    // (esp. k=11..19, the previously-dropped nulls), the null->index boundary
+                    // (k=19 last null, k=20 first index), and the index tail.
+                    for (int k = 0; k < gt.size(); k++) {
+                        assertEquals("selectKthMatch != cursor at k=" + k,
+                                gt.getQuick(k),
+                                reader.selectKthMatch(0, 0, nullMaxValue, clampedMax, k));
+                    }
+                    // One past the end is the sentinel.
+                    assertEquals("k == N must be the sentinel",
+                            Numbers.LONG_NULL,
+                            reader.selectKthMatch(0, 0, nullMaxValue, clampedMax, gt.size()));
                 }
             }
         });
@@ -719,109 +709,133 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
         });
     }
 
-    // ---- helpers ----
-
     /**
-     * An early gen whose postings for the key are ENTIRELY below minValue must be skipped
-     * by the cheap path (it contributes 0, exactly as the cursor skips it), NOT trip the
-     * MIXED bail. Layout: key 0 has gen 0 at rows 0,2,..,98 (all &lt; 1000) and gen 1 at rows
-     * 1000,1002,..,1098 (all &gt;= 1000). For any minValue in (98, 1000] the early gen is fully
-     * below and the late gen is fully covered, so selectKthMatch/countMatchesClamped must
-     * equal the cursor exactly (NON-sentinel). Before the fully-below optimization this
-     * returned the LONG_NULL sentinel and forced the whole partition onto the O(rows) traverse.
+     * Single-gen DELTA layout: few keys, many consecutive rows per key (multi-block delta-FoR,
+     * BLOCK_CAPACITY=64). Exercises the delta-blob select's block locate + in-block accumulate,
+     * including indices past a block boundary.
      */
     @Test
-    public void testEarlyGenFullyBelowMinValueUsesCheapPath() throws Exception {
+    public void testSingleGenDeltaMatchesCursor() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
-                final String name = "skm_below_min";
+                final String name = "skm_delta";
                 final int plen = path.size();
-
+                final int keyCount = 5;
+                final int rowsPerKey = 200; // > 64 -> multiple delta blocks per key
+                final int totalRows = keyCount * rowsPerKey;
                 try (PostingIndexWriter writer = new PostingIndexWriter(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
-                    // Gen 0: rows 0..99, key = row % 2 -> key 0 at 0,2,..,98 (all < 1000).
-                    for (long rowId = 0; rowId < 100; rowId++) {
-                        writer.add((int) (rowId % 2), rowId);
+                    for (int row = 0; row < totalRows; row++) {
+                        writer.add(row % keyCount, row);
                     }
-                    writer.setMaxValue(99);
+                    writer.setMaxValue(totalRows - 1);
                     writer.commit();
-                    // Gen 1: rows 1000..1099, key = row % 2 -> key 0 at 1000,1002,..,1098.
-                    for (long rowId = 1000; rowId < 1100; rowId++) {
-                        writer.add((int) (rowId % 2), rowId);
-                    }
-                    writer.setMaxValue(1099);
-                    writer.commit();
+                    writer.seal();
                 }
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
                     reader.reloadConditionally();
-                    final long clamp = entryMaxValue(reader);
-
-                    // Sweep minValues where the early gen (max 98) is fully below and the late
-                    // gen (1000..1098, within clamp) is fully covered: 0 (no skip) plus
-                    // interior values that skip only the early gen. Each must match the cursor
-                    // exactly and NEVER produce the sentinel. (minValue > clamp is a separate,
-                    // pre-existing empty-range bail and is not what this optimization touches.)
-                    for (long minValue : new long[]{0, 200, 500, 999, 1000}) {
-                        assertSelectMatchesCursor(reader, 0, minValue, Long.MAX_VALUE);
+                    for (int key = 0; key < keyCount; key++) {
+                        assertSelectMatchesCursor(reader, key, 0, Long.MAX_VALUE);
                     }
+                }
+            }
+        });
+    }
 
-                    // Loud, explicit teeth: at minValue=500 the cheap path must SUCCEED with the
-                    // exact count (50: rows 1000,1002,..,1098), not bail to the sentinel.
-                    assertNotEquals("fully-below early gen must not force the sentinel",
-                            Numbers.LONG_NULL, reader.countMatchesClamped(0, 500, Long.MAX_VALUE, clamp));
-                    assertEquals("cheap-path count must equal the cursor's drained count",
-                            50L, reader.countMatchesClamped(0, 500, Long.MAX_VALUE, clamp));
-                    assertEquals("first match at minValue=500 must be row 1000",
-                            1000L, reader.selectKthMatch(0, 500, Long.MAX_VALUE, clamp, 0));
-                    assertEquals("last match at minValue=500 must be row 1098",
-                            1098L, reader.selectKthMatch(0, 500, Long.MAX_VALUE, clamp, 49));
+    // ---- helpers ----
+
+    /**
+     * Single-gen EF layout: one key, many strictly-increasing gapped rowids across two
+     * committed gens then sealed into one dense gen. The high-value-to-count ratio drives
+     * the adaptive encoder to Elias-Fano. Asserts selectKthMatch == cursor ground truth at
+     * k = 0, 1, interior, and N-1, including a chunk-boundary interior index.
+     */
+    @Test
+    public void testSingleGenEfMatchesCursor() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "skm_ef";
+                final int plen = path.size();
+                final int totalRows = 4_000;
+                long[] rowIds = new long[totalRows];
+                long pos = 0;
+                for (int i = 0; i < totalRows; i++) {
+                    pos += 1 + ((i * 0x9E3779B1L) & 0x7F); // gapped, strictly increasing
+                    rowIds[i] = pos;
+                }
+                long maxRow = rowIds[totalRows - 1];
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    int half = totalRows / 2;
+                    for (int i = 0; i < half; i++) {
+                        writer.add(0, rowIds[i]);
+                    }
+                    writer.setMaxValue(rowIds[half - 1]);
+                    writer.commit();
+                    for (int i = half; i < totalRows; i++) {
+                        writer.add(0, rowIds[i]);
+                    }
+                    writer.setMaxValue(maxRow);
+                    writer.commit();
+                    writer.seal();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
+                    reader.reloadConditionally();
+                    assertSelectMatchesCursor(reader, 0, 0, Long.MAX_VALUE);
                 }
             }
         });
     }
 
     /**
-     * A gen that STRADDLES minValue (some postings below, some at/above) must still bail to
-     * the sentinel — the full per-gen count would over-count the below-minValue postings the
-     * cursor filters out. This guards the precision of the fully-below optimization: only a
-     * gen entirely below minValue may be skipped, never a straddling one.
+     * Single-gen dense FLAT layout: many keys, few rows per key (stride-wide FoR after seal).
+     * Asserts selectKthMatch == cursor ground truth for several keys across strides.
      */
     @Test
-    public void testGenStraddlingMinValueStillBailsToSentinel() throws Exception {
+    public void testSingleGenFlatMatchesCursor() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
-                final String name = "skm_straddle";
+                final String name = "skm_flat";
                 final int plen = path.size();
-
+                final int keyCount = 300; // > DENSE_STRIDE (256): exercises multiple strides
+                final int rowsPerKey = 3;
+                final int totalRows = keyCount * rowsPerKey;
                 try (PostingIndexWriter writer = new PostingIndexWriter(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
-                    // Single gen: key 0 at rows 0,2,..,98.
-                    for (long rowId = 0; rowId < 100; rowId++) {
-                        writer.add((int) (rowId % 2), rowId);
+                    for (int row = 0; row < totalRows; row++) {
+                        writer.add(row % keyCount, row);
                     }
-                    writer.setMaxValue(99);
+                    writer.setMaxValue(totalRows - 1);
                     writer.commit();
+                    writer.seal();
                 }
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
                     reader.reloadConditionally();
-                    final long clamp = entryMaxValue(reader);
-
-                    // minValue=50 lands inside the gen (postings 0..48 below, 50..98 at/above):
-                    // a genuine straddle -> the metadata count diverges from the cursor, so the
-                    // cheap path MUST return the sentinel and let the caller traverse.
-                    assertEquals("a gen straddling minValue must still yield the fallback sentinel",
-                            Numbers.LONG_NULL, reader.countMatchesClamped(0, 50, Long.MAX_VALUE, clamp));
-                    for (int k = 0; k < 25; k++) {
-                        assertEquals("straddling gen must yield the sentinel for every k (k=" + k + ")",
-                                Numbers.LONG_NULL, reader.selectKthMatch(0, 50, Long.MAX_VALUE, clamp, k));
+                    // Probe keys in the first stride, the stride boundary, and the last stride.
+                    for (int key : new int[]{0, 1, 7, 255, 256, 257, 299}) {
+                        assertSelectMatchesCursor(reader, key, 0, Long.MAX_VALUE);
                     }
                 }
             }
         });
+    }
+
+    private static void addProbe(LongList acc, int n, int k) {
+        if (k < 0 || k >= n) {
+            return;
+        }
+        for (int i = 0; i < acc.size(); i++) {
+            if (acc.getQuick(i) == k) {
+                return;
+            }
+        }
+        acc.add(k);
     }
 
     private static void assertSelectMatchesCursor(PostingIndexFwdReader reader, int key, long minValue, long callerMax) {
@@ -903,18 +917,6 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
             out[i] = (int) tmp.getQuick(i);
         }
         return out;
-    }
-
-    private static void addProbe(LongList acc, int n, int k) {
-        if (k < 0 || k >= n) {
-            return;
-        }
-        for (int i = 0; i < acc.size(); i++) {
-            if (acc.getQuick(i) == k) {
-                return;
-            }
-        }
-        acc.add(k);
     }
 
     private static void writeMultiGenSparse(

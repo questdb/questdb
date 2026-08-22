@@ -27,6 +27,9 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.AsyncQueryErrorState;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
@@ -40,7 +43,8 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class VectorAggregateEntry implements Mutable {
-    private ExecutionCircuitBreaker circuitBreaker;
+    private AsyncQueryErrorState aggregateError;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private CountDownLatchSPI doneLatch;
     private int frameIndex;
     private ObjList<PageFrameMemoryPool> frameMemoryPools;
@@ -50,6 +54,7 @@ public class VectorAggregateEntry implements Mutable {
     private AtomicInteger oomCounter;
     private long[] pRosti;
     private PerWorkerLocks perWorkerLocks;
+    private AsyncQueryProgressState progressState;
     private RostiAllocFacade raf;
     private AtomicInteger startedCounter;
     private int valueColIndex;
@@ -105,6 +110,7 @@ public class VectorAggregateEntry implements Mutable {
 
     @Override
     public void clear() {
+        this.aggregateError = null;
         this.frameMemoryPools = null;
         this.func = null;
         this.pRosti = null;
@@ -114,12 +120,38 @@ public class VectorAggregateEntry implements Mutable {
         this.raf = null;
         this.perWorkerLocks = null;
         this.circuitBreaker = null;
+        this.progressState = null;
         this.frameRowCount = 0;
         this.keyColIndex = -1;
         this.valueColIndex = -1;
     }
 
+    public void abort(boolean started) {
+        if (!started) {
+            startedCounter.incrementAndGet();
+        }
+        try {
+            circuitBreaker.cancel();
+        } finally {
+            doneLatch.countDown();
+        }
+    }
+
+    public SqlExecutionCircuitBreaker getCircuitBreaker() {
+        return circuitBreaker;
+    }
+
+    public AsyncQueryProgressState getProgressState() {
+        return progressState;
+    }
+
     public void run(int workerId, Sequence seq, long cursor) {
+        seq.done(cursor);
+        runDetached(workerId);
+    }
+
+    public void runDetached(int workerId) {
+        AsyncQueryErrorState aggregateError = this.aggregateError;
         AtomicInteger oomCounter = this.oomCounter;
         int frameIndex = this.frameIndex;
         long frameRowCount = this.frameRowCount;
@@ -129,15 +161,15 @@ public class VectorAggregateEntry implements Mutable {
         ObjList<PageFrameMemoryPool> frameMemoryPools = this.frameMemoryPools;
         RostiAllocFacade raf = this.raf;
         VectorAggregateFunction func = this.func;
-        ExecutionCircuitBreaker circuitBreaker = this.circuitBreaker;
+        SqlExecutionCircuitBreaker circuitBreaker = this.circuitBreaker;
         AtomicInteger startedCounter = this.startedCounter;
         CountDownLatchSPI doneLatch = this.doneLatch;
         PerWorkerLocks perWorkerLocks = this.perWorkerLocks;
 
-        seq.done(cursor);
         aggregate(
                 workerId,
                 oomCounter,
+                aggregateError,
                 frameIndex,
                 frameRowCount,
                 keyColIndex,
@@ -156,6 +188,7 @@ public class VectorAggregateEntry implements Mutable {
     private static void aggregate(
             int workerId,
             AtomicInteger oomCounter,
+            @NotNull AsyncQueryErrorState aggregateError,
             int frameIndex,
             long frameRowCount,
             int keyColIndex,
@@ -165,7 +198,7 @@ public class VectorAggregateEntry implements Mutable {
             RostiAllocFacade raf,
             VectorAggregateFunction func,
             PerWorkerLocks perWorkerLocks,
-            ExecutionCircuitBreaker circuitBreaker,
+            SqlExecutionCircuitBreaker circuitBreaker,
             AtomicInteger startedCounter,
             CountDownLatchSPI doneLatch
     ) {
@@ -191,6 +224,10 @@ public class VectorAggregateEntry implements Mutable {
                     perWorkerLocks,
                     circuitBreaker
             );
+        } catch (Throwable th) {
+            aggregateError.setError(th);
+            circuitBreaker.cancel();
+            throw th;
         } finally {
             doneLatch.countDown();
         }
@@ -208,9 +245,11 @@ public class VectorAggregateEntry implements Mutable {
             @NotNull CountDownLatchSPI doneLatch,
             // OOM is not possible when aggregation is not keyed
             @Nullable AtomicInteger oomCounter,
+            @NotNull AsyncQueryErrorState aggregateError,
             @Nullable RostiAllocFacade raf,
             @NotNull PerWorkerLocks perWorkerLocks,
-            @NotNull ExecutionCircuitBreaker circuitBreaker
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @NotNull AsyncQueryProgressState progressState
     ) {
         this.frameIndex = frameIndex;
         this.frameRowCount = frameRowCount;
@@ -222,8 +261,10 @@ public class VectorAggregateEntry implements Mutable {
         this.startedCounter = startedCounter;
         this.doneLatch = doneLatch;
         this.oomCounter = oomCounter;
+        this.aggregateError = aggregateError;
         this.raf = raf;
         this.perWorkerLocks = perWorkerLocks;
         this.circuitBreaker = circuitBreaker;
+        this.progressState = progressState;
     }
 }

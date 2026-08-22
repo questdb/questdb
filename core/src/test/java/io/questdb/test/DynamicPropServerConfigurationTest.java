@@ -50,6 +50,12 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.window.WindowMapState;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.metrics.QueryTracingJob;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.FiberWaitCoordinator;
+import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
@@ -318,6 +324,86 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 // [5] Should we re-register, we'll get a different ID.
                 final long watchId2 = serverMain.getEngine().getConfigReloader().watch(listener);
                 Assert.assertNotEquals("re-register should return a new watchId", watchId, watchId2);
+            }
+        });
+    }
+
+    @Test
+    public void testFiberLimitsReloadIntoExistingRuntime() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter writer = new FileWriter(serverConf)) {
+                writer.write("shared.network.worker.fiber.max.live=2\n");
+                writer.write("shared.network.worker.fiber.max.retained=1\n");
+                writer.write("shared.network.worker.fiber.mount.budget=3\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                final DynamicPropServerConfiguration configuration =
+                        (DynamicPropServerConfiguration) serverMain.getConfiguration();
+                try (WorkerPool pool = new WorkerPool(configuration.getSharedWorkerPoolNetworkConfiguration())) {
+                    final FiberRuntime runtime = pool.getFiberRuntime();
+
+                    try (FileWriter writer = new FileWriter(serverConf)) {
+                        writer.write("shared.network.worker.fiber.max.live=5\n");
+                        writer.write("shared.network.worker.fiber.max.retained=4\n");
+                        writer.write("shared.network.worker.fiber.mount.budget=7\n");
+                    }
+
+                    Assert.assertTrue(configuration.reload());
+                    Assert.assertSame(runtime, pool.getFiberRuntime());
+                    Assert.assertEquals(5, runtime.getMaxLiveFiberCount());
+                    Assert.assertEquals(4, runtime.getMaxRetainedFiberCount());
+                    Assert.assertEquals(7, runtime.getMountBudget());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFiberMaxLiveIncreaseWakesCapacityWaiter() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter writer = new FileWriter(serverConf)) {
+                writer.write("shared.network.worker.fiber.max.live=2\n");
+                writer.write("shared.network.worker.fiber.max.retained=2\n");
+                writer.write("shared.network.worker.fiber.mount.budget=1\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                final DynamicPropServerConfiguration configuration =
+                        (DynamicPropServerConfiguration) serverMain.getConfiguration();
+                try (WorkerPool pool = new WorkerPool(configuration.getSharedWorkerPoolNetworkConfiguration())) {
+                    final FiberRuntime runtime = pool.getFiberRuntime();
+                    final Fiber reservedFiber = runtime.tryReserveFiber();
+                    Assert.assertNotNull(reservedFiber);
+                    final AtomicLong wakeReason = new AtomicLong(FiberWaitCoordinator.REASON_NONE);
+                    final FiberTask waiter = new FiberTask() {
+                        @Override
+                        protected boolean runStep() {
+                            wakeReason.set(runtime.awaitCapacity());
+                            return true;
+                        }
+                    };
+                    try {
+                        Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(waiter));
+                        Assert.assertEquals(1, runtime.drain(1));
+                        Assert.assertFalse(waiter.isDone());
+                        Assert.assertEquals(1, runtime.getParkedFiberCount());
+
+                        try (FileWriter writer = new FileWriter(serverConf)) {
+                            writer.write("shared.network.worker.fiber.max.live=3\n");
+                            writer.write("shared.network.worker.fiber.max.retained=2\n");
+                            writer.write("shared.network.worker.fiber.mount.budget=1\n");
+                        }
+
+                        Assert.assertTrue(configuration.reload());
+                        Assert.assertEquals(1, runtime.drain(1));
+                        Assert.assertTrue(waiter.isDone());
+                        Assert.assertEquals(FiberWaitCoordinator.REASON_CAPACITY, wakeReason.get());
+                    } finally {
+                        runtime.releaseReservedFiber(reservedFiber, reservedFiber.getReservationEpoch());
+                        runtime.beginQuiesce();
+                        runtime.drain(64);
+                        runtime.awaitClosed();
+                    }
+                }
             }
         });
     }

@@ -32,6 +32,8 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
@@ -85,6 +87,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     private final ObjList<GroupByMapFragment> perWorkerFragments;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final PerWorkerLocks perWorkerLocks;
+    private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
     private final ColumnTypes valueTypes;
     volatile boolean sharded;
     boolean shardedHint;
@@ -146,6 +149,10 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         Misc.free(ownerFragment);
         Misc.freeObjList(perWorkerFragments);
         Misc.freeObjList(destShards);
+    }
+
+    public AsyncQueryProgressState getProgressState() {
+        return progressState;
     }
 
     public int maybeAcquire(int carrierId, boolean owner, ExecutionCircuitBreaker circuitBreaker) {
@@ -383,6 +390,17 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         final MPSequence pubSeq = messageBus.getGroupByMergeShardPubSeq();
         final MCSequence subSeq = messageBus.getGroupByMergeShardSubSeq();
         final WorkStealingStrategy strategy = workStealingStrategy.of(postAggregationStartedCounter);
+        final QueryParallelFiberDispatcher dispatcher = messageBus.getQueryParallelFiberDispatcher();
+        final boolean publicationPermit = dispatcher != null && dispatcher.tryAcquirePublication();
+
+        if (dispatcher != null && !publicationPermit) {
+            for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                mergeShard(-1, shardIndex);
+            }
+            finalizeShardStats();
+            return destShards;
+        }
 
         int queuedCount = 0;
         int ownCount = 0;
@@ -393,16 +411,26 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         try {
             for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
                 while (true) {
+                    final long observedProgress = progressState.getVersion();
+                    final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                    final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
                         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
 
-                        if (strategy.shouldSteal(mergedCount)) {
+                        if (!isOwnerParkable && strategy.shouldSteal(mergedCount)) {
                             mergeShard(-1, shardIndex);
                             ownCount++;
                             total++;
                             mergedCount = postAggregationDoneLatch.getCount();
                             break;
+                        }
+                        if (isOwnerParkable) {
+                            if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
+                                Os.pause();
+                            }
+                        } else {
+                            Os.pause();
                         }
                         mergedCount = postAggregationDoneLatch.getCount();
                     } else {
@@ -424,24 +452,45 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             postAggregationCircuitBreaker.cancel();
             throw th;
         } finally {
-            while (!postAggregationDoneLatch.done(queuedCount)) {
-                if (circuitBreaker.checkIfTripped()) {
-                    postAggregationCircuitBreaker.cancel();
+            try {
+                if (publicationPermit) {
+                    dispatcher.releasePublication();
                 }
+            } finally {
+                while (true) {
+                    final long observedProgress = progressState.getVersion();
+                    final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                    final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
+                    if (postAggregationDoneLatch.done(queuedCount)) {
+                        break;
+                    }
+                    if (circuitBreaker.checkIfTripped()) {
+                        postAggregationCircuitBreaker.cancel();
+                    }
 
-                if (strategy.shouldSteal(mergedCount)) {
-                    long cursor = subSeq.next();
-                    if (cursor > -1) {
-                        GroupByMergeShardTask task = queue.get(cursor);
-                        GroupByMergeShardJob.run(-1, task, subSeq, cursor, this);
-                        reclaimed++;
+                    if (!isOwnerParkable && strategy.shouldSteal(mergedCount)) {
+                        long cursor = subSeq.next();
+                        if (cursor > -1) {
+                            GroupByMergeShardTask task = queue.get(cursor);
+                            // run() releases the slot
+                            final AsyncQueryProgressState stolenProgress = task.getShardingContext().getProgressState();
+                            GroupByMergeShardJob.run(-1, task, subSeq, cursor, this);
+                            if (dispatcher != null) {
+                                dispatcher.signalProgress(stolenProgress);
+                            }
+                            reclaimed++;
+                        } else {
+                            Os.pause();
+                        }
+                    } else if (isOwnerParkable) {
+                        if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
+                            Os.pause();
+                        }
                     } else {
                         Os.pause();
                     }
-                } else {
-                    Os.pause();
+                    mergedCount = postAggregationDoneLatch.getCount();
                 }
-                mergedCount = postAggregationDoneLatch.getCount();
             }
         }
 

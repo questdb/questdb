@@ -33,11 +33,22 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionSuspension;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.mp.continuation.TxnWaiter;
+import io.questdb.mp.continuation.CancellationBinding;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberWaitCoordinator;
+import io.questdb.mp.continuation.FiberWalWaitRegistration;
+import io.questdb.mp.continuation.SourceRegistrationResult;
+import io.questdb.mp.continuation.SuspensionScope;
+import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 class WaitWalFunction extends BooleanFunction implements Function {
     private final Function seqTxnArg;
@@ -78,78 +89,12 @@ class WaitWalFunction extends BooleanFunction implements Function {
             return true;
         }
 
-        // Continuation path: the worker thread is carrying a WorkerContinuation
-        // (mounted in its outer driver), so we can suspend the stack and free
-        // the carrier. Wakes on each cycle so the circuit breaker can probe
-        // the fd (broken connection), the cancel flag, and the SQL timeout.
-        // If the body is still healthy after the probe, we re-park; otherwise
-        // the breaker throws and the wait ends. This guarantees the wait can
-        // NEVER be unbounded: a dead client, an explicit cancel, or a timeout
-        // always wins.
-        //
-        // Pooled across iterations: fireWaiters drops the waiter from the
-        // tracker queue when it CASes the state to FIRED, so by the time we
-        // resume from suspend the previous queue entry is gone and reset()
-        // can safely flip state back to PENDING for the next park. Stale
-        // shard entries from a prior cycle are harmless: expire() is purely
-        // state-driven, never reads deadlineMillis.
-        TxnWaiter waiter = new TxnWaiter(
-                executionContext.getCairoEngine().getTimerShards(),
-                executionContext.getCairoEngine().getConfiguration().getQueryContinuationWakeIntervalMillis(),
-                seqTxn
-        );
-        boolean firstRegister = true;
-        if (waiter.tryBindCurrent()) {
-            try {
-                while (seqTxnTracker.getWriterTxn() < seqTxn) {
-                    // Owning context is closing: do not re-park. Throwing unwinds the
-                    // body all the way to the continuation loop's tail suspend, which is
-                    // what the close path needs in order to drive cont.run() to isDone().
-                    if (waiter.isShuttingDown()) {
-                        throw CairoException.nonCritical().put("wait_wal_table aborted, connection closing [tableName=").put(tableName).put("]");
-                    }
-                    // Probe before re-parking: detects timeout, cancellation, broken
-                    // connection, shutdown.
-                    executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
-                    throwIfTerminated();
-
-                    waiter.reset();
-                    if (firstRegister) {
-                        seqTxnTracker.registerWaiter(waiter);
-                        firstRegister = false;
-                    }
-                    if (!waiter.suspend()) {
-                        // The JDK refused to yield because the carrier is pinned (a
-                        // synchronized or native frame sits above this call). The body
-                        // never unmounted, so this is the same carrier that registered
-                        // the waiter.
-                        break;
-                    }
-                    // Resumed: either the waiter fired (target met or table state
-                    // changed) or the timer shard cancelled it at the deadline.
-                    // Loop top re-checks writerTxn and probes the breaker.
-                }
-                if (seqTxnTracker.getWriterTxn() >= seqTxn) {
-                    throwIfTerminated();
-                    return true;
-                }
-                // else: yield was refused at least once; fall through to polling.
-            } finally {
-                // Hygiene: unconditionally mark the waiter CANCELLED so the next
-                // fireWaiters() walk drops the holder immediately instead of waiting
-                // up to waitIntervalMillis for the timer pop. This is the last touch
-                // of the waiter -- the body is unwinding and never re-suspends -- so
-                // the write is safe from any prior state: if a throw landed during the
-                // iteration-1 PENDING window (before any racer fired) it is the
-                // cancellation; on iteration 2+ a racer already FIRED us and the
-                // overwrite is unobservable (the fired waiter was already dequeued).
-                // The timer-shard heap entry is not touched either way -- it pops at
-                // its deadline and observes CANCELLED / FIRED, so expire() short-circuits.
-                waiter.cancel();
-            }
+        final Fiber fiber = SqlExecutionSuspension.currentFiber();
+        if (fiber != null && waitInFiber(fiber)) {
+            return true;
         }
 
-        // Legacy polling fallback: no continuation gateway, or yield refused.
+        // Legacy polling fallback.
         for (int i = 0; seqTxnTracker.getWriterTxn() < seqTxn; i++) {
             Os.sleep(1);
             executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
@@ -204,6 +149,27 @@ class WaitWalFunction extends BooleanFunction implements Function {
         sink.val(')');
     }
 
+    private CairoException abortedException() {
+        return CairoException.nonCritical()
+                .put("wait_wal_table aborted, connection closing [tableName=")
+                .put(tableName)
+                .put(']');
+    }
+
+    private void throwIfCancelled(
+            @Nullable FiberCancellationSignal cancellationSignal,
+            long cancellationSignalGeneration,
+            @Nullable FiberCancellationSignal supplementalCancellationSignal,
+            long supplementalCancellationSignalGeneration
+    ) {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+        if ((cancellationSignal != null && cancellationSignal.isCancelled(cancellationSignalGeneration))
+                || (supplementalCancellationSignal != null
+                && supplementalCancellationSignal.isCancelled(supplementalCancellationSignalGeneration))) {
+            throw CairoException.queryCancelled();
+        }
+    }
+
     private void throwIfTerminated() {
         if (seqTxnTracker.isSuspended()) {
             throw CairoException.nonCritical().put("table is suspended [tableName=").put(tableName).put("]");
@@ -212,4 +178,93 @@ class WaitWalFunction extends BooleanFunction implements Function {
             throw CairoException.tableDoesNotExist(tableToken.getTableName());
         }
     }
+
+    private boolean waitInFiber(Fiber fiber) {
+        final MillisecondClock clock = executionContext.getCairoEngine().getConfiguration().getMillisecondClock();
+        final long wakeIntervalMillis = Math.max(
+                1,
+                executionContext.getCairoEngine().getConfiguration().getQueryContinuationWakeIntervalMillis()
+        );
+        final TimerShards timerShards = executionContext.getCairoEngine().getTimerShards();
+        final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
+        FiberCancellationSignal cancellationSignal = SuspensionScope.getCancellationSignal();
+        long cancellationSignalGeneration = SuspensionScope.getCancellationSignalGeneration();
+        FiberCancellationSignal supplementalCancellationSignal = SuspensionScope.getSupplementalCancellationSignal();
+        final long supplementalCancellationSignalGeneration =
+                SuspensionScope.getSupplementalCancellationSignalGeneration();
+        if (cancellationSignal == null) {
+            final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch();
+            executionContext.getCircuitBreaker().copyCancelledFlagTo(cancellationBinding);
+            final AtomicBoolean cancelledFlag = cancellationBinding.getFlag();
+            if (cancelledFlag instanceof FiberCancellationSignal signal) {
+                cancellationSignal = signal;
+                cancellationSignalGeneration = cancellationBinding.getGeneration(cancelledFlag);
+            }
+        }
+        if (supplementalCancellationSignal == cancellationSignal) {
+            supplementalCancellationSignal = null;
+        }
+        while (seqTxnTracker.getWriterTxn() < seqTxn) {
+            throwIfCancelled(
+                    cancellationSignal,
+                    cancellationSignalGeneration,
+                    supplementalCancellationSignal,
+                    supplementalCancellationSignalGeneration
+            );
+            throwIfTerminated();
+
+            final int sourceCount = 2
+                    + (cancellationSignal != null ? 1 : 0)
+                    + (supplementalCancellationSignal != null ? 1 : 0);
+            long token = fiber.tryBeginWaitBuild(sourceCount);
+            if (token == Fiber.TOKEN_REFUSED) {
+                throw abortedException();
+            }
+            try {
+                if (cancellationSignal != null
+                        && !coordinator.armCancellation(
+                        token,
+                        cancellationSignal,
+                        cancellationSignalGeneration
+                )) {
+                    throw abortedException();
+                }
+                if (supplementalCancellationSignal != null
+                        && !coordinator.armCancellation(
+                        token,
+                        supplementalCancellationSignal,
+                        supplementalCancellationSignalGeneration
+                )) {
+                    throw abortedException();
+                }
+                final FiberWalWaitRegistration walRegistration = coordinator.acquireWal(token, seqTxn);
+                if (seqTxnTracker.registerWaiter(walRegistration) != SourceRegistrationResult.ACCEPTED
+                        || !coordinator.armTimer(token, timerShards, clock, wakeIntervalMillis)) {
+                    throw abortedException();
+                }
+                int reason = fiber.suspendWait(token, FiberWaitCoordinator.REASON_NONE);
+                if (reason == FiberWaitCoordinator.REASON_NONE) {
+                    return false;
+                }
+                if (reason == FiberWaitCoordinator.REASON_SHUTDOWN) {
+                    throw abortedException();
+                }
+                if (reason == FiberWaitCoordinator.REASON_CANCEL) {
+                    executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                    throw CairoException.queryCancelled();
+                }
+            } finally {
+                coordinator.teardownWait(token);
+            }
+        }
+        throwIfCancelled(
+                cancellationSignal,
+                cancellationSignalGeneration,
+                supplementalCancellationSignal,
+                supplementalCancellationSignalGeneration
+        );
+        throwIfTerminated();
+        return true;
+    }
+
 }

@@ -71,4 +71,23 @@ public class ConcurrentPool<T> {
         queue.enqueue(item);
         count.incrementAndGet();
     }
+
+    public boolean tryPush(T item, int maxSize) {
+        while (true) {
+            final int currentCount = count.get();
+            if (currentCount >= maxSize) {
+                return false;
+            }
+            if (count.compareAndSet(currentCount, currentCount + 1)) {
+                break;
+            }
+        }
+        try {
+            queue.enqueue(item);
+            return true;
+        } catch (Throwable th) {
+            count.decrementAndGet();
+            throw th;
+        }
+    }
 }

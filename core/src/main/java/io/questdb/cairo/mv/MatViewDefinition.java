@@ -50,6 +50,7 @@ import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public class MatViewDefinition implements Mutable {
     public static final String MAT_VIEW_DEFINITION_FILE_NAME = "_mv";
@@ -345,6 +346,11 @@ public class MatViewDefinition implements Mutable {
 
     public boolean isDeferred() {
         return deferred;
+    }
+
+    @TestOnly
+    public void setMatViewSqlForTesting(String matViewSql) {
+        this.matViewSql = matViewSql;
     }
 
     public void setPeriodSampler(TimestampSampler periodSampler) {

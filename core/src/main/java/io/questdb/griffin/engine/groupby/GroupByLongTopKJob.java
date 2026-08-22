@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.log.Log;
@@ -37,6 +38,7 @@ import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.tasks.GroupByLongTopKTask;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -47,9 +49,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopKTask> {
     private static final Log LOG = LogFactory.getLog(GroupByLongTopKJob.class);
+    private final MessageBus messageBus;
 
     public GroupByLongTopKJob(MessageBus messageBus) {
         super(messageBus.getGroupByLongTopKQueue(), messageBus.getGroupByLongTopKSubSeq());
+        this.messageBus = messageBus;
     }
 
     public static void run(
@@ -71,9 +75,34 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
         task.clear();
         subSeq.done(cursor);
 
-        startedCounter.incrementAndGet();
-
         final boolean owner = stealingAtom != null && stealingAtom == atom;
+        runDetached(
+                workerId,
+                circuitBreaker,
+                startedCounter,
+                doneLatch,
+                atom,
+                longFunc,
+                shardIndex,
+                order,
+                limit,
+                owner
+        );
+    }
+
+    public static void runDetached(
+            int workerId,
+            AtomicBooleanCircuitBreaker circuitBreaker,
+            AtomicInteger startedCounter,
+            CountDownLatchSPI doneLatch,
+            AsyncGroupByAtom atom,
+            Function longFunc,
+            int shardIndex,
+            int order,
+            int limit,
+            boolean owner
+    ) {
+        startedCounter.incrementAndGet();
         try {
             final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
             try {
@@ -92,6 +121,14 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
         } finally {
             doneLatch.countDown();
         }
+    }
+
+    @Override
+    public boolean run(@NotNull WorkerContext workerContext) {
+        final QueryParallelFiberDispatcher dispatcher = messageBus.getQueryParallelFiberDispatcher();
+        return dispatcher != null
+                ? !dispatcher.consumeLongTopK(workerContext.carrierId())
+                : super.run(workerContext);
     }
 
     @Override

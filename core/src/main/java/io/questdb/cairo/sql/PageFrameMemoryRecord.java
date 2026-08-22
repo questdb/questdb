@@ -860,7 +860,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return stableStrings;
     }
 
-    public void of(SymbolTableSource symbolTableSource) {
+    public void of(@Nullable SymbolTableSource symbolTableSource) {
         close();
         this.symbolTableSource = symbolTableSource;
     }

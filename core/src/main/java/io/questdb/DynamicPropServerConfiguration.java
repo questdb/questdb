@@ -44,6 +44,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolConfigurationWrapper;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.ObjHashSet;
@@ -79,6 +80,9 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.PG_RECV_BUFFER_SIZE,
             PropertyKey.PG_SEND_BUFFER_SIZE,
             PropertyKey.PG_NET_CONNECTION_LIMIT,
+            PropertyKey.PG_WORKER_FIBER_MAX_LIVE,
+            PropertyKey.PG_WORKER_FIBER_MAX_RETAINED,
+            PropertyKey.PG_WORKER_FIBER_MOUNT_BUDGET,
             PropertyKey.HTTP_REQUEST_HEADER_BUFFER_SIZE,
             PropertyKey.HTTP_MULTIPART_HEADER_BUFFER_SIZE,
             PropertyKey.HTTP_RECV_BUFFER_SIZE,
@@ -87,6 +91,9 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.HTTP_ILP_CONNECTION_LIMIT,
             PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT,
             PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT,
+            PropertyKey.HTTP_WORKER_FIBER_MAX_LIVE,
+            PropertyKey.HTTP_WORKER_FIBER_MAX_RETAINED,
+            PropertyKey.HTTP_WORKER_FIBER_MOUNT_BUDGET,
             PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE,
             PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT,
             PropertyKey.QUERY_TRACING_ENABLED,
@@ -109,7 +116,19 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES,
             PropertyKey.MEMORY_USAGE_LOG_ENABLED,
             PropertyKey.MEMORY_USAGE_LOG_INTERVAL,
-            PropertyKey.QWP_EGRESS_COMPRESSION_FORCE_LEVEL
+            PropertyKey.QWP_EGRESS_COMPRESSION_FORCE_LEVEL,
+            PropertyKey.MAT_VIEW_REFRESH_WORKER_FIBER_MAX_LIVE,
+            PropertyKey.MAT_VIEW_REFRESH_WORKER_FIBER_MAX_RETAINED,
+            PropertyKey.MAT_VIEW_REFRESH_WORKER_FIBER_MOUNT_BUDGET,
+            PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_LIVE,
+            PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED,
+            PropertyKey.SHARED_NETWORK_WORKER_FIBER_MOUNT_BUDGET,
+            PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_LIVE,
+            PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_RETAINED,
+            PropertyKey.SHARED_QUERY_WORKER_FIBER_MOUNT_BUDGET,
+            PropertyKey.SHARED_WRITE_WORKER_FIBER_MAX_LIVE,
+            PropertyKey.SHARED_WRITE_WORKER_FIBER_MAX_RETAINED,
+            PropertyKey.SHARED_WRITE_WORKER_FIBER_MOUNT_BUDGET
     ));
     private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {
         Optional<PropertyKey> prop = PropertyKey.getByString(k);
@@ -128,6 +147,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     private final LineTcpReceiverConfigurationWrapper lineTcpConfig;
     private final boolean loadAdditionalConfigurations;
     private final Log log;
+    private final WorkerPoolConfigurationWrapper matViewRefreshPoolConfig;
     private final MemoryConfigurationWrapper memoryConfig;
     private final Metrics metrics;
     private final MicrosecondClock microsecondClock;
@@ -136,6 +156,9 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     private final Properties properties;
     private final Object reloadLock = new Object();
     private final AtomicReference<PropServerConfiguration> serverConfig;
+    private final WorkerPoolConfigurationWrapper sharedNetworkPoolConfig;
+    private final WorkerPoolConfigurationWrapper sharedQueryPoolConfig;
+    private final WorkerPoolConfigurationWrapper sharedWritePoolConfig;
     private final @NotNull ConfigReloader.WatchRegistry watchRegistry = new WatchRegistry();
     private long version;
 
@@ -177,8 +200,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         this.minHttpServerConfig = new HttpMinServerConfigurationWrapper(this.metrics);
         this.httpServerConfig = new HttpServerConfigurationWrapper(this.metrics);
         this.lineTcpConfig = new LineTcpReceiverConfigurationWrapper(this.metrics);
+        this.matViewRefreshPoolConfig = new WorkerPoolConfigurationWrapper();
         this.memoryConfig = new MemoryConfigurationWrapper();
         this.pgWireConfig = new PGConfigurationWrapper(this.metrics);
+        this.sharedNetworkPoolConfig = new WorkerPoolConfigurationWrapper();
+        this.sharedQueryPoolConfig = new WorkerPoolConfigurationWrapper();
+        this.sharedWritePoolConfig = new WorkerPoolConfigurationWrapper();
         reloadNestedConfigurations(serverConfig);
         this.version = 0;
         this.confPath = Paths.get(getCairoConfiguration().getConfRoot().toString(), Bootstrap.CONFIG_FILE);
@@ -367,8 +394,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
 
     @Override
     public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
-        // nested object is kept non-reloadable
-        return serverConfig.get().getMatViewRefreshPoolConfiguration();
+        return matViewRefreshPoolConfig;
     }
 
     @Override
@@ -406,18 +432,17 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
 
     @Override
     public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
-        // nested object is kept non-reloadable
-        return serverConfig.get().getSharedWorkerPoolNetworkConfiguration();
+        return sharedNetworkPoolConfig;
     }
 
     @Override
     public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
-        return serverConfig.get().getSharedWorkerPoolQueryConfiguration();
+        return sharedQueryPoolConfig;
     }
 
     @Override
     public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
-        return serverConfig.get().getSharedWorkerPoolWriteConfiguration();
+        return sharedWritePoolConfig;
     }
 
     @Override
@@ -584,7 +609,11 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         minHttpServerConfig.setDelegate(serverConfig.getHttpMinServerConfiguration());
         httpServerConfig.setDelegate(serverConfig.getHttpServerConfiguration());
         lineTcpConfig.setDelegate(serverConfig.getLineTcpReceiverConfiguration());
+        matViewRefreshPoolConfig.setDelegate(serverConfig.getMatViewRefreshPoolConfiguration());
         memoryConfig.setDelegate(serverConfig.getMemoryConfiguration());
         pgWireConfig.setDelegate(serverConfig.getPGWireConfiguration());
+        sharedNetworkPoolConfig.setDelegate(serverConfig.getSharedWorkerPoolNetworkConfiguration());
+        sharedQueryPoolConfig.setDelegate(serverConfig.getSharedWorkerPoolQueryConfiguration());
+        sharedWritePoolConfig.setDelegate(serverConfig.getSharedWorkerPoolWriteConfiguration());
     }
 }

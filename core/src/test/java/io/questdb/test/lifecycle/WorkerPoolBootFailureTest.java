@@ -6,11 +6,16 @@ import io.questdb.lifecycle.LifecycleContext;
 import io.questdb.lifecycle.LifecycleOrchestrator;
 import io.questdb.lifecycle.LifecycleStartupException;
 import io.questdb.lifecycle.State;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.ObjList;
 import io.questdb.test.lifecycle.fakes.ProbeComponent;
+import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -35,6 +40,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * probes but cannot serve requests).
  */
 public class WorkerPoolBootFailureTest {
+    private static final Log LOG = LogFactory.getLog(WorkerPoolBootFailureTest.class);
 
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -123,7 +129,7 @@ public class WorkerPoolBootFailureTest {
     @Test
     public void testConcurrentHaltStopsStartFromSpawningAgainstFreedResources() throws Exception {
         final int workerCount = 4;
-        final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+        final WorkerPool pool = TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
             @Override
             public Metrics getMetrics() {
                 return Metrics.DISABLED;
@@ -327,13 +333,13 @@ public class WorkerPoolBootFailureTest {
     /**
      * When start() stalls between running=true and started.countDown() (realistic on an OOM mid-launch:
      * the worker thread is spawned and looping, but the start latch never counts down), halt(long) must
-     * STILL signal worker.halt() for every worker before it clears and frees freeOnExit. Otherwise a
-     * worker keeps looping on RUNNING against freed resources - a use-after-free plus orphan-thread leak.
+     * signal worker.halt() for every worker, but it must retain freeOnExit until start() publishes
+     * completion. Otherwise a worker can keep looping against freed resources.
      */
     @Test
-    public void testStartLatchTimeoutStillHaltsEveryWorker() throws Exception {
+    public void testStartLatchTimeoutHaltsWorkersAndRetainsResources() throws Exception {
         final int workerCount = 2;
-        final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+        final WorkerPool pool = TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
             @Override
             public Metrics getMetrics() {
                 return Metrics.DISABLED;
@@ -392,11 +398,8 @@ public class WorkerPoolBootFailureTest {
             }
             Assert.assertTrue("the workers must be running their assigned job", jobTicks.get() > 0);
 
-            // halt(long) takes the start-latch-timeout branch (started never counted down). It must
-            // still signal every worker, so the loops exit promptly.
-            pool.halt(TimeUnit.MILLISECONDS.toNanos(200));
-
-            Assert.assertTrue("halt() must free freeOnExit", resourceFreed.get());
+            Assert.assertFalse(pool.haltWithin(TimeUnit.MILLISECONDS.toNanos(200)));
+            Assert.assertFalse("halt() must retain freeOnExit while start() is live", resourceFreed.get());
 
             // After halt the workers must STOP ticking. Sample, wait well past the worker sleep
             // cadence, sample again: a halted worker leaves the count stable; an un-halted worker
@@ -406,13 +409,15 @@ public class WorkerPoolBootFailureTest {
             final long settled = jobTicks.get();
             Assert.assertEquals(
                     "every worker must be halted on the start-latch-timeout branch; a still-ticking "
-                            + "count means a worker is looping on RUNNING against freed resources",
+                            + "count means a worker is still running while shutdown awaits retry",
                     afterHalt, settled);
         } finally {
             releaseStart.countDown();
             starter.join(TimeUnit.SECONDS.toMillis(10));
-            pool.halt();
+            Assert.assertFalse("start() must finish after release", starter.isAlive());
+            Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(10)));
         }
+        Assert.assertTrue("the retry must free freeOnExit", resourceFreed.get());
     }
 
     /**
@@ -440,7 +445,7 @@ public class WorkerPoolBootFailureTest {
     @Test
     public void testHaltDuringStartAddLoopIsHeldOffNotReadTorn() throws Exception {
         final int workerCount = 4;
-        final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+        final WorkerPool pool = TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
             @Override
             public Metrics getMetrics() {
                 return Metrics.DISABLED;
@@ -624,7 +629,7 @@ public class WorkerPoolBootFailureTest {
     @Test
     public void testMetricsScrapeIsHeldOffNotReadTornDuringStartAddLoop() throws Exception {
         final int workerCount = 4;
-        final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+        final WorkerPool pool = TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
             @Override
             public Metrics getMetrics() {
                 return Metrics.ENABLED;
@@ -735,6 +740,69 @@ public class WorkerPoolBootFailureTest {
                 scrapeHeldOffWhileParked);
     }
 
+    @Test
+    public void testPartialStartFailureCountsDownUnstartedWorkers() {
+        final AtomicBoolean assignedJobClosed = new AtomicBoolean();
+        final AtomicBoolean freeOnExitClosed = new AtomicBoolean();
+        final AtomicLong spawnAttempt = new AtomicLong();
+        final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return Metrics.DISABLED;
+            }
+
+            @Override
+            public String getPoolName() {
+                return "partial-start-failure";
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 2;
+            }
+
+            @Override
+            public WorkerPoolMode getWorkerPoolMode() {
+                return WorkerPoolMode.FIBER_HOST;
+            }
+
+            @Override
+            public boolean isDaemonPool() {
+                return true;
+            }
+        });
+        pool.assign(new Job() {
+            @Override
+            public void closeInstance() {
+                assignedJobClosed.set(true);
+            }
+
+            @Override
+            public boolean run(Job.WorkerContext workerContext) {
+                return false;
+            }
+        });
+        pool.freeOnExit(closeableJob(() -> freeOnExitClosed.set(true)));
+        pool.setBeforeWorkerAddedForTesting(() -> {
+            if (spawnAttempt.getAndIncrement() == 1) {
+                throw new IllegalStateException("forced partial start failure");
+            }
+        });
+
+        try {
+            pool.start();
+            Assert.fail("start must propagate the worker creation failure");
+        } catch (IllegalStateException expected) {
+            Assert.assertEquals("forced partial start failure", expected.getMessage());
+        } finally {
+            pool.setBeforeWorkerAddedForTesting(null);
+            pool.haltAndAssertCleanForTest(TimeUnit.SECONDS.toNanos(10));
+        }
+
+        Assert.assertTrue(assignedJobClosed.get());
+        Assert.assertTrue(freeOnExitClosed.get());
+    }
+
     // The pool's freeOnExit(Job) closes elements that are Closeable via
     // Misc.freeObjListIfCloseable. Wrap a resource-freeing Runnable in a no-op Job that is
     // also Closeable so freeOnExit accepts it and halt() runs onClose at shutdown.
@@ -743,7 +811,7 @@ public class WorkerPoolBootFailureTest {
     }
 
     private static WorkerPool newDaemonWorkerPool(String poolName, int workerCount) {
-        return new WorkerPool(new WorkerPoolConfiguration() {
+        return TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
             @Override
             public Metrics getMetrics() {
                 return Metrics.DISABLED;

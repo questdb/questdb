@@ -183,6 +183,10 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
         }
     }
 
+    private CairoException buildInterruptionException() {
+        return frameSequence.buildInterruptionException();
+    }
+
     private void buildMap() {
         // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
@@ -206,7 +210,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
                     postAggregationStartedCounter
             );
             if (postAggregationCircuitBreaker.checkIfTripped()) {
-                throwTimeoutException();
+                throw buildInterruptionException();
             }
             shardedCursor.of(shards);
             mapCursor = shardedCursor;
@@ -246,14 +250,6 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
                 throw CairoException.nonCritical().put(e.getFlyweightMessage());
             }
             isSlaveTimeFrameCacheBuilt = true;
-        }
-    }
-
-    private void throwTimeoutException() {
-        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        } else {
-            throw CairoException.queryTimedOut();
         }
     }
 
