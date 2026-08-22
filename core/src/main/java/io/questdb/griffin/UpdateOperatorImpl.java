@@ -220,7 +220,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                             // back to its ordinary, single-piece shape first, in the same transaction this
                             // update is already building - see TableWriter#compactPartitionIfComposite. A
                             // partition that is already ordinary costs one flag check.
-                            tableWriter.compactPartitionIfComposite(rowPartitionIndex);
+                            tableWriter.compactPartitionNoCommit(rowPartitionIndex);
 
                             openColumns(srcColumns, rowPartitionIndex, false);
                             openColumns(dstColumns, rowPartitionIndex, true);

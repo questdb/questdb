@@ -1606,6 +1606,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         metrics.tableWriterMetrics().addCommittedRows(rowsCommitted);
     }
 
+    /**
+     * Compacts {@code partitionIndex} into an ordinary, single-piece partition if it is currently
+     * COMPOSITE. Stays inside the CALLER's transaction rather than committing one of its own
+     */
+    public boolean compactPartitionNoCommit(int partitionIndex) {
+        if (!txWriter.isPartitionComposite(partitionIndex)) {
+            return false;
+        }
+        final boolean isActivePartition = partitionIndex == txWriter.getPartitionCount() - 1;
+        final boolean rewritten = compactPartition0(partitionIndex);
+        if (rewritten && isActivePartition) {
+            // A REWRITE retires the directory columns[] is currently mapped against - see runCompaction's
+            // own javadoc for the identical requirement on its own REWRITE/MOVE-TAIL outcomes.
+            closeActivePartition(false);
+            openLastPartition();
+        }
+        return rewritten;
+    }
+
     @Override
     public boolean convertPartitionNativeToParquet(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
         assert metadata.getTimestampIndex() > -1;
@@ -15348,25 +15367,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     void closeActivePartition(long size) {
         closeActivePartition(size, false);
-    }
-
-    /**
-     * Compacts {@code partitionIndex} into an ordinary, single-piece partition if it is currently
-     * COMPOSITE. Stays inside the CALLER's transaction rather than committing one of its own
-     */
-    boolean compactPartitionNoCommit(int partitionIndex) {
-        if (!txWriter.isPartitionComposite(partitionIndex)) {
-            return false;
-        }
-        final boolean isActivePartition = partitionIndex == txWriter.getPartitionCount() - 1;
-        final boolean rewritten = compactPartition0(partitionIndex);
-        if (rewritten && isActivePartition) {
-            // A REWRITE retires the directory columns[] is currently mapped against - see runCompaction's
-            // own javadoc for the identical requirement on its own REWRITE/MOVE-TAIL outcomes.
-            closeActivePartition(false);
-            openLastPartition();
-        }
-        return rewritten;
     }
 
     // Routes a parquet index rebuild's seal-purges into the same deferred path
