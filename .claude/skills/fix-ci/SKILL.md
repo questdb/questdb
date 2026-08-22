@@ -82,7 +82,35 @@ gh run view {run_id} --json jobs --jq '.jobs[] | select(.conclusion == "failure"
 Report these as Category E (non-test failures) in the final output. Common cases:
 - **Danger** — PR convention issues (title format, description, labels). Show the comment: `gh pr view $PR --comments --jq '.comments[-1].body'`
 - **build** — compilation failure. The job log contains the error.
-- **gitleaks** — secret detected in diff.
+- **gitleaks** — the job failed on a credential-shaped string in one of the
+  branch's commits, or on a scan error; tell the two apart before reporting.
+  The Actions API exposes no job summary, but the job tees its findings to the
+  log, so fetch them with
+  `gh run view {run_id} --log | cut -f3- | cut -d' ' -f2- | grep -E '^[^ ]+:[a-z0-9-]+:[0-9]+$' | sort -u`.
+  Anchor on that line shape, not a `grep -A N` window around the heading: the
+  runner echoes the workflow's own `run:` body into the log, so a heading match
+  returns script source first, and a fixed window silently truncates a long
+  finding list. Nothing back means the scan produced no findings and the job
+  failed for another reason; read the log before naming which one.
+  - `ERROR: Unexpected exit code [1]` alongside `fatal: Invalid revision range`
+    is gitleaks failing on a commit range it cannot resolve, typically after a
+    force-push. A re-run usually clears this one.
+  - `FTL unable to load gitleaks config` (exit 1), or a Go `panic:` trace from
+    `regexp: Compile` (exit 2), means `.gitleaks.toml` itself is broken — an
+    unbalanced `(` in a `[[rules.allowlists]]` regex is enough. The panic exits
+    2, so the action still reports `Leaks detected, see job summary for details`
+    even though nothing was scanned and no `results.sarif` was written. Name the
+    config error, not that warning, and do not expect a re-run to clear it.
+
+  Report the raw error in both cases; do not call it a leaked credential.
+  With findings, report them and do not act on them: like every Category E
+  failure, the decision is the user's (Step 5). A real credential has to be
+  rotated first, and only a confirmed false positive gets suppressed by
+  committing those `<file>:<rule-id>:<start-line>` lines to `.gitleaksignore`.
+  The scan runs with `--redact`, so neither the log nor the SARIF carries the
+  value and you cannot make that call yourself. Never propose the four-part
+  `Fingerprint:` line from the log — it names a commit the squash-merge
+  discards, so it silences the PR and then fails the push scan of `master`.
 
 ### 1e. Triage
 

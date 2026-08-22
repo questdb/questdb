@@ -20,3 +20,49 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          # Suppress the action's per-finding pull request comment. It tells the
+          # author to paste a four-part <commit>:<file>:<rule-id>:<start-line>
+          # fingerprint, which stops matching once the PR is squash-merged and
+          # then fails the push scan of master. See .gitleaksignore for the form
+          # that survives. Findings still fail the job and appear in its summary.
+          GITLEAKS_ENABLE_COMMENTS: "false"
+      # gitleaks prints that same four-part fingerprint itself, labelled
+      # "Fingerprint:", in the log of the step above. Dropping the comment
+      # removes the instruction but not the value, so append the form that does
+      # survive a squash to the summary the failure warning already points at.
+      - name: Report ignorable fingerprints
+        if: ${{ failure() && env.HAS_GITLEAKS_LICENSE == 'true' }}
+        run: |
+          [ -f results.sarif ] || exit 0
+          fingerprints=$(jq -r '.runs[]?.results[]? | "\(.locations[0].physicalLocation.artifactLocation.uri):\(.ruleId):\(.locations[0].physicalLocation.region.startLine)"' results.sarif 2>/dev/null | sort -u) || true
+          [ -n "$fingerprints" ] || exit 0
+          {
+            echo '### What to do with these findings'
+            echo
+            echo 'If any of these is a real credential, rotate it now. It is already in this'
+            echo 'branch history, and removing it in a later commit does not undo that.'
+            echo
+            echo 'Only for a confirmed false positive: add the matching line below to'
+            echo '`.gitleaksignore`.'
+            echo
+            echo '```'
+            echo "$fingerprints"
+            echo '```'
+            echo
+            echo 'Each line pins a file path and a start line, recorded as of the commit that'
+            echo 'introduced the finding. Anything that moves the finding before the merge --'
+            echo 'a later commit here, an unrelated pull request shifting the same line on'
+            echo '`master`, a rename -- stops the entry matching. For a false positive in a'
+            echo 'file that is still changing, or one that keeps coming back, add a'
+            echo 'line-independent `[[rules.allowlists]]` regex to `.gitleaks.toml` instead.'
+            echo 'See CONTRIBUTING.md, "Secret scanning".'
+            echo
+            if [ "$GITHUB_EVENT_NAME" = 'pull_request' ]; then
+              echo 'Commit the entry to this branch. Do NOT paste the four-part `Fingerprint:`'
+              echo 'line from the job log: it names a commit that the squash-merge discards, so'
+              echo 'it silences this pull request and then fails the push scan of `master`.'
+            else
+              echo 'This build cannot be cleared retroactively -- a re-run scans the same'
+              echo 'commits. An entry committed now takes effect on later scans.'
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
