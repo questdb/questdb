@@ -415,6 +415,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long partitionCompactionMaxRowsPerCommit;
     private final int partitionCompactionPrefixMinPercent;
     private final long partitionCompactionTableDeadMaxSize;
+    private final long partitionCompactionTableDeadMinSize;
     private final int partitionCompactionTableDeadPercent;
     private final int partitionCompactionTableDeadStopPercent;
     private final long partitionCompactionTimeBudget;
@@ -1818,6 +1819,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     getIntPercentage(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_PERCENT, 40)
             );
             this.partitionCompactionTableDeadMaxSize = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_MAX_SIZE, 10 * Numbers.SIZE_1GB);
+            this.partitionCompactionTableDeadMinSize = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_MIN_SIZE, 50 * Numbers.SIZE_1MB);
             this.partitionCompactionMaxRowsPerCommit = getLong(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_ROWS_PER_COMMIT, 5_000_000);
             this.partitionCompactionMaxJoinsPerCommit = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_JOINS_PER_COMMIT, 32));
             this.partitionCompactionTimeBudget = getMicros(properties, env, PropertyKey.CAIRO_PARTITION_COMPACTION_TIME_BUDGET, 200 * Micros.MILLI_MICROS);
@@ -4483,6 +4485,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getPartitionCompactionTableDeadMaxSize() {
             return partitionCompactionTableDeadMaxSize;
+        }
+
+        @Override
+        public long getPartitionCompactionTableDeadMinSize() {
+            return partitionCompactionTableDeadMinSize;
         }
 
         @Override

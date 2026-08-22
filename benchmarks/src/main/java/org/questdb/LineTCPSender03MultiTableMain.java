@@ -33,33 +33,43 @@ import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
 public class LineTCPSender03MultiTableMain {
+    private static final long MAX_STREAM_OFFSET_MICROS = 60_000_000L; // 1 minute
+    private static final int STREAM_COUNT = 3;
+    private static final String TABLE_NAME = "weather3";
+
     public static void main(String[] args) {
-        int[] tables = new int[]{3};
-        final SOCountDownLatch haltLatch = new SOCountDownLatch(tables.length);
-        for (int i = 0; i < tables.length; i++) {
-            int k = tables[i];
-            new Thread(() -> doSend(k, haltLatch)).start();
+        final SOCountDownLatch haltLatch = new SOCountDownLatch(STREAM_COUNT);
+        for (int i = 0; i < STREAM_COUNT; i++) {
+            // Evenly spread across the 1-minute window, so the oldest stream starts exactly
+            // MAX_STREAM_OFFSET_MICROS behind the newest.
+            final long streamOffsetMicros = i * (MAX_STREAM_OFFSET_MICROS / (STREAM_COUNT - 1));
+            new Thread(() -> doSend(streamOffsetMicros, haltLatch)).start();
         }
         haltLatch.await();
     }
 
-    private static void doSend(int k, SOCountDownLatch haltLatch) {
+    /**
+     * One stream into the shared table. Its own timestamps only ever move forward - unlike the old
+     * per-row jitter, which could land anywhere within a window and so was out of order even within
+     * one stream - so the out-of-order shape merge-append exists for comes only from interleaving
+     * the three streams' otherwise-ordered data against each other, staggered by up to a minute.
+     */
+    private static void doSend(long streamOffsetMicros, SOCountDownLatch haltLatch) {
         String hostIPv4 = "127.0.0.1";
         int port = 9009; // 8089 influx
         int bufferCapacity = 4 * 1024;
 
         final Rnd rnd = new Rnd();
         Clock clock = new MicrosecondClockImpl();
-        String tab = "weather" + k;
         try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
             while (true) {
-                sender.metric(tab);
+                long ts = clock.getTicks() * 1000L - streamOffsetMicros + rnd.nextLong(1_000_000);
+                sender.metric(TABLE_NAME);
                 sender
                         .tag("location", "london")
                         .tag("by", "blah")
                         .field("temp", rnd.nextPositiveLong())
                         .field("ok", rnd.nextPositiveInt());
-                final long ts = clock.getTicks() * 1000L + rnd.nextLong(1_000_000_000) - 500_000_000;
                 sender.$(ts);
             }
         } finally {

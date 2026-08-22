@@ -191,6 +191,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final long TIMESTAMP_EPOCH = 0L;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final int COMPACTION_JOINED = 1;
+    private static final int COMPACTION_MADE_PLAIN = 4;
     private static final int COMPACTION_MOVED_TAIL = 3;
     private static final int COMPACTION_NONE = 0;
     private static final int COMPACTION_REWRITTEN = 2;
@@ -2481,6 +2482,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public long getPartitionTimestamp(int partitionIndex) {
         return txWriter.getPartitionTimestampByIndex(partitionIndex);
+    }
+
+    /**
+     * The length of {@code path}'s db-root prefix, so a caller building its own partition path off
+     * {@code getFrameFactory()}'s table root can log it relative to the db root the same way this class's
+     * own log lines do, via {@code $substr(getPathRootSize(), path)}.
+     */
+    public int getPathRootSize() {
+        return pathRootSize;
     }
 
     public long getPhysicallyWrittenRowsSinceLastCommit() {
@@ -5147,7 +5157,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long srcNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
 
         final long e = geometry.getE(partitionIndex);
-        LOG.info().$("compacting partition [table=").$(tableToken)
+        LOG.info().$("compacting composite partition, REWRITE [table=").$(tableToken)
                 .$(", dir=").$(formatPartitionForTimestamp(partitionTs, srcNameTxn))
                 .$(", pieces=").$(pieceCount)
                 .$(", liveRows=").$(liveRows)
@@ -5245,22 +5255,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Compacts ONE partition, reclaiming the dead space a merge-append left in its column files. Three
+     * Compacts ONE partition, reclaiming the dead space a merge-append left in its column files. Four
      * ways, cheapest first: JOIN folds pieces that already sit next to each other in the files and
      * copies nothing; MOVE-TAIL, when the caller allows it, leaves a clean front-at-row-0 piece exactly
      * where it is and copies only the messy tail pieces into a new sibling partition (see
-     * {@link #moveTailToFreshPartition}); REWRITE, the fallback, copies every live row into a fresh
-     * directory and puts the old one on the remove-candidate list.
+     * {@link #moveTailToFreshPartition}); MAKE-PLAIN, for a partition already reduced to that single
+     * front piece (by MOVE-TAIL, by JOIN folding everything into one, or by any commit that merely
+     * happened to leave it that way), drops the dead space above it for free once no reader can still
+     * resolve the geometry record that shape came from (see {@link #makePartitionPlain}); REWRITE, the
+     * fallback for everything else, copies every live row into a fresh directory and puts the old one on
+     * the remove-candidate list.
      * <p>
-     * MAKE-PLAIN and TRIM-FILES (PARTITION_COMPACTION.md Sec.5) are not implemented - see
-     * PARTITION_COMPACTION_state.md for why - so a MOVE-TAIL'd front's own leftover dead space is left for
-     * its own later REWRITE to reclaim, not shrunk in place. Nothing here writes below {@code E} or
-     * shortens any file, which is why none of it needs a reader check: new rows only ever go into a
-     * directory no committed {@code _txn} has ever named, and a directory REWRITE retires is unlinked by
-     * the ordinary purge, under its own check.
+     * TRIM-FILES (PARTITION_COMPACTION.md Sec.5) is not implemented - see PARTITION_COMPACTION_state.md
+     * for why - so a MAKE-PLAIN'd partition's files stay at their old, now-oversized length; only REWRITE
+     * (a later pass, once this one is no longer composite and MAKE-PLAIN cannot pick it again) actually
+     * shortens anything, by copying into a fresh directory. Nothing JOIN, MOVE-TAIL or REWRITE do writes
+     * below {@code E} or shortens any file, which is why none of the three needs a reader check: new rows
+     * only ever go into a directory no committed {@code _txn} has ever named, and a directory REWRITE
+     * retires is unlinked by the ordinary purge, under its own check. MAKE-PLAIN is the one exception - it
+     * is the only one of the four that changes what a PINNED reader's own, already-resolved geometry
+     * record means, so it is the only one gated on {@link #txnScoreboard}.
      *
-     * @return {@link #COMPACTION_NONE}, {@link #COMPACTION_JOINED}, {@link #COMPACTION_MOVED_TAIL} or
-     * {@link #COMPACTION_REWRITTEN}
+     * @return {@link #COMPACTION_NONE}, {@link #COMPACTION_JOINED}, {@link #COMPACTION_MOVED_TAIL},
+     * {@link #COMPACTION_MADE_PLAIN} or {@link #COMPACTION_REWRITTEN}
      */
     private int compactPhysicalPartition(int partitionIndex, boolean unlimited, boolean allowMoveTail, long deadlineMicros) {
         if (txWriter.isPartitionReadOnly(partitionIndex)) {
@@ -5286,6 +5303,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (moved != COMPACTION_NONE) {
                 return moved;
             }
+        }
+        if (isMakePlainEligible(partitionIndex)) {
+            // A single piece already at row 0 is exactly what REWRITE would produce by copying every live
+            // row into a fresh directory - MAKE-PLAIN gets the same result for free, so this shape is
+            // ALWAYS its call, never REWRITE's, even on a pass where MAKE-PLAIN itself is still waiting on
+            // a reader (the caller's own decline/backoff bookkeeping handles the wait, same as any other
+            // declined compaction - see PARTITION_COMPACTION.md's "Backing off after a refusal").
+            return makePartitionPlain(partitionIndex) ? COMPACTION_MADE_PLAIN : COMPACTION_NONE;
         }
         return compactPartition(partitionIndex) ? COMPACTION_REWRITTEN : COMPACTION_NONE;
     }
@@ -7223,7 +7248,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // [0, E) with no hole - possible only when the run covered the whole array (newPieceCount == 1).
         final boolean stillComposite = newPieceCount > 1 || survivorRowOffset != 0 || rowCount != e;
 
-        LOG.info().$("folding adjacent partition pieces [table=").$(tableToken)
+        LOG.info().$("compacting composite partition, JOIN: folding adjacent pieces [table=").$(tableToken)
                 .$(", dir=").$(formatPartitionForTimestamp(partitionTs, nameTxn))
                 .$(", pieces=").$(bestLen)
                 .$(", rows=").$(rowCount)
@@ -8162,6 +8187,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * True when {@code partitionIndex} is a composite partition already reduced to a single piece
+     * sitting at row 0 - MOVE-TAIL's own end state, JOIN folding everything into one, or any commit that
+     * merely happened to leave it that way - with real dead space above it and nothing else standing in
+     * the way. {@link #makePartitionPlain} still has to wait for readers; this only decides whether the
+     * SHAPE is right for it to ever be worth trying. The active (last) partition never matches - flipping
+     * composite-ness on it changes how ITS OWN eventual close truncates {@code columns[]} (the
+     * composite-close guard {@code doClose} relies on), and that decision must not run ahead of the
+     * writer's own live append state the way it would here.
+     */
+    private boolean isMakePlainEligible(int partitionIndex) {
+        return PartitionCompactionPolicy.isMakePlainShape(txWriter, getGeometry(), partitionIndex);
+    }
+
+    /**
      * Checks whether a partition already has a sealed posting index for the
      * given column. The v2 .pk chain has at least one published entry
      * (sealTxn >= 0) iff at least one seal landed for this partition; the
@@ -8356,6 +8395,86 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * MAKE-PLAIN (PARTITION_COMPACTION.md Sec.5, ported onto this branch's {@code PartitionGeometry}
+     * instead of the reference's explicit {@code E} field on a hardlink-split folder). {@code
+     * isMakePlainEligible} already confirmed the shape - one piece, at row 0, with dead space above it -
+     * so the only thing left to decide is whether any reader can still resolve the geometry record that
+     * shape came from: an older reader's own resolved {@link PartitionGeometry} may still list piece(s)
+     * this partition no longer has, and would misread bytes above the live piece as belonging to one of
+     * them instead of as the dead space they now are.
+     * <p>
+     * In this branch's model, "plain" and "the piece's row count is {@code E}" are the same fact: an
+     * ordinary (non-composite) partition has no {@code _geometry} record of its own, so
+     * {@link PartitionGeometry#getE} falls back to the live row count directly. Dropping the geometry
+     * pointer - {@link #NO_GEOMETRY_REF} - and leaving {@code _txn}'s own row count untouched (it was
+     * already the live count, {@code E} was the only thing composite about this shape) IS lowering
+     * {@code E} to the row count; there is no separate field to write. No bytes move and no file
+     * shortens - that is TRIM-FILES's job, not implemented in this pass (see
+     * PARTITION_COMPACTION_state.md) - so unlike TRIM-FILES this needs no SECOND reader wait of its own.
+     *
+     * @return true if the partition was made plain this call; false if a reader still resolves the
+     * geometry record this shape came from - the caller's own decline/backoff bookkeeping (same path any
+     * other declined compaction takes) is what retries this on a later housekeeping pass.
+     */
+    private boolean makePartitionPlain(int partitionIndex) {
+        final PartitionGeometry geometry = getGeometry();
+        // The commit that published this partition's CURRENT geometry record is exactly the commit a
+        // reader must be AT OR PAST to be reading this shape rather than an earlier, still-composite one -
+        // any later commit that changed the piece set would have published a newer record instead. One
+        // transaction more conservative than tight, matching PARTITION_COMPACTION.md's own canMakePlain:
+        // a directory named `.N` first becomes reachable at the commit AFTER the one that named it.
+        final long fromTxn = Math.max(0, txWriter.getPartitionNameTxn(partitionIndex));
+        final long toTxn = geometry.getWriterTxn(partitionIndex);
+        if (toTxn <= fromTxn || !txnScoreboard.isRangeAvailable(fromTxn, toTxn)) {
+            return false;
+        }
+        final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long liveRows = txWriter.getPartitionSize(partitionIndex);
+        final long deadRows = geometry.getE(partitionIndex) - liveRows;
+        txWriter.setPartitionGeometryRef(partitionTs, NO_GEOMETRY_REF);
+        LOG.info().$("compacting composite partition, MAKE-PLAIN: dropping dead space above the single" +
+                        " piece at row 0 [table=").$(tableToken)
+                .$(", dir=").$(formatPartitionForTimestamp(partitionTs, txWriter.getPartitionNameTxn(partitionIndex)))
+                .$(", liveRows=").$(liveRows)
+                .$(", deadRows=").$(deadRows)
+                .I$();
+        commitTxWriterAndPublishPendingPostingSealPurges();
+        return true;
+    }
+
+    /**
+     * MAKE-PLAIN, independent of the four waste thresholds - see {@link PartitionCompactionPolicy#selectMakePlainCandidate}
+     * for why this sweep exists at all, the same reasoning {@link #foldFoldableFolders} already applies
+     * to JOIN. A decline (a reader still blocks it) backs the partition off through the ordinary
+     * decline/cooldown bookkeeping, same as a declined REWRITE or MOVE-TAIL - PARTITION_COMPACTION.md's
+     * own "Backing off after a refusal" - so this pass moves on rather than spinning on it; a success
+     * needs no cooldown, since a plain partition can never match {@link PartitionCompactionPolicy#isMakePlainShape}
+     * again.
+     */
+    private void makePlainFoldableFolders(long wallClockMicros) {
+        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudget();
+        final int maxPerCommit = configuration.getPartitionCompactionMaxJoinsPerCommit();
+        final PartitionGeometry geometry = getGeometry();
+        int madePlain = 0;
+        int from = 0;
+        while (madePlain < maxPerCommit) {
+            final int partitionIndex = partitionCompactionPolicy.selectMakePlainCandidate(txWriter, geometry, wallClockMicros, from);
+            if (partitionIndex < 0) {
+                return;
+            }
+            from = partitionIndex + 1;
+            if (makePartitionPlain(partitionIndex)) {
+                madePlain++;
+            } else {
+                partitionCompactionPolicy.onDeclined(txWriter.getPartitionTimestampByIndex(partitionIndex), wallClockMicros);
+            }
+            if (configuration.getMicrosecondClock().getTicks() > deadline) {
+                return;
+            }
+        }
+    }
+
     private long mapAppendColumnBuffer(MemoryMA column, long offset, long size, boolean rw) {
         if (size == 0) {
             return 0;
@@ -8482,10 +8601,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * front to preserve - the reference's own "first piece does not start at row 0 -> REWRITE" rule), no
      * live tail rows, or the front is not a big enough share of the partition to be worth a two-way split.
      * <p>
-     * Unlike REWRITE, the front's {@code E} is deliberately left unchanged - its remaining dead space (the
-     * old tail pieces' abandoned bytes, still counted in {@code E}) is reclaimed later by the front's own
-     * future REWRITE, not by this method. See PARTITION_COMPACTION_state.md for why MAKE-PLAIN/TRIM-FILES
-     * (the reference's steps that shrink the front in place) are not implemented in this pass.
+     * Unlike REWRITE, the front's {@code E} is deliberately left unchanged here - its remaining dead space
+     * (the old tail pieces' abandoned bytes, still counted in {@code E}) is what {@link #makePartitionPlain}
+     * reclaims later, in its own transaction, once no reader still resolves the geometry record this
+     * commit is about to publish. TRIM-FILES, the reference's OTHER in-place-shrink step - which would
+     * additionally cut the front's files down to their now-true length - is not implemented in this pass;
+     * see PARTITION_COMPACTION_state.md for why.
      *
      * @return {@link #COMPACTION_NONE} or {@link #COMPACTION_MOVED_TAIL}
      */
@@ -8508,8 +8629,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return COMPACTION_NONE;
         }
         if (!unlimited && tailRows > configuration.getPartitionCompactionMaxRowsPerCommit()) {
-            LOG.info().$("moving a compaction tail over the per-commit row budget, nothing else has run" +
-                            " this pass [table=").$(tableToken)
+            LOG.info().$("compacting composite partition, MOVE-TAIL: tail over the per-commit row budget," +
+                            " nothing else has run this pass [table=").$(tableToken)
                     .$(", rows=").$(tailRows)
                     .$(", budget=").$(configuration.getPartitionCompactionMaxRowsPerCommit())
                     .I$();
@@ -9020,7 +9141,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
-                LOG.info().$("o3 partition update [timestampMin=").$ts(timestampDriver, timestampMin)
+                LOG.debug().$("o3 partition update [timestampMin=").$ts(timestampDriver, timestampMin)
                         .$(", last=").$(partitionTimestamp == lastPartitionTimestamp)
                         .$(", partitionTimestamp=").$ts(timestampDriver, partitionTimestamp)
                         .$(", partitionMutates=").$(partitionMutates)
@@ -13553,10 +13674,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         continue;
                     }
                 }
+                // allowFreshIfMissing=true: columnTop < partitionSize falls through to here without the
+                // keyFileExists probe above ever running, so a column whose first real row is this very
+                // commit reaches this reopen the same way the O3 write path that just built its key file
+                // does - skip the redundant existence probe rather than let a lying/racing exists() throw
+                // over a file this session's own earlier step already created (see IndexWriter#of).
                 indexer.configureFollowerAndWriter(
                         path.trimTo(plen), colName, colNameTxn,
                         getPrimaryColumn(colIdx), columnTop,
-                        lastOpenPartitionTs, currentNameTxn
+                        lastOpenPartitionTs, currentNameTxn, true
                 );
                 configureCoveringIfNeeded(indexer, colIdx, lastOpenPartitionTs);
             }
@@ -13734,61 +13860,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /**
-     * Runs one pass of partition compaction, inside {@code housekeep} and on whichever thread owns the
-     * writer. At most ONE partition is touched per commit, and each step of a compaction is its own
-     * transaction, so the work can always be stopped between steps.
-     * <p>
-     * JOIN comes first and always: it copies nothing, so folding whatever can be folded before deciding
-     * whether a copy is needed is free. After a fold the rules are re-evaluated on the NEXT commit, from
-     * committed state, rather than continued from a stale reading here.
-     * <p>
-     * The active (last) partition is an ordinary candidate like any other. A REWRITE or MOVE-TAIL of it
-     * retires the directory or row range {@code columns[]} is currently mapped against - a JOIN does not,
-     * since it only ever rewrites {@link PartitionGeometry}'s own piece array, never a file byte or a
-     * {@code nameTxn} - so only those two outcomes need {@code columns[]} closed and reopened against
-     * whatever {@code txWriter} records as the last partition afterward, before the next append (or
-     * {@link #processPartitionRemoveCandidates()}, called right after this method returns) reaches it.
-     */
-    private void runCompaction(long wallClockMicros) {
-        if (!PartitionBy.isPartitioned(partitionBy)) {
-            return;
-        }
-        if (partitionCompactionPolicy == null) {
-            partitionCompactionPolicy = new PartitionCompactionPolicy(configuration);
-        }
-        final PartitionGeometry geometry = getGeometry();
-        if (partitionCompactionPolicy.selectPartition(txWriter, geometry, avgRecordSize(), wallClockMicros) < 0) {
-            foldFoldableFolders(wallClockMicros);
-            return;
-        }
-        final int partitionIndex = partitionCompactionPolicy.getSelectedPartitionIndex();
-        final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
-        final int reason = partitionCompactionPolicy.getSelectedReason();
-        // The piece-count rule is the one case allowed over the row budget: the alternative is a
-        // geometry file that grows without end.
-        final boolean unlimited = reason == PartitionCompactionPolicy.REASON_PIECE_COUNT;
-        // An idle partition (the age rule) will not be written to again, so there is no future write to
-        // spare a clean front for - MOVE-TAIL's whole point. Every other rule goes through it first.
-        final boolean allowMoveTail = reason != PartitionCompactionPolicy.REASON_AGE;
-        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudget();
-        final boolean isActivePartition = partitionIndex == txWriter.getPartitionCount() - 1;
-        final int result = compactPhysicalPartition(partitionIndex, unlimited, allowMoveTail, deadline);
-        switch (result) {
-            case COMPACTION_REWRITTEN, COMPACTION_MOVED_TAIL ->
-                // Cooling off matters only after a copy. A fold cannot repeat - the pieces it merged are
-                // gone - so suppressing the partition after one would only delay the copy that follows it.
-                    partitionCompactionPolicy.onCompacted(partitionTs, wallClockMicros);
-            case COMPACTION_NONE -> partitionCompactionPolicy.onDeclined(partitionTs, wallClockMicros);
-            default -> {
-            }
-        }
-        if (isActivePartition && (result == COMPACTION_REWRITTEN || result == COMPACTION_MOVED_TAIL)) {
-            closeActivePartition(false);
-            openLastPartition();
-        }
-    }
-
     private void runFragile(FragileCode fragile, CairoException e) {
         try {
             fragile.run();
@@ -13804,6 +13875,80 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         partitionRemoveCandidates.clear();
         partitionRemoveCandidates.add(timestamp, partitionNameTxn);
         processPartitionRemoveCandidates();
+    }
+
+    /**
+     * Runs one pass of partition compaction, inside {@code housekeep} and on whichever thread owns the
+     * writer. At most ONE partition is touched per commit, and each step of a compaction is its own
+     * transaction, so the work can always be stopped between steps.
+     * <p>
+     * JOIN comes first and always: it copies nothing, so folding whatever can be folded before deciding
+     * whether a copy is needed is free. After a fold the rules are re-evaluated on the NEXT commit, from
+     * committed state, rather than continued from a stale reading here. MOVE-TAIL is the one exception:
+     * a successful MOVE-TAIL is immediately followed, in the same call and the same partition, by an
+     * attempt at MAKE-PLAIN - the front it just left behind is exactly MAKE-PLAIN's own eligible shape,
+     * so trying it right away (its own transaction, gated on its own reader check) beats cooling the
+     * partition down for a fixed interval that has nothing to do with whether a reader is in the way.
+     * <p>
+     * The active (last) partition is an ordinary candidate for JOIN, MOVE-TAIL and REWRITE, like any
+     * other. A REWRITE or MOVE-TAIL of it retires the directory or row range {@code columns[]} is
+     * currently mapped against - a JOIN does not, since it only ever rewrites {@link PartitionGeometry}'s
+     * own piece array, never a file byte or a {@code nameTxn} - so only those two outcomes need
+     * {@code columns[]} closed and reopened against whatever {@code txWriter} records as the last
+     * partition afterward, before the next append (or {@link #processPartitionRemoveCandidates()}, called
+     * right after this method returns) reaches it. MAKE-PLAIN is the one exception to "ordinary candidate
+     * like any other": {@link PartitionCompactionPolicy#isMakePlainShape} always declines the active
+     * partition, so it never needs this treatment - see {@link #makePartitionPlain}.
+     */
+    private void runCompaction(long wallClockMicros) {
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            return;
+        }
+        if (partitionCompactionPolicy == null) {
+            partitionCompactionPolicy = new PartitionCompactionPolicy(configuration);
+        }
+        final PartitionGeometry geometry = getGeometry();
+        if (partitionCompactionPolicy.selectPartition(txWriter, geometry, avgRecordSize(), wallClockMicros) < 0) {
+            foldFoldableFolders(wallClockMicros);
+            makePlainFoldableFolders(wallClockMicros);
+            return;
+        }
+        final int partitionIndex = partitionCompactionPolicy.getSelectedPartitionIndex();
+        final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final int reason = partitionCompactionPolicy.getSelectedReason();
+        // The piece-count rule is the one case allowed over the row budget: the alternative is a
+        // geometry file that grows without end.
+        final boolean unlimited = reason == PartitionCompactionPolicy.REASON_PIECE_COUNT;
+        // An idle partition (the age rule) will not be written to again, so there is no future write to
+        // spare a clean front for - MOVE-TAIL's whole point. Every other rule goes through it first.
+        final boolean allowMoveTail = reason != PartitionCompactionPolicy.REASON_AGE;
+        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudget();
+        final boolean isActivePartition = partitionIndex == txWriter.getPartitionCount() - 1;
+        final int result = compactPhysicalPartition(partitionIndex, unlimited, allowMoveTail, deadline);
+        switch (result) {
+            case COMPACTION_REWRITTEN ->
+                // Cooling off matters only after a copy. A fold cannot repeat - the pieces it merged are
+                // gone - so suppressing the partition after one would only delay the copy that follows it.
+                    partitionCompactionPolicy.onCompacted(partitionTs, wallClockMicros);
+            case COMPACTION_MOVED_TAIL -> {
+                // The front MOVE-TAIL just left behind is exactly MAKE-PLAIN's own eligible shape - try
+                // it immediately, in its own transaction, rather than cooling the partition down for a
+                // fixed interval that has nothing to do with whether a reader is actually in the way. A
+                // plain partition can never match isMakePlainShape again, so success needs no cooldown of
+                // its own; a decline (a reader still pinned) gets the ordinary backoff, same as any other,
+                // and the independent sweep in makePlainFoldableFolders retries it from there.
+                if (!isMakePlainEligible(partitionIndex) || !makePartitionPlain(partitionIndex)) {
+                    partitionCompactionPolicy.onDeclined(partitionTs, wallClockMicros);
+                }
+            }
+            case COMPACTION_NONE -> partitionCompactionPolicy.onDeclined(partitionTs, wallClockMicros);
+            default -> {
+            }
+        }
+        if (isActivePartition && (result == COMPACTION_REWRITTEN || result == COMPACTION_MOVED_TAIL)) {
+            closeActivePartition(false);
+            openLastPartition();
+        }
     }
 
     private void scaleSymbolCapacities() {
@@ -13926,6 +14071,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (indexer == null) {
                     continue;
                 }
+                // A column whose top only just fell inside [0, partitionSize) can reach here right after
+                // the O3 write itself already created its key file - ADD COLUMN never wrote one for a
+                // partition it found row-less, and this commit is the first to add a row past that top,
+                // so the O3 write path is what built it moments ago, not some earlier commit.
+                // configureFollowerAndWriter's default reopen throws "index does not exist" whenever its
+                // own exists() probe says no, suspending the whole WAL table even though the file is
+                // right there. allowFreshIfMissing=true only skips that redundant probe in favor of the
+                // length() check PostingIndexWriter#of already runs next: a file this session really did
+                // just create reads back its real size regardless of what exists() claims, while a
+                // genuinely absent one still fails that size check and still throws - so this never masks
+                // a real loss, it only stops trusting a probe that is not the thing actually being relied
+                // on.
                 processed = true;
 
                 IntList coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
@@ -13940,7 +14097,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.configureFollowerAndWriter(
                                 path.trimTo(plen), colName, colNameTxn,
                                 getPrimaryColumn(colIdx), columnTop,
-                                partitionTimestamp, partitionNameTxn
+                                partitionTimestamp, partitionNameTxn, true
                         );
                         // REBUILD intermediate entry: getTxn()+1 keeps it
                         // invisible to T-pinned readers (it lacks a cover
@@ -14032,7 +14189,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     indexer.configureFollowerAndWriter(
                             path.trimTo(plen), colName, colNameTxn,
                             getPrimaryColumn(colIdx), columnTop,
-                            partitionTimestamp, partitionNameTxn
+                            partitionTimestamp, partitionNameTxn, true
                     );
                     try {
                         // Same getTxn()+1 convention as O3CopyJob and the
@@ -15587,7 +15744,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 case DROP -> deadRows += O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
             }
         }
-        return PartitionCompactionPolicy.exceedsThresholds(configuration, liveRows, deadRows, pieceCount, avgRecordSize());
+        final boolean breaches = PartitionCompactionPolicy.exceedsThresholds(configuration, liveRows, deadRows, pieceCount, avgRecordSize());
+        if (breaches) {
+            LOG.info().$("assembling fresh composite partition version: would breach compaction thresholds [table=")
+                    .$(tableToken)
+                    .$(", partitionIndex=").$(partitionIndex)
+                    .$(", anticipatedLiveRows=").$(liveRows)
+                    .$(", anticipatedDeadRows=").$(deadRows)
+                    .$(", anticipatedPieces=").$(pieceCount)
+                    .$(", maxPieces=").$(configuration.getPartitionCompactionMaxPieces())
+                    .$(", deadRowsRatio=").$(configuration.getPartitionCompactionDeadRowsRatio())
+                    .$(", deadMinSize=").$(configuration.getPartitionCompactionDeadMinSize())
+                    .I$();
+        }
+        return breaches;
     }
 
     @FunctionalInterface

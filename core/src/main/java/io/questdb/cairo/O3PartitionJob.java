@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -65,6 +66,7 @@ import io.questdb.std.Os;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionTask;
@@ -428,6 +430,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         final long piecesBefore = ctx.bounds.size() / O3CompositeMergeStrategy.LONGS_PER_BOUND;
         final long eBefore = geometry.getE(partitionIndex);
+        // The committed, pre-cut piece count, read before beginUpdate/commitUpdate below replace it -
+        // piecesBefore already reflects the pre-split cuts step 2 applied in memory, so the delta between
+        // the two is exactly how many of those cuts landed (each one adds a single bound entry).
+        final long piecesBeforeCuts = geometry.getPieceCount(partitionIndex);
         int keepCount = 0, mergeCount = 0, newPieceCount = 0, appendCount = 0, dropCount = 0;
         for (int i = 0; i < plan.actions.size(); i++) {
             switch (plan.actions.getQuick(i).type) {
@@ -461,6 +467,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 ctx.transientVersions,
                 ctx
         );
+        // JOIN, automatically: fold whatever this plan's own KEEP/MERGE/NEW_PIECE/APPEND pieces left
+        // list-and-file-adjacent, before publishing, rather than leaving it for a later housekeeping
+        // commit to find and fold as a separate transaction.
+        foldAdjacentPieces(ctx.pieces);
 
         // Does this partition END UP composite AT ALL? Pieces that TILE [0, physicalRows) with no holes are
         // described exactly by a single piece, so their boundaries carry nothing: the row count says
@@ -519,19 +529,39 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // pieces are what the design exists to leave alone, and the physical row count growing by far less
         // than the partition holds is the win it claims. Reading that off several lines, interleaved with
         // other partitions' and other tables', is what a per-action log costs.
+        final Path dirPath = Path.getThreadLocal(pathToTable);
+        setPathForNativePartition(
+                dirPath,
+                tableWriter.getMetadata().getTimestampType(),
+                tableWriter.getPartitionBy(),
+                partitionTimestamp,
+                srcNameTxn
+        );
+        // newRows is what THIS pass physically wrote - e is grow-only and every action that writes
+        // anything does so at the tail (see executeCompositePlan), so the extent's own growth already
+        // is that count, with no separate accumulator to keep in step.
+        final long newRows = e - eBefore;
+        // How many of those written rows are genuinely new, versus existing rows a MERGE recopied to
+        // relocate them: the ratio is this pass's own write amplification, the same metric and rounding
+        // ApplyWal2TableJob's own "ampl=" already uses.
+        final long incomingRows = srcOooHi - srcOooLo + 1;
+        final double amplification = incomingRows > 0
+                ? Numbers.roundUp(Numbers.roundUp(100.0 * newRows / incomingRows, 2) / 100.0, 2)
+                : 0;
         LOG.info().$("merge-append composite partition [table=").$(tableWriter.getTableToken())
-                .$(", ts=").$ts(ColumnType.getTimestampDriver(tableWriter.getMetadata().getTimestampType()), partitionTimestamp)
+                .$(", dir=").$substr(tableWriter.getPathRootSize(), dirPath)
                 // What the partition ENDS UP with, not what the plan produced: a plan whose pieces tile
                 // the files publishes no geometry, and such a partition holds one piece by definition.
                 .$(", pieces=").$(piecesBefore).$("->").$(isComposite ? ctx.pieces.size() / 4 : (fullyReplaced ? 0 : 1))
+                .$(", split=").$(piecesBefore - piecesBeforeCuts)
                 .$(", keep=").$(keepCount)
                 .$(", merge=").$(mergeCount)
-                .$(", newPieces=").$(newPieceCount)
-                .$(", append=").$(appendCount)
-                .$(", drop=").$(dropCount)
-                .$(", newRows=").$(liveRows)
-                .$(", newPhysicalRows=").$(e)
-                .$(", deadRows=").$(e > 0 ? Math.round((e - liveRows) * 100.0 / e * 100.0) / 100.0 : 0).$('%')
+                .$(", newPieces=").$(newPieceCount + appendCount)
+                .$(", newRows=").$(incomingRows)
+                .$(", totalRows=").$(liveRows)
+                .$(", totalPhysicalRows=").$(e)
+                .$(", ampl=").$(amplification)
+                .$(", deadRows=").$(liveRows > 0 ? Math.round((e - liveRows) * 100.0 / liveRows * 100.0) / 100.0 : 0).$('%')
                 .I$();
 
         final long geometryRef = !isComposite ? TableWriter.NO_GEOMETRY_REF : geometry.publish(
@@ -622,6 +652,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 partitionTimestamp,
                 srcNameTxn
         );
+        final int partitionPathLen = partitionPath.size();
 
         final ObjList<O3CompositeMergeStrategy.Action> actions = plan.actions;
         final int actionCount = actions.size();
@@ -850,6 +881,27 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final int columnType = metadata.getColumnType(i);
                 if (columnType <= 0) {
                     continue;
+                }
+                if (metadata.isColumnIndexed(i) && IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                    long columnTop = transientVersions.getColumnTop(partitionTimestamp, i);
+                    // Row-less when this commit began (top already at-or-past the pre-commit extent): the
+                    // plan's own action loop above already opened this column under that same condition and
+                    // wrote whatever it needed to, so its key file, if this partition ever gets one, is this
+                    // commit's own fresh creation - not a pre-existing file this pass can rely on finding.
+                    // Confirm it is there before re-opening; a re-open a few lines down would otherwise
+                    // throw "index does not exist" out of a diagnostic-only length check and take the whole
+                    // WAL table down with it, for a column this loop has nothing left to verify on anyway.
+                    if (columnTop >= partitionE) {
+                        long columnNameTxn = transientVersions.getColumnNameTxn(partitionTimestamp, i);
+                        LPSZ keyFile = IndexFactory.keyFileName(
+                                metadata.getColumnIndexType(i), partitionPath.trimTo(partitionPathLen), metadata.getColumnName(i), columnNameTxn
+                        );
+                        boolean keyFileExists = ff.exists(keyFile);
+                        partitionPath.trimTo(partitionPathLen);
+                        if (!keyFileExists) {
+                            continue;
+                        }
+                    }
                 }
                 try (FrameColumn col = target.createColumn(i)) {
                     final long top = col.getColumnTop();
@@ -1100,7 +1152,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
         }
 
-        LOG.info().$("assembled fresh partition version [table=").$(tableWriter.getTableToken())
+        LOG.info().$("assembled fresh composite partition version [table=").$(tableWriter.getTableToken())
                 .$(", ts=").$ts(ColumnType.getTimestampDriver(metadata.getTimestampType()), partitionTimestamp)
                 .$(", srcNameTxn=").$(srcNameTxn)
                 .$(", newNameTxn=").$(newNameTxn)
@@ -1160,6 +1212,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         if (TxReader.geometryGeneration(committedRef) >= TxReader.PARTITION_GEOMETRY_MAX_GENERATION) {
             final long nextOffset = TxReader.geometryOffset(committedRef) + geometry.getCommittedRecordSize(partitionIndex);
             if (nextOffset + PartitionGeometryFile.recordSize(actionCount) > PartitionGeometryFile.MAX_FILE_SIZE) {
+                LOG.info().$("assembling fresh composite partition version: geometry chain exhausted [table=")
+                        .$(tableWriter.getTableToken())
+                        .$(", partitionIndex=").$(partitionIndex)
+                        .$(", generation=").$(TxReader.geometryGeneration(committedRef))
+                        .$(", nextOffset=").$(nextOffset)
+                        .$(", maxFileSize=").$(PartitionGeometryFile.MAX_FILE_SIZE)
+                        .I$();
                 return true;
             }
         }
@@ -1293,6 +1352,50 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static void addNewPiece(LongList piecesOut, long tsLo, long tsHi, long rowOffset, long rowCount) {
         piecesOut.add(tsLo, tsHi);
         piecesOut.add(rowOffset, rowCount);
+    }
+
+    /**
+     * JOIN, inline: folds every run of list-adjacent pieces (this plan's own tsLo order, the order
+     * {@code addPiece} requires) that are ALSO file-adjacent ({@code rowOffset == prevOffset + prevCount})
+     * into one, in a single forward pass. Free, like {@code TableWriter.foldContiguousPieces} - no bytes
+     * move, only the piece records merge - so there is no reason to leave it for a later housekeeping
+     * commit to find: this commit is already rewriting the piece list, and a run only exists here because
+     * this same plan just placed a KEEP piece directly behind a MERGE/NEW_PIECE/APPEND one (or the
+     * partition already carried an adjacent run from before this commit).
+     * <p>
+     * Folds forward into the piece already written, so - unlike the housekeeping version, which picks a
+     * run's first piece as the survivor and must special-case an empty one - an empty piece here never
+     * becomes the anchor other pieces fold onto; it only ever contributes rows into whatever real piece
+     * precedes it. {@code tsHi} only ever grows, and only from a piece that actually holds rows, so an
+     * empty piece can never shrink what a real one already set.
+     */
+    private static void foldAdjacentPieces(LongList pieces) {
+        final int n = pieces.size();
+        if (n <= 4) {
+            return;
+        }
+        int w = 0;
+        for (int r = 0; r < n; r += 4) {
+            final long tsLo = pieces.getQuick(r);
+            final long tsHi = pieces.getQuick(r + 1);
+            final long rowOffset = pieces.getQuick(r + 2);
+            final long rowCount = pieces.getQuick(r + 3);
+            if (w > 0 && rowOffset == pieces.getQuick(w - 2) + pieces.getQuick(w - 1)) {
+                if (rowCount > 0) {
+                    pieces.setQuick(w - 3, tsHi);
+                }
+                pieces.setQuick(w - 1, pieces.getQuick(w - 1) + rowCount);
+                continue;
+            }
+            if (w != r) {
+                pieces.setQuick(w, tsLo);
+                pieces.setQuick(w + 1, tsHi);
+                pieces.setQuick(w + 2, rowOffset);
+                pieces.setQuick(w + 3, rowCount);
+            }
+            w += 4;
+        }
+        pieces.setPos(w);
     }
 
 
