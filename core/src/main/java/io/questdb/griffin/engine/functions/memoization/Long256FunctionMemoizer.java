@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -43,6 +43,12 @@ public final class Long256FunctionMemoizer extends Long256Function implements Me
 
     public Long256FunctionMemoizer(Function fn) {
         this.fn = fn;
+    }
+
+    @Override
+    public void clearMemo() {
+        validAValue = false;
+        validBValue = false;
     }
 
     @Override
@@ -99,12 +105,6 @@ public final class Long256FunctionMemoizer extends Long256Function implements Me
     @Override
     public boolean isThreadSafe() {
         return false;
-    }
-
-    @Override
-    public void memoize(Record record) {
-        validAValue = false;
-        validBValue = false;
     }
 
     @Override

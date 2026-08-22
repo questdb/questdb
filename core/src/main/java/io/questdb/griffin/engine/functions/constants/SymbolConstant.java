@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -48,9 +48,7 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
             this.utf8Value = null;
             this.index = SymbolTable.VALUE_IS_NULL;
         } else {
-            if (Chars.startsWith(value, '\'')
-                    && Chars.endsWith(value, '\'')
-                    && value.length() > 1) {
+            if (Chars.startsWith(value, '\'') && Chars.endsWith(value, '\'') && value.length() > 1) {
                 this.value = Chars.toString(value, 1, value.length() - 1);
             } else {
                 this.value = Chars.toString(value);
@@ -114,6 +112,14 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     }
 
     @Override
+    public boolean supportsKeyValueAccess() {
+        // The key is a field read and valueOf() resolves it without touching text, so a key
+        // consumer such as QWP egress should ship this constant once per batch rather than
+        // re-encoding it on every row.
+        return true;
+    }
+
+    @Override
     public boolean supportsParallelism() {
         return true;
     }
@@ -129,11 +135,12 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
 
     @Override
     public CharSequence valueBOf(int key) {
-        return value;
+        // Aggregates store VALUE_IS_NULL on setEmpty and read it back through arg.
+        return key != SymbolTable.VALUE_IS_NULL ? value : null;
     }
 
     @Override
     public CharSequence valueOf(int symbolKey) {
-        return value;
+        return symbolKey != SymbolTable.VALUE_IS_NULL ? value : null;
     }
 }

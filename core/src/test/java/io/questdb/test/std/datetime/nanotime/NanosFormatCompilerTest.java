@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,7 +31,6 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.datetime.nanotime.NanosFormatCompiler;
 import io.questdb.std.datetime.nanotime.NanosFormatUtils;
@@ -423,6 +422,11 @@ public class NanosFormatCompilerTest {
     @Test
     public void testFormatNano9Six() throws NumericException {
         assertFormat("2022-02-02 02:02:02.374812000", "y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.374812000Z");
+    }
+
+    @Test
+    public void testFormatOptionalNano9Zero() throws NumericException {
+        assertFormat("2026-03-31T09:02:28.000000000", "yyyy-MM-ddTHH:mm:ss.N+", "2026-03-31T09:02:28.000000000Z");
     }
 
     @Test
@@ -826,13 +830,13 @@ public class NanosFormatCompilerTest {
     @Test
     public void testOperationUniqueness() {
 
-        Assert.assertTrue(MicrosFormatCompiler.getOpCount() > 0);
+        Assert.assertTrue(NanosFormatCompiler.getOpCount() > 0);
 
         IntHashSet codeSet = new IntHashSet();
         CharSequenceHashSet nameSet = new CharSequenceHashSet();
-        for (int i = 0, n = MicrosFormatCompiler.getOpCount(); i < n; i++) {
-            String name = MicrosFormatCompiler.getOpName(i);
-            int code = MicrosFormatCompiler.getOpCode(name);
+        for (int i = 0, n = NanosFormatCompiler.getOpCount(); i < n; i++) {
+            String name = NanosFormatCompiler.getOpName(i);
+            int code = NanosFormatCompiler.getOpCode(name);
             Assert.assertTrue(codeSet.add(code));
             Assert.assertTrue(nameSet.add(name));
         }
@@ -889,6 +893,41 @@ public class NanosFormatCompilerTest {
     }
 
     @Test
+    public void testParseOptionalNanos9Absent() throws NumericException {
+        assertNanos("yyyy-MM-dd'T'HH:mm:ss.N+'Z'", "2026-03-31T09:02:28.000000000Z", "2026-03-31T09:02:28Z");
+    }
+
+    @Test
+    public void testParseOptionalNanos9Present() throws NumericException {
+        assertNanos("yyyy-MM-dd'T'HH:mm:ss.N+'Z'", "2026-03-31T09:02:28.123456789Z", "2026-03-31T09:02:28.123456789Z");
+    }
+
+    @Test
+    public void testParseOptionalNanos9RejectsBareDot() {
+        assertException("yyyy-MM-dd'T'HH:mm:ss.N+'Z'", "2026-03-31T09:02:28.Z");
+    }
+
+    @Test
+    public void testParseOptionalNanos9AbsentAtEnd() throws NumericException {
+        assertNanos("yyyy-MM-dd'T'HH:mm:ss.N+", "2026-03-31T09:02:28.000000000Z", "2026-03-31T09:02:28");
+    }
+
+    @Test
+    public void testParseOptionalNanos9RejectsBareDotAtEnd() {
+        assertException("yyyy-MM-dd'T'HH:mm:ss.N+", "2026-03-31T09:02:28.");
+    }
+
+    @Test
+    public void testParseOptionalNanos9LeavesDotForLiteral() throws NumericException {
+        assertNanos(".N+.", "1970-01-01T00:00:00.000000000Z", ".");
+    }
+
+    @Test
+    public void testParseOptionalNanos9LeavesDotForLiteralWhenFollowedByNonDigit() throws NumericException {
+        assertNanos(".N+..", "1970-01-01T00:00:00.000000000Z", "..");
+    }
+
+    @Test
     public void testParseUtc() {
         assertThat(CommonUtils.UTC_PATTERN, "2011-10-03T00:00:00.000000000Z", "2011-10-03T00:00:00.000Z");
     }
@@ -935,12 +974,12 @@ public class NanosFormatCompilerTest {
 
     @Test
     public void testTimeZone4() {
-        assertThat("dd-MM-yy HH:m z", "2003-10-23T04:01:00.000000000Z", "23-10-03 06:01 Hora de verano de Sudáfrica", "es-PA");
+        assertThat("dd-MM-yy HH:m z", "2003-10-23T04:01:00.000000000Z", "23-10-03 06:01 hora de verano de Johannesburgo", "es-PA");
     }
 
     @Test
     public void testTimeZone5() {
-        assertThat("dd-MM-yy HH:m [z]", "2010-09-03T21:01:00.000000000Z", "03-09-10 23:01 [Hora de verano de Sudáfrica]", "es-PA");
+        assertThat("dd-MM-yy HH:m [z]", "2010-09-03T21:01:00.000000000Z", "03-09-10 23:01 [hora de verano de Johannesburgo]", "es-PA");
     }
 
     @Test
@@ -1009,7 +1048,7 @@ public class NanosFormatCompilerTest {
     private static void assertException(String pattern, String input) {
         DateFormat format = get(pattern);
         try {
-            format.parse(pattern, DateLocaleFactory.EN_LOCALE);
+            format.parse(input, DateLocaleFactory.EN_LOCALE);
             Assert.fail();
         } catch (NumericException ignored) {
         }
@@ -1045,6 +1084,7 @@ public class NanosFormatCompilerTest {
 
         sink.clear();
         REFERENCE.format(compiler.compile(pattern).parse(input, DateLocaleFactory.EN_LOCALE), DateLocaleFactory.EN_LOCALE, "Z", sink);
+        TestUtils.assertEquals(expected, sink);
     }
 
     private void assertThat(String pattern, String expected, String input, CharSequence localeId) throws NumericException {

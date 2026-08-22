@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -43,9 +43,12 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
 
@@ -54,6 +57,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN = 200;
     protected final FuzzRunner fuzzer = new FuzzRunner();
     protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, node1.getMetrics());
+    private final Rnd setUpRnd = TestUtils.generateRandom(LOG);
 
     public static int getRndO3PartitionSplit(Rnd rnd) {
         return MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN + rnd.nextInt(MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL - MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN);
@@ -61,6 +65,12 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
     public static int getRndO3PartitionSplitMaxCount(Rnd rnd) {
         return 1 + rnd.nextInt(2);
+    }
+
+    public static int getRndParquetRowGroupSize(Rnd rnd) {
+        // 50..10000 rows: small enough that fuzz partitions routinely span
+        // multiple row groups, exercising the per-row-group write/read paths.
+        return 50 + rnd.nextInt(9951);
     }
 
     @BeforeClass
@@ -93,6 +103,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(setUpRnd));
         super.setUp();
         fuzzer.withDb(engine, sqlExecutionContext);
         fuzzer.clearSeeds();
@@ -122,6 +133,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 rnd.nextDouble(),
                 0.01,
                 rnd.nextDouble(),
+                0.0,
+                0.0,
                 0.1 * rnd.nextDouble(),
                 rnd.nextDouble(),
                 rnd.nextDouble(),
@@ -224,6 +237,10 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         });
     }
 
+    protected void setCreateWalAsParquet(boolean createWalAsParquet) {
+        fuzzer.setCreateWalAsParquet(createWalAsParquet);
+    }
+
     protected void setFuzzCounts(
             boolean isO3,
             int fuzzRowCount,
@@ -276,6 +293,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             double dataAddProb,
             double equalTsRowsProb,
             double partitionDropProb,
+            double partitionToParquetProb,
+            double partitionToNativeProb,
             double truncateProb,
             double tableDropProb,
             double setTtlProb,
@@ -286,8 +305,70 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         fuzzer.setFuzzProbabilities(
                 cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
                 colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
-                equalTsRowsProb, partitionDropProb, truncateProb, tableDropProb, setTtlProb,
+                equalTsRowsProb, partitionDropProb, partitionToParquetProb, partitionToNativeProb, truncateProb, tableDropProb, setTtlProb,
                 replaceProb, symbolAccessProb, queryProb
+        );
+    }
+
+    protected void setFuzzProbabilities(
+            double cancelRowsProb,
+            double notSetProb,
+            double nullSetProb,
+            double rollbackProb,
+            double colAddProb,
+            double colRemoveProb,
+            double colRenameProb,
+            double colTypeChangeProb,
+            double dataAddProb,
+            double equalTsRowsProb,
+            double partitionDropProb,
+            double partitionToParquetProb,
+            double partitionToNativeProb,
+            double truncateProb,
+            double tableDropProb,
+            double setTtlProb,
+            double replaceProb,
+            double symbolAccessProb,
+            double queryProb,
+            double setParquetEncodingProb
+    ) {
+        fuzzer.setFuzzProbabilities(
+                cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
+                colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
+                equalTsRowsProb, partitionDropProb, partitionToParquetProb, partitionToNativeProb, truncateProb, tableDropProb, setTtlProb,
+                replaceProb, symbolAccessProb, queryProb, setParquetEncodingProb
+        );
+    }
+
+    protected void setFuzzProbabilities(
+            double cancelRowsProb,
+            double notSetProb,
+            double nullSetProb,
+            double rollbackProb,
+            double colAddProb,
+            double colRemoveProb,
+            double colRenameProb,
+            double colTypeChangeProb,
+            double dataAddProb,
+            double equalTsRowsProb,
+            double partitionDropProb,
+            double partitionToParquetProb,
+            double partitionToNativeProb,
+            double truncateProb,
+            double tableDropProb,
+            double setTtlProb,
+            double replaceProb,
+            double symbolAccessProb,
+            double queryProb,
+            double setParquetEncodingProb,
+            double addCoveringIndexProb,
+            double setTableFormatProb
+    ) {
+        fuzzer.setFuzzProbabilities(
+                cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
+                colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
+                equalTsRowsProb, partitionDropProb, partitionToParquetProb, partitionToNativeProb, truncateProb, tableDropProb, setTtlProb,
+                replaceProb, symbolAccessProb, queryProb, setParquetEncodingProb, setTableFormatProb, addCoveringIndexProb
         );
     }
 
@@ -320,6 +401,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, getMaxWalSize(rnd));
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, getMaxWalFdCache(rnd));
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1 + rnd.nextInt(200));
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndParquetRowGroupSize(rnd));
 
         int txnCount = Math.max(10, fuzzer.getTransactionCount());
         long walChunk = Math.max(0, rnd.nextInt((int) (3.5 * txnCount)) - txnCount);
@@ -339,5 +421,15 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1L << (minPage + rnd.nextInt(22 - minPage))); // MAX page size 4Mb
         long dataAppendPageSize = configuration.getDataAppendPageSize();
         LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
+    }
+
+    // Joins every job the caller started, including a partially started batch, so a failure mid-run
+    // does not leave background jobs alive against test teardown.
+    protected void stopAndJoinJobs(AtomicBoolean stop, ObjList<Thread> jobs) {
+        stop.set(true);
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            int k = i;
+            TestUtils.unchecked(() -> jobs.getQuick(k).join());
+        }
     }
 }

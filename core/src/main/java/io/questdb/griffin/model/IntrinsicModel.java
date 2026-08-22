@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -51,7 +51,7 @@ public class IntrinsicModel implements Mutable {
     // Indexed symbol column used as the initial "efficient" filter for the query.
     public CharSequence keyColumn;
     public ObjList<ExpressionNode> keyExcludedNodes = new ObjList<>();
-    public QueryModel keySubQuery;
+    public IQueryModel keySubQuery;
 
     public RuntimeIntrinsicIntervalModel buildIntervalModel() {
         return runtimeIntervalBuilder.build();
@@ -73,8 +73,28 @@ public class IntrinsicModel implements Mutable {
         runtimeIntervalBuilder.clearBetweenParsing();
     }
 
+    public void clearBetweenTempParsing(Throwable primary) {
+        runtimeIntervalBuilder.clearBetweenParsing(primary);
+    }
+
+    /**
+     * Clears only the interval filter state without touching keys, filter
+     * expression or intrinsicValue. Used by WhereClauseParser to roll back
+     * a partial OR-tree extraction when one branch can't be turned into an
+     * interval intrinsic. Frees Functions accumulated in the dynamic range
+     * list because rollback discards them without transferring ownership to
+     * a built RuntimeIntervalModel.
+     */
+    public void clearIntervalFilters() {
+        runtimeIntervalBuilder.freeAndClear();
+    }
+
     public boolean hasIntervalFilters() {
         return runtimeIntervalBuilder.hasIntervalFilters();
+    }
+
+    public boolean isBetweenBoundaryFunctionConsumed() {
+        return runtimeIntervalBuilder.isBetweenBoundaryFunctionConsumed();
     }
 
     public void intersectEmpty() {
@@ -93,29 +113,36 @@ public class IntrinsicModel implements Mutable {
         }
     }
 
-    public void intersectIntervals(long lo, Function function, short funcAdjust) {
-        runtimeIntervalBuilder.intersect(lo, function, funcAdjust);
+    public void intersectIntervals(long lo, Function function, short funcAdjust, int functionPosition) {
+        runtimeIntervalBuilder.intersect(lo, function, funcAdjust, functionPosition);
         if (runtimeIntervalBuilder.isEmptySet()) {
             intrinsicValue = FALSE;
         }
     }
 
-    public void intersectIntervals(Function function, long hi, short funcAdjust) {
-        runtimeIntervalBuilder.intersect(function, hi, funcAdjust);
+    public void intersectIntervals(Function function, long hi, short funcAdjust, int functionPosition) {
+        runtimeIntervalBuilder.intersect(function, hi, funcAdjust, functionPosition);
         if (runtimeIntervalBuilder.isEmptySet()) {
             intrinsicValue = FALSE;
         }
     }
 
-    public void intersectRuntimeIntervals(Function intervalFunction) {
-        runtimeIntervalBuilder.intersectRuntimeIntervals(intervalFunction);
+    public void intersectMonotonicTimestamp(TimestampMonotonicInverter inverter) {
+        runtimeIntervalBuilder.intersectMonotonicTimestamp(inverter);
         if (runtimeIntervalBuilder.isEmptySet()) {
             intrinsicValue = FALSE;
         }
     }
 
-    public void intersectRuntimeTimestamp(Function function) {
-        runtimeIntervalBuilder.intersectRuntimeTimestamp(function);
+    public void intersectRuntimeIntervals(Function intervalFunction, int functionPosition) {
+        runtimeIntervalBuilder.intersectRuntimeIntervals(intervalFunction, functionPosition);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
+    }
+
+    public void intersectRuntimeTimestamp(Function function, int functionPosition) {
+        runtimeIntervalBuilder.intersectRuntimeTimestamp(function, functionPosition);
         if (runtimeIntervalBuilder.isEmptySet()) {
             intrinsicValue = FALSE;
         }
@@ -130,6 +157,9 @@ public class IntrinsicModel implements Mutable {
 
     public void mergeIntervalModel(RuntimeIntervalModel model, long loOffset, long hiOffset) {
         runtimeIntervalBuilder.merge(model, loOffset, hiOffset);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     /**
@@ -138,6 +168,9 @@ public class IntrinsicModel implements Mutable {
      */
     public void mergeIntervalModelWithAddMethod(IntrinsicModel other, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
         runtimeIntervalBuilder.mergeWithAddMethod(other.runtimeIntervalBuilder, addMethod, offset);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     public void of(int timestampType, int partitionBy, CairoConfiguration configuration) {
@@ -146,18 +179,24 @@ public class IntrinsicModel implements Mutable {
 
     public void setBetweenBoundary(long timestamp) {
         runtimeIntervalBuilder.setBetweenBoundary(timestamp);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
-    public void setBetweenBoundary(Function timestamp) {
-        runtimeIntervalBuilder.setBetweenBoundary(timestamp);
+    public void setBetweenBoundary(Function timestamp, int functionPosition) {
+        runtimeIntervalBuilder.setBetweenBoundary(timestamp, functionPosition);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     public void setBetweenNegated(boolean isNegated) {
         runtimeIntervalBuilder.setBetweenNegated(isNegated);
     }
 
-    public void subtractEquals(Function function) {
-        runtimeIntervalBuilder.subtractEquals(function);
+    public void subtractEquals(Function function, int functionPosition) {
+        runtimeIntervalBuilder.subtractEquals(function, functionPosition);
         if (runtimeIntervalBuilder.isEmptySet()) {
             intrinsicValue = FALSE;
         }
@@ -177,8 +216,8 @@ public class IntrinsicModel implements Mutable {
         }
     }
 
-    public void subtractRuntimeIntervals(Function intervalFunction) {
-        runtimeIntervalBuilder.subtractRuntimeIntervals(intervalFunction);
+    public void subtractRuntimeIntervals(Function intervalFunction, int functionPosition) {
+        runtimeIntervalBuilder.subtractRuntimeIntervals(intervalFunction, functionPosition);
         if (runtimeIntervalBuilder.isEmptySet()) {
             intrinsicValue = FALSE;
         }
@@ -201,8 +240,8 @@ public class IntrinsicModel implements Mutable {
         runtimeIntervalBuilder.unionIntervals(seq, lo, lim, position);
     }
 
-    public void unionRuntimeTimestamp(Function function) {
-        runtimeIntervalBuilder.unionRuntimeTimestamp(function);
+    public void unionRuntimeTimestamp(Function function, int functionPosition) {
+        runtimeIntervalBuilder.unionRuntimeTimestamp(function, functionPosition);
     }
 
     static {

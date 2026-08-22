@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -177,7 +177,7 @@ public class DirectLongListTest {
 
             Assert.assertEquals(0, list.size());
             long addr = list.getAddress();
-            Unsafe.getUnsafe().putLong(addr, 42);
+            Unsafe.putLong(addr, 42);
             Assert.assertEquals(42, list.get(0));
             for (long i = 0; i < list.getCapacity(); i++) {
                 list.add(i);
@@ -281,6 +281,17 @@ public class DirectLongListTest {
                 Assert.assertEquals(N - i, list.get(i));
             }
         }
+    }
+
+    @Test
+    public void testSetAtCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectLongList list = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT)) {
+                list.set(0, 42);
+                Assert.assertEquals(42, list.get(0));
+                Assert.assertThrows(AssertionError.class, () -> list.set(list.getCapacity(), 43));
+            }
+        });
     }
 
     @Test

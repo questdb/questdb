@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -35,7 +35,7 @@ public class LatestByAllIndexedJob extends AbstractQueueConsumerJob<LatestByTask
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
         final LatestByTask task = queue.get(cursor);
         final boolean result = task.run();
         subSeq.done(cursor);

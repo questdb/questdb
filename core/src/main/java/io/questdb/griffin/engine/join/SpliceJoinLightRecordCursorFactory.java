@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -32,10 +33,12 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -62,9 +65,9 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
     private static final int VAL_MASTER_PREV = 0;
     private static final int VAL_SLAVE_NEXT = 3;
     private static final int VAL_SLAVE_PREV = 2;
-    private final SpliceJoinLightRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
+    private SpliceJoinLightRecordCursor cursor;
 
     public SpliceJoinLightRecordCursorFactory(
             CairoConfiguration cairoConfiguration,
@@ -79,13 +82,16 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             JoinContext joinContext
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        Map joinKeyMap = null;
         try {
             this.masterKeySink = masterSink;
             this.slaveKeySink = slaveSink;
-            Map joinKeyMap = MapFactory.createUnorderedMap(
+            joinKeyMap = MapFactory.createUnorderedMap(
                     cairoConfiguration,
                     joinColumnTypes,
-                    valueTypes
+                    valueTypes,
+                    false,
+                    false
             );
             cursor = new SpliceJoinLightRecordCursor(
                     joinKeyMap,
@@ -98,6 +104,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
                     NullRecordFactory.getInstance(slaveFactory.getMetadata())
             );
         } catch (Throwable th) {
+            Misc.free(joinKeyMap);
             close();
             throw th;
         }
@@ -114,11 +121,15 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         RecordCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor);
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+            cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() binds the per-query tracker and reopens the join map before it can throw;
+            // close() frees it under that tracker and resets isOpen so the factory is reusable.
+            Misc.free(cursor);
             throw e;
         }
     }
@@ -145,10 +156,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
+        final SpliceJoinLightRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class SpliceJoinLightRecordCursor extends AbstractJoinCursor {
@@ -160,6 +172,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         private final JoinRecord record;
         private final int slaveTimestampIndex;
         private final long slaveTimestampScale;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean dualRecord;
         private boolean fetchMaster = true;
         private boolean fetchSlave = true;
@@ -194,7 +207,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             this.slaveTimestampIndex = slaveTimestampIndex;
             this.nullMasterRecord = nullMasterRecord;
             this.nullSlaveRecord = nullSlaveRecord;
-            isOpen = true;
+            isOpen = false;
             if (masterTimestampType == slaveTimestampType) {
                 masterTimestampScale = slaveTimestampScale = 1L;
             } else {
@@ -219,6 +232,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (dualRecord) {
                 slaveRecordLeads();
                 dualRecord = false;
@@ -354,9 +368,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             }
         }
 
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             if (!isOpen) {
                 isOpen = true;
+                joinKeyMap.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyMap.reopen();
             }
             // avoid resetting these

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -136,10 +136,10 @@ public interface Utf8Sequence extends ByteSequence {
     default void writeTo(long addr, int lo, int hi) {
         int i = lo;
         for (int n = hi - 7; i < n; i += 8, addr += 8) {
-            Unsafe.getUnsafe().putLong(addr, longAt(i));
+            Unsafe.putLong(addr, longAt(i));
         }
         for (; i < hi; i++, addr++) {
-            Unsafe.getUnsafe().putByte(addr, byteAt(i));
+            Unsafe.putByte(addr, byteAt(i));
         }
     }
 

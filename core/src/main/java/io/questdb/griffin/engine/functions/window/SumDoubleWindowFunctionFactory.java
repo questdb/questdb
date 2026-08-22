@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -40,10 +41,14 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -59,6 +64,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     private static final String NAME = "sum";
     private static final String SIGNATURE = NAME + "(D)";
     private static final ArrayColumnTypes SUM_COLUMN_TYPES;
+    private static final ArrayColumnTypes SUM_COLUMN_TYPES_LV;
 
     @Override
     public String getSignature() {
@@ -108,10 +114,11 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            SUM_COLUMN_TYPES
+                            liveView ? SUM_COLUMN_TYPES_LV : SUM_COLUMN_TYPES
                     );
 
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
@@ -119,7 +126,10 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
@@ -129,21 +139,16 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
                     int timestampIndex = windowContext.getTimestampIndex();
 
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.DOUBLE); // current frame sum
-                    columnTypes.add(ColumnType.LONG); // number of (non-null) values in current frame
-                    columnTypes.add(ColumnType.LONG); // native array start offset, requires updating on resize
-                    columnTypes.add(ColumnType.LONG); // native buffer size
-                    columnTypes.add(ColumnType.LONG); // native buffer capacity
-                    columnTypes.add(ColumnType.LONG); // index of first buffered element
-
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                columnTypes
+                                liveView
+                                        ? AvgDoubleWindowFunctionFactory.AVG_OVER_PARTITION_RANGE_COLUMN_TYPES_LV
+                                        : AvgDoubleWindowFunctionFactory.AVG_OVER_PARTITION_RANGE_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -161,7 +166,10 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 args.get(0),
                                 mem,
                                 configuration.getSqlWindowInitialRangeBufferSize(),
-                                timestampIndex
+                                timestampIndex,
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -172,17 +180,21 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            SUM_COLUMN_TYPES
+                            liveView ? SUM_COLUMN_TYPES_LV : SUM_COLUMN_TYPES
                     );
 
                     return new SumOverUnboundedPartitionRowsFrameFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -204,19 +216,16 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 }
                 // between [unbounded | x] preceding and [x preceding | current row]
                 else {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.DOUBLE); // sum
-                    columnTypes.add(ColumnType.LONG); // current frame size
-                    columnTypes.add(ColumnType.LONG); // position of current oldest element
-                    columnTypes.add(ColumnType.LONG); // start offset of native array
-
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                columnTypes
+                                liveView
+                                        ? AvgDoubleWindowFunctionFactory.AVG_OVER_PARTITION_ROWS_COLUMN_TYPES_LV
+                                        : AvgDoubleWindowFunctionFactory.AVG_OVER_PARTITION_ROWS_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -232,7 +241,9 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 rowsLo,
                                 rowsHi,
                                 args.get(0),
-                                mem
+                                mem,
+                                partitionByKeyTypes,
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -323,8 +334,18 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return NAME;
         }
 
+        /**
+         * Writes the partition's sum back over itself, which is what this family's
+         * finalization amounts to. It stays an override rather than being dropped because
+         * inheriting {@code avg}'s would replace the sum with the average; and it stays
+         * skipped when bound for the same reason every bound function's does - the group
+         * keeps the raw pair and there is no map of this function's own to walk.
+         */
         @Override
         public void preparePass2() {
+            if (isWindowStateOwned()) {
+                return;
+            }
             RecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
             while (cursor.hasNext()) {
@@ -335,6 +356,18 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     value.putDouble(0, sum);
                 }
             }
+        }
+
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            windowStateResult = value.getLong(windowStateNonNullCountSlot) != 0
+                    ? value.getDouble(windowStateSumSlot)
+                    : Double.NaN;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_SUM;
         }
     }
 
@@ -353,9 +386,13 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 Function arg,
                 MemoryARW memory,
                 int initialBufferSize,
-                int timestampIdx
+                int timestampIdx,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
-            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx);
+            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx,
+                    partitionByKeyTypes, liveView, configuration);
         }
 
         @Override
@@ -366,6 +403,29 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public String getName() {
             return NAME;
+        }
+
+        /**
+         * The total rather than the average, which the inherited {@code pass1} writes. Its
+         * counterpart on the ROWS spelling below has always been here; this one was missing, so
+         * the cached cursors - the only callers of {@code pass1} - answered a bounded-RANGE
+         * {@code sum} with the {@code avg} of the same frame. Bound or not: a bound function's
+         * {@code computeNext} returns at once and {@code sum} is what
+         * {@code projectWindowState} has just materialized.
+         */
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);
+        }
+
+        /**
+         * The total rather than the average, off the component the superclass declares and
+         * maintains - the bounded-RANGE counterpart of the ROWS pair below.
+         */
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_SUM;
         }
     }
 
@@ -379,9 +439,12 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 long rowsLo,
                 long rowsHi,
                 Function arg,
-                MemoryARW memory
+                MemoryARW memory,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory);
+            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory,
+                    partitionByKeyTypes, liveView);
         }
 
         @Override
@@ -397,7 +460,18 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), sum);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);
+        }
+
+        /**
+         * The total rather than the average, off the component the superclass declares and
+         * maintains. The one thing this output does not share with the {@code avg} beside it: a
+         * bounded frame's {@code (sum, count)} pair is one state and two readings of it, exactly
+         * as the cumulative pair is.
+         */
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_SUM;
         }
     }
 
@@ -436,6 +510,18 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public String getName() {
             return NAME;
         }
+
+        /**
+         * The total rather than the average, which the inherited {@code pass1} writes. Its
+         * counterpart on the ROWS spelling below has always been here; this one was missing, so
+         * the cached cursors - the only callers of {@code pass1} - answered a bounded-RANGE
+         * {@code sum} with the {@code avg} of the same frame.
+         */
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
+        }
     }
 
     // Handles sum() over ([order by o] rows between y and z); there's no partition by.
@@ -459,7 +545,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
         }
 
         @Override
@@ -475,14 +561,67 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // Doesn't require value buffering.
     static class SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
+        private final CairoConfiguration configuration;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (including tombstone slot) for the
+        // newCompactionScratch() scratch Map used by the frontier sweep. Null
+        // outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
+        // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         private double sum;
+        // Single-writer (refresh worker), not volatile.
 
-        public SumOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
+        public SumOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = SUM_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(SUM_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+        }
+
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final double d = arg.getDouble(record);
+            if (Numbers.isFinite(d)) {
+                value.putDouble(windowStateSumSlot, value.getDouble(windowStateSumSlot) + d);
+                value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
+            }
         }
 
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The window absorbed this row into the group's one accumulator and
+                // materialized the projection before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -492,6 +631,9 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             long count;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 sum = 0;
                 count = 0;
             } else {
@@ -525,11 +667,119 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            sum = value.getLong(windowStateNonNullCountSlot) != 0
+                    ? value.getDouble(windowStateSumSlot)
+                    : Double.NaN;
+        }
+
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : SUM_COLUMN_TYPES.getColumnCount();
+        }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), sum);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            if (isWindowStateOwned()) {
+                // The window zeroes the component in the fused value it has already
+                // loaded, so the crossing costs no probe of this function's own.
+                return;
+            }
+            // ANCHOR-driven reset. Zero the [sum, count] slots; next
+            // computeNext re-anchors on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putLong(1, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            value.putDouble(0, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putLong(1, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * The running {@code (sum, nonNullCount)} pair, which is the same accumulator a
+         * DOUBLE {@code avg} over the same window and argument maintains. The state is the
+         * component; this call is the projection that reads its sum.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_SUM;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putDouble(value.getDouble(0));
+            sink.putLong(value.getLong(1));
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -540,6 +790,12 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            tombstoneCount = 0;
         }
     }
 
@@ -584,7 +840,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
         }
 
         @Override
@@ -644,7 +900,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
         }
 
         @Override
@@ -674,5 +930,10 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         SUM_COLUMN_TYPES = new ArrayColumnTypes();
         SUM_COLUMN_TYPES.add(ColumnType.DOUBLE);
         SUM_COLUMN_TYPES.add(ColumnType.LONG);
+
+        SUM_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        SUM_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // sum
+        SUM_COLUMN_TYPES_LV.add(ColumnType.LONG);   // count
+        SUM_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // tombstone (anchor-driven compaction)
     }
 }

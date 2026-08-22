@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,12 +26,14 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordIdSink;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -49,8 +51,8 @@ import org.jetbrains.annotations.NotNull;
  * and returns all row pairs matching filter plus all unmatched rows from master and slave factory.
  */
 public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final NestedLoopFullRecordCursor cursor;
-    private final Function filter;
+    private NestedLoopFullRecordCursor cursor;
+    private Function filter;
 
     public NestedLoopFullJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -66,7 +68,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
         this.filter = filter;
         Map matchIdsMap = null;
         try {
-            matchIdsMap = MapFactory.createUnorderedMap(configuration, RecordIdSink.RECORD_ID_COLUMN_TYPE, ArrayColumnTypes.EMPTY);
+            matchIdsMap = MapFactory.createUnorderedMap(configuration, RecordIdSink.RECORD_ID_COLUMN_TYPE, ArrayColumnTypes.EMPTY, false, false);
             this.cursor = new NestedLoopFullRecordCursor(columnSplit, filter, matchIdsMap, masterNullRecord, slaveNullRecord);
         } catch (Throwable e) {
             Misc.free(matchIdsMap);
@@ -86,11 +88,15 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
         RecordCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getCursor(executionContext);
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
+            // of() reopens the match-ids map before it assigns the master/slave cursors, so a
+            // breach there leaves them unset; close() frees the map and resets isOpen for reuse.
+            Misc.free(cursor);
             throw ex;
         }
     }
@@ -120,15 +126,19 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(filter);
-        Misc.free(cursor);
+        final NestedLoopFullRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private static class NestedLoopFullRecordCursor extends AbstractJoinCursor {
         private final Function filter;
+        private final JoinSymbolTableSource filterSymbolTableSource;
         private final Map matchIdsMap;
         private final FullOuterJoinRecord record;
         private SqlExecutionCircuitBreaker circuitBreaker;
@@ -142,9 +152,10 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
             super(columnSplit);
             this.record = new FullOuterJoinRecord(columnSplit, masterNullRecord, slaveNullRecord);
             this.filter = filter;
+            this.filterSymbolTableSource = new JoinSymbolTableSource(columnSplit);
             this.isMatch = false;
             this.matchIdsMap = matchIdsMap;
-            isOpen = true;
+            isOpen = false;
         }
 
         @Override
@@ -229,17 +240,21 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
-            this.masterCursor = masterCursor;
-            this.slaveCursor = slaveCursor;
-            filter.init(this, executionContext);
+            if (!isOpen) {
+                isOpen = true;
+                matchIdsMap.setMemoryTracker(executionContext.getMemoryTracker());
+                matchIdsMap.reopen();
+            }
+            // filter.init() resolves symbols through a source over the master/slave cursors. Adopt the
+            // cursors last so an init() throw above leaves them unset for the getCursor() catch.
+            filterSymbolTableSource.of(masterCursor, slaveCursor);
+            filter.init(filterSymbolTableSource, executionContext);
             this.slaveRecord = slaveCursor.getRecord();
             record.of(masterCursor.getRecord(), this.slaveRecord);
             isMasterHasNextPending = true;
-            if (!isOpen) {
-                isOpen = true;
-                matchIdsMap.reopen();
-            }
             circuitBreaker = executionContext.getCircuitBreaker();
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 }

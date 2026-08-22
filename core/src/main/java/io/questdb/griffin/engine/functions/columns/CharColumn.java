@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -42,10 +42,5 @@ public class CharColumn extends CharFunction implements ColumnFunction {
     @Override
     public int getColumnIndex() {
         return columnIndex;
-    }
-
-    @Override
-    public boolean isThreadSafe() {
-        return true;
     }
 }

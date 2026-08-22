@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -75,11 +75,20 @@ public class SymbolColumn extends SymbolFunction implements ColumnFunction {
 
     @Override
     public CharSequence getSymbol(Record rec) {
+        if (!symbolTableStatic) {
+            // A dynamic symbol table may be backed by a lazy cast. In that case resolving
+            // the value through getInt()/valueOf() needlessly materialises a key for a
+            // consumer that only asked for the string value.
+            return rec.getSymA(columnIndex);
+        }
         return symbolTable.valueOf(rec.getInt(columnIndex));
     }
 
     @Override
     public CharSequence getSymbolB(Record rec) {
+        if (!symbolTableStatic) {
+            return rec.getSymB(columnIndex);
+        }
         return symbolTable.valueBOf(rec.getInt(columnIndex));
     }
 
@@ -108,6 +117,11 @@ public class SymbolColumn extends SymbolFunction implements ColumnFunction {
     @Override
     public @Nullable SymbolTable newSymbolTable() {
         return symbolTableSource.newSymbolTable(columnIndex);
+    }
+
+    @Override
+    public boolean supportsKeyValueAccess() {
+        return symbolTable != null && symbolTable.supportsKeyValueAccess();
     }
 
     @Override

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,7 +24,11 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.lv.LiveViewCheckpointDependency;
+import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -34,10 +38,27 @@ import io.questdb.std.Misc;
 
 public abstract class BaseWindowFunction implements WindowFunction {
     protected final Function arg;
+    // Whether arg reads back as a DATE (milliseconds) rather than a TIMESTAMP (ticks). The value
+    // window functions are specialized into DATE and TIMESTAMP subclasses, so this is invariant per
+    // instance; readArgValue caches it here to avoid re-deriving the tag from arg.getType() per row.
+    protected final boolean argIsDate;
     protected int columnIndex;
+    private LiveViewCheckpointDependency checkpointDependency;
+    private LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity;
 
     public BaseWindowFunction(Function arg) {
         this.arg = arg;
+        this.argIsDate = arg != null && ColumnType.tagOf(arg.getType()) == ColumnType.DATE;
+    }
+
+    @Override
+    public LiveViewCheckpointDependency checkpointDependency() {
+        return checkpointDependency;
+    }
+
+    @Override
+    public LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity() {
+        return checkpointFunctionIdentity;
     }
 
     @Override
@@ -62,8 +83,50 @@ public abstract class BaseWindowFunction implements WindowFunction {
         }
     }
 
+    /**
+     * Rebinds {@code arg} on the live-view incremental refresh path, which skips
+     * {@link #init} from the second cycle on so the accumulated window state survives.
+     * <p>
+     * arg caches cursor-scoped bindings: a SYMBOL column holds the symbol table it
+     * resolved against, and a symbol comparison such as {@code side = 'BUY'} caches the
+     * int key it resolved the constant to. Each refresh hands the function a fresh
+     * WAL-segment-scoped SymbolTableSource whose keys the WAL writer re-assigns per
+     * commit, so a binding cached on one cycle names the wrong value on the next and the
+     * window silently aggregates the wrong rows. Rebinding every cycle is what
+     * {@link WindowFunction#initPartitionBy} exists to do; overrides must call super.
+     */
+    @Override
+    public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        if (arg != null) {
+            arg.init(symbolTableSource, executionContext);
+        }
+    }
+
+    /**
+     * Reads a value-window function's argument as a native long. A DATE argument is read as
+     * milliseconds; everything else (TIMESTAMP ticks, or a SYMBOL/STRING/VARCHAR parsed to a
+     * timestamp) goes through getTimestamp(). The max/min/first_value/last_value/nth_value value
+     * functions store and write this native long, and report getType() = arg.getType(), so the
+     * cached chain column reads it back at the right scale for both DATE and TIMESTAMP results.
+     */
+    protected final long readArgValue(Record rec) {
+        return argIsDate ? arg.getDate(rec) : arg.getTimestamp(rec);
+    }
+
     @Override
     public void reset() {
+    }
+
+    @Override
+    public void setCheckpointCompilerMetadata(
+            LiveViewCheckpointFunctionIdentity identity,
+            LiveViewCheckpointDependency dependency
+    ) {
+        if (checkpointFunctionIdentity != null || checkpointDependency != null) {
+            throw new IllegalStateException("live view checkpoint compiler metadata already set");
+        }
+        this.checkpointFunctionIdentity = identity;
+        this.checkpointDependency = dependency;
     }
 
     @Override

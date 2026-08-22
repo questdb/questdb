@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -39,22 +39,37 @@ import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
+import io.questdb.lifecycle.Component;
+import io.questdb.lifecycle.LifecycleContext;
+import io.questdb.lifecycle.LifecycleOrchestrator;
+import io.questdb.lifecycle.State;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.ObjList;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.datetime.MicrosecondClock;
-import io.questdb.std.str.*;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.cutlass.pgwire.BasePGTest;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 import static io.questdb.test.tools.TestUtils.*;
@@ -68,7 +83,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     private static final String VIEW1 = "view1";
     private static final String VIEW2 = "view2";
     private static final LogCapture capture = new LogCapture();
-    private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
     private ServerMain questdb;
 
     private static void assertExecRequest(
@@ -123,13 +138,21 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
         }
     }
 
-    private static ServerMain createServerMain() {
+    private static ServerMain createServerMain(@Nullable Component extraComponent) {
         return new ServerMain(new Bootstrap(Bootstrap.getServerMainArgs(root)) {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 return new TestMicroClock(1750345200000000L, 0L);
             }
         }) {
+            @Override
+            protected void registerComponents(LifecycleOrchestrator orch) {
+                super.registerComponents(orch);
+                if (extraComponent != null) {
+                    orch.register(extraComponent);
+                }
+            }
+
             @Override
             protected void setupViewJobs(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
             }
@@ -419,6 +442,33 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testViewDefinitionsLoadedBeforeEngineReady() {
+        try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+            createTable(httpClient, TABLE1);
+            drainWalQueue();
+            createView(httpClient, VIEW1, "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4");
+            drainWalQueue();
+            drainViewQueue();
+        }
+        stopQuestDB();
+
+        // Restart with a probe that observes the engine's READY publication. The orchestrator
+        // dispatches onDependencyState synchronously on the publishing thread, so the probe sees
+        // exactly what every engine-gated component sees: the hydration envelope's compileAllViews
+        // and hydrateRecentWriteTracker both walk the table name registry from there, and the
+        // registry carries the view token whether or not its definition has been loaded.
+        final AtomicReference<ServerMain> serverRef = new AtomicReference<>();
+        final EngineReadyViewProbe probe = new EngineReadyViewProbe(serverRef);
+        questdb = createServerMain(probe);
+        serverRef.set(questdb);
+        questdb.start();
+        questdb.awaitStartup();
+
+        Assert.assertNotNull("probe never observed the engine reaching READY", probe.getSnapshot());
+        Assert.assertEquals("token=true, definition=true, state=true", probe.getSnapshot());
+    }
+
+    @Test
     public void testViewStateAfterRestart() {
         final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4";
         final String query2 = "select ts, k2, min(v) as v_min from " + TABLE2 + " where v > 6";
@@ -443,7 +493,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             final ViewDefinition definition2 = getViewDefinition(VIEW2);
 
             assertNotNull(definition1);
-            Assert.assertEquals(6, definition1.getViewToken().getTableId());
             Assert.assertEquals(VIEW1, definition1.getViewToken().getTableName());
             Assert.assertEquals(0, definition1.getSeqTxn());
             assertEquals(query1, definition1.getViewSql());
@@ -456,7 +505,11 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             Assert.assertTrue(definition1.getDependencies().get(TABLE1).contains("v"));
 
             assertNotNull(definition2);
-            Assert.assertEquals(7, definition2.getViewToken().getTableId());
+
+            int id1 = definition1.getViewToken().getTableId();
+            int id2 = definition2.getViewToken().getTableId();
+
+            Assert.assertEquals(id1 + 1, id2);
             Assert.assertEquals(VIEW2, definition2.getViewToken().getTableName());
             Assert.assertEquals(0, definition2.getSeqTxn());
             assertEquals(query2, definition2.getViewSql());
@@ -470,9 +523,9 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
             assertExecRequest(
                     httpClient,
-                    "views()",
+                    "SELECT * FROM views() ORDER BY view_name",
                     "{" +
-                            "\"query\":\"views()\"," +
+                            "\"query\":\"SELECT * FROM views() ORDER BY view_name\"," +
                             "\"columns\":[" +
                             "{\"name\":\"view_name\",\"type\":\"STRING\"}," +
                             "{\"name\":\"view_sql\",\"type\":\"STRING\"}," +
@@ -483,8 +536,8 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "]," +
                             "\"timestamp\":-1," +
                             "\"dataset\":[" +
-                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
-                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]" +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~" + id1 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~" + id2 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]" +
                             "]," +
                             "\"count\":2" +
                             "}"
@@ -503,9 +556,9 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
             assertExecRequest(
                     httpClient,
-                    "views()",
+                    "SELECT * FROM views() ORDER BY view_name",
                     "{" +
-                            "\"query\":\"views()\"," +
+                            "\"query\":\"SELECT * FROM views() ORDER BY view_name\"," +
                             "\"columns\":[" +
                             "{\"name\":\"view_name\",\"type\":\"STRING\"}," +
                             "{\"name\":\"view_sql\",\"type\":\"STRING\"}," +
@@ -516,8 +569,8 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "]," +
                             "\"timestamp\":-1," +
                             "\"dataset\":[" +
-                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
-                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]" +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~" + id1 + "\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]," +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~" + id2 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]" +
                             "]," +
                             "\"count\":2" +
                             "}"
@@ -542,7 +595,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             final ViewDefinition definition2 = getViewDefinition(VIEW2);
 
             assertNotNull(definition1);
-            Assert.assertEquals(6, definition1.getViewToken().getTableId());
             Assert.assertEquals(VIEW1, definition1.getViewToken().getTableName());
             Assert.assertEquals(0, definition1.getSeqTxn());
             assertEquals(query1, definition1.getViewSql());
@@ -555,7 +607,11 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             Assert.assertTrue(definition1.getDependencies().get(TABLE1).contains("v"));
 
             assertNotNull(definition2);
-            Assert.assertEquals(7, definition2.getViewToken().getTableId());
+
+            int id1 = definition1.getViewToken().getTableId();
+            int id2 = definition2.getViewToken().getTableId();
+
+            Assert.assertEquals(id1 + 1, id2);
             Assert.assertEquals(VIEW2, definition2.getViewToken().getTableName());
             Assert.assertEquals(0, definition2.getSeqTxn());
             assertEquals(query2, definition2.getViewSql());
@@ -569,9 +625,9 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
             assertExecRequest(
                     httpClient,
-                    "views()",
+                    "SELECT * FROM views() ORDER BY view_name",
                     "{" +
-                            "\"query\":\"views()\"," +
+                            "\"query\":\"SELECT * FROM views() ORDER BY view_name\"," +
                             "\"columns\":[" +
                             "{\"name\":\"view_name\",\"type\":\"STRING\"}," +
                             "{\"name\":\"view_sql\",\"type\":\"STRING\"}," +
@@ -582,8 +638,8 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "]," +
                             "\"timestamp\":-1," +
                             "\"dataset\":[" +
-                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
-                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]" +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~" + id1 + "\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]," +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~" + id2 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]" +
                             "]," +
                             "\"count\":2" +
                             "}"
@@ -613,7 +669,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             final ViewDefinition definition2 = getViewDefinition(VIEW2);
 
             assertNotNull(definition1);
-            Assert.assertEquals(6, definition1.getViewToken().getTableId());
             Assert.assertEquals(VIEW1, definition1.getViewToken().getTableName());
             Assert.assertEquals(0, definition1.getSeqTxn());
             assertEquals(query1, definition1.getViewSql());
@@ -626,7 +681,11 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             Assert.assertTrue(definition1.getDependencies().get(TABLE1).contains("v"));
 
             assertNotNull(definition2);
-            Assert.assertEquals(7, definition2.getViewToken().getTableId());
+
+            int id1 = definition1.getViewToken().getTableId();
+            int id2 = definition2.getViewToken().getTableId();
+
+            Assert.assertEquals(id1 + 1, id2);
             Assert.assertEquals(VIEW2, definition2.getViewToken().getTableName());
             Assert.assertEquals(0, definition2.getSeqTxn());
             assertEquals(query2, definition2.getViewSql());
@@ -640,9 +699,9 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
             assertExecRequest(
                     httpClient,
-                    "views()",
+                    "SELECT * FROM views() ORDER BY view_name",
                     "{" +
-                            "\"query\":\"views()\"," +
+                            "\"query\":\"SELECT * FROM views() ORDER BY view_name\"," +
                             "\"columns\":[" +
                             "{\"name\":\"view_name\",\"type\":\"STRING\"}," +
                             "{\"name\":\"view_sql\",\"type\":\"STRING\"}," +
@@ -653,8 +712,8 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "]," +
                             "\"timestamp\":-1," +
                             "\"dataset\":[" +
-                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
-                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]" +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~" + id1 + "\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]," +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~" + id2 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]" +
                             "]," +
                             "\"count\":2" +
                             "}"
@@ -687,12 +746,69 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                 PropertyKey.DEV_MODE_ENABLED + "=true",
                 PropertyKey.CAIRO_WAL_ENABLED_DEFAULT + "=true"
         ));
-        questdb = createServerMain();
+        questdb = createServerMain(null);
         questdb.start();
         questdb.awaitStartup();
     }
 
     private void stopQuestDB() {
         questdb = Misc.free(questdb);
+    }
+
+    /**
+     * Snapshots the view graph and the view state store at the instant the engine publishes
+     * READY. Every component gated on engine READY -- the hydration envelope above all -- runs
+     * against that state, so view definitions have to be loaded by then.
+     */
+    private static final class EngineReadyViewProbe implements Component {
+        private final ObjList<String> empty = new ObjList<>();
+        private final ObjList<String> hardDeps = new ObjList<>();
+        private final AtomicReference<ServerMain> serverRef;
+        private volatile String snapshot;
+
+        private EngineReadyViewProbe(AtomicReference<ServerMain> serverRef) {
+            this.serverRef = serverRef;
+            hardDeps.add("engine");
+        }
+
+        public String getSnapshot() {
+            return snapshot;
+        }
+
+        @Override
+        public ObjList<String> hardRequiredDependencies() {
+            return hardDeps;
+        }
+
+        @Override
+        public String name() {
+            return "engine-ready-view-probe";
+        }
+
+        @Override
+        public void onDependencyState(String depName, State previous, State current) {
+            if ("engine".equals(depName) && current == State.READY) {
+                final CairoEngine engine = serverRef.get().getEngine();
+                final TableToken viewToken = engine.getTableTokenIfExists(VIEW1);
+                snapshot = "token=" + (viewToken != null)
+                        + ", definition=" + (viewToken != null && engine.getViewGraph().getViewDefinition(viewToken) != null)
+                        + ", state=" + (viewToken != null && engine.getViewStateStore().getViewState(viewToken) != null);
+            }
+        }
+
+        @Override
+        public ObjList<String> softDependencies() {
+            return empty;
+        }
+
+        @Override
+        public void start(LifecycleContext ctx) {
+            ctx.publish(State.STARTING);
+            ctx.publish(State.READY);
+        }
+
+        @Override
+        public void stop() {
+        }
     }
 }

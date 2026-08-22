@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -34,8 +34,8 @@ public abstract class SynchronizedJob implements Job {
     private volatile int locked = 0;
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
-        if (Unsafe.getUnsafe().compareAndSwapInt(this, LOCKED_OFFSET, 0, 1)) {
+    public boolean run(@NotNull WorkerContext workerContext) {
+        if (Unsafe.cas(this, LOCKED_OFFSET, 0, 1)) {
             try {
                 return runSerially();
             } finally {
@@ -43,11 +43,6 @@ public abstract class SynchronizedJob implements Job {
             }
         }
         return false;
-    }
-
-    @Override
-    public boolean run(int workerId) {
-        return run(workerId, Job.RUNNING_STATUS);
     }
 
     protected abstract boolean runSerially();

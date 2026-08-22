@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 
 public final class LongNullUtils {
@@ -62,6 +63,22 @@ public final class LongNullUtils {
                 case ColumnType.GEOINT:
                 case ColumnType.GEOLONG:
                     LONG_NULLs[i] = GeoHashes.NULL;
+                    break;
+
+                case ColumnType.DECIMAL8:
+                    LONG_NULLs[i] = Decimals.DECIMAL8_NULL;
+                    break;
+
+                case ColumnType.DECIMAL16:
+                    LONG_NULLs[i] = Decimals.DECIMAL16_NULL;
+                    break;
+
+                case ColumnType.DECIMAL32:
+                    LONG_NULLs[i] = Decimals.DECIMAL32_NULL;
+                    break;
+
+                case ColumnType.DECIMAL64:
+                    LONG_NULLs[i] = Decimals.DECIMAL64_NULL;
                     break;
 
                 default:

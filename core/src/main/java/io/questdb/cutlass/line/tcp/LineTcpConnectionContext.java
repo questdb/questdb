@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -236,39 +236,54 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     private IOContextResult handleAuthentication(NetworkIOJob netIoJob) {
+        final int result;
         try {
-            int result = authenticator.handleIO();
-            switch (result) {
-                case SocketAuthenticator.NEEDS_WRITE:
-                    return IOContextResult.NEEDS_WRITE;
-                case SocketAuthenticator.OK:
-                    assert authenticator.isAuthenticated();
-                    assert securityContext == DenyAllSecurityContext.INSTANCE;
+            result = authenticator.handleIO();
+        } catch (AuthenticatorException e) {
+            return IOContextResult.NEEDS_DISCONNECT;
+        } catch (CairoException e) {
+            // Malformed client input is not a server fault, so this catch never forces a
+            // severity: it follows the exception. An authenticator that rejects what the client
+            // sent raises a non-critical exception and lands on LOG.error(); a pluggable
+            // authenticator that fails for a genuinely critical reason keeps its severity and
+            // errno.
+            LogRecord error = e.isCritical() ? LOG.critical() : LOG.error();
+            error.$('[').$(getFd()).$("] authentication failed [error=").$safe(e.getFlyweightMessage())
+                    .$(", errno=").$(e.getErrno()).I$();
+            return IOContextResult.NEEDS_DISCONNECT;
+        } catch (Throwable th) {
+            return unhandledAuthenticationError(th);
+        }
+        switch (result) {
+            case SocketAuthenticator.NEEDS_WRITE:
+                return IOContextResult.NEEDS_WRITE;
+            case SocketAuthenticator.OK:
+                assert authenticator.isAuthenticated();
+                assert securityContext == DenyAllSecurityContext.INSTANCE;
+                try {
                     securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
                             authenticator, SecurityContextFactory.ILP
                     );
-                    try {
-                        securityContext.checkEntityEnabled();
-                    } catch (CairoException e) {
-                        LOG.error().$('[').$(getFd()).$("] ").$safe(e.getFlyweightMessage()).$();
-                        return IOContextResult.NEEDS_DISCONNECT;
-                    }
+                    securityContext.checkEntityEnabled();
+                } catch (CairoException e) {
+                    LOG.error().$('[').$(getFd()).$("] ").$safe(e.getFlyweightMessage()).$();
+                    return IOContextResult.NEEDS_DISCONNECT;
+                } catch (Throwable th) {
+                    return unhandledAuthenticationError(th);
+                }
 
-                    recvBuffer.setBufPos(authenticator.getRecvBufPos());
-                    resetParser(authenticator.getRecvBufPseudoStart());
-                    return parseMeasurements(netIoJob);
-                case SocketAuthenticator.NEEDS_READ:
-                    return IOContextResult.NEEDS_READ;
-                case SocketAuthenticator.NEEDS_DISCONNECT:
-                    return IOContextResult.NEEDS_DISCONNECT;
-                case SocketAuthenticator.QUEUE_FULL:
-                    return IOContextResult.QUEUE_FULL;
-                default:
-                    LOG.error().$("unexpected authenticator result [result=").$(result).I$();
-                    return IOContextResult.NEEDS_DISCONNECT;
-            }
-        } catch (AuthenticatorException e) {
-            return IOContextResult.NEEDS_DISCONNECT;
+                recvBuffer.setBufPos(authenticator.getRecvBufPos());
+                resetParser(authenticator.getRecvBufPseudoStart());
+                return parseMeasurements(netIoJob);
+            case SocketAuthenticator.NEEDS_READ:
+                return IOContextResult.NEEDS_READ;
+            case SocketAuthenticator.NEEDS_DISCONNECT:
+                return IOContextResult.NEEDS_DISCONNECT;
+            case SocketAuthenticator.QUEUE_FULL:
+                return IOContextResult.QUEUE_FULL;
+            default:
+                LOG.error().$("unexpected authenticator result [result=").$(result).I$();
+                return IOContextResult.NEEDS_DISCONNECT;
         }
     }
 
@@ -291,6 +306,18 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         parser.of(pos);
         goodMeasurement = true;
         recvBuffer.setBufStartOfMeasurement(pos);
+    }
+
+    private IOContextResult unhandledAuthenticationError(Throwable th) {
+        // The authenticator and the security context factory are both pluggable, so they can throw
+        // anything. Letting it escape strands the connection: the dispatcher takes the context out
+        // of its pending list before it publishes the IO event, so nothing is left to disconnect
+        // the client and the fd, the receive buffer and one of the connection slots leak for the
+        // lifetime of the process. Disconnecting here is what parseMeasurements() already does with
+        // the same class of error, so the error counter is bumped the same way too.
+        LOG.critical().$('[').$(getFd()).$("] unhandled error while authenticating [error=").$(th).I$();
+        metrics.healthMetrics().incrementUnhandledErrors();
+        return IOContextResult.NEEDS_DISCONNECT;
     }
 
     void addTableUpdateDetails(Utf8String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {

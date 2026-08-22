@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -57,6 +57,6 @@ public class InformationSchemaQuestDBColumnsFunctionFactory implements FunctionF
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CursorFunction(new InformationSchemaColumnsFunctionFactory.ColumnsCursorFactory(TYPE_TO_NAME));
+        return new CursorFunction(new InformationSchemaColumnsFunctionFactory.ColumnsCursorFactory(TYPE_TO_NAME, configuration));
     }
 }

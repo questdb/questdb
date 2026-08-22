@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -96,13 +96,21 @@ public final class TlsProxy {
         });
     }
 
-    public synchronized void stop() {
-        shutdownRequested = true;
-        TestUtils.unchecked(() -> serverSocket.close());
+    public void stop() {
+        synchronized (this) {
+            shutdownRequested = true;
+            TestUtils.unchecked(() -> serverSocket.close());
+        }
+        // The acceptor thread takes this monitor right after it dialled the backend, so joining it
+        // while holding the monitor deadlocks: interrupt() cannot break monitor entry. Release the
+        // monitor first, then join. The acceptor observes shutdownRequested under the monitor and
+        // bails out without registering a new link, so links is complete once the join returns.
         acceptorThread.interrupt();
         TestUtils.unchecked(() -> acceptorThread.join());
-        for (Link link : links) {
-            link.shutDown();
+        synchronized (this) {
+            for (Link link : links) {
+                link.shutDown();
+            }
         }
     }
 

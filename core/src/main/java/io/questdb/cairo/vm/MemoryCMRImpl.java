@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -122,13 +122,42 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
             if (size < 0) {
                 newSize = ff.length(fd);
                 if (newSize < 0) {
+                    final int errno = ff.errno();
                     close();
-                    throw CairoException.critical(ff.errno()).put("could not get length: ").put(name);
+                    throw CairoException.critical(errno).put("could not get length: ").put(name);
                 }
             } else {
                 newSize = size;
             }
             assert !VM_PARANOIA_MODE || newSize <= ff.length(fd) || newSize <= ff.length(fd); // Some tests simulate ff.length() to be 0 once.
+            map(ff, name, newSize);
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
+    }
+
+    // Single open: read the committed size from the 8-byte header at offset 0,
+    // then mmap that many bytes through the same fd. Saves the extra open that a
+    // read-size-then-map sequence costs on the per-partition scan path.
+    public void ofWithSizeFromHeader(FilesFacade ff, LPSZ name, int memoryTag) {
+        this.memoryTag = memoryTag;
+        this.madviseOpts = -1;
+        try {
+            openFile(ff, name);
+            final long newSize = ff.readNonNegativeLong(fd, 0);
+            if (newSize <= 0) {
+                throw CairoException.critical(0).put("invalid size header [path=").put(name).put(']');
+            }
+            // A header size past EOF would SIGBUS the JVM on the first read of
+            // the trailing region; surface corruption as a catchable error.
+            final long actualLength = ff.length(fd);
+            if (newSize > actualLength) {
+                throw CairoException.critical(0)
+                        .put("size header exceeds file length [size=").put(newSize)
+                        .put(", fileLength=").put(actualLength)
+                        .put(", path=").put(name).put(']');
+            }
             map(ff, name, newSize);
         } catch (Throwable e) {
             close();

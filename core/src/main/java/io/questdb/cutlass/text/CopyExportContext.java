@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -301,7 +301,7 @@ public class CopyExportContext {
             }
 
             // serial insert to copy_export_log table to avoid table busy
-            try (TableWriter statusTableWriter = engine.getWriter(statusTableToken, "QuestDB system")) {
+            try (TableWriter statusTableWriter = engine.getWriter(statusTableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON)) {
                 try {
                     MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
                     TableWriter.Row row = statusTableWriter.newRow(microsecondClock.getTicks());

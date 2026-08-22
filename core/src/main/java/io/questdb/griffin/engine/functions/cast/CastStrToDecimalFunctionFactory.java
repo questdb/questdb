@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -43,8 +43,10 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class CastStrToDecimalFunctionFactory implements FunctionFactory {
+
     /**
      * Create a new instance of a Function that can cast a string to a decimal.
      *
@@ -75,8 +77,8 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
@@ -98,7 +100,11 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
         try {
             decimal.ofString(cs, targetPrecision, targetScale);
         } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, targetType).position(position);
+            throw ImplicitCastException.inconvertibleValue(cs, value.getType(), targetType).position(position);
+        }
+        // NaN and Infinity parse to null
+        if (decimal.isNull()) {
+            return DecimalUtil.createNullDecimalConstant(targetPrecision, targetScale);
         }
         return DecimalUtil.createDecimalConstant(decimal, targetPrecision, targetScale);
     }
@@ -132,7 +138,7 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
             try {
                 sink.ofString(cs, precision, scale);
             } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, type).position(position);
+                throw ImplicitCastException.inconvertibleValue(cs, arg.getType(), type).position(position);
             }
         }
 
@@ -171,7 +177,7 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
             try {
                 sink.ofString(cs, precision, scale);
             } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, type).position(position);
+                throw ImplicitCastException.inconvertibleValue(cs, arg.getType(), type).position(position);
             }
         }
 
@@ -182,6 +188,7 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
     }
 
     private static class Func64 extends AbstractCastToDecimal64Function {
+
         public Func64(Function value, int targetType, int position) {
             super(value, targetType, position);
         }
@@ -194,9 +201,10 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
             try {
                 decimal.ofString(cs, precision, scale);
             } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, type).position(position);
+                throw ImplicitCastException.inconvertibleValue(cs, arg.getType(), type).position(position);
             }
-            return true;
+            // NaN and Infinity parse to null
+            return !decimal.isNull();
         }
     }
 }

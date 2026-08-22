@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -45,11 +45,30 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createSrcTable();
 
-            assertException(
-                    "create table dest as (select * from src) like src",
-                    41,
-                    "unexpected token [like]"
-            );
+            assertQuery("create table dest as (select * from src) like src")
+                    .fails(41, "unexpected token [like]");
+        });
+    }
+
+    @Test
+    public void testCreateAsSelectDoesNotPropagateParquetConfig() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (ts TIMESTAMP, v LONG PARQUET(delta_binary_packed, zstd(3))) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("INSERT INTO src VALUES('2024-01-01', 42);");
+            execute("CREATE TABLE dest AS (SELECT * FROM src) TIMESTAMP(ts) PARTITION BY DAY;");
+
+            // CTAS derives columns from SELECT metadata, which does not carry
+            // per-column parquet encoding config from the source table.
+            assertQuery("SHOW CREATE TABLE dest")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE TABLE 'dest' (\s
+                            \tts TIMESTAMP,
+                            \tv LONG
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """);
         });
     }
 
@@ -96,15 +115,31 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateAsSelectParquetConfig() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table src (ts timestamp, v long PARQUET(DELTA_BINARY_PACKED, zstd(3))) timestamp(ts) partition by day;");
+            execute("create table dest (like src)");
+
+            assertQuery("SHOW CREATE TABLE dest")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE TABLE 'dest' (\s
+                            \tts TIMESTAMP,
+                            \tv LONG PARQUET(delta_binary_packed, zstd(3))
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """);
+        });
+    }
+
+    @Test
     public void testCreateNonPartitionedTableAsSelectTimestampDescOrder() throws Exception {
         assertMemoryLeak(() -> {
             createSrcTable();
 
-            assertException(
-                    "create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);",
-                    13,
-                    "cannot insert rows out of order to non-partitioned table."
-            );
+            assertQuery("create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);")
+                    .fails(13, "cannot insert rows out of order to non-partitioned table.");
         });
     }
 
@@ -174,18 +209,17 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
 
             execute("create table dest as (select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;");
 
-            String expected = "ts\tv\n" +
-                    "1970-01-01T00:00:00.000000Z\t0\n" +
-                    "1970-01-01T00:00:00.020000Z\t2\n" +
-                    "1970-01-01T00:00:00.040000Z\t4\n";
+            String expected = """
+                    ts\tv
+                    1970-01-01T00:00:00.000000Z\t0
+                    1970-01-01T00:00:00.020000Z\t2
+                    1970-01-01T00:00:00.040000Z\t4
+                    """;
 
-            assertQuery(
-                    expected,
-                    "dest",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("dest")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -208,18 +242,17 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
             sql += "(select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;";
             execute(sql);
 
-            String expected = "ts\tv\n" +
-                    "1970-01-01T00:00:00.000000Z\t0\n" +
-                    "1970-01-01T00:00:00.020000Z\t2\n" +
-                    "1970-01-01T00:00:00.040000Z\t4\n";
+            String expected = """
+                    ts\tv
+                    1970-01-01T00:00:00.000000Z\t0
+                    1970-01-01T00:00:00.020000Z\t2
+                    1970-01-01T00:00:00.040000Z\t4
+                    """;
 
-            assertQuery(
-                    expected,
-                    "dest",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("dest")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -233,18 +266,17 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
             sql += "(select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;";
             execute(sql);
 
-            String expected = "ts\tv\n" +
-                    "1970-01-01T00:00:00.000000Z\t0\n" +
-                    "1970-01-01T00:00:00.020000Z\t2\n" +
-                    "1970-01-01T00:00:00.040000Z\t4\n";
+            String expected = """
+                    ts\tv
+                    1970-01-01T00:00:00.000000Z\t0
+                    1970-01-01T00:00:00.020000Z\t2
+                    1970-01-01T00:00:00.040000Z\t4
+                    """;
 
-            assertQuery(
-                    expected,
-                    "dest",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("dest")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
         });
     }
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,7 +24,7 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IntervalBwdPartitionFrameCursor;
@@ -33,20 +33,24 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.cairo.ParquetMetaFileReader;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
@@ -83,6 +87,13 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 {false, TestTimestampType.MICRO},
                 {false, TestTimestampType.NANO},
         });
+    }
+
+    @Override
+    public void setUp() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
+        super.setUp();
     }
 
     @Test
@@ -208,6 +219,78 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCalculateSizeUnboundedLowIntervalAcrossPartitions() throws Exception {
+        // Regression for an off-by-one (and early-exit) in calculateSize() on an unbounded-low
+        // interval ("ts < X", intervalLo == Long.MIN_VALUE). The frame size is hi - lo with lo the
+        // exclusive lower index, which must be -1 when the interval reaches below row 0; a previous
+        // ": 0" dropped row 0 and -- because that also routes to "skip interval" instead of "skip
+        // partition" -- stopped after the first matching partition, so calculateSize() diverged from
+        // what next() iterates. Three day-partitions with the cut inside the middle one exercise both
+        // the partially-cut partition and a wholly-included lower one; with convertToParquet the cut
+        // lands inside a parquet partition.
+        assertMemoryLeak(() -> {
+            final long increment = timestampType.getDriver().fromHours(1);
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .timestamp(timestampType.getTimestampType());
+            AbstractCairoTest.create(model);
+
+            long timestamp = timestampType.getDriver().parseFloorLiteral("2024-01-01T00:00:00.000Z");
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                // 72 hourly rows across three day-partitions (2024-01-01..03).
+                for (int i = 0; i < 72; i++) {
+                    TableWriter.Row row = writer.newRow(timestamp);
+                    row.putInt(0, i);
+                    row.append();
+                    timestamp += increment;
+                }
+                writer.commit();
+            }
+            if (convertToParquet) {
+                // Converts the two non-active partitions; 2024-01-03 stays native, so the cut below
+                // lands inside parquet 2024-01-02.
+                execute("alter table x convert partition to parquet where timestamp >= 0;");
+            }
+
+            // "ts < 2024-01-02T05:00:00" -> [Long.MIN_VALUE, 2024-01-02T04:00:00] (edges inclusive).
+            // Matches all 24 rows of 2024-01-01 plus 00:00..04:00 of 2024-01-02 = 29 rows.
+            intervals.clear();
+            intervals.add(Long.MIN_VALUE);
+            intervals.add(timestampType.getDriver().parseFloorLiteral("2024-01-02T04:00:00.000Z"));
+
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    IntervalBwdPartitionFrameCursor cursor = new IntervalBwdPartitionFrameCursor(
+                            configuration,
+                            new RuntimeIntervalModel(
+                                    ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()),
+                                    reader.getPartitionedBy(),
+                                    intervals
+                            ),
+                            reader.getMetadata().getTimestampIndex()
+                    )
+            ) {
+                cursor.of(reader, null);
+
+                // Ground truth: what next() actually iterates (the path the bug did not touch).
+                long iterated = 0;
+                PartitionFrame frame;
+                while ((frame = cursor.next()) != null) {
+                    iterated += frame.getRowHi() - frame.getRowLo();
+                }
+                Assert.assertEquals(29L, iterated);
+
+                // calculateSize() must agree with the iteration. The pre-fix ": 0" returned 4 here
+                // (off by one on the cut partition, then stopping before the wholly-included one).
+                cursor.toTop();
+                final RecordCursor.Counter counter = new RecordCursor.Counter();
+                cursor.calculateSize(counter);
+                Assert.assertEquals(iterated, counter.get());
+            }
+        });
+    }
+
+    @Test
     public void testClose() throws Exception {
         Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
@@ -219,6 +302,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             TableReader reader = newOffPoolReader(configuration, "x");
             IntervalBwdPartitionFrameCursor cursor = new IntervalBwdPartitionFrameCursor(
+                    configuration,
                     new RuntimeIntervalModel(
                             ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()),
                             reader.getPartitionedBy(),
@@ -434,6 +518,10 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
             }
             final TestTableReaderRecord record = new TestTableReaderRecord();
+            IntList columnIndexes = new IntList();
+            columnIndexes.add(0); // a
+            columnIndexes.add(1); // b
+            columnIndexes.add(2); // timestamp
             try (
                     final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(
                             tableToken,
@@ -450,7 +538,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                             0,
                             false
                     );
-                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, new IntList(), ORDER_DESC)
+                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, columnIndexes, ORDER_DESC)
             ) {
                 // assert that there is nothing to start with
                 record.of(cursor.getTableReader());
@@ -620,14 +708,14 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             // BitmapIndex is always at partition frame scope, each table can have more than one.
             // we have to get BitmapIndexReader instance once for each frame.
-            BitmapIndexReader indexReader = record.getReader().getBitmapIndexReader(frame.getPartitionIndex(), columnIndex, BitmapIndexReader.DIR_BACKWARD);
+            IndexReader indexReader = record.getReader().getIndexReader(frame.getPartitionIndex(), columnIndex, IndexReader.DIR_BACKWARD);
 
             // because out Symbol column 0 is indexed, frame has to have index.
             Assert.assertNotNull(indexReader);
 
             int keyCount = indexReader.getKeyCount();
             for (int i = 0; i < keyCount; i++) {
-                RowCursor ic = indexReader.getCursor(true, i, low, limit - 1);
+                RowCursor ic = indexReader.getCursor(i, low, limit - 1);
                 CharSequence expected = symbolTable.valueOf((int) (i - low - 1));
                 while (ic.hasNext()) {
                     long row = ic.next();
@@ -635,6 +723,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                     TestUtils.assertEquals(expected, record.getSymA(columnIndex));
                     rowCount++;
                 }
+                Misc.free(ic);
             }
         }
         if (allNative) {
@@ -671,15 +760,15 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 }
 
                 Assert.assertEquals(PartitionFormat.PARQUET, frame.getPartitionFormat());
-                PartitionDecoder parquetDecoder = frame.getParquetDecoder();
+                ParquetPartitionDecoder parquetDecoder = frame.getParquetMetaDecoder();
                 Assert.assertNotNull(parquetDecoder);
-                PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
+                ParquetMetaFileReader parquetMetadata = parquetDecoder.metadata();
                 for (int i = 0, n = parquetMetadata.getRowGroupCount(); i < n; i++) {
-                    int size = parquetMetadata.getRowGroupSize(i);
+                    int size = (int) parquetMetadata.getRowGroupSize(i);
                     parquetDecoder.decodeRowGroup(parquetBuffers, parquetColumns, i, 0, size);
                     long addr = parquetBuffers.getChunkDataPtr(0);
                     for (long r = frame.getRowHi() - 1; r > frame.getRowLo() - 1; r--) {
-                        sink.putISODate(timestampType.getDriver(), Unsafe.getUnsafe().getLong(addr + r * Long.BYTES)).put('\n');
+                        sink.putISODate(timestampType.getDriver(), Unsafe.getLong(addr + r * Long.BYTES)).put('\n');
                     }
                 }
             }
@@ -725,6 +814,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
             try (
                     TableReader reader = newOffPoolReader(configuration, "x");
                     IntervalBwdPartitionFrameCursor cursor = new IntervalBwdPartitionFrameCursor(
+                            configuration,
                             new RuntimeIntervalModel(
                                     ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()),
                                     reader.getPartitionedBy(),
@@ -779,6 +869,10 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
             }
             final TestTableReaderRecord record = new TestTableReaderRecord();
+            IntList columnIndexes = new IntList();
+            columnIndexes.add(0); // a
+            columnIndexes.add(1); // b
+            columnIndexes.add(2); // timestamp
             try (
                     final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(
                             tableToken,
@@ -795,7 +889,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                             0,
                             false
                     );
-                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, new IntList(), ORDER_DESC)
+                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, columnIndexes, ORDER_DESC)
             ) {
                 // assert that there is nothing to start with
                 record.of(cursor.getTableReader());

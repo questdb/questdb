@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -199,6 +199,21 @@ public class CursorFunction implements Function {
     @Override
     public RecordCursorFactory getRecordCursorFactory() {
         return factory;
+    }
+
+    // Deliberately does NOT override isNonDeterministic(). RecordCursorFactory#isNonDeterministic()
+    // is a fail-safe optimizer hint defaulting to true, while Function#isNonDeterministic() is a
+    // fail-open legality flag defaulting to false and is read by the materialized-view guard in
+    // FunctionParser. Delegating across that polarity boundary makes BinaryFunction OR the fail-safe
+    // true up through any enclosing operator, so `n > (SELECT count() FROM t)` gets rejected with
+    // "non-deterministic function: >". Consumers that genuinely need the factory's determinism hold
+    // their own factory reference (see ScalarSubQueryTimestampFunction) and read it directly.
+
+    // Stability is only ever used to *disable* optimizations, so the fail-safe direction is correct
+    // here and this delegation is safe.
+    @Override
+    public boolean isStableWithinExecution() {
+        return factory.isStableWithinExecution();
     }
 
     @Override

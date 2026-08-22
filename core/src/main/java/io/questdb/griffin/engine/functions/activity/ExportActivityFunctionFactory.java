@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -69,6 +70,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
         private final CopyExportContext.ExportTaskData entry;
         private final LongList entryIds = new LongList();
         private final ExportActivityRecord record = new ExportActivityRecord();
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private int entryIndex;
         private boolean isAdmin;
         private CharSequence principal;
@@ -95,6 +97,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
         @Override
         public boolean hasNext() {
             while (++entryIndex < size) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 if (copyExportContext.getAndCopyEntry(entryIds.get(entryIndex), entry)) {
                     if (isAdmin || Objects.equals(entry.getPrincipal(), principal)) {
                         return true;
@@ -105,6 +108,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
         }
 
         public void of(SqlExecutionContext executionContext) {
+            circuitBreaker = executionContext.getCircuitBreaker();
             try {
                 executionContext.getSecurityContext().authorizeSqlEngineAdmin();
                 isAdmin = true;
@@ -228,6 +232,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
             cursor.of(executionContext);
             return cursor;
         }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -41,6 +41,11 @@ public final class BooleanFunctionMemoizer extends BooleanFunction implements Me
     }
 
     @Override
+    public void clearMemo() {
+        validValue = false;
+    }
+
+    @Override
     public Function getArg() {
         return fn;
     }
@@ -67,11 +72,6 @@ public final class BooleanFunctionMemoizer extends BooleanFunction implements Me
     @Override
     public boolean isThreadSafe() {
         return false;
-    }
-
-    @Override
-    public void memoize(Record record) {
-        validValue = false;
     }
 
     @Override

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -91,8 +91,8 @@ public class OperatorRegistry {
     public OperatorExpression tryGetOperator(OperatorExpression.Operator operator) {
         return operator == unaryMinus.operator ? unaryMinus
                 : operator == unaryComplement.operator ? unaryComplement
-                : operator == unarySetNegation.operator ? unarySetNegation
-                : map.get(operator.token);
+                  : operator == unarySetNegation.operator ? unarySetNegation
+                    : map.get(operator.token);
     }
 
     /*

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -271,7 +271,7 @@ public class Table2IlpTest {
         new Table2IlpCopier().copyTable(params);
 
         ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0);
-        job.run(0);
+        job.run();
         TestUtils.assertEquals(engine, sqlExecutionContext, tableNameSrc, tableNameDst);
     }
 

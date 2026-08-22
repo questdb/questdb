@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -35,8 +35,6 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 
 public class DecimalAdapter extends AbstractTypeAdapter implements Mutable {
-    public static final DecimalAdapter DEFAULT_INSTANCE = new DecimalAdapter(new Decimal256()).of(ColumnType.DECIMAL_DEFAULT_TYPE);
-
     private final Decimal256 decimal256;
     private int precision;
     private int scale;
@@ -74,9 +72,9 @@ public class DecimalAdapter extends AbstractTypeAdapter implements Mutable {
         }
 
         try {
-            // We use concurrently decimal256, but it's fine because we don't care about the resulting value, only
-            // if parsing succeeds or not.
-            decimal256.ofString(text.asAsciiCharSequence(), 0, len - 1, -1, -1, true, false);
+            // The value is irrelevant, we only check that this adapter could also write it, so that
+            // a probed column is never silently nulled at write time.
+            decimal256.ofString(text.asAsciiCharSequence(), 0, len - 1, precision, scale, true, false);
             return true;
         } catch (NumericException ignored) {
             return false;

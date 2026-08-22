@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -40,11 +40,13 @@ import org.jetbrains.annotations.Nullable;
  * A list of UTF-8 strings backed by native memory.
  */
 public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable, Utf8Sink {
+
     private final BoolList asciiFlags = new BoolList();
     private final DirectLongList offsets;
     private final DirectByteSink sink;
     private final DirectUtf8StringView view = new DirectUtf8StringView();
     private boolean currentElemAscii = true;
+    private int[] ryuE10;
 
     public DirectUtf8StringList(long initialCapacity, long initialElementCount) {
         this(initialCapacity, initialElementCount, false);
@@ -157,6 +159,14 @@ public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable
         currentElemAscii = true;
     }
 
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
+    }
+
     /**
      * Marks the end of current element.
      * All bytes put since the last setElem() call become a new element.
@@ -187,7 +197,7 @@ public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable
 
         @Override
         public byte byteAt(int index) {
-            return Unsafe.getUnsafe().getByte(lo + index);
+            return Unsafe.getByte(lo + index);
         }
 
         @Override

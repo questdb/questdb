@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -32,12 +32,9 @@ import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.ShardedMapCursor;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrame;
-import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -47,19 +44,17 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.std.DirectIntList;
-import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
-import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
 
 class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private final MessageBus messageBus;
+    // Borrowed non-group-by views into recordFunctions; the factory owns and closes the functions.
+    private final ObjList<Function> nonGroupByFunctions;
     private final AtomicBooleanCircuitBreaker postAggregationCircuitBreaker;
     private final SOUnboundedCountDownLatch postAggregationDoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger postAggregationStartedCounter = new AtomicInteger();
@@ -68,12 +63,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private final ObjList<Function> recordFunctions;
     private final ShardedMapCursor shardedCursor = new ShardedMapCursor();
     private final RecordCursorFactory slaveFactory;
-    private final LongList slavePartitionCeilings = new LongList();
-    private final LongList slavePartitionTimestamps = new LongList();
-    // Slave time frame cache data
-    private final PageFrameAddressCache slaveTimeFrameAddressCache;
-    private final DirectIntList slaveTimeFramePartitionIndexes;
-    private final LongList slaveTimeFrameRowCounts = new LongList();
+    private final ConcurrentTimeFrameState slaveTimeFrameState;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private SqlExecutionContext executionContext;
     private UnorderedPageFrameSequence<AsyncHorizonJoinAtom> frameSequence;
@@ -90,15 +80,22 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
             RecordCursorFactory slaveFactory
     ) {
         try {
+            // True during construction so the catch below can close() a partially built
+            // cursor and free what was already allocated.
             this.isOpen = true;
+            this.slaveTimeFrameState = new ConcurrentTimeFrameState();
             this.messageBus = messageBus;
             this.postAggregationCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
             this.recordFunctions = recordFunctions;
+            this.nonGroupByFunctions = GroupByUtils.extractNonGroupByFunctions(recordFunctions);
             this.slaveFactory = slaveFactory;
             this.recordA = new VirtualRecord(recordFunctions);
             this.recordB = new VirtualRecord(recordFunctions);
-            this.slaveTimeFrameAddressCache = new PageFrameAddressCache();
-            this.slaveTimeFramePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
+            // Construction succeeded: start closed so the first of() runs atom.reopen(),
+            // which opens the lazy (openOnInit=false) allocators and ASOF maps and binds the
+            // per-query tracker before any allocation. Skipping reopen() on the first cursor
+            // would leave the allocator's chunk index unallocated and the tracker unbound.
+            this.isOpen = false;
         } catch (Throwable th) {
             close();
             throw th;
@@ -124,8 +121,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
                 // Free shared resources only after workers have finished
                 mapCursor = Misc.free(mapCursor);
                 slaveFrameCursor = Misc.free(slaveFrameCursor);
-                Misc.free(slaveTimeFrameAddressCache);
-                Misc.free(slaveTimeFramePartitionIndexes);
+                Misc.free(slaveTimeFrameState);
                 isOpen = false;
             }
         }
@@ -188,8 +184,10 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     }
 
     private void buildMap() {
+        // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
 
         final AsyncHorizonJoinAtom atom = frameSequence.getAtom();
@@ -227,45 +225,27 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
 
     private void buildSlaveTimeFrameCacheConditionally() {
         if (!isSlaveTimeFrameCacheBuilt) {
-            final int frameCount = initializeSlaveTimeFrameCache();
-            populatePartitionTimestamps(slaveFrameCursor, slavePartitionTimestamps, slavePartitionCeilings);
-            initializeTimeFrameCursors(frameCount);
-            isSlaveTimeFrameCacheBuilt = true;
-        }
-    }
-
-    private int initializeSlaveTimeFrameCache() {
-        RecordMetadata slaveMetadata = slaveFactory.getMetadata();
-        slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnIndexes(), slaveFrameCursor.isExternal());
-        slaveTimeFramePartitionIndexes.reopen();
-        slaveTimeFramePartitionIndexes.clear();
-        slaveTimeFrameRowCounts.clear();
-
-        int frameCount = 0;
-        PageFrame frame;
-        while ((frame = slaveFrameCursor.next()) != null) {
-            slaveTimeFramePartitionIndexes.add(frame.getPartitionIndex());
-            slaveTimeFrameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
-            slaveTimeFrameAddressCache.add(frameCount++, frame);
-        }
-        return frameCount;
-    }
-
-    private void initializeTimeFrameCursors(int frameCount) {
-        try {
-            frameSequence.getAtom().initTimeFrameCursors(
-                    executionContext,
-                    frameSequence.getSymbolTableSource(),
+            slaveTimeFrameState.of(
                     slaveFrameCursor,
-                    slaveTimeFrameAddressCache,
-                    slaveTimeFramePartitionIndexes,
-                    slaveTimeFrameRowCounts,
-                    slavePartitionTimestamps,
-                    slavePartitionCeilings,
-                    frameCount
+                    slaveFactory.getMetadata(),
+                    slaveFrameCursor.getColumnMapping(),
+                    slaveFrameCursor.isExternal(),
+                    executionContext.getPageFrameMinRows(),
+                    executionContext.getPageFrameMaxRows(),
+                    executionContext.getSharedQueryWorkerCount(),
+                    executionContext.getMemoryTracker()
             );
-        } catch (SqlException e) {
-            throw CairoException.nonCritical().put(e.getFlyweightMessage());
+            try {
+                frameSequence.getAtom().initTimeFrameCursors(
+                        executionContext,
+                        frameSequence.getSymbolTableSource(),
+                        slaveFrameCursor,
+                        slaveTimeFrameState
+                );
+            } catch (SqlException e) {
+                throw CairoException.nonCritical().put(e.getFlyweightMessage());
+            }
+            isSlaveTimeFrameCacheBuilt = true;
         }
     }
 
@@ -279,11 +259,12 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
 
     void of(UnorderedPageFrameSequence<AsyncHorizonJoinAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncHorizonJoinAtom atom = frameSequence.getAtom();
+        // Assign before reopen() so close() can drain a partially reopened atom on a breach.
+        this.frameSequence = frameSequence;
         if (!isOpen) {
             isOpen = true;
             atom.reopen();
         }
-        this.frameSequence = frameSequence;
         this.executionContext = executionContext;
         this.circuitBreaker = executionContext.getCircuitBreaker();
 
@@ -291,10 +272,16 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
         this.slaveFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, ORDER_ASC);
 
         // Initialize record functions with a symbol table source that routes lookups
-        // to the correct source (master or slave) based on column mappings
+        // to the correct source (master or slave) based on column mappings. Skip the group by
+        // functions: the atom initializes them in initTimeFrameCursors(), before any frame is
+        // dispatched, and donates the owner state to the per-worker clones. Re-initializing them
+        // here would re-run stateful initialization, such as a cursor comparison re-executing its
+        // scalar sub-query, and could diverge from the state the workers observe. The constructor
+        // pre-filters the non-group-by functions once, so cached re-executions skip the
+        // per-function classification scan.
         final HorizonJoinSymbolTableSource symbolTableSource = atom.getSymbolTableSource();
         symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveFrameCursor);
-        Function.init(recordFunctions, symbolTableSource, executionContext, null);
+        Function.init(nonGroupByFunctions, symbolTableSource, executionContext, null);
 
         isDataMapBuilt = false;
         isSlaveTimeFrameCacheBuilt = false;

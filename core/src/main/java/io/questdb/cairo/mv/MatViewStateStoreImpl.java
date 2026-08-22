@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -35,7 +35,7 @@ import io.questdb.mp.Queue;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.tasks.TelemetryMatViewTask;
 import org.jetbrains.annotations.NotNull;
@@ -47,7 +47,7 @@ import java.util.function.Function;
 
 public class MatViewStateStoreImpl implements MatViewStateStore {
     private static final Log LOG = LogFactory.getLog(MatViewStateStoreImpl.class);
-    private static final ThreadLocal<MatViewTimerTask> tlTimerTask = new ThreadLocal<>(MatViewTimerTask::new);
+    private static final CarrierLocal<MatViewTimerTask> tlTimerTask = new CarrierLocal<>(MatViewTimerTask::new);
     private final Function<CharSequence, AtomicLong> createLastNotifiedTxn;
     // Table name to last notified base table txn.
     // Flips to negative value once a refresh message is processed. Long.MIN_VALUE stands for "just invalidated" state.
@@ -56,7 +56,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     private final ConcurrentHashMap<AtomicLong> lastNotifiedTxnByTableName = new ConcurrentHashMap<>(false);
     private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<MatViewState> stateByTableDirName = new ConcurrentHashMap<>();
-    private final ThreadLocal<MatViewRefreshTask> taskHolder = new ThreadLocal<>(MatViewRefreshTask::new);
+    private final CarrierLocal<MatViewRefreshTask> taskHolder = new CarrierLocal<>(MatViewRefreshTask::new);
     private final Queue<MatViewRefreshTask> taskQueue = ConcurrentQueue.createConcurrentQueue(MatViewRefreshTask::new);
     private final Telemetry<TelemetryMatViewTask> telemetry;
     private final MatViewTelemetryFacade telemetryFacade;
@@ -122,15 +122,19 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     public void clear() {
         close();
         taskQueue.clear();
-        stateByTableDirName.clear();
         lastNotifiedTxnByTableName.clear();
     }
 
     @Override
     public void close() {
+        // Idempotent across SEQUENTIAL closes: a promote unwind frees a private, never-installed
+        // store, and engine teardown later frees whatever delegate is installed; clearing the map
+        // after the free loop makes any second (sequential) close a no-op instead of a double-free.
+        // This method is not synchronized -- concurrent double-close is not a supported reach.
         for (MatViewState state : stateByTableDirName.values()) {
             Misc.free(state);
         }
+        stateByTableDirName.clear();
     }
 
     @Override
@@ -246,6 +250,17 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
                 LOG.debug().$("no need to notify to refresh job [baseTable=").$(baseTableToken).I$();
             }
         }
+    }
+
+    @Override
+    public void notifyRefreshRetry(TableToken matViewToken, long retryAfterMicros) {
+        final MatViewTimerTask timerTask = tlTimerTask.get();
+        timerTaskQueue.enqueue(timerTask.ofRetry(matViewToken, retryAfterMicros));
+    }
+
+    @Override
+    public void reenqueueRefreshTask(MatViewRefreshTask task) {
+        taskQueue.enqueue(task);
     }
 
     @Override

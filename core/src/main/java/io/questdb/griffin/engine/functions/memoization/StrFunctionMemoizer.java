@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -44,6 +44,12 @@ public final class StrFunctionMemoizer extends StrFunction implements MemoizerFu
 
     public StrFunctionMemoizer(Function fn) {
         this.fn = fn;
+    }
+
+    @Override
+    public void clearMemo() {
+        validAValue = false;
+        validBValue = false;
     }
 
     @Override
@@ -106,12 +112,6 @@ public final class StrFunctionMemoizer extends StrFunction implements MemoizerFu
     @Override
     public boolean isThreadSafe() {
         return false;
-    }
-
-    @Override
-    public void memoize(Record record) {
-        validAValue = false;
-        validBValue = false;
     }
 
     @Override

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,8 +28,12 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.NullRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
@@ -46,7 +50,22 @@ public class ExtraNullColumnRecord implements Record {
 
     @Override
     public ArrayView getArray(int col, int columnType) {
-        return col < columnSplit ? base.getArray(col, columnType) : null;
+        if (col < columnSplit) {
+            return base.getArray(col, columnType);
+        }
+        // A spliced column has no array behind it. Hand out a NULL ArrayView, not a Java null, as
+        // the sibling join records do, so every caller sees a NULL array rather than nothing.
+        return ArrayConstant.NULL;
+    }
+
+    @Override
+    public int getArrayDimLen(int col, int columnType, int dim) {
+        return col < columnSplit ? base.getArrayDimLen(col, columnType, dim) : Numbers.INT_NULL;
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+        return col < columnSplit ? base.getArrayDouble1d2d(col, columnType, idx0, idx1) : Double.NaN;
     }
 
     public Record getBaseRecord() {
@@ -81,6 +100,44 @@ public class ExtraNullColumnRecord implements Record {
     @Override
     public long getDate(int col) {
         return col < columnSplit ? base.getDate(col) : Numbers.LONG_NULL;
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        if (col < columnSplit) {
+            base.getDecimal128(col, sink);
+        } else {
+            sink.ofRawNull();
+        }
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        return col < columnSplit ? base.getDecimal16(col) : Decimals.DECIMAL16_NULL;
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        if (col < columnSplit) {
+            base.getDecimal256(col, sink);
+        } else {
+            sink.ofRawNull();
+        }
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        return col < columnSplit ? base.getDecimal32(col) : Decimals.DECIMAL32_NULL;
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        return col < columnSplit ? base.getDecimal64(col) : Decimals.DECIMAL64_NULL;
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        return col < columnSplit ? base.getDecimal8(col) : Decimals.DECIMAL8_NULL;
     }
 
     @Override

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,11 +24,11 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 
 public final class SingleCharCharSequence extends AbstractCharSequence {
 
-    private static final ThreadLocal<SingleCharCharSequence> TL_CHAR_SEQUENCE = new ThreadLocal<>(SingleCharCharSequence::new);
+    private static final CarrierLocal<SingleCharCharSequence> TL_CHAR_SEQUENCE = new CarrierLocal<>(SingleCharCharSequence::new);
     private char value;
 
     public static CharSequence get(char value) {

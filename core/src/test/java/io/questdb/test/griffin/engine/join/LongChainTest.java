@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.join.LongChain;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -31,6 +32,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -69,6 +71,136 @@ public class LongChainTest {
                     }
                     Assert.assertEquals(N, count);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testBudgetFlooredAtOnePage() throws Exception {
+        // cairo.sql.hash.join.light.value.max.pages = 0 is accepted by config and used to give a
+        // zero budget, so every hash join failed with "limit of 0" even though the chain had
+        // already allocated a full page. What the floor changes is the message, not where the
+        // chain gives up: this constructor allocates the page up front, so the first five puts
+        // land either way and the sixth throws either way - reporting "limit of 0" without the
+        // floor and "limit of 64" with it. The number a user is told to raise now matches what
+        // the chain actually holds.
+        assertMemoryLeak(() -> {
+            try (LongChain chain = new LongChain(64, 0)) {
+                // 64-byte page, 12-byte values: five fit, the sixth needs 72.
+                int prev = -1;
+                for (int i = 0; i < 5; i++) {
+                    prev = chain.put(i, prev);
+                }
+                try {
+                    chain.put(5, prev);
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 64 memory exceeded in LongChain");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHeapAcceptsRequiredEqualToMaxHeapSize() throws Exception {
+        assertMemoryLeak(() -> {
+            // 12B page x 3 pages = a 36B budget, which is an exact multiple of the 12-byte value.
+            // The third value makes required exactly 36, so the throw predicate sees its boundary
+            // case: a value that fits exactly must be accepted, not rejected.
+            try (LongChain chain = new LongChain(12, 3)) {
+                int tail = -1;
+                tail = chain.put(10, tail);
+                tail = chain.put(20, tail);
+                tail = chain.put(30, tail); // required == 36 == the budget
+                try {
+                    chain.put(40, tail);
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 36 memory exceeded in LongChain");
+                }
+
+                LongChain.Cursor cursor = chain.getCursor(tail);
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(30, cursor.next());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(20, cursor.next());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(10, cursor.next());
+                Assert.assertFalse(cursor.hasNext());
+            }
+        });
+    }
+
+    @Test
+    public void testHeapClampsToMaxHeapSize() throws Exception {
+        assertMemoryLeak(() -> {
+            // 64B page x 3 pages = a 192B budget, which is not a power of two. Doubling goes
+            // 64 -> 128 -> 256, and 256 overshoots, so rejecting there stranded a third of the
+            // configured budget. Clamping to 192 fits 16 12-byte values instead of 10.
+            try (LongChain chain = new LongChain(64, 3)) {
+                final LongList expected = new LongList();
+                int tail = -1;
+                try {
+                    for (int i = 0; i < 100; i++) {
+                        tail = chain.put(i, tail);
+                        expected.add(i);
+                    }
+                    Assert.fail("expected LimitOverflowException");
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 192 memory exceeded in LongChain");
+                }
+                Assert.assertEquals(16, expected.size());
+
+                // Everything written into the clamped heap must still read back, in reverse order.
+                expected.reverse();
+                LongChain.Cursor cursor = chain.getCursor(tail);
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals(expected.getQuick(count), cursor.next());
+                    count++;
+                }
+                Assert.assertEquals(expected.size(), count);
+            }
+        });
+    }
+
+    @Test
+    public void testKeepClosedChainAllocatesOnFirstPut() throws Exception {
+        // All three production owners construct the chain with keepClosed == true, yet no test
+        // built one that way. Such a chain allocates nothing until reopen(), so a put() that skips
+        // reopen() has to allocate the configured page rather than grow from heapSize 0.
+        assertMemoryLeak(() -> {
+            try (LongChain chain = new LongChain(64, 3, true)) {
+                Assert.assertEquals("a keepClosed chain allocates nothing until it is used", 0, chain.getHeapSize());
+
+                // Ask the chain what it holds rather than reading the engine-wide NATIVE_DEFAULT
+                // counter: that counter moves for reasons this test does not control, in both
+                // directions, so neither a delta nor an equality against it separates the two
+                // outcomes reliably. A chain that opened its configured page reads 64 here; one
+                // that grew from a closed heap reads 12 and re-doubles from there for the rest of
+                // its life.
+                int tail = chain.put(42, -1);
+                Assert.assertEquals(
+                        "a keepClosed chain must open its configured page, not grow from a closed heap",
+                        64,
+                        chain.getHeapSize()
+                );
+
+                for (int i = 0; i < 4; i++) {
+                    tail = chain.put(44 + i, tail);
+                }
+                // 5 * 12 = 60 bytes, still inside the 64-byte page.
+                Assert.assertEquals(64, chain.getHeapSize());
+
+                final int second = chain.put(43, tail);
+
+                LongChain.Cursor cursor = chain.getCursor(second);
+                final long[] expected = {43, 47, 46, 45, 44, 42};
+                for (long value : expected) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(value, cursor.next());
+                }
+                Assert.assertFalse(cursor.hasNext());
             }
         });
     }

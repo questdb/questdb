@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -45,6 +45,7 @@ import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Properties;
@@ -101,6 +102,28 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             execute("create table src (ts TIMESTAMP)");
             executeWithPg("select * from src");
+        });
+    }
+
+    @Test
+    public void testCurrentUserReflectsConfiguredPrincipal() throws Exception {
+        // current_user() must report the authenticated pgwire user, not the hardcoded "admin" default
+        assertMemoryLeak(() -> {
+            try (
+                    final PGServer server = createPGServer(READ_ONLY_USER_CONF);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (
+                        final Connection defaultUserConnection = getConnection(server.getPort(), false, true);
+                        final Connection roUserConnection = getConnectionWithReadOnlyUser(server.getPort())
+                ) {
+                    // the read-only user "user" gets a read-only context that still reports its own name
+                    assertCurrentUser(roUserConnection, "user");
+                    // the default admin user maps to the shared singleton and reports the default name
+                    assertCurrentUser(defaultUserConnection, "admin");
+                }
+            }
         });
     }
 
@@ -214,10 +237,12 @@ public class PGSecurityTest extends BasePGTest {
             // if this asserts fails then it means UPDATE are already implemented
             // please change this test to check the update throws an exception in the read-only mode
             // this is in place, so we won't forget to test UPDATE honours read-only security context
-            assertSql("""
-                    ts\tname
-                    2022-04-12T17:30:45.145921Z\tfoo
-                    """, "select * from src");
+            assertQuery("select * from src")
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            ts\tname
+                            2022-04-12T17:30:45.145921Z\tfoo
+                            """);
         });
     }
 
@@ -253,7 +278,7 @@ public class PGSecurityTest extends BasePGTest {
         // because the out of thin air property would overwrite the user set by the client. Example:
         // 2022-05-17T15:58:38.973955Z I i.q.c.p.PGConnectionContext property [name=user, value=user] <-- client indicates username is "user"
         // 2022-05-17T15:58:38.974236Z I i.q.c.p.PGConnectionContext property [name=user, value=database] <-- buggy pgwire parser overwrites username with out of thin air value
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> getConnectionWithCustomProperty(port, PGProperty.OPTIONS.getName()).close());
+        assertWithPgServer(CONN_AWARE_ALL, (_, _, _, port) -> getConnectionWithCustomProperty(port, PGProperty.OPTIONS.getName()).close());
     }
 
     @Test
@@ -292,7 +317,7 @@ public class PGSecurityTest extends BasePGTest {
                 return new DefaultFactoryProvider() {
                     @Override
                     public @NotNull SecurityContextFactory getSecurityContextFactory() {
-                        return (principalContext, interfaceId) -> {
+                        return (_, _) -> {
                             throw CairoException.nonCritical().put("test security context error");
                         };
                     }
@@ -314,6 +339,19 @@ public class PGSecurityTest extends BasePGTest {
                 }
             }
         });
+    }
+
+    private static void assertCurrentUser(Connection connection, String expectedUser) throws SQLException {
+        try (
+                final Statement statement = connection.createStatement();
+                // current_user() and session_user() must both reflect the authenticated user
+                final ResultSet rs = statement.executeQuery("SELECT current_user(), session_user()")
+        ) {
+            Assert.assertTrue(rs.next());
+            Assert.assertEquals(expectedUser, rs.getString(1));
+            Assert.assertEquals(expectedUser, rs.getString(2));
+            Assert.assertFalse(rs.next());
+        }
     }
 
     private void assertQueryDisallowed(String query) throws Exception {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,12 +27,16 @@ package io.questdb.test.griffin.engine.table.parquet;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
+import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
+import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -55,6 +59,7 @@ import java.util.Arrays;
 import java.util.Collection;
 
 import static io.questdb.cairo.TableUtils.PARQUET_PARTITION_NAME;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 @RunWith(Parameterized.class)
 public class ReadParquetFunctionTest extends AbstractCairoTest {
@@ -113,109 +118,103 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         ParquetVersion.PARQUET_VERSION_V1,
                         bloomFilterColumnIndexes.getAddress(),
                         (int) bloomFilterColumnIndexes.size(),
-                        0.01
+                        0.01,
+                        0.0,
+                        -1,
+                        -1L,
+                        -1L
                 );
                 Assert.assertTrue(Files.exists(path.$()));
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
-                assertQueryNoLeakCheck(
-                        "id\n",
-                        "SELECT id FROM read_parquet('x.parquet') WHERE id = -999",
-                        null, parallel, false
-                );
+                assertQuery("SELECT id FROM read_parquet('x.parquet') WHERE id = -999")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("id\n");
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-                assertQueryNoLeakCheck(
-                        "id\n42\n",
-                        "SELECT id FROM read_parquet('x.parquet') WHERE id = 42",
-                        null, parallel, false
-                );
+                assertQuery("SELECT id FROM read_parquet('x.parquet') WHERE id = 42")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("id\n42\n");
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
-                assertQueryNoLeakCheck(
-                        "name\n",
-                        "SELECT name FROM read_parquet('x.parquet') WHERE name = 'no_such_value'",
-                        null, parallel, false
-                );
+                assertQuery("SELECT name FROM read_parquet('x.parquet') WHERE name = 'no_such_value'")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("name\n");
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-                assertQueryNoLeakCheck(
-                        "name\nval_100\n",
-                        "SELECT name FROM read_parquet('x.parquet') WHERE name = 'val_100'",
-                        null, parallel, false
-                );
+                assertQuery("SELECT name FROM read_parquet('x.parquet') WHERE name = 'val_100'")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("name\nval_100\n");
 
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
-                assertQueryNoLeakCheck(
-                        "id\n",
-                        "SELECT id FROM read_parquet('x.parquet') WHERE id IN (-1, -2, -3)",
-                        null, parallel, false
-                );
+                assertQuery("SELECT id FROM read_parquet('x.parquet') WHERE id IN (-1, -2, -3)")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("id\n");
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
                 bindVariableService.clear();
                 bindVariableService.setInt("v", -999);
-                assertQueryNoLeakCheck(
-                        "id\n",
-                        "SELECT id FROM read_parquet('x.parquet') WHERE id = :v",
-                        null, parallel, false
-                );
+                assertQuery("SELECT id FROM read_parquet('x.parquet') WHERE id = :v")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("id\n");
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
                 bindVariableService.clear();
                 bindVariableService.setInt("v", 42);
-                assertQueryNoLeakCheck(
-                        "id\n42\n",
-                        "SELECT id FROM read_parquet('x.parquet') WHERE id = :v",
-                        null, parallel, false
-                );
+                assertQuery("SELECT id FROM read_parquet('x.parquet') WHERE id = :v")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("id\n42\n");
 
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
                 bindVariableService.clear();
                 bindVariableService.setStr("v", "no_such_value");
-                assertQueryNoLeakCheck(
-                        "name\n",
-                        "SELECT name FROM read_parquet('x.parquet') WHERE name = :v",
-                        null, parallel, false
-                );
+                assertQuery("SELECT name FROM read_parquet('x.parquet') WHERE name = :v")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("name\n");
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
                 bindVariableService.clear();
                 bindVariableService.setInt(0, -999);
-                assertQueryNoLeakCheck(
-                        "id\n",
-                        "SELECT id FROM read_parquet('x.parquet') WHERE id = $1",
-                        null, parallel, false
-                );
+                assertQuery("SELECT id FROM read_parquet('x.parquet') WHERE id = $1")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("id\n");
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
-                assertQueryNoLeakCheck(
-                        "id\n",
-                        "SELECT id FROM read_parquet('x.parquet') WHERE id IS NULL",
-                        null, parallel, false
-                );
+                assertQuery("SELECT id FROM read_parquet('x.parquet') WHERE id IS NULL")
+                        .noLeakCheck()
+                        .supportsRandomAccess(parallel)
+                        .returns("id\n");
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-                assertQueryNoLeakCheck(
-                        "cnt\n" + rows + "\n",
-                        "SELECT COUNT(*) cnt FROM read_parquet('x.parquet') WHERE id IS NOT NULL",
-                        null, false, true
-                );
+                assertQuery("SELECT COUNT(*) cnt FROM read_parquet('x.parquet') WHERE id IS NOT NULL")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("cnt\n" + rows + "\n");
 
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
-                assertQueryNoLeakCheck(
-                        "cnt\n10\n",
-                        "SELECT COUNT(*) cnt FROM read_parquet('x.parquet') WHERE id BETWEEN 10 AND 1",
-                        null, false, true
-                );
+                assertQuery("SELECT COUNT(*) cnt FROM read_parquet('x.parquet') WHERE id BETWEEN 10 AND 1")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("cnt\n10\n");
 
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
-                assertQueryNoLeakCheck(
-                        "cnt\n0\n",
-                        "SELECT COUNT(*) cnt FROM read_parquet('x.parquet') WHERE id BETWEEN -100 AND -50",
-                        null, false, true
-                );
+                assertQuery("SELECT COUNT(*) cnt FROM read_parquet('x.parquet') WHERE id BETWEEN -100 AND -50")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("cnt\n0\n");
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
             }
         });
@@ -253,10 +252,9 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         parquet file sequential scan
                           columns: a_ts,a_long
                         """;
-                assertPlanNoLeakCheck(
-                        sink,
-                        expectedPlan
-                );
+                assertQuery(sink)
+                        .noLeakCheck()
+                        .assertsPlan(expectedPlan);
 
                 assertSqlCursors0("select a_ts, a_long from x");
             }
@@ -291,12 +289,119 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         """;
                 sink.clear();
                 sink.put("select an_int, a_long, a_str from read_parquet('x.parquet')");
-                assertPlanNoLeakCheck(
-                        sink,
-                        expectedPlan
-                );
+                assertQuery(sink)
+                        .noLeakCheck()
+                        .assertsPlan(expectedPlan);
                 assertSqlCursors0("select an_int, a_long, a_str from x");
             }
+        });
+    }
+
+    @Test
+    public void testColumnProjectionDuplicatedColumn() throws Exception {
+        // A duplicated/crossed projection (v, ts, v as v2) cannot be pushed down into the
+        // parquet reader, so the compiled shape is SelectedRecord over the parquet scan.
+        // SelectedRecordCursorFactory.getPageFrameCursor used to cast the base page-frame
+        // cursor to TablePageFrameCursor unconditionally, so every page-frame consumer
+        // (parquet export, QWP egress, parallel GROUP BY) hit a ClassCastException over the
+        // plain ReadParquetPageFrameCursor. The projection wrapper needs nothing
+        // table-specific for the plain surface, so it hands out a plain PageFrameCursor
+        // wrapper over a non-table base and the projected scan works.
+        assertMemoryLeak(() -> {
+            final long rows = 10;
+            execute("create table x as (select x::int v, (x * 1_000_000)::timestamp ts from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+            }
+
+            try (RecordCursorFactory factory = select("select v, ts, v as v2 from read_parquet('x.parquet')")) {
+                RecordCursorFactory f = factory;
+                while (f != null && !(f instanceof SelectedRecordCursorFactory)) {
+                    f = f.getBaseFactory();
+                }
+                Assert.assertNotNull("the duplicated projection must compile to SelectedRecord over the parquet scan", f);
+                if (parallel) {
+                    Assert.assertTrue("projection must keep the parquet base page-frame capability", factory.supportsPageFrameCursor());
+                    try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
+                        Assert.assertFalse(
+                                "the projection wrapper must not claim TablePageFrameCursor over a non-table base",
+                                cursor instanceof TablePageFrameCursor
+                        );
+                        Assert.assertTrue("the parquet base is external", cursor.isExternal());
+                        Assert.assertEquals(
+                                "column mapping must be projected to the selected column count",
+                                3, cursor.getColumnMapping().getColumnCount()
+                        );
+                        long frameRows = 0;
+                        PageFrame frame;
+                        while ((frame = cursor.next()) != null) {
+                            Assert.assertEquals(3, frame.getColumnCount());
+                            frameRows += frame.getPartitionHi() - frame.getPartitionLo();
+                        }
+                        Assert.assertEquals("every parquet row must flow through the projection", rows, frameRows);
+                        Assert.assertEquals(rows, cursor.size());
+                        cursor.toTop();
+                        Assert.assertNotNull("the cursor must be reusable after toTop", cursor.next());
+                    }
+                } else {
+                    Assert.assertFalse("the serial parquet scan has no page-frame capability", factory.supportsPageFrameCursor());
+                }
+            }
+
+            assertQuery("select v, ts, v as v2 from read_parquet('x.parquet')")
+                    // the parallel scan's page-frame record cursor supports random access, the
+                    // serial scan's cursor does not
+                    .supportsRandomAccess(parallel)
+                    .expectSize()
+                    .returns("""
+                            v\tts\tv2
+                            1\t1970-01-01T00:00:01.000000Z\t1
+                            2\t1970-01-01T00:00:02.000000Z\t2
+                            3\t1970-01-01T00:00:03.000000Z\t3
+                            4\t1970-01-01T00:00:04.000000Z\t4
+                            5\t1970-01-01T00:00:05.000000Z\t5
+                            6\t1970-01-01T00:00:06.000000Z\t6
+                            7\t1970-01-01T00:00:07.000000Z\t7
+                            8\t1970-01-01T00:00:08.000000Z\t8
+                            9\t1970-01-01T00:00:09.000000Z\t9
+                            10\t1970-01-01T00:00:10.000000Z\t10
+                            """);
+        });
+    }
+
+    @Test
+    public void testColumnProjectionDuplicatedColumnGroupBy() throws Exception {
+        // End-to-end page-frame consumer over the duplicated projection: with parallel
+        // read_parquet the GROUP BY consumer drives the projected page frames through
+        // SelectedRecordCursorFactory.getPageFrameCursor - the exact seam that used to
+        // throw ClassCastException. The serial mode covers the record-cursor fallback.
+        assertMemoryLeak(() -> {
+            execute("create table x as (select x::int v, (x * 1_000_000)::timestamp ts from long_sequence(10))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+            }
+
+            assertQuery("select sum(v) s1, count(ts) c, sum(v2) s2 from (select v, ts, v as v2 from read_parquet('x.parquet'))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            s1\tc\ts2
+                            55\t10\t55
+                            """);
         });
     }
 
@@ -328,10 +433,9 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         parquet file sequential scan
                           columns: a_long
                         """;
-                assertPlanNoLeakCheck(
-                        sink,
-                        expectedPlan
-                );
+                assertQuery(sink)
+                        .noLeakCheck()
+                        .assertsPlan(expectedPlan);
                 assertSqlCursors0("select a_long from x");
             }
         });
@@ -367,10 +471,9 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                             parquet file sequential scan
                               columns: a_long
                         """;
-                assertPlanNoLeakCheck(
-                        "select a_long + 1 from read_parquet('x.parquet')",
-                        expectedPlan
-                );
+                assertQuery("select a_long + 1 from read_parquet('x.parquet')")
+                        .noLeakCheck()
+                        .assertsPlan(expectedPlan);
             }
         });
     }
@@ -464,12 +567,15 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         parquet file sequential scan
                           columns: id,ts
                         """;
-                assertPlanNoLeakCheck(
-                        query,
-                        expectedPlan
-                );
-                assertQueryNoLeakCheck(
-                        """
+                assertQuery(query)
+                        .noLeakCheck()
+                        .assertsPlan(expectedPlan);
+                assertQuery(query + " limit 10")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .supportsRandomAccess(parallel)
+                        .expectSize()
+                        .returns("""
                                 id\tts
                                 1\t1970-01-01T00:00:01.000000Z
                                 2\t1970-01-01T00:00:02.000000Z
@@ -481,12 +587,57 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                                 8\t1970-01-01T00:00:08.000000Z
                                 9\t1970-01-01T00:00:09.000000Z
                                 10\t1970-01-01T00:00:10.000000Z
-                                """,
-                        query + " limit 10",
-                        "ts",
-                        parallel,
-                        true
-                );
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testDictionaryNumValuesOverBuffer() throws Exception {
+        // A foreign parquet whose dictionary page header declares more values than its
+        // buffer can hold (each var-width value needs at least a 4-byte length prefix)
+        // must surface a clean SQL error, not abort the JVM. Before the guard,
+        // BaseVarDictDecoder reserved a Vec sized by the attacker-controlled num_values
+        // (up to ~2.1 billion entries), and the allocator refusing that multi-gigabyte
+        // request aborts the process over JNI. The committed fixture is a valid
+        // dictionary-encoded VARCHAR column ("v") with only the dict header's
+        // num_values patched over the buffer size; the
+        // generate_dict_num_values_over_buffer_fixture Rust test (core/rust/qdbr)
+        // builds and verifies it. Draining the cursor forces the dictionary decode
+        // that trips the guard. This is a distinct crash class and decode path from
+        // testRleDictionaryIndexBitWidthOver32 (the bit-width unreachable!()), so it
+        // pins JNI propagation for the dictionary-construction guard too.
+        assertMemoryLeak(() -> {
+            final String fixture = "dict_num_values_over_buffer.parquet";
+            final byte[] bytes;
+            try (java.io.InputStream is = ReadParquetFunctionTest.class.getResourceAsStream(
+                    "/sqllogictest/data/parquet-testing/broken/" + fixture)) {
+                Assert.assertNotNull("missing test fixture on classpath", is);
+                bytes = is.readAllBytes();
+            }
+            java.nio.file.Files.write(java.nio.file.Paths.get(root, fixture), bytes);
+
+            sink.clear();
+            sink.put("SELECT v FROM read_parquet('").put(fixture).put("')");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (RecordCursorFactory factory = compiler.compile(sink, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain to force the dictionary decode
+                        }
+                        Assert.fail("expected a decode error for an oversized dictionary num_values");
+                    }
+                } catch (CairoException e) {
+                    // Reaching a clean CairoException here -- rather than a JVM abort
+                    // when the allocator refuses the oversized reservation -- is the
+                    // contract. Both readers must surface the guard's specific "too
+                    // short to hold" message: the parallel reader reports it directly,
+                    // and the non-parallel ReadParquetRecordCursor now appends the
+                    // underlying cause to its "likely corrupted" wrapper instead of
+                    // discarding it (without that, this assertion fails for parallel=false).
+                    TestUtils.assertContains(e.getMessage(), "too short to hold");
+                }
             }
         });
     }
@@ -625,7 +776,8 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         false,
                         1000,
                         0,
-                        ParquetVersion.PARQUET_VERSION_V1
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0.0
                 );
                 Assert.assertTrue(Files.exists(path.$()));
                 sink.clear();
@@ -647,6 +799,61 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 sink.clear();
                 sink.put("select * from read_parquet('x.parquet') limit 5001, 2");
                 assertSqlCursors0("select * from x limit 5001, 2");
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit -2, -1999");
+                assertSqlCursors0("select * from x limit -2, -1999");
+            }
+        });
+    }
+
+    @Test
+    public void testLimitOffsetWithVarLenColumns() throws Exception {
+        // A LIMIT query decodes only a prefix of each row group. For var-len
+        // columns on DELTA_LENGTH_BYTE_ARRAY pages the value bytes start after
+        // the FULL delta-encoded lengths block; the decoder used to compute
+        // their offset from the partially consumed block and served length
+        // bytes as values (garbage strings of the right length).
+        assertMemoryLeak(() -> {
+            final long rows = 5000;
+            execute("create table x as (select" +
+                    " x as id," +
+                    " rnd_str(1, 16, 4) as a_str," +
+                    " rnd_varchar(1, 16, 4) as a_varchar," +
+                    " rnd_bin(1, 24, 4) as a_bin" +
+                    " from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        1000,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0.0
+                );
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit 1");
+                assertSqlCursors0("select * from x limit 1");
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit 100, 500");
+                assertSqlCursors0("select * from x limit 100, 500");
+
+                sink.clear();
+                sink.put("select * from read_parquet('x.parquet') limit 999, 2501");
+                assertSqlCursors0("select * from x limit 999, 2501");
 
                 sink.clear();
                 sink.put("select * from read_parquet('x.parquet') limit -2, -1999");
@@ -691,20 +898,60 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 sink.put("select * from read_parquet('x.parquet')");
 
                 if (parallel) {
-                    assertPlanNoLeakCheck(sink, """ 
-                            parquet page frame scan
-                              columns: id,a_boolean,a_byte,a_short,an_int,a_long,a_float,a_double,a_varchar,a_uuid,a_date,a_ts,a_ns,designated_ts
-                            """
-                    );
+                    assertQuery(sink)
+                            .noLeakCheck()
+                            .assertsPlan(""" 
+                                    parquet page frame scan
+                                      columns: id,a_boolean,a_byte,a_short,an_int,a_long,a_float,a_double,a_varchar,a_uuid,a_date,a_ts,a_ns,designated_ts
+                                    """);
                 } else {
-                    assertPlanNoLeakCheck(sink, """ 
-                            parquet file sequential scan
-                              columns: id,a_boolean,a_byte,a_short,an_int,a_long,a_float,a_double,a_varchar,a_uuid,a_date,a_ts,a_ns,designated_ts
-                            """);
+                    assertQuery(sink)
+                            .noLeakCheck()
+                            .assertsPlan(""" 
+                                    parquet file sequential scan
+                                      columns: id,a_boolean,a_byte,a_short,an_int,a_long,a_float,a_double,a_varchar,a_uuid,a_date,a_ts,a_ns,designated_ts
+                                    """);
                 }
 
                 sink.put(" where 1 = 2");
                 assertSqlCursors0("x where 1 = 2");
+            }
+        });
+    }
+
+    @Test
+    public void testNativeSymbolColumnReadBack() throws Exception {
+        // Verifies that read_parquet() can decode SYMBOL columns stored in QuestDB's
+        // native parquet encoding (dictionary-encoded BYTE_ARRAY with LocalKeyIsGlobal format).
+        // read_parquet() converts SYMBOL to VARCHAR in its metadata, so the Rust decoder
+        // must resolve dictionary entries to UTF-8 strings rather than returning INT32 keys.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES ('AAA', 1, '2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO x VALUES ('BBB', 2, '2024-01-01T01:00:00.000000Z')");
+            execute("INSERT INTO x VALUES ('AAA', 3, '2024-01-01T02:00:00.000000Z')");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                assertQuery("SELECT * FROM read_parquet('x.parquet')")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .supportsRandomAccess(parallel)
+                        .expectSize()
+                        .returns("""
+                                id\tval\tts
+                                AAA\t1\t2024-01-01T00:00:00.000000Z
+                                BBB\t2\t2024-01-01T01:00:00.000000Z
+                                AAA\t3\t2024-01-01T02:00:00.000000Z
+                                """);
             }
         });
     }
@@ -731,6 +978,1052 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 sink.clear();
                 sink.put("select * from read_parquet('x.parquet') order by a_varchar1, a_varchar2");
                 assertSqlCursors0("select * from x order by a_varchar1, a_varchar2");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetVarcharAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " NULL::VARCHAR AS v" +
+                    " FROM long_sequence(100))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetVarcharBasic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('hello', 'world', 'foo', 'bar') AS v" +
+                    " FROM long_sequence(1000))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetVarcharConcat() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('hello', 'world') AS v" +
+                    " FROM long_sequence(100))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT id, concat(v, '!') AS v2 FROM read_parquet('x.parquet') ORDER BY id");
+                assertSqlCursors0("SELECT id, concat(v, '!') AS v2 FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetVarcharEmptyStrings() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " CASE WHEN x % 2 = 0 THEN '' ELSE rnd_varchar('hello', 'world') END AS v" +
+                    " FROM long_sequence(200))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetVarcharGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('a', 'b', 'c', 'd') AS v" +
+                    " FROM long_sequence(1000))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT v, count() FROM read_parquet('x.parquet') GROUP BY v ORDER BY v");
+                assertSqlCursors0("SELECT v, count() FROM x GROUP BY v ORDER BY v");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetVarcharLargeDataset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar(1, 50, 0) AS v" +
+                    " FROM long_sequence(100_000))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetVarcharLength() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar(1, 40, 0) AS v" +
+                    " FROM long_sequence(200))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT id, length(v) AS len FROM read_parquet('x.parquet') ORDER BY id");
+                assertSqlCursors0("SELECT id, length(v) AS len FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetVarcharLongStrings() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar(20, 100, 0) AS v" +
+                    " FROM long_sequence(500))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetVarcharMixedTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_int() AS an_int," +
+                    " rnd_long() AS a_long," +
+                    " rnd_double() AS a_double," +
+                    " rnd_varchar('foo', 'bar', 'baz') AS a_varchar," +
+                    " rnd_boolean() AS a_bool" +
+                    " FROM long_sequence(500))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetVarcharMultipleColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('a1', 'a2', 'a3') AS v1," +
+                    " rnd_varchar('b1', 'b2', 'b3') AS v2," +
+                    " rnd_varchar('c1', 'c2', 'c3') AS v3" +
+                    " FROM long_sequence(500))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetVarcharNonAsciiRoundtrip() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " CASE" +
+                    "   WHEN x % 8 = 0 THEN NULL" +
+                    "   WHEN x % 8 = 1 THEN CAST('héllo wörld' AS VARCHAR)" +
+                    "   WHEN x % 8 = 2 THEN CAST('こんにちは世界' AS VARCHAR)" +
+                    "   WHEN x % 8 = 3 THEN CAST('Привет мир' AS VARCHAR)" +
+                    "   WHEN x % 8 = 4 THEN CAST('🎉🎊🎈🎁' AS VARCHAR)" +
+                    "   WHEN x % 8 = 5 THEN CAST('مرحبا بالعالم' AS VARCHAR)" +
+                    "   WHEN x % 8 = 6 THEN CAST('café résumé naïve' AS VARCHAR)" +
+                    "   ELSE CAST('混合ABC日本語123' AS VARCHAR)" +
+                    " END AS v" +
+                    " FROM long_sequence(200))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetVarcharNullCheck() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_varchar('yes', 'no') ELSE NULL END AS v" +
+                    " FROM long_sequence(200))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') WHERE v IS NOT NULL ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x WHERE v IS NOT NULL ORDER BY id");
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') WHERE v IS NULL ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x WHERE v IS NULL ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetVarcharOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('zzz', 'aaa', 'mmm', 'bbb') AS v" +
+                    " FROM long_sequence(200))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY v, id");
+                assertSqlCursors0("SELECT * FROM x ORDER BY v, id");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetVarcharUnicode() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('ганьба','слава','добрий','вечір') AS v" +
+                    " FROM long_sequence(200))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetVarcharWhereFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " CASE WHEN x % 4 = 0 THEN NULL ELSE rnd_varchar('alpha', 'beta', 'gamma', 'delta') END AS v" +
+                    " FROM long_sequence(1000))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') WHERE v IS NOT NULL ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x WHERE v IS NOT NULL ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testParquetVarcharWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " CASE WHEN x % 3 = 0 THEN NULL ELSE rnd_varchar('abc', 'def', 'ghi') END AS v" +
+                    " FROM long_sequence(500))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testRleDictionaryIndexBitWidthOver32() throws Exception {
+        // A foreign parquet whose RLE_DICTIONARY data page declares a dictionary
+        // index bit width > 32 must surface a clean SQL error, not abort the JVM
+        // via an unreachable!() in the bitpacked decoder. The committed fixture is
+        // a valid dictionary-encoded INT32 column ("v") with only that single page
+        // byte patched to 40; the generate_rle_dict_index_bitwidth_fixture Rust
+        // test (core/rust/qdbr) builds and verifies it. Draining the cursor forces
+        // the page decode that trips the guard.
+        assertMemoryLeak(() -> {
+            final String fixture = "rle_dict_index_bitwidth_over_32.parquet";
+            final byte[] bytes;
+            try (java.io.InputStream is = ReadParquetFunctionTest.class.getResourceAsStream(
+                    "/sqllogictest/data/parquet-testing/broken/" + fixture)) {
+                Assert.assertNotNull("missing test fixture on classpath", is);
+                bytes = is.readAllBytes();
+            }
+            java.nio.file.Files.write(java.nio.file.Paths.get(root, fixture), bytes);
+
+            sink.clear();
+            sink.put("SELECT v FROM read_parquet('").put(fixture).put("')");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (RecordCursorFactory factory = compiler.compile(sink, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain to force page decode
+                        }
+                        Assert.fail("expected a decode error for an oversized dictionary index bit width");
+                    }
+                } catch (CairoException e) {
+                    // Reaching a clean CairoException here -- rather than a JVM abort
+                    // via the bitpacked decoder's unreachable!() -- is the contract.
+                    // Both readers must surface the guard's specific "exceeds" detail:
+                    // the parallel reader reports it directly, and the non-parallel
+                    // ReadParquetRecordCursor now appends the underlying cause to its
+                    // "likely corrupted" wrapper instead of discarding it, so a
+                    // regression in either reader's path can no longer hide behind the
+                    // other's wording. The Rust generate_rle_dict_index_bitwidth_fixture
+                    // test pins the exact guard message.
+                    TestUtils.assertContains(e.getMessage(), "exceeds");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceCastToSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('alpha', 'beta', 'gamma', 'delta') AS v" +
+                    " FROM long_sequence(200))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT id, v::SYMBOL AS v FROM read_parquet('x.parquet') ORDER BY id");
+                assertSqlCursors0("SELECT id, v::SYMBOL AS v FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceCompoundGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('a', 'b', 'c') AS v," +
+                    " (x % 5)::INT AS grp" +
+                    " FROM long_sequence(1000))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT v, grp, count() AS cnt FROM read_parquet('x.parquet') GROUP BY v, grp ORDER BY v, grp");
+                assertSqlCursors0("SELECT v, grp, count() AS cnt FROM x GROUP BY v, grp ORDER BY v, grp");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceCopyToLarge() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar(5, 30, 1) AS v" +
+                    " FROM long_sequence(10_000))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                execute("CREATE TABLE y (id LONG, v VARCHAR)");
+                execute("INSERT INTO y SELECT * FROM read_parquet('x.parquet')");
+
+                sink.clear();
+                sink.put("SELECT * FROM y ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('alpha', 'beta', 'gamma', 'delta') AS v" +
+                    " FROM long_sequence(500))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT DISTINCT v FROM read_parquet('x.parquet') ORDER BY v");
+                assertSqlCursors0("SELECT DISTINCT v FROM x ORDER BY v");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceEqualityFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('alpha', 'beta', 'gamma', 'delta') AS v" +
+                    " FROM long_sequence(1000))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') WHERE v = 'alpha' ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x WHERE v = 'alpha' ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceGroupByWithLength() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('abc', 'de', 'f', 'ghij', NULL) AS v" +
+                    " FROM long_sequence(500))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT v, length(v) AS len, count() AS cnt FROM read_parquet('x.parquet') GROUP BY v, length(v) ORDER BY v");
+                assertSqlCursors0("SELECT v, length(v) AS len, count() AS cnt FROM x GROUP BY v, length(v) ORDER BY v");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceHighCardinalityGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar(10, 30, 0) AS v" +
+                    " FROM long_sequence(10_000))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT v, count() AS cnt FROM read_parquet('x.parquet') GROUP BY v ORDER BY v");
+                assertSqlCursors0("SELECT v, count() AS cnt FROM x GROUP BY v ORDER BY v");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceInsertAsSelect() throws Exception {
+        // INSERT INTO ... SELECT ... FROM read_parquet() must correctly copy
+        // VARCHAR_SLICE columns into a native VARCHAR column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('hello', 'world', NULL, '') AS v" +
+                    " FROM long_sequence(100))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                execute("CREATE TABLE y (id LONG, v VARCHAR)");
+                execute("INSERT INTO y SELECT * FROM read_parquet('x.parquet')");
+
+                sink.clear();
+                sink.put("SELECT * FROM y ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceIsNullFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " CASE WHEN x % 3 = 0 THEN NULL ELSE rnd_varchar('a', 'b', 'c') END AS v" +
+                    " FROM long_sequence(300))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') WHERE v IS NULL ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x WHERE v IS NULL ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('alpha', 'beta', 'gamma') AS v" +
+                    " FROM long_sequence(100))");
+            execute("CREATE TABLE b AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('alpha', 'beta', 'delta') AS v," +
+                    " rnd_long() AS val" +
+                    " FROM long_sequence(100))");
+
+            try (
+                    Path pathA = new Path();
+                    Path pathB = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader readerA = engine.getReader("a");
+                    TableReader readerB = engine.getReader("b")
+            ) {
+                pathA.of(root).concat("a.parquet");
+                PartitionEncoder.populateFromTableReader(readerA, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, pathA);
+                Assert.assertTrue(Files.exists(pathA.$()));
+
+                pathB.of(root).concat("b.parquet");
+                PartitionEncoder.populateFromTableReader(readerB, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, pathB);
+                Assert.assertTrue(Files.exists(pathB.$()));
+
+                sink.clear();
+                sink.put("SELECT a.id, a.v, b.val FROM read_parquet('a.parquet') a JOIN read_parquet('b.parquet') b ON a.v = b.v ORDER BY a.id, b.id");
+                assertSqlCursors0("SELECT a.id, a.v, b.val FROM a JOIN b ON a.v = b.v ORDER BY a.id, b.id");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceLatestOn() throws Exception {
+        // LATEST ON with a VARCHAR_SLICE column from read_parquet() must not
+        // throw "invalid type" error.
+        // Parallel parquet scan does not support LATEST ON, so skip in parallel mode.
+        if (parallel) {
+            return;
+        }
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " rnd_varchar('a', 'b', 'c') AS v," +
+                    " x AS val," +
+                    " timestamp_sequence('2024-01-01', 1000000) AS ts" +
+                    " FROM long_sequence(20)) TIMESTAMP(ts)");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') LATEST ON ts PARTITION BY v");
+                assertSqlCursors0("SELECT * FROM x LATEST ON ts PARTITION BY v");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceLimitOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('alpha', 'beta', 'gamma', 'delta') AS v" +
+                    " FROM long_sequence(500))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY id LIMIT 50, 60");
+                assertSqlCursors0("SELECT * FROM x ORDER BY id LIMIT 50, 60");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceMultipleRowGroups() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('alpha', 'beta', 'gamma', 'delta') AS v" +
+                    " FROM long_sequence(5000))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        1000L,
+                        0L,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0.0
+                );
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceOrderByLimitMultipleRowGroups() throws Exception {
+        // Regression test: the Async Top K path stores a comparator reference
+        // pointing to decoded Parquet row group data. Between frames,
+        // releaseParquetBuffers() frees that data, leaving a dangling pointer.
+        // The comparator then reads freed memory, producing wrong sort results.
+        // We use many small row groups and ORDER BY varchar LIMIT to trigger
+        // the LimitedSizeLongTreeChain cross-frame comparison path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar(5, 20, 0) AS v" +
+                    " FROM long_sequence(50_000))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                // Use a very small row group size (10) to create many row groups
+                // (5,000), ensuring the Async Top K workers process many frames
+                // and release buffers between them.
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        10,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0.0
+                );
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // ORDER BY varchar LIMIT triggers the Async Top K execution plan
+                // in the parallel path. Run multiple times to catch non-determinism.
+                // Use ORDER BY v, id to break ties deterministically.
+                for (int i = 0; i < 5; i++) {
+                    sink.clear();
+                    sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY v, id LIMIT 10");
+                    assertSqlCursors0("SELECT * FROM x ORDER BY v, id LIMIT 10");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceOrderByWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " CASE WHEN x % 4 = 0 THEN NULL ELSE rnd_varchar('alpha', 'beta', 'gamma') END AS v" +
+                    " FROM long_sequence(200))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY v");
+                assertSqlCursors0("SELECT * FROM x ORDER BY v");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceSampleBy() throws Exception {
+        // SAMPLE BY is not supported in parallel parquet scan mode.
+        if (parallel) {
+            return;
+        }
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " rnd_varchar('a', 'b', 'c') AS v," +
+                    " rnd_long() AS val," +
+                    " timestamp_sequence('2024-01-01', 1_000_000) AS ts" +
+                    " FROM long_sequence(100)) TIMESTAMP(ts)");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT ts, v, count() FROM read_parquet('x.parquet') SAMPLE BY 1s");
+                assertSqlCursors0("SELECT ts, v, count() FROM x SAMPLE BY 1s");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceStringFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('alpha', 'beta', 'gamma', 'delta') AS v" +
+                    " FROM long_sequence(200))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT id, substring(v, 1, 3) AS sub, left(v, 2) AS l, right(v, 2) AS r, upper(v) AS u, lower(v) AS lo FROM read_parquet('x.parquet') ORDER BY id");
+                assertSqlCursors0("SELECT id, substring(v, 1, 3) AS sub, left(v, 2) AS l, right(v, 2) AS r, upper(v) AS u, lower(v) AS lo FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('alpha', 'beta', 'gamma', 'delta') AS v" +
+                    " FROM long_sequence(1000))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM (SELECT v, count() AS cnt FROM read_parquet('x.parquet') GROUP BY v) WHERE cnt > 1 ORDER BY v");
+                assertSqlCursors0("SELECT * FROM (SELECT v, count() AS cnt FROM x GROUP BY v) WHERE cnt > 1 ORDER BY v");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceUnionAllWithString() throws Exception {
+        // VARCHAR_SLICE (from read_parquet) UNION ALL with STRING column. The
+        // matrix resolves this to STRING, requiring a VARCHAR_SLICE→STRING cast.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE vc AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('hello', 'world', NULL) AS v" +
+                    " FROM long_sequence(10))");
+            execute("CREATE TABLE str AS (SELECT" +
+                    " x AS id," +
+                    " rnd_str(3, 6, 0) AS v" +
+                    " FROM long_sequence(10))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("vc")
+            ) {
+                path.of(root).concat("vc.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('vc.parquet') UNION ALL SELECT * FROM str");
+                assertSqlCursors0("SELECT * FROM vc UNION ALL SELECT * FROM str");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceUnionAllWithVarchar() throws Exception {
+        // VARCHAR_SLICE (from read_parquet) UNION ALL with native VARCHAR must not
+        // trigger an assertion in generateCastFunctions().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('hello', 'world', NULL) AS v" +
+                    " FROM long_sequence(10))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // VARCHAR_SLICE (read_parquet) UNION ALL VARCHAR (native table)
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') UNION ALL SELECT * FROM x");
+                assertSqlCursors0("SELECT * FROM x UNION ALL SELECT * FROM x");
+
+                // VARCHAR (native table) UNION ALL VARCHAR_SLICE (read_parquet)
+                sink.clear();
+                sink.put("SELECT * FROM x UNION ALL SELECT * FROM read_parquet('x.parquet')");
+                assertSqlCursors0("SELECT * FROM x UNION ALL SELECT * FROM x");
             }
         });
     }
@@ -791,8 +2084,12 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
 
                 sink.clear();
                 sink.put("select * from read_parquet('").put(path).put("')");
-                assertQueryNoLeakCheck(
-                        """
+                assertQuery(sink)
+                        .noLeakCheck()
+                        .timestamp("a_ts")
+                        .supportsRandomAccess(parallel)
+                        .expectSize()
+                        .returns("""
                                 id\ta_long\ta_str\ta_varchar\tan_array\ta_boolean\ta_short\ta_byte\ta_char\ta_uuid\ta_double\ta_float\ta_sym\ta_date\ta_long256\ta_ip\ta_geo_byte\ta_geo_short\ta_geo_int\ta_geo_long\ta_bin\ta_ts\ta_ns
                                 null\tnull\t\t\tnull\tfalse\t0\t0\t\t\tnull\tnull\t\t2015-11-24T20:19:13.843Z\t0x2705e02c613acfc405374f5fbcef4819523eb59d99c647af9840ad8800156d26\t138.69.22.149\t0000\t11001010\t0000101000111011\t10100111010101011100000010101100\t\t2015-01-01T00:00:00.000000Z\t2015-01-01T00:00:00.000000000Z
                                 2\t-461611463\tHYRX\t0L#YS\\%~\\2o#/ZUAI6Q,]K+BuHiX\t[0.8001121139739173,0.38642336707855873,0.92050039469858,0.16381374773748514,0.456344569609078,0.8664158914718532,0.40455469747939254,0.4149517697653501,0.5659429139861241,0.05384400312338511]\ttrue\t10633\t99\tU\t516e1efd-8bbc-4cf6-b7b4-f6e41fbfd55f\t0.9566236549439661\t0.11585981\tGPGW\t2015-08-13T19:00:41.832Z\t0x772c8b7f9505620ebbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea61\t160.13.39.44\t1011\t01111111\t1001110001101111\t01100001100100000101101000010010\t\t2015-01-02T00:00:00.000000Z\t2015-01-02T00:00:00.000000000Z
@@ -808,13 +2105,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                                 null\tnull\t\t\tnull\tfalse\t0\t0\t\t\tnull\tnull\t\t\t0x25ab6a3b3808d94d30ec2498d018efdd67bf677cfe82f2528ebaf26ca19a89b9\t213.3.185.243\t0010\t01011011\t0100011111011011\t11110011001101101110011001111101\t00000000 c5 60 b7 d1 5a 0c e9 db 51 13 4d 59 20 c9 37 a1
                                 00000010 00\t2015-01-09T00:00:00.000000Z\t2015-01-09T00:00:00.000000000Z
                                 10\t2013697528\t\t\t[0.15274858078119136,0.7887510806568455,0.7468602267994937,0.23567419576658333,0.9976896430755934]\ttrue\t12861\t120\tI\ta0cd12e6-d39f-469a-9f88-06288f4b53ad\t0.9316283568969537\t0.8791439\tGPGW\t2015-03-04T04:42:20.407Z\t0x8ca81bb363d7ac4585afb517c8aee023d107b1affff76a2c79189b578191a8f6\t248.76.18.163\t0011\t11001010\t1101000010010101\t10101011110101111111110000001011\t00000000 87 28 92 a3 9b e3 cb c2 64 8a b0 35\t2015-01-10T00:00:00.000000Z\t2015-01-10T00:00:00.000000000Z
-                                """,
-                        sink,
-                        null,
-                        "a_ts",
-                        parallel,
-                        true
-                );
+                                """);
             }
         });
     }

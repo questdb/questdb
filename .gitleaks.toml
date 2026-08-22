@@ -1,0 +1,5 @@
+[allowlist]
+  description = "Exclude test source directories (false positives from test credentials/tokens)"
+  paths = [
+    '''(^|/)src/test/''',
+  ]

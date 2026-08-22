@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,9 +27,11 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -87,18 +89,18 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     private static final int INDEX_LOOKAHEAD = 2;
     private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
     private static final int INITIAL_LIST_CAPACITY = 16;
-    private final AbstractWindowJoinFastRecordCursor cursor;
     private final boolean includePrevailing;
-    private final Function joinFilter;
-    private final JoinRecordMetadata joinMetadata;
-    private final RecordCursorFactory masterFactory;
     private final int masterSymbolIndex;
-    private final RecordCursorFactory slaveFactory;
     private final int slaveSymbolIndex;
-    private final SimpleMapValue value;
     private final boolean vectorized;
     private final long windowHi;
     private final long windowLo;
+    private AbstractWindowJoinFastRecordCursor cursor;
+    private Function joinFilter;
+    private JoinRecordMetadata joinMetadata;
+    private RecordCursorFactory masterFactory;
+    private RecordCursorFactory slaveFactory;
+    private SimpleMapValue value;
 
     public WindowJoinFastRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -236,10 +238,14 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         TimeFrameCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             cursor.of(masterCursor, slaveCursor, executionContext);
         } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
+            // of() binds the per-query tracker and reopens the allocators before it can throw;
+            // close() frees them under that tracker and resets isOpen so the factory stays reusable.
+            Misc.free(cursor);
             throw ex;
         }
         return cursor;
@@ -294,15 +300,60 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         sink.child(slaveFactory);
     }
 
+    // A join reads externally if either input does. getBaseFactory() cannot express this because it
+    // returns a single child, so the two-child propagation is explicit here, mirroring
+    // AbstractJoinRecordCursorFactory. Guards against a null child during teardown.
+    @Override
+    public boolean usesExternalDataSource() {
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        if (masterFactory != null && masterFactory.usesExternalDataSource()) {
+            return true;
+        }
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        return slaveFactory != null && slaveFactory.usesExternalDataSource();
+    }
+
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
-        Misc.free(joinFilter);
-        Misc.free(joinMetadata);
-        Misc.free(value);
+        final RecordMetadata metadata = detachMetadata();
+        final AbstractWindowJoinFastRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function joinFilter = this.joinFilter;
+        this.joinFilter = null;
+        final JoinRecordMetadata joinMetadata = this.joinMetadata;
+        this.joinMetadata = null;
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        this.slaveFactory = null;
+        final SimpleMapValue value = this.value;
+        this.value = null;
+
+        Throwable failure = Misc.freeIfCloseableBestEffort(null, metadata);
+        failure = Misc.freeBestEffort(failure, masterFactory);
+        if (slaveFactory != masterFactory) {
+            failure = Misc.freeBestEffort(failure, slaveFactory);
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, joinFilter);
+        if (joinMetadata != metadata) {
+            failure = Misc.freeBestEffort(failure, joinMetadata);
+        }
+        failure = Misc.freeBestEffort(failure, value);
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
+    private static StaticSymbolTable asStaticSymbolTable(SymbolTable symbolTable) {
+        if (symbolTable instanceof StaticSymbolTable sst) {
+            return sst;
+        }
+        if (symbolTable instanceof SymbolFunction sf) {
+            StaticSymbolTable sst = sf.getStaticSymbolTable();
+            if (sst != null) {
+                return sst;
+            }
+        }
+        throw new AssertionError("Failed to get static symbol table from " + symbolTable);
     }
 
     private abstract class AbstractWindowJoinFastRecordCursor implements NoRandomAccessRecordCursor {
@@ -351,7 +402,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
         protected void setupSlaveLookupMap(RecordCursor masterCursor, TimeFrameCursor slaveCursor) {
             slaveSymbolLookupMap.reopen();
-            StaticSymbolTable masterSymbolTable = (StaticSymbolTable) masterCursor.getSymbolTable(masterSymbolIndex);
+            // Master may project the symbol through a SymbolColumn (e.g. CTE / sub-select), so unwrap.
+            StaticSymbolTable masterSymbolTable = asStaticSymbolTable(masterCursor.getSymbolTable(masterSymbolIndex));
             StaticSymbolTable slaveSymbolTable = slaveCursor.getSymbolTable(slaveSymbolIndex);
             for (int masterKey = 0, n = masterSymbolTable.getSymbolCount(); masterKey < n; masterKey++) {
                 final CharSequence masterSym = masterSymbolTable.valueOf(masterKey);
@@ -383,7 +435,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         private final ObjList<GroupByFunction> groupByFunctions;
         private final VirtualRecord groupByRecord;
         private final JoinRecord joinRecord;
-        private final WindowJoinSymbolTableSource joinSymbolTableSource;
+        private final JoinSymbolTableSource joinSymbolTableSource;
         private final Record record;
         protected SqlExecutionCircuitBreaker circuitBreaker;
         protected long lastSlaveTimestamp;
@@ -409,7 +461,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             this.crossIndex = columnIndex;
             this.columnSplit = columnSplit;
             this.groupByFunctions = groupByFunctions;
-            this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+            this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
             this.value = value;
             this.masterTimestampIndex = masterTimestampIndex;
@@ -421,7 +473,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 slaveTimestampScale = ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale();
             }
             this.slaveTimeFrameHelper = new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTimestampScale);
-            this.joinSymbolTableSource = new WindowJoinSymbolTableSource(columnSplit);
+            this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
 
             this.internalJoinRecord = new JoinRecord(columnSplit);
             this.groupByRecord = new VirtualRecord(groupByFunctions);
@@ -435,7 +487,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 this.record = joinRecord;
             }
 
-            this.slaveAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+            this.slaveAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             this.slaveTimestamps = new GroupByLongList(INITIAL_LIST_CAPACITY);
             this.slaveTimestamps.setAllocator(slaveAllocator);
             this.slaveRowIds = new GroupByLongList(INITIAL_LIST_CAPACITY);
@@ -607,13 +659,13 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             if (!isOpen) {
                 isOpen = true;
                 slaveData.reopen();
+                allocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 allocator.reopen();
+                slaveAllocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 slaveAllocator.reopen();
                 setupSlaveLookupMap(masterCursor, slaveCursor);
             }
-            this.masterCursor = masterCursor;
             this.masterRecord = masterCursor.getRecord();
-            this.slaveCursor = slaveCursor;
             joinRecord.of(masterRecord, groupByRecord);
             slaveTimeFrameHelper.of(slaveCursor);
             internalJoinRecord.of(masterRecord, slaveTimeFrameHelper.getRecord());
@@ -624,6 +676,10 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             Function.init(groupByFunctions, joinSymbolTableSource, sqlExecutionContext, null);
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();
             lastSlaveTimestamp = Long.MIN_VALUE;
+
+            // Adopt master/slave last so an init() throw above can't double-free them via the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 
@@ -640,7 +696,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         private final VirtualRecord groupByRecord;
         private final JoinRecord internalJoinRecord;
         private final JoinRecord joinRecord;
-        private final WindowJoinSymbolTableSource joinSymbolTableSource;
+        private final JoinSymbolTableSource joinSymbolTableSource;
         private final int masterTimestampIndex;
         private final long masterTimestampScale;
         private final WindowJoinPrevailingCache prevailingCache;
@@ -679,7 +735,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 this.crossIndex = columnIndex;
                 this.columnSplit = columnSplit;
                 this.groupByFunctions = groupByFunctions;
-                this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                 GroupByUtils.setAllocator(groupByFunctions, allocator);
                 this.value = value;
                 this.masterTimestampIndex = masterTimestampIndex;
@@ -692,7 +748,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 }
                 this.slaveTimeFrameHelper = new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTimestampScale);
                 this.prevailingCache = new WindowJoinPrevailingCache();
-                this.joinSymbolTableSource = new WindowJoinSymbolTableSource(columnSplit);
+                this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
 
                 this.internalJoinRecord = new JoinRecord(columnSplit);
                 this.groupByRecord = new VirtualRecord(groupByFunctions);
@@ -706,7 +762,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                     this.record = joinRecord;
                 }
 
-                this.slaveAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+                this.slaveAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                 this.columnSink = new GroupByColumnSink(INITIAL_COLUMN_SINK_CAPACITY);
                 this.columnSink.setAllocator(slaveAllocator);
                 this.timestamps = new GroupByLongList(INITIAL_LIST_CAPACITY);
@@ -731,10 +787,10 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         public void close() {
             super.close();
             Misc.free(prevailingCache);
-            Misc.free(allocator);
-            Misc.free(slaveAllocator);
             if (isOpen) {
                 isOpen = false;
+                Misc.free(allocator);
+                Misc.free(slaveAllocator);
                 Misc.clearObjList(groupByFunctions);
                 masterCursor = Misc.free(masterCursor);
                 slaveCursor = Misc.free(slaveCursor);
@@ -886,9 +942,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
                             // in case of include prevailing column values are shifted by one slot, hence `rowLo + 1`
                             final long efficientRowLo = includePrevailing ? rowLo + 1 : rowLo;
-                            groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * efficientRowLo, (int) (rowHi - rowLo));
+                            groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * efficientRowLo, (int) (rowHi - rowLo), 0);
                         } else { // no-arg function, e.g. count()
-                            groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
+                            groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo), 0);
                         }
                     }
                 }
@@ -951,13 +1007,13 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 isOpen = true;
                 slaveData.reopen();
                 prevailingCache.reopen();
+                allocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 allocator.reopen();
+                slaveAllocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 slaveAllocator.reopen();
                 setupSlaveLookupMap(masterCursor, slaveCursor);
             }
-            this.masterCursor = masterCursor;
             this.masterRecord = masterCursor.getRecord();
-            this.slaveCursor = slaveCursor;
             joinRecord.of(masterRecord, groupByRecord);
             slaveTimeFrameHelper.of(slaveCursor);
             internalJoinRecord.of(masterRecord, slaveTimeFrameHelper.getRecord());
@@ -965,6 +1021,10 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             Function.init(groupByFunctions, joinSymbolTableSource, sqlExecutionContext, null);
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();
             lastSlaveTimestamp = Long.MIN_VALUE;
+
+            // Adopt master/slave last so an init() throw above can't double-free them via the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 
@@ -1315,7 +1375,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                 rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
-                if (rowLo >= rowHi || slaveTimestamps.get(rowLo) > masterTimestampHi) {
+                if (rowLo >= rowHi || slaveTimestamps.get(rowLo) > slaveTimestampLo) {
                     // No rows in the time window or the first row has timestamp higher than the low window boundary.
                     // In both cases we need to include the prevailing value.
                     if (rowLo > 0) {

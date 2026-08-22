@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
@@ -35,6 +36,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -83,6 +85,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
         private final Path path;
         private final int plimit;
         private final long tempMem;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private int columnCount;
         private int columnIndex = 0;
         // pointer to a struct containing file info,
@@ -154,6 +157,8 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
 
         private boolean next0() {
             do {
+                // scans the db directory reading metadata files per table, so observe the breaker each iteration
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 if (readNextFileFromDisk) {
                     foundMetadataFile = false;
                     final long pUtf8NameZ = ff.findName(findFileStruct);
@@ -163,10 +168,10 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
                                 long fd = ff.openRO(path.$());
                                 if (fd > -1) {
                                     if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
-                                        tableId = Unsafe.getUnsafe().getInt(tempMem);
+                                        tableId = Unsafe.getInt(tempMem);
                                         if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_COUNT) == Integer.BYTES) {
                                             foundMetadataFile = true;
-                                            columnCount = Unsafe.getUnsafe().getInt(tempMem);
+                                            columnCount = Unsafe.getInt(tempMem);
                                         } else {
                                             LOG.error().$("Could not read column count [fd=").$(fd).$(", errno=").$(ff.errno()).I$();
                                         }
@@ -241,7 +246,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
 
     private static class AttrDefCatalogueCursorFactory extends AbstractRecordCursorFactory {
         private final AttrDefCatalogueCursor cursor;
-        private final Path path;
+        private Path path;
         private long tempMem;
 
         public AttrDefCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
@@ -258,6 +263,8 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            cursor.circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop();
             return cursor;
         }
@@ -274,8 +281,21 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
 
         @Override
         protected void _close() {
-            Misc.free(path);
-            tempMem = Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
+            final Path path = this.path;
+            this.path = null;
+            final long tempMem = this.tempMem;
+            this.tempMem = 0;
+            Throwable failure = Misc.freeBestEffort(null, path);
+            try {
+                Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
+            } catch (Throwable th) {
+                if (failure == null) {
+                    failure = th;
+                } else if (failure != th) {
+                    failure.addSuppressed(th);
+                }
+            }
+            CairoException.rethrowCleanupFailure(failure);
         }
     }
 

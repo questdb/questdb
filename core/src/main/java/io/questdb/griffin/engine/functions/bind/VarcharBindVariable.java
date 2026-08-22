@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -87,6 +87,12 @@ public class VarcharBindVariable extends VarcharFunction implements Mutable {
 
     @Override
     public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        // the bound value is set before execution starts and is immutable while it runs
         return true;
     }
 

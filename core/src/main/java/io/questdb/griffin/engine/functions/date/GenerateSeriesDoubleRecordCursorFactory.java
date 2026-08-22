@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -76,6 +76,7 @@ public final class GenerateSeriesDoubleRecordCursorFactory extends AbstractGener
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             recordA.kahanInc(step);
             if (Numbers.isNull(recordA.curr)) {
                 return false;

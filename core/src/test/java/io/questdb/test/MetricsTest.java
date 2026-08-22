@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -142,6 +142,11 @@ public class MetricsTest {
         @Override
         public void addTarget(Target target) {
             delegate.addTarget(target);
+        }
+
+        @Override
+        public void removeTarget(Target target) {
+            delegate.removeTarget(target);
         }
 
         public Set<CharSequence> getLabelNames() {

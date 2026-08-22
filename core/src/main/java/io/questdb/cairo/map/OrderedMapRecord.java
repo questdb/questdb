@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,8 +27,4 @@ package io.questdb.cairo.map;
 interface OrderedMapRecord extends MapRecord {
 
     OrderedMapRecord clone();
-
-    void of(long address);
-
-    void setLimit(long limit);
 }

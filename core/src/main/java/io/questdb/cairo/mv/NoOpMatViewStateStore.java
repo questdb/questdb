@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -88,6 +88,15 @@ public class NoOpMatViewStateStore implements MatViewStateStore {
 
     @Override
     public void notifyBaseTableCommit(MatViewRefreshTask task, long seqTxn) {
+    }
+
+    @Override
+    public void notifyRefreshRetry(TableToken matViewToken, long retryAfterMicros) {
+    }
+
+    @Override
+    public void reenqueueRefreshTask(MatViewRefreshTask task) {
+        // No-op: a read-only/replica node discards its refresh queue and rebuilds from disk on promote.
     }
 
     @Override

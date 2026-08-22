@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -113,6 +113,18 @@ public class LowerCaseUtf8SequenceObjHashMap<V> extends AbstractLowerCaseUtf8Seq
             Utf8Sequence key = keys[-index - 1];
             super.removeAt(index);
             list.remove(key);
+        }
+    }
+
+    public void removeAtQuick(int keyIndex, int listIndex) {
+        assert keyIndex < 0 : "removeAtQuick expects a present key (negative keyIndex)";
+        if (keyIndex < 0) {
+            assert list.getQuick(listIndex) == keys[-keyIndex - 1];
+            super.removeAt(keyIndex);
+            Utf8Sequence lastKey = list.popLast();
+            if (listIndex < list.size()) {
+                list.setQuick(listIndex, lastKey);
+            }
         }
     }
 

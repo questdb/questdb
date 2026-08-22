@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -202,29 +202,13 @@ public abstract class VarcharFunction implements Function {
     @Override
     public CharSequence getStrA(Record rec) {
         Utf8Sequence utf8seq = getVarcharA(rec);
-        if (utf8seq == null) {
-            return null;
-        }
-        if (utf8seq.isAscii()) {
-            return utf8seq.asAsciiCharSequence();
-        }
-        utf16SinkA.clear();
-        Utf8s.utf8ToUtf16(utf8seq, utf16SinkA);
-        return utf16SinkA;
+        return utf8seq != null ? Utf8s.utf8ToUtf16OrView(utf8seq, utf16SinkA) : null;
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
         Utf8Sequence utf8seq = getVarcharB(rec);
-        if (utf8seq == null) {
-            return null;
-        }
-        if (utf8seq.isAscii()) {
-            return utf8seq.asAsciiCharSequence();
-        }
-        utf16SinkB.clear();
-        Utf8s.utf8ToUtf16(utf8seq, utf16SinkB);
-        return utf16SinkB;
+        return utf8seq != null ? Utf8s.utf8ToUtf16OrView(utf8seq, utf16SinkB) : null;
     }
 
     @Override

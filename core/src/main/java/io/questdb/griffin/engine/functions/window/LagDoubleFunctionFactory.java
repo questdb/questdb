@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
@@ -105,7 +106,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lagValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), lagValue);
         }
     }
 
@@ -120,8 +121,11 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                                         Function arg,
                                         boolean ignoreNulls,
                                         Function defaultValue,
-                                        long offset) {
-            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+                                        long offset,
+                                        ColumnTypes partitionByKeyTypes,
+                                        boolean liveView) {
+            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset,
+                    partitionByKeyTypes, liveView);
         }
 
         @Override
@@ -133,7 +137,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lagValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), lagValue);
         }
 
         @Override
@@ -173,7 +177,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.CharColumn;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
@@ -37,36 +37,42 @@ import io.questdb.griffin.engine.functions.groupby.MaxCharGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MinCharGroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.IntList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class CharGroupByFunctionBatchTest {
-    private static final int COLUMN_INDEX = 765;
-    private long lastAllocated;
-    private long lastSize;
-
-    @After
-    public void tearDown() {
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-            lastAllocated = 0;
-            lastSize = 0;
+public class CharGroupByFunctionBatchTest extends AbstractGroupByFunctionBatchTest {
+    // Stands in for a row whose column is NULL, as a column-top row reads.
+    private static final Record NULL_RECORD = new Record() {
+        @Override
+        public char getChar(int col) {
+            return CharConstant.ZERO.getChar(null);
         }
-    }
+    };
 
     @Test
     public void testFirstCharBatch() {
         GroupByFunction function = newFirstCharFunction();
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateChars('b', 'c');
-            function.computeBatch(value, ptr, 2);
+            function.computeBatch(value, ptr, 2, 0);
 
             Assert.assertEquals('b', function.getChar(value));
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testFirstCharBatchAccumulates() {
+        GroupByFunction function = newFirstCharFunction();
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateChars('b', 'c');
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateChars('d', 'e');
+            function.computeBatch(value, ptr, 2, 2);
+
+            Assert.assertEquals('b', function.getChar(value));
         }
     }
 
@@ -85,7 +91,21 @@ public class CharGroupByFunctionBatchTest {
         FirstNotNullCharGroupByFunction function = new FirstNotNullCharGroupByFunction(new CharColumn(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateChars(CharConstant.ZERO.getChar(null), 'x', 'y');
-            function.computeBatch(value, ptr, 3);
+            function.computeBatch(value, ptr, 3, 0);
+
+            Assert.assertEquals('x', function.getChar(value));
+        }
+    }
+
+    @Test
+    public void testFirstNotNullCharBatchAccumulates() {
+        FirstNotNullCharGroupByFunction function = new FirstNotNullCharGroupByFunction(new CharColumn(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateChars(CharConstant.ZERO.getChar(null), 'x');
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateChars('y', CharConstant.ZERO.getChar(null));
+            function.computeBatch(value, ptr, 2, 2);
 
             Assert.assertEquals('x', function.getChar(value));
         }
@@ -98,10 +118,26 @@ public class CharGroupByFunctionBatchTest {
             function.setNull(value);
 
             long ptr = allocateChars('a', 'z', 'm');
-            function.computeBatch(value, ptr, 3);
+            function.computeBatch(value, ptr, 3, 0);
 
             Assert.assertEquals('m', function.getChar(value));
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testLastCharBatchAccumulates() {
+        GroupByFunction function = newLastCharFunction();
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            long ptr = allocateChars('a', 'b');
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateChars('c', 'd');
+            function.computeBatch(value, ptr, 2, 2);
+
+            Assert.assertEquals('d', function.getChar(value));
         }
     }
 
@@ -112,9 +148,58 @@ public class CharGroupByFunctionBatchTest {
             function.setNull(value);
 
             long ptr = allocateChars('a', CharConstant.ZERO.getChar(null), 'd');
-            function.computeBatch(value, ptr, 3);
+            function.computeBatch(value, ptr, 3, 0);
 
             Assert.assertEquals('d', function.getChar(value));
+        }
+    }
+
+    @Test
+    public void testLastNotNullCharBatchAccumulates() {
+        LastNotNullCharGroupByFunction function = new LastNotNullCharGroupByFunction(new CharColumn(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            long ptr = allocateChars('a', CharConstant.ZERO.getChar(null));
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateChars(CharConstant.ZERO.getChar(null), 'd');
+            function.computeBatch(value, ptr, 2, 2);
+
+            Assert.assertEquals('d', function.getChar(value));
+        }
+    }
+
+    @Test
+    public void testLastNotNullCharBatchKeepsHigherRowIdNonNull() {
+        LastNotNullCharGroupByFunction function = new LastNotNullCharGroupByFunction(new CharColumn(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            // A stored non-null must survive a batch that arrives at a lower rowId. See the class javadoc.
+            long ptr = allocateChars('q');
+            function.computeBatch(value, ptr, 1, 100);
+            Assert.assertEquals('q', function.getChar(value));
+
+            ptr = allocateChars('z');
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals('q', function.getChar(value));
+        }
+    }
+
+    @Test
+    public void testLastNotNullCharBatchReplacesStoredNull() {
+        LastNotNullCharGroupByFunction function = new LastNotNullCharGroupByFunction(new CharColumn(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            // computeFirst writes NULL through with a real rowId; a non-null at a lower rowId must still
+            // replace it. See the class javadoc.
+            function.computeFirst(value, NULL_RECORD, 100);
+
+            long ptr = allocateChars('z');
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals('z', function.getChar(value));
         }
     }
 
@@ -125,10 +210,24 @@ public class CharGroupByFunctionBatchTest {
             value.putChar(function.getValueIndex(), CharConstant.ZERO.getChar(null));
 
             long ptr = allocateChars('a', 'y', CharConstant.ZERO.getChar(null), 'z');
-            function.computeBatch(value, ptr, 4);
+            function.computeBatch(value, ptr, 4, 0);
 
             Assert.assertEquals('z', function.getChar(value));
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testMaxCharBatchAccumulates() {
+        MaxCharGroupByFunction function = new MaxCharGroupByFunction(new CharColumn(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateChars('a', 'c');
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateChars('b', 'a');
+            function.computeBatch(value, ptr, 2, 0);
+
+            Assert.assertEquals('c', function.getChar(value));
         }
     }
 
@@ -139,10 +238,24 @@ public class CharGroupByFunctionBatchTest {
             value.putChar(function.getValueIndex(), CharConstant.ZERO.getChar(null));
 
             long ptr = allocateChars(CharConstant.ZERO.getChar(null), 'd', 'b', 'c');
-            function.computeBatch(value, ptr, 4);
+            function.computeBatch(value, ptr, 4, 0);
 
-            Assert.assertEquals(0, function.getChar(value));
+            Assert.assertEquals('b', function.getChar(value));
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testMinCharBatchAccumulates() {
+        MinCharGroupByFunction function = new MinCharGroupByFunction(new CharColumn(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateChars('d', 'c');
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateChars('e', 'a');
+            function.computeBatch(value, ptr, 2, 0);
+
+            Assert.assertEquals('a', function.getChar(value));
         }
     }
 
@@ -153,28 +266,11 @@ public class CharGroupByFunctionBatchTest {
             value.putChar(function.getValueIndex(), CharConstant.ZERO.getChar(null));
 
             long ptr = allocateChars('d', 'b', 'c');
-            function.computeBatch(value, ptr, 4);
+            function.computeBatch(value, ptr, 3, 0);
 
             Assert.assertEquals('b', function.getChar(value));
             Assert.assertTrue(function.supportsBatchComputation());
         }
-    }
-
-    private long allocateChars(char... values) {
-        if (values.length == 0) {
-            return 0;
-        }
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-        }
-        lastSize = (long) values.length * Character.BYTES;
-        lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
-        long addr = lastAllocated;
-        for (char value : values) {
-            Unsafe.getUnsafe().putChar(addr, value);
-            addr += Character.BYTES;
-        }
-        return lastAllocated;
     }
 
     private GroupByFunction newFirstCharFunction() {
@@ -191,14 +287,5 @@ public class CharGroupByFunctionBatchTest {
         IntList argPositions = new IntList();
         argPositions.add(0);
         return (GroupByFunction) new LastCharGroupByFunctionFactory().newInstance(0, args, argPositions, null, null);
-    }
-
-    private SimpleMapValue prepare(GroupByFunction function) {
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        return value;
     }
 }

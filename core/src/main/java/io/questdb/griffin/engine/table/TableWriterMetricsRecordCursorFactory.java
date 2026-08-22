@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -69,7 +69,7 @@ public final class TableWriterMetricsRecordCursorFactory extends AbstractRecordC
             values[COMMITTED_ROWS_COLUMN_INDEX] = METRICS_DISABLED_VALUE;
             values[PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX] = METRICS_DISABLED_VALUE;
         }
-        cursor.of(KEYS, values);
+        cursor.of(KEYS, values, executionContext.getCircuitBreaker());
         return cursor;
     }
 

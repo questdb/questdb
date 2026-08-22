@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -34,6 +34,11 @@ public class MemoryConfigurationWrapper implements MemoryConfiguration {
     }
 
     @Override
+    public long getMemoryUsageLogInterval() {
+        return getDelegate().getMemoryUsageLogInterval();
+    }
+
+    @Override
     public long getRamUsageLimitBytes() {
         return getDelegate().getRamUsageLimitBytes();
     }
@@ -51,6 +56,11 @@ public class MemoryConfigurationWrapper implements MemoryConfiguration {
     @Override
     public long getTotalSystemMemory() {
         return getDelegate().getTotalSystemMemory();
+    }
+
+    @Override
+    public boolean isMemoryUsageLogEnabled() {
+        return getDelegate().isMemoryUsageLogEnabled();
     }
 
     public void setDelegate(MemoryConfiguration delegate) {

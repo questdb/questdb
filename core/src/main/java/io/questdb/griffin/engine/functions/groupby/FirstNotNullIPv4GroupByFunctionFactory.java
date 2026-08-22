@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,11 +25,14 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -65,14 +68,77 @@ public class FirstNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void computeBatch(MapValue mapValue, long ptr, int count) {
-            if (count > 0) {
-                final long hi = ptr + count * 4L;
-                for (; ptr < hi; ptr += 4L) {
-                    int value = Unsafe.getUnsafe().getInt(ptr);
+        public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+            if (rowCount > 0) {
+                final long hi = dataAddr + rowCount * 4L;
+                long offset = 0;
+                for (; dataAddr < hi; dataAddr += 4L) {
+                    int value = Unsafe.getInt(dataAddr);
                     if (value != Numbers.IPv4_NULL) {
-                        mapValue.putInt(valueIndex + 1, value);
+                        long rowId = startRowId + offset;
+                        long existingRowId = mapValue.getLong(valueIndex);
+                        if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getIPv4(valueIndex + 1) == Numbers.IPv4_NULL) {
+                            mapValue.putLong(valueIndex, rowId);
+                            mapValue.putInt(valueIndex + 1, value);
+                        }
                         break;
+                    }
+                    offset++;
+                }
+            }
+        }
+
+        @Override
+        public void computeKeyedBatch(
+                PageFrameMemoryRecord record,
+                FlyweightPackedMapValue mapValue,
+                long baseValueAddr,
+                long batchAddr,
+                long rowCount,
+                long baseRowId
+        ) {
+            // setEmpty pre-seeds rowId = LONG_NULL and value = IPv4_NULL. Null input is
+            // skipped; non-null input wins when the stored value is still null or has a
+            // later rowId. The inherited FirstIPv4 override compares rowIds alone, which
+            // both stores a leading NULL and then refuses to replace it.
+            final long rowIdOffset = mapValue.getOffset(valueIndex);
+            final long valueColumnOffset = mapValue.getOffset(valueIndex + 1);
+            // Fast path: arg is a direct IPv4 column with data on the current frame.
+            // Zero page address means a column top; fall through to the record-based path.
+            final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+            if (argAddr != 0) {
+                for (long i = 0; i < rowCount; i++) {
+                    final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                    final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                    final int value = Unsafe.getInt(argAddr + (rowIndex << 2));
+                    // Mirror computeFirst semantics on new entries (write through even for
+                    // null values) so the state matches what the per-row path produces.
+                    if (value != Numbers.IPv4_NULL || Map.isNewBatchEntry(encoded)) {
+                        final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                        final long rowId = baseRowId + rowIndex;
+                        final int existingValue = Unsafe.getInt(entryBase + valueColumnOffset);
+                        if (existingValue == Numbers.IPv4_NULL || rowId < Unsafe.getLong(entryBase + rowIdOffset)) {
+                            Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                            Unsafe.putInt(entryBase + valueColumnOffset, value);
+                        }
+                    }
+                }
+            } else {
+                for (long i = 0; i < rowCount; i++) {
+                    final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                    final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                    record.setRowIndex(rowIndex);
+                    final int value = arg.getIPv4(record);
+                    // Mirror computeFirst semantics on new entries (write through even for
+                    // null values) so the state matches what the per-row path produces.
+                    if (value != Numbers.IPv4_NULL || Map.isNewBatchEntry(encoded)) {
+                        final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                        final long rowId = baseRowId + rowIndex;
+                        final int existingValue = Unsafe.getInt(entryBase + valueColumnOffset);
+                        if (existingValue == Numbers.IPv4_NULL || rowId < Unsafe.getLong(entryBase + rowIdOffset)) {
+                            Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                            Unsafe.putInt(entryBase + valueColumnOffset, value);
+                        }
                     }
                 }
             }
@@ -80,8 +146,12 @@ public class FirstNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (mapValue.getIPv4(valueIndex + 1) == Numbers.IPv4_NULL) {
-                computeFirst(mapValue, record, rowId);
+            final int value = arg.getIPv4(record);
+            if (value != Numbers.IPv4_NULL) {
+                if (mapValue.getIPv4(valueIndex + 1) == Numbers.IPv4_NULL || rowId < mapValue.getLong(valueIndex)) {
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putInt(valueIndex + 1, value);
+                }
             }
         }
 

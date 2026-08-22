@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -109,8 +109,6 @@ public interface IODispatcherConfiguration {
 
     // user-land buffer size
     int getSendBufferSize();
-
-    int getTestConnectionBufferSize();
 
     long getTimeout();
 

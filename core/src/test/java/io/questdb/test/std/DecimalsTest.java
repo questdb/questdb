@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -37,6 +37,11 @@ import org.junit.Test;
  * Tests for Decimal256 storage with variable byte length based on precision
  */
 public class DecimalsTest extends AbstractTest {
+    private static final int APPENDED_LONGS = 16;
+    private static final long OFFSET = 32;
+    private static final long REGION = 256;
+    private static final long SENTINEL = 0x5A5A5A5A5A5A5A5AL;
+
     @Test
     public void testAssertNullMinimalValues() {
         // This test asserts that null values in small decimals (8-64) are the minimum values of their
@@ -100,6 +105,22 @@ public class DecimalsTest extends AbstractTest {
     }
 
     @Test
+    public void testPutDecimal128AtOffsetAfterAppend() {
+        Decimal128 decimal128 = new Decimal128();
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(1024, 8, MemoryTag.NATIVE_DEFAULT)) {
+            prepare(mem);
+            long high = 0x0102030405060708L;
+            long low = 0x090A0B0C0D0E0F10L;
+            mem.putDecimal128(OFFSET, high, low);
+
+            mem.getDecimal128(OFFSET, decimal128);
+            Assert.assertEquals("Unexpected high value", high, decimal128.getHigh());
+            Assert.assertEquals("Unexpected low value", low, decimal128.getLow());
+            assertNoStrayWrite(mem, Decimal128.BYTES);
+        }
+    }
+
+    @Test
     public void testPutDecimal128WithoutOffset() {
         Decimal128 decimal128 = new Decimal128();
         try (MemoryPARWImpl mem = new MemoryPARWImpl(8, 256, MemoryTag.NATIVE_DEFAULT)) {
@@ -134,6 +155,26 @@ public class DecimalsTest extends AbstractTest {
     }
 
     @Test
+    public void testPutDecimal256AtOffsetAfterAppend() {
+        Decimal256 decimal256 = new Decimal256();
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(1024, 8, MemoryTag.NATIVE_DEFAULT)) {
+            prepare(mem);
+            long hh = 0x0102030405060708L;
+            long hl = 0x090A0B0C0D0E0F10L;
+            long lh = 0x1112131415161718L;
+            long ll = 0x191A1B1C1D1E1F20L;
+            mem.putDecimal256(OFFSET, hh, hl, lh, ll);
+
+            mem.getDecimal256(OFFSET, decimal256);
+            Assert.assertEquals("Unexpected hh value", hh, decimal256.getHh());
+            Assert.assertEquals("Unexpected hl value", hl, decimal256.getHl());
+            Assert.assertEquals("Unexpected lh value", lh, decimal256.getLh());
+            Assert.assertEquals("Unexpected ll value", ll, decimal256.getLl());
+            assertNoStrayWrite(mem, Decimal256.BYTES);
+        }
+    }
+
+    @Test
     public void testPutDecimal256WithoutOffset() {
         Decimal256 decimal256 = new Decimal256();
         try (MemoryPARWImpl mem = new MemoryPARWImpl(8, 256, MemoryTag.NATIVE_DEFAULT)) {
@@ -148,6 +189,27 @@ public class DecimalsTest extends AbstractTest {
             Assert.assertEquals("Unexpected hl value", hl, decimal256.getHl());
             Assert.assertEquals("Unexpected lh value", lh, decimal256.getLh());
             Assert.assertEquals("Unexpected ll value", ll, decimal256.getLl());
+        }
+    }
+
+    private static void assertNoStrayWrite(MemoryPARWImpl mem, int written) {
+        for (long o = 0; o < REGION; o += Long.BYTES) {
+            if (o >= OFFSET && o < OFFSET + written) {
+                continue;
+            }
+            Assert.assertEquals("Stray write at offset " + o, SENTINEL, mem.getLong(o));
+        }
+    }
+
+    // Appends first, so that the append pointer sits well ahead of the page base, then warms
+    // up the hot page and fills the region under test with a sentinel.
+    private static void prepare(MemoryPARWImpl mem) {
+        for (int i = 0; i < APPENDED_LONGS; i++) {
+            mem.putLong(SENTINEL);
+        }
+        Assert.assertEquals(SENTINEL, mem.getLong(0));
+        for (long o = 0; o < REGION; o += Long.BYTES) {
+            mem.putLong(o, SENTINEL);
         }
     }
 }

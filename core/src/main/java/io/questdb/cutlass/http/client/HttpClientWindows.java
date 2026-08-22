@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -37,14 +37,31 @@ public class HttpClientWindows extends HttpClient {
 
     public HttpClientWindows(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         super(configuration, socketFactory);
-        this.fdSet = new FDSet(configuration.getWaitQueueCapacity());
-        this.sf = configuration.getSelectFacade();
+        try {
+            // Read the facade before taking the FD set, so nothing between that acquisition and the
+            // end of the constructor can throw. That leaves the catch with only the base class to
+            // release, and drops a partial-FDSet branch that Linux and macOS CI could never reach:
+            // FDSet's first statement touches the Windows-only SelectAccessor natives, so a test
+            // cannot get past it to fail anything later.
+            this.sf = configuration.getSelectFacade();
+            this.fdSet = new FDSet(configuration.getWaitQueueCapacity());
+        } catch (Throwable th) {
+            // super() has already taken the socket, both buffers and the response parser. A throw
+            // here leaves a half-built client the caller never receives, so nothing would close it.
+            closeBaseQuietly(th);
+            throw th;
+        }
     }
 
     @Override
     public void close() {
-        super.close();
-        this.fdSet = Misc.free(fdSet);
+        // Free the FD set in a finally: super.close() disconnects first, and an extension socket that
+        // throws there used to leak it for good, since close() is the only thing that frees it.
+        try {
+            super.close();
+        } finally {
+            this.fdSet = Misc.free(fdSet);
+        }
     }
 
     @Override

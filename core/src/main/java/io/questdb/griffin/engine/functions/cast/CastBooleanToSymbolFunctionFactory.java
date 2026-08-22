@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -89,6 +89,14 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
         public @Nullable SymbolTable newSymbolTable() {
             // this is an entity function
             return this;
+        }
+
+        @Override
+        public boolean supportsKeyValueAccess() {
+            // getInt() mints a key with one probe on the decoded scalar, never by hashing the row's
+            // text, and valueOf() resolves it by indexing symbols. A key consumer such as QWP egress
+            // should therefore encode each distinct value once instead of re-encoding it per row.
+            return true;
         }
 
         @Override

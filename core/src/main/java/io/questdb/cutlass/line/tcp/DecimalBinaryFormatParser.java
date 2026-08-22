@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,7 +28,7 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
@@ -67,7 +67,7 @@ public class DecimalBinaryFormatParser implements QuietCloseable {
     /**
      * Load the parsed decimal into a Decimal256
      *
-     * @return true if decimal is fully loaded, false if the unscaled value was too big for Decimal256
+     * @return true if decimal is fully loaded, false if the unscaled value is out of range for a decimal
      */
     public boolean load(Decimal256 decimal256) {
         // Fast path when no values are present in the unscaled value
@@ -77,11 +77,15 @@ public class DecimalBinaryFormatParser implements QuietCloseable {
         }
 
         int size = unscaledValues.size();
-        // A Decimal256 can only hold 256 bits, so we can't load more than that
+        // A Decimal256 can only hold 256 bits, so anything above them has to be zero padding
         for (int i = 0, n = size - 8; i < n; i++) {
             if (unscaledValues.getQuick(i) != 0) {
                 return false;
             }
+        }
+        // Zero padding means positive, so the retained bits must not set the sign bit
+        if (size > 8 && unscaledValues.getQuick(size - 8) < 0) {
+            return false;
         }
 
         long sign = unscaledValues.getQuick(0) < 0 ? -1 : 0;
@@ -91,7 +95,7 @@ public class DecimalBinaryFormatParser implements QuietCloseable {
         long ll = sign;
 
         // The values are stored in big-endian format, so we need to reverse the order
-        switch ((size - 1) & 0b111) {
+        switch (Math.min(size, 8) - 1) {
             case 7:
                 hh = (long) unscaledValues.getQuick(size - 8) << 32;
                 // fall through
@@ -118,13 +122,14 @@ public class DecimalBinaryFormatParser implements QuietCloseable {
         }
 
         decimal256.of(hh, hl, lh, ll, scale);
-        return true;
+        // -2²⁵⁵ is the NULL sentinel, both it and any other out of range magnitude must be rejected
+        return !decimal256.isNull() && decimal256.comparePrecision(Decimals.MAX_PRECISION);
     }
 
     public boolean processNextBinaryPart(long addr) throws ParseException {
         switch (state) {
             case SCALE -> {
-                scale = Unsafe.getUnsafe().getByte(addr);
+                scale = Unsafe.getByte(addr);
                 if (scale < 0 || scale > Decimals.MAX_SCALE) {
                     throw ParseException.invalidScale();
                 }
@@ -133,7 +138,7 @@ public class DecimalBinaryFormatParser implements QuietCloseable {
                 return false;
             }
             case LEN -> {
-                len = Unsafe.getUnsafe().getByte(addr) & 0xFF;
+                len = Unsafe.getByte(addr) & 0xFF;
                 if (len > 0) {
                     state = ParserState.VALUES;
                     nextBinaryPartExpectSize = len;
@@ -149,7 +154,7 @@ public class DecimalBinaryFormatParser implements QuietCloseable {
                 unscaledValues.extendAndSet(nints - 1, 0);
                 int intIndex = nints - 1;
                 for (int i = len; i >= 4; i -= 4) {
-                    int value = Unsafe.getUnsafe().getInt(addr + i - 4);
+                    int value = Unsafe.getInt(addr + i - 4);
                     // Convert from little endian to big endian
                     value = Integer.reverseBytes(value);
                     unscaledValues.setQuick(intIndex--, value);
@@ -158,16 +163,16 @@ public class DecimalBinaryFormatParser implements QuietCloseable {
                 if (remaining != 0) {
                     switch (remaining) {
                         case 1:
-                            unscaledValues.setQuick(0, Unsafe.getUnsafe().getByte(addr));
+                            unscaledValues.setQuick(0, Unsafe.getByte(addr));
                             break;
                         case 2: {
-                            short s = Short.reverseBytes(Unsafe.getUnsafe().getShort(addr));
+                            short s = Short.reverseBytes(Unsafe.getShort(addr));
                             unscaledValues.setQuick(0, s);
                             break;
                         }
                         case 3: {
-                            short s = Short.reverseBytes(Unsafe.getUnsafe().getShort(addr));
-                            int value = s << 8 | (Unsafe.getUnsafe().getByte(addr + 2) & 0xFF);
+                            short s = Short.reverseBytes(Unsafe.getShort(addr));
+                            int value = s << 8 | (Unsafe.getByte(addr + 2) & 0xFF);
                             unscaledValues.setQuick(0, value);
                             break;
                         }
@@ -198,7 +203,7 @@ public class DecimalBinaryFormatParser implements QuietCloseable {
     }
 
     public static class ParseException extends Exception {
-        private static final ThreadLocal<ParseException> tlException = new ThreadLocal<>(ParseException::new);
+        private static final CarrierLocal<ParseException> tlException = new CarrierLocal<>(ParseException::new);
         private LineTcpParser.ErrorCode errorCode;
 
         public static @NotNull ParseException invalidScale() {

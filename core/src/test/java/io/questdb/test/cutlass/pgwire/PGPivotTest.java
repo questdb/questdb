@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -33,6 +33,7 @@ import java.sql.SQLException;
 
 
 public class PGPivotTest extends BasePGTest {
+
     @Test
     public void testBindVariablesAreAllowedElsewhereInPivot() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -44,7 +45,7 @@ public class PGPivotTest extends BasePGTest {
                 Assert.assertFalse(ps.execute());
             }
 
-            try (PreparedStatement ps = connection.prepareStatement("foo PIVOT (sum(y) FOR x IN (SELECT DISTINCT x FROM foo ORDER BY x) GROUP BY x) LIMIT ?")) {
+            try (PreparedStatement ps = connection.prepareStatement("foo PIVOT (sum(y) FOR x IN (SELECT DISTINCT x FROM foo ORDER BY x) GROUP BY x) ORDER BY x LIMIT ?")) {
                 ps.setInt(1, 1);
                 try (ResultSet rs = ps.executeQuery()) {
                     assertResultSet(
@@ -131,6 +132,62 @@ public class PGPivotTest extends BasePGTest {
                 } catch (SQLException e) {
                     Assert.assertEquals("ERROR: PIVOT IN subquery returned empty result set\n" +
                             "  Position: 29", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPivotDottedColumnNames() throws Exception {
+        // Pivot values containing dots ('FNCL 2.5') are wrapped in protective quotes internally so
+        // the optimiser does not split them at the dot. The PG RowDescription must surface the
+        // clean names, not "FNCL 2.5" with embedded quotes (regression for the quote leak).
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement ps = connection.prepareStatement("CREATE TABLE data (grp INT, cat STRING, val INT);")) {
+                Assert.assertFalse(ps.execute());
+            }
+            try (PreparedStatement ps = connection.prepareStatement("INSERT INTO data VALUES (1,'FNCL 2.5',10),(1,'FNCL 3.0',20),(2,'FNCL 2.5',30),(2,'FNCL 3.0',40);")) {
+                Assert.assertFalse(ps.execute());
+            }
+            try (PreparedStatement ps = connection.prepareStatement("data PIVOT (sum(val) FOR cat IN ('FNCL 2.5','FNCL 3.0') GROUP BY grp) ORDER BY grp")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            """
+                                    grp[INTEGER],FNCL 2.5[BIGINT],FNCL 3.0[BIGINT]
+                                    1,10,20
+                                    2,30,40
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPivotOperatorTokenColumnNames() throws Exception {
+        // Pivot values 'in' and 'and' collide with operator tokens, so the compiler wraps them in
+        // protective quotes internally. The PG RowDescription must surface the clean names in /
+        // and, not "in" / "and" - the quotes must not leak to wire clients (regression).
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement ps = connection.prepareStatement("CREATE TABLE data (grp INT, cat STRING, val INT);")) {
+                Assert.assertFalse(ps.execute());
+            }
+            try (PreparedStatement ps = connection.prepareStatement("INSERT INTO data VALUES (1,'in',10),(1,'and',20),(2,'in',30),(2,'and',40);")) {
+                Assert.assertFalse(ps.execute());
+            }
+            try (PreparedStatement ps = connection.prepareStatement("data PIVOT (sum(val) FOR cat IN ('in','and') GROUP BY grp) ORDER BY grp")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            """
+                                    grp[INTEGER],in[BIGINT],and[BIGINT]
+                                    1,10,20
+                                    2,30,40
+                                    """,
+                            sink,
+                            rs
+                    );
                 }
             }
         });

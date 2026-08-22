@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -66,6 +66,13 @@ public final class EmptyTableRandomRecordCursor implements RecordCursor {
     @Override
     public boolean hasNext() {
         return false;
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        // The empty symbol table is immutable, so a parallel consumer can safely share the
+        // single instance; this mirrors getSymbolTable() and honors the newSymbolTable contract.
+        return EmptySymbolMapReader.INSTANCE;
     }
 
     @Override

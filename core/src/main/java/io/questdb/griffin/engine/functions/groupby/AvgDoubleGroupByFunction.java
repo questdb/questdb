@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,32 +26,48 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Numbers;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final int argColumnIndex;
     private int valueIndex;
 
     public AvgDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.DOUBLE);
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
-        if (count > 0) {
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
             final long countPtr = mapValue.getAddress(valueIndex + 1);
-            final double sum = Vect.sumDoubleAcc(ptr, count, countPtr);
-            if (!Numbers.isNull(sum)) {
-                mapValue.putDouble(valueIndex, sum);
-                // the count is already updated by the sumDoubleAcc call, so we don't need to write it here
+            final long prevCount = mapValue.getLong(valueIndex + 1);
+            final double batchSum = Vect.sumDoubleAcc(dataAddr, rowCount, countPtr);
+            // sumDoubleAcc overwrites *countPtr with the batch count
+            final long batchCount = mapValue.getLong(valueIndex + 1);
+            if (batchCount > 0) {
+                final double prevSum = mapValue.getDouble(valueIndex);
+                if (prevCount > 0) {
+                    mapValue.putDouble(valueIndex, prevSum + batchSum);
+                } else {
+                    mapValue.putDouble(valueIndex, batchSum);
+                }
+                mapValue.putLong(valueIndex + 1, prevCount + batchCount);
+            } else {
+                mapValue.putLong(valueIndex + 1, prevCount);
             }
         }
     }
@@ -59,7 +75,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double d = arg.getDouble(record);
-        if (Numbers.isFinite(d)) {
+        if (!Double.isNaN(d)) {
             mapValue.putDouble(valueIndex, d);
             mapValue.putLong(valueIndex + 1, 1L);
         } else {
@@ -69,9 +85,46 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        // Two-slot layout: [sum:double][count:long]. setEmpty seeds (NaN, 0), so the
+        // etalon copied into new entries is (NaN, 0). A new entry with a finite value
+        // must take the computeFirst path (value, 1) rather than (NaN+value, 1); once
+        // past the first row the sum is either real or 0 and we can add unconditionally.
+        final long sumOffset = mapValue.getOffset(valueIndex);
+        final long countOffset = mapValue.getOffset(valueIndex + 1);
+        // Fast path: arg is a direct double column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final double value = Unsafe.getDouble(argAddr + (rowIndex << 3));
+                final long valueBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                applyAvg(valueBase + sumOffset, valueBase + countOffset, value, Map.isNewBatchEntry(encoded));
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                record.setRowIndex(Map.decodeBatchRowIndex(encoded));
+                final double value = arg.getDouble(record);
+                final long valueBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                applyAvg(valueBase + sumOffset, valueBase + countOffset, value, Map.isNewBatchEntry(encoded));
+            }
+        }
+    }
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double d = arg.getDouble(record);
-        if (Numbers.isFinite(d)) {
+        if (!Double.isNaN(d)) {
             mapValue.addDouble(valueIndex, d);
             mapValue.addLong(valueIndex + 1, 1L);
         }
@@ -161,5 +214,21 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
+    }
+
+    private static void applyAvg(long sumAddr, long countAddr, double value, boolean isNew) {
+        if (isNew) {
+            if (!Double.isNaN(value)) {
+                Unsafe.putDouble(sumAddr, value);
+                Unsafe.putLong(countAddr, 1L);
+            } else {
+                // Overwrite the etalon's (NaN, 0) with the computeFirst NaN-case state.
+                Unsafe.putDouble(sumAddr, 0);
+                Unsafe.putLong(countAddr, 0L);
+            }
+        } else if (!Double.isNaN(value)) {
+            Unsafe.putDouble(sumAddr, Unsafe.getDouble(sumAddr) + value);
+            Unsafe.putLong(countAddr, Unsafe.getLong(countAddr) + 1L);
+        }
     }
 }

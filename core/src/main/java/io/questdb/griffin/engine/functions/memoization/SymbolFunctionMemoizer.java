@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -48,6 +48,13 @@ public final class SymbolFunctionMemoizer extends SymbolFunction implements Memo
 
     public SymbolFunctionMemoizer(Function fn) {
         this.fn = fn;
+    }
+
+    @Override
+    public void clearMemo() {
+        validIntValue = false;
+        validAValue = false;
+        validBValue = false;
     }
 
     @Override
@@ -146,18 +153,20 @@ public final class SymbolFunctionMemoizer extends SymbolFunction implements Memo
     }
 
     @Override
-    public void memoize(Record record) {
-        validIntValue = false;
-        validAValue = false;
-        validBValue = false;
-    }
-
-    @Override
     public SymbolTable newSymbolTable() {
         if (fn instanceof SymbolFunction symbolFunction) {
             return symbolFunction.newSymbolTable();
         }
         return null;
+    }
+
+    @Override
+    public boolean supportsKeyValueAccess() {
+        // Memoizing caches the key rather than producing it, so the wrapped function decides
+        // whether resolving a key beats reading the row's text. Answering for ourselves would
+        // demote every function we wrap - including rnd_symbol(count, lo, hi, nullRate), which
+        // asks to be memoized and is therefore always wrapped in production.
+        return fn instanceof SymbolTable symbolTable && symbolTable.supportsKeyValueAccess();
     }
 
     @Override

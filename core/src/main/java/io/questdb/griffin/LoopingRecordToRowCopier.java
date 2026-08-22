@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -93,6 +93,12 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             final int toColumnTypeTag = ColumnType.tagOf(toColumnType);
             final int toColumnWriterIndex = toMetadata.getWriterIndex(toColumnIndex);
 
+            // VARCHAR_SLICE is a transient in-memory type (from read_parquet)
+            // accessed through the same getVarcharA() interface as VARCHAR.
+            if (fromColumnTypeTag == ColumnType.VARCHAR_SLICE) {
+                fromColumnTypeTag = ColumnType.VARCHAR;
+            }
+
             // Handle NULL type - treat as target type so getter returns null value
             if (fromColumnTypeTag == ColumnType.NULL) {
                 fromColumnTypeTag = toColumnTypeTag;
@@ -138,9 +144,12 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);
             int toColumnType = to.getColumnType(toColumnIndex);
             int fromColumnType = from.getColumnType(i);
+            int fromTag = ColumnType.tagOf(fromColumnType);
+            if (fromTag == ColumnType.VARCHAR_SLICE) {
+                fromTag = ColumnType.VARCHAR;
+            }
             if (ColumnType.tagOf(toColumnType) == ColumnType.ARRAY &&
-                    (ColumnType.tagOf(fromColumnType) == ColumnType.STRING ||
-                            ColumnType.tagOf(fromColumnType) == ColumnType.VARCHAR)) {
+                    (fromTag == ColumnType.STRING || fromTag == ColumnType.VARCHAR)) {
                 return true;
             }
         }
@@ -259,6 +268,8 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.VARCHAR -> row.putVarchar(toIndex, value);
             case ColumnType.SYMBOL -> row.putSym(toIndex, value);
             case ColumnType.GEOBYTE -> row.putByte(toIndex, SqlUtil.implicitCastCharAsGeoHash(value, toType));
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> row.putDecimalChar(toIndex, value);
             default -> throw new IllegalStateException("Unexpected value: " + toTypeTag);
         }
     }
@@ -547,6 +558,8 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
                     row.putGeoVarchar(toIndex, value);
             case ColumnType.LONG256 -> row.putLong256Utf8(toIndex, value);
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> row.putDecimalVarchar(toIndex, value);
             default -> throw new IllegalStateException("Unexpected value: " + toTypeTag);
         }
     }

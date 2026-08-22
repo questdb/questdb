@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,6 +26,7 @@ package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
+import org.jetbrains.annotations.Nullable;
 
 
 public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable {
@@ -38,10 +39,19 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     private int capacity;
     private int free;
     private long mask;
+    // Per-query native memory tracker bound by the owning component before the
+    // backing directory is (re)allocated. Null when no per-query limit applies;
+    // all Unsafe.{malloc,realloc,free} calls degrade to the global-only overloads.
+    @Nullable
+    private MemoryTracker memoryTracker;
     private long ptr;
     private int size;
 
     public DirectIntIntHashMap(int initialCapacity, double loadFactor, int noEntryKey, int noEntryValue, int memoryTag) {
+        this(initialCapacity, loadFactor, noEntryKey, noEntryValue, memoryTag, true);
+    }
+
+    public DirectIntIntHashMap(int initialCapacity, double loadFactor, int noEntryKey, int noEntryValue, int memoryTag, boolean openOnInit) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
@@ -53,8 +63,12 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         this.size = 0;
         this.free = (int) (capacity * loadFactor);
         this.mask = capacity - 1;
-        this.ptr = Unsafe.malloc(8L * capacity, memoryTag);
-        zero();
+        if (openOnInit) {
+            this.ptr = Unsafe.malloc(8L * capacity, memoryTag, memoryTracker);
+            zero();
+        }
+        // else: ptr stays 0; the first reopen() allocates the directory under
+        // whatever MemoryTracker is bound at that time.
     }
 
     public int capacity() {
@@ -71,9 +85,10 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     @Override
     public void close() {
         if (ptr != 0) {
-            ptr = Unsafe.free(ptr, 8L * capacity, memoryTag);
+            ptr = Unsafe.free(ptr, 8L * capacity, memoryTag, memoryTracker);
             capacity = 0;
             free = 0;
+            mask = 0;
             size = 0;
         }
     }
@@ -86,12 +101,16 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         return valueAt(keyIndex(key));
     }
 
+    public boolean isOpen() {
+        return ptr != 0;
+    }
+
     public int keyAt(long index) {
-        return Unsafe.getUnsafe().getInt(ptr + (index << 3));
+        return Unsafe.getInt(ptr + (index << 3));
     }
 
     public long keyIndex(int key) {
-        long hashCode = Hash.fastHashInt64(key);
+        long hashCode = Hash.hashInt64(key);
         long index = hashCode & mask;
         int k = keyAt(index);
         if (k == noEntryKey) {
@@ -109,12 +128,17 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
 
     public void putAt(long index, int key, int value) {
         if (index < 0) {
-            Unsafe.getUnsafe().putInt(ptr + ((-index - 1) << 3) + 4, value);
+            Unsafe.putInt(ptr + ((-index - 1) << 3) + 4, value);
         } else {
             putAt0(index, key, value);
             size++;
             if (--free == 0) {
-                rehash(capacity() << 1);
+                try {
+                    rehash(capacity() << 1);
+                } catch (CairoException e) {
+                    free = 1;
+                    throw e;
+                }
             }
         }
     }
@@ -129,16 +153,29 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     public void restoreInitialCapacity() {
         if (ptr == 0 || capacity != initialCapacity) {
             final long oldCapacity = capacity;
+            long newPtr;
+            if (ptr == 0) {
+                newPtr = Unsafe.malloc(8L * initialCapacity, memoryTag, memoryTracker);
+            } else {
+                newPtr = Unsafe.realloc(ptr, 8L * oldCapacity, 8L * initialCapacity, memoryTag, memoryTracker);
+            }
+            ptr = newPtr;
             capacity = initialCapacity;
             mask = capacity - 1;
-            if (ptr == 0) {
-                ptr = Unsafe.malloc(8L * capacity, memoryTag);
-            } else {
-                ptr = Unsafe.realloc(ptr, 8L * oldCapacity, 8L * capacity, memoryTag);
-            }
         }
 
         clear();
+    }
+
+    /**
+     * Binds the per-query tracker. It must be bound before the backing directory is
+     * allocated and cleared only after it is freed, so that a malloc and its matching free
+     * charge the same tracker. Rebinding over a live directory would refund bytes the new
+     * tracker was never charged.
+     */
+    public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        assert ptr == 0 || memoryTracker == null : "tracker must be bound before allocation";
+        this.memoryTracker = memoryTracker;
     }
 
     public int size() {
@@ -146,7 +183,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     }
 
     public int valueAt(long index) {
-        return index < 0 ? Unsafe.getUnsafe().getInt(ptr + ((-index - 1) << 3) + 4) : noEntryValue;
+        return index < 0 ? Unsafe.getInt(ptr + ((-index - 1) << 3) + 4) : noEntryValue;
     }
 
     private long probe(int key, long index) {
@@ -167,8 +204,8 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
 
     private void putAt0(long index, int key, int value) {
         final long p = ptr + (index << 3);
-        Unsafe.getUnsafe().putInt(p, key);
-        Unsafe.getUnsafe().putInt(p + 4, value);
+        Unsafe.putInt(p, key);
+        Unsafe.putInt(p + 4, value);
     }
 
     private void rehash(int newCapacity) {
@@ -177,39 +214,45 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         }
 
         final int oldCapacity = capacity;
+        long newPtr = Unsafe.malloc(8L * newCapacity, memoryTag, memoryTracker);
 
+        long oldPtr = ptr;
+        ptr = newPtr;
         capacity = newCapacity;
         mask = newCapacity - 1;
         free += (int) ((newCapacity - oldCapacity) * loadFactor);
-        long oldPtr = ptr;
-        ptr = Unsafe.malloc(8L * newCapacity, memoryTag);
         zero();
 
         for (long p = oldPtr, lim = oldPtr + 8L * oldCapacity; p < lim; p += 8L) {
-            int key = Unsafe.getUnsafe().getInt(p);
+            int key = Unsafe.getInt(p);
             if (key != noEntryKey) {
-                long hashCode = Hash.fastHashInt64(key);
+                long hashCode = Hash.hashInt64(key);
                 long index = hashCode & mask;
                 while (keyAt(index) != noEntryKey) {
                     index = (index + 1) & mask;
                 }
 
-                int value = Unsafe.getUnsafe().getInt(p + 4);
+                int value = Unsafe.getInt(p + 4);
                 putAt0(index, key, value);
             }
         }
 
-        Unsafe.free(oldPtr, 8L * oldCapacity, memoryTag);
+        Unsafe.free(oldPtr, 8L * oldCapacity, memoryTag, memoryTracker);
     }
 
     private void zero() {
+        if (ptr == 0) {
+            // Lazy-open (openOnInit == false) leaves capacity sized while ptr is still 0.
+            // reopen() zeroes the directory it allocates, so there is nothing to do here.
+            return;
+        }
         if (noEntryKey == 0) {
             // Vectorized fast path for zero default value.
             Vect.memset(ptr, 8L * capacity, 0);
         } else {
             // Otherwise, clean up only keys.
             for (long p = ptr, lim = ptr + 8L * capacity; p < lim; p += 8L) {
-                Unsafe.getUnsafe().putInt(p, noEntryKey);
+                Unsafe.putInt(p, noEntryKey);
             }
         }
     }

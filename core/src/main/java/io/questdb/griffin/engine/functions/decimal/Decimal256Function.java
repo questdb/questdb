@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,6 +30,7 @@ import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.std.Decimal128;
 
 public abstract class Decimal256Function extends DecimalFunction implements Function {
+
     protected Decimal256Function(int type) {
         super(type);
     }

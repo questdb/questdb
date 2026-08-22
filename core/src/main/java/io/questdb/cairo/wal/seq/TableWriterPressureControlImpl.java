@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -48,7 +48,9 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     // positive int: holds max parallelism
     // negative int: holds backoff counter
     private int memoryPressureRegulationValue = Integer.MAX_VALUE;
-    private long walBackoffUntilEpochMs = Long.MIN_VALUE;
+    // Read cross-thread by the live-view refresh readiness guard (isReadyToProcess)
+    // while the apply worker writes it, so it must be volatile for visibility.
+    private volatile long walBackoffUntilEpochMs = Long.MIN_VALUE;
 
     public TableWriterPressureControlImpl(CairoConfiguration configuration) {
         this.configuration = configuration;

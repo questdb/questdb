@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -53,7 +53,7 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
     private static final RecordMetadata METADATA;
     protected final int tokenPosition;
     protected final TableToken viewToken;
-    private final ShowCreateViewCursor cursor = new ShowCreateViewCursor();
+    private ShowCreateViewCursor cursor = new ShowCreateViewCursor();
 
     public ShowCreateViewRecordCursorFactory(TableToken viewToken, int tokenPosition) {
         super(METADATA);
@@ -63,6 +63,7 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         return cursor.of(executionContext, viewToken, tokenPosition);
     }
 
@@ -79,8 +80,16 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(cursor);
+        final ShowCreateViewCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public static class ShowCreateViewCursor implements NoRandomAccessRecordCursor {
@@ -129,12 +138,18 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
         ) throws SqlException {
             this.viewToken = viewToken;
             this.executionContext = executionContext;
+            // The view token is resolved from the synchronously loaded table registry
+            // (SqlParserCallback.getViewToken), which already guarantees the view exists
+            // and is a view. Do NOT treat a metadata-cache miss as "view does not exist":
+            // plain views have no _meta file, are skipped by the startup hydrator, and
+            // hydrateTableOnDemand() no-ops on views, so only the async ViewCompilerJob
+            // ever caches them. Gating on the cache would report a registered view as
+            // missing during the startup / embedded window (the bug fixed for SHOW CREATE
+            // TABLE/MATERIALIZED VIEW). Read the cache best-effort to keep the staleness
+            // guard when the view is warm; the definition itself is read from disk below.
             try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
                 this.view = metadataRO.getTable(viewToken);
-                if (this.view == null) {
-                    throw SqlException.$(tokenPosition, "view does not exist [view=")
-                            .put(viewToken.getTableName()).put(']');
-                } else if (!viewToken.equals(view.getTableToken())) {
+                if (this.view != null && !viewToken.equals(view.getTableToken())) {
                     throw TableReferenceOutOfDateException.of(viewToken);
                 }
             }
@@ -190,7 +205,7 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
                     .put(viewToken.getTableName())
                     .putAscii("' AS ( ")
                     .putAscii('\n');
-            sink.put(viewDefinition.getViewSql());
+            ShowCreateTableRecordCursorFactory.putTrimmed(sink, viewDefinition.getViewSql());
             sink.putAscii('\n');
             sink.putAscii(')');
             putAdditional();

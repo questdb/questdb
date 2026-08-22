@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractTest;
@@ -43,6 +44,12 @@ public class PGOidsTest extends AbstractTest {
 
             Assert.assertEquals("failure for oid " + i + ", le: " + le + ", be: " + be + ", did you add a typmod for a new type? make sure you update both Big and Little endian methods!", le, Numbers.bswap(be));
         }
+    }
+
+    @Test
+    public void testLongArrayHasNoOutboundOid() {
+        int longArrayType = ColumnType.encodeArrayType(ColumnType.LONG, 1, false);
+        Assert.assertEquals(0, PGOids.getTypeOid(longArrayType));
     }
 
     @Test

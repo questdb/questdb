@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -39,12 +39,13 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
      * Partition frame low and high row will be within intervals inclusive of edges.
      * Intervals themselves are pairs of microsecond time.
      *
+     * @param configuration  engine configuration used to resolve the partition parquet decoder
      * @param intervalModel  pairs of microsecond interval values, as in "low" and "high" inclusive of
      *                       edges.
      * @param timestampIndex index of timestamp column in the readr that is used by this cursor
      */
-    public IntervalFwdPartitionFrameCursor(RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
-        super(intervalModel, timestampIndex);
+    public IntervalFwdPartitionFrameCursor(CairoConfiguration configuration, RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
+        super(configuration, intervalModel, timestampIndex);
     }
 
     @Override
@@ -223,12 +224,11 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     final byte format = reader.getPartitionFormat(partitionLo);
                     if (format == PartitionFormat.PARQUET) {
                         frame.format = PartitionFormat.PARQUET;
-                        frame.parquetDecoder = reader.getAndInitParquetPartitionDecoders(partitionLo);
-                        assert frame.parquetDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
+                        frame.parquetMetaDecoder = reader.getAndInitParquetPartitionDecoder(partitionLo);
                     } else {
                         assert format == PartitionFormat.NATIVE;
                         frame.format = PartitionFormat.NATIVE;
-                        frame.parquetDecoder = null;
+                        frame.parquetMetaDecoder = null;
                     }
 
                     // we do have whole partition of fragment?

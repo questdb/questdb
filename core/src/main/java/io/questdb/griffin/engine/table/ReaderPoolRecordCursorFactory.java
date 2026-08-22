@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -61,6 +61,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         ReaderPoolCursor readerPoolCursor = new ReaderPoolCursor();
         readerPoolCursor.of(cairoEngine.getReaderPoolEntries(), cairoEngine.getConfiguration().getPoolSegmentSize());
         return readerPoolCursor;

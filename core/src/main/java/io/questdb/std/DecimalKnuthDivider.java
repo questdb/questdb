@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -82,10 +82,17 @@ public class DecimalKnuthDivider {
         // Main loop.
         for (int j = m - n; j >= 0; j--) {
             //region Step D3
-            long dividend = ((long) u[j + n] << Integer.SIZE) | (u[j + n - 1] & 0xFFFFFFFFL);
             long qhat;
             long rhat;
-            {
+            boolean skipCorrection = false;
+            if (u[j + n] == v[n - 1]) {
+                // The estimate would be b, which does not fit a digit: clamp it to b - 1.
+                qhat = 0xFFFFFFFFL;
+                rhat = (u[j + n - 1] & 0xFFFFFFFFL) + (v[n - 1] & 0xFFFFFFFFL);
+                skipCorrection = rhat > 0xFFFFFFFFL;
+                rhat &= 0xFFFFFFFFL;
+            } else {
+                long dividend = ((long) u[j + n] << Integer.SIZE) | (u[j + n - 1] & 0xFFFFFFFFL);
                 long q = (dividend >>> 1) / divisor << 1;
                 long r = dividend - q * divisor;
                 long i = ~(r - divisor);
@@ -98,7 +105,7 @@ public class DecimalKnuthDivider {
             long nl = u[j + n - 2] & 0xFFFFFFFFL;
             long rs = ((rhat & 0xFFFFFFFFL) << Integer.SIZE) | nl;
             long estProduct = (qhat & 0xFFFFFFFFL) * (v[n - 2] & 0xFFFFFFFFL);
-            if (unsignedLongCompare(estProduct, rs)) {
+            if (!skipCorrection && unsignedLongCompare(estProduct, rs)) {
                 qhat--;
                 rhat = (rhat + vnm1Long) & 0xFFFFFFFFL;
                 if (rhat >= vnm1Long) {
@@ -135,10 +142,12 @@ public class DecimalKnuthDivider {
                 q[j] = q[j] - 1;
                 k = 0;
                 for (int i = 0; i < n; i++) {
-                    t = u[i + j] + k + (v[i] & 0xFFFFFFFFL);
+                    t = (u[i + j] & 0xFFFFFFFFL) + k + (v[i] & 0xFFFFFFFFL);
                     u[i + j] = (int) t;
-                    k = (t >> 32);
+                    k = t >>> 32;
                 }
+                // The carry cancels the borrow left by D4.
+                u[j + n] = (int) (u[j + n] + k);
                 //endregion Step D6
             }
         }
@@ -343,6 +352,8 @@ public class DecimalKnuthDivider {
     private void normalize() {
         int s = Integer.numberOfLeadingZeros(v[n - 1]);
         if (s == 0) {
+            // u[m] is the top of the first partial remainder, it may be stale from a previous division.
+            u[m] = 0;
             return;
         }
 

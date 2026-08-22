@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,7 +28,7 @@ import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
@@ -95,7 +95,7 @@ public class ConcurrentParquetExportTest extends AbstractBootstrapTest {
                                             long lo = fragment.lo();
                                             long len = fragment.hi() - lo;
                                             long dest = buf.appendAddressFor(len);
-                                            Unsafe.getUnsafe().copyMemory(lo, dest, len);
+                                            Unsafe.copyMemory(lo, dest, len);
                                         }
                                     }
                                     successCount.incrementAndGet();
@@ -119,7 +119,7 @@ public class ConcurrentParquetExportTest extends AbstractBootstrapTest {
                         }
                         Assert.assertEquals("All threads should complete successfully", threadCount, successCount.get());
 
-                        try (PartitionDecoder decoder = new PartitionDecoder()) {
+                        try (ParquetFileDecoder decoder = new ParquetFileDecoder()) {
                             for (int t = 0; t < threadCount; t++) {
                                 long fileSize = buffers[t].getAppendOffset();
                                 Assert.assertTrue("Thread " + t + " parquet too small: " + fileSize, fileSize > 0);

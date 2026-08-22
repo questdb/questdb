@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,15 +25,40 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Chars;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * Execution context used when WAL-applying a re-compiled ALTER or UPDATE.
+ * <p>
+ * The stored SQL names its target as of the moment the statement was sequenced. By apply time that
+ * name may mean something else entirely - the table may have been renamed, and the old name may
+ * since have been given to a different table - so the target cannot be found by resolving the name
+ * against the registry. It is known independently: it is the writer's table.
+ * <p>
+ * What has to be decided per reference is therefore not <em>which table does this name mean now</em>
+ * but <em>does this reference denote the target at all</em>, and that is a syntactic question. The
+ * compiler supplies the target's name through {@link #setStatementTargetTableName(CharSequence)}
+ * before resolving anything, and every reference under that name maps to the writer's token while
+ * every other name resolves normally. The target name legitimately occurs more than once - an
+ * UPDATE reads and writes the same table, and a sub-query may name it again - and all of those
+ * occurrences are the target.
+ * <p>
+ * The remap used to be unconditional, which silently redirected every table reference onto the
+ * target: {@code UPDATE t SET v = 99 WHERE v >= (SELECT count() FROM bounds)} counted {@code t}
+ * instead of {@code bounds} and wrote the wrong rows, and a sub-query naming a column the target
+ * does not have suspended the table instead. Scoping it by physical identity rather than by name
+ * fixes that but loses the write when the old name has been handed to a replacement table, as a
+ * blue/green swap does. UPDATE is acknowledged when sequenced, so none of these are visible to the
+ * client. {@code WalUpdateScalarSubqueryTest} pins all three shapes.
+ */
 class WalApplySqlExecutionContext extends SqlExecutionContextImpl {
+    private String targetTableName;
     private TableToken tableToken;
 
     WalApplySqlExecutionContext(CairoEngine engine, int sharedQueryWorkerCount) {
@@ -58,47 +83,36 @@ class WalApplySqlExecutionContext extends SqlExecutionContextImpl {
         // When WAL is applied and SQL is re-compiled
         // the correct metadata for writing is reader metadata,
         // because the sequencer metadata looks at the future.
-        return getCairoEngine().getTableMetadata(this.tableToken, desiredVersion);
-    }
-
-    @Override
-    public TableReader getReader(TableToken tableToken, long version) {
-        return getCairoEngine().getReader(this.tableToken, version);
-    }
-
-    @Override
-    public TableReader getReader(TableToken tableToken) {
-        return getCairoEngine().getReader(this.tableToken);
+        // This is a metadata-source override, not a remap: it honours the token it is given.
+        return getCairoEngine().getTableMetadata(tableToken, desiredVersion);
     }
 
     @Override
     public int getTableStatus(Path path, CharSequence tableName) {
-        return getCairoEngine().getTableStatus(path, this.tableToken.getTableName());
-    }
-
-    @Override
-    public int getTableStatus(Path path, TableToken tableToken) {
-        return getCairoEngine().getTableStatus(path, this.tableToken);
+        // The target exists by construction - the writer holds it - even when its name does not.
+        return isStatementTarget(tableName)
+                ? getCairoEngine().getTableStatus(path, tableToken)
+                : super.getTableStatus(path, tableName);
     }
 
     @Override
     public TableToken getTableToken(CharSequence tableName, int lo, int hi) {
-        return this.tableToken;
+        return isStatementTarget(tableName, lo, hi) ? tableToken : super.getTableToken(tableName, lo, hi);
     }
 
     @Override
     public TableToken getTableToken(CharSequence tableName) {
-        return tableToken;
+        return isStatementTarget(tableName) ? tableToken : super.getTableToken(tableName);
     }
 
     @Override
     public TableToken getTableTokenIfExists(CharSequence tableName) {
-        return this.tableToken;
+        return isStatementTarget(tableName) ? tableToken : super.getTableTokenIfExists(tableName);
     }
 
     @Override
     public TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
-        return this.tableToken;
+        return isStatementTarget(tableName, lo, hi) ? tableToken : super.getTableTokenIfExists(tableName, lo, hi);
     }
 
     @Override
@@ -113,11 +127,34 @@ class WalApplySqlExecutionContext extends SqlExecutionContextImpl {
 
     public void remapTableNameResolutionTo(TableToken tableToken) {
         this.tableToken = tableToken;
+        // Per statement: the next compilation declares its own target name before resolving
+        // anything, and until it does no name is treated as the target.
+        this.targetTableName = null;
+    }
+
+    @Override
+    public void setStatementTargetTableName(CharSequence tableName) {
+        // Copied: the compiler hands over a lexer flyweight that is reused as parsing continues.
+        this.targetTableName = Chars.toString(tableName);
     }
 
     @Override
     public boolean shouldLogSql() {
         // avoid duplicate logging for ALTER and UPDATE
         return false;
+    }
+
+    /**
+     * Reports whether {@code tableName} denotes the table the statement being applied targets.
+     * Returns false while no target has been declared, which is also the answer WAL apply needs
+     * when it asks after a failed resolution: a name that cannot be the target cannot be recovered
+     * by refreshing the target's token.
+     */
+    boolean isStatementTarget(CharSequence tableName) {
+        return targetTableName != null && Chars.equalsIgnoreCase(targetTableName, tableName);
+    }
+
+    private boolean isStatementTarget(CharSequence tableName, int lo, int hi) {
+        return targetTableName != null && Chars.equalsIgnoreCase(targetTableName, tableName, lo, hi);
     }
 }

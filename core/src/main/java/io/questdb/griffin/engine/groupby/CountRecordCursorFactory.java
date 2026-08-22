@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -121,6 +121,7 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public boolean hasNext() {
             if (hasNext) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 // recalculate state only when new query is executed and not after toTop() is called.
                 if (this.count == -1) {
                     long size = baseCursor.size();

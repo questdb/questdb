@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -54,6 +54,10 @@ public class TestMatchFunctionFactory implements FunctionFactory {
         openCounter.set(0);
         topCounter.set(0);
         closeCount.set(0);
+    }
+
+    public static int getOpenCounter() {
+        return openCounter.get();
     }
 
     public static boolean isClosed() {

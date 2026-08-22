@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -33,9 +33,15 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
         while (partitionIndex > -1) {
-            final long hi = reader.openPartition(partitionIndex);
-            if (hi > 0) {
-                counter.add(hi);
+            // Skip empty partitions without opening them, exactly as next() and the interval cursors
+            // do. A size-0 partition (e.g. one a backup left out of the restore) has no directory on
+            // disk, so openPartition() would throw "partition does not exist" instead of contributing
+            // 0 rows.
+            if (reader.getPartitionRowCountFromMetadata(partitionIndex) > 0) {
+                final long hi = reader.openPartition(partitionIndex);
+                if (hi > 0) {
+                    counter.add(hi);
+                }
             }
             partitionIndex--;
         }
@@ -53,6 +59,10 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
                 frame.rowLo = 0;
                 frame.rowHi = hi;
                 if (hi <= skipTarget) {
+                    // Skip-only skeleton: drop any prior nextSlow()'s decoder ref
+                    // so it can't reach PageFrameAddressCache as a stale pointer.
+                    frame.format = PartitionFormat.NATIVE;
+                    frame.parquetMetaDecoder = null;
                     partitionIndex--;
                     return frame;
                 }
@@ -65,6 +75,11 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     @Override
     public boolean supportsSizeCalculation() {
         return true;
+    }
+
+    @Override
+    public void toPartition(int targetPartitionIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -81,15 +96,14 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
 
         final byte format = reader.getPartitionFormat(frame.partitionIndex);
         if (format == PartitionFormat.PARQUET) {
-            frame.parquetDecoder = reader.getAndInitParquetPartitionDecoders(frame.partitionIndex);
-            assert frame.parquetDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
+            frame.parquetMetaDecoder = reader.getAndInitParquetPartitionDecoder(frame.partitionIndex);
             frame.format = PartitionFormat.PARQUET;
             return frame;
         }
 
         assert format == PartitionFormat.NATIVE;
         frame.format = PartitionFormat.NATIVE;
-        frame.parquetDecoder = null;
+        frame.parquetMetaDecoder = null;
         return frame;
     }
 }

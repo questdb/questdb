@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,8 +27,10 @@ package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -41,22 +43,27 @@ import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.*;
 
 public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private final StreamPartitionParquetExporter streamPartitionParquetExporter = new StreamPartitionParquetExporter();
+    private @Nullable BindVariableService bindVariableService;
     private @Nullable CharSequence bloomFilterColumns;
     private int bloomFilterColumnsPosition = -1;
     private double bloomFilterFpp = Double.NaN;
@@ -68,6 +75,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private CopyExportContext.ExportTaskEntry entry;
     private ParquetExportMode exportMode;
     private CharSequence fileName;
+    private @Nullable MemoryTracker memoryTracker;
     private RecordMetadata metadata;
     private long now;
     private int nowTimestampType;
@@ -81,6 +89,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private String tableName;
     private RecordCursorFactory tempTableFactory;
     private @Nullable StreamWriteParquetCallBack writeCallback;
+
+    public static Status classifyFailureStatus(SqlExecutionCircuitBreaker circuitBreaker) {
+        return circuitBreaker.checkIfTrippedNoThrottle() ? Status.CANCELLED : Status.FAILED;
+    }
 
     public static void validateBloomFilterColumns(@Nullable CharSequence columns, RecordMetadata meta, int position) throws SqlException {
         if (columns == null || columns.isEmpty()) {
@@ -113,7 +125,16 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     @Override
     public void clear() {
-        this.selectFactory = Misc.free(selectFactory);
+        final RecordCursorFactory selectFactory = this.selectFactory;
+        this.selectFactory = null;
+        final CreateTableOperation createOp = this.createOp;
+        this.createOp = null;
+        final RecordCursorFactory tempTableFactory = this.tempTableFactory;
+        this.tempTableFactory = null;
+        final PageFrameCursor ownedPageFrameCursor = tempTableFactory != null ? this.pageFrameCursor : null;
+        this.pageFrameCursor = null;
+
+        this.bindVariableService = null;
         this.entry = null;
         this.exportMode = null;
         this.selectText = null;
@@ -127,23 +148,28 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.statisticsEnabled = true;
         this.now = 0;
         this.nowTimestampType = 0;
-        this.createOp = Misc.free(createOp);
-        if (tempTableFactory != null) {
-            // Temp-table path owns both the factory and the cursor.
-            tempTableFactory = Misc.free(tempTableFactory);
-            pageFrameCursor = Misc.free(pageFrameCursor);
-        } else {
-            // Ownership belongs to BaseParquetExporter subclass (streamingPfc)
-            // or ExportQueryProcessorState (for DIRECT_PAGE_FRAME).
-            pageFrameCursor = null;
-        }
         writeCallback = null;
         metadata = null;
-        streamPartitionParquetExporter.clear();
         descending = false;
         bloomFilterColumns = null;
         bloomFilterColumnsPosition = -1;
         bloomFilterFpp = Double.NaN;
+
+        Throwable cleanupFailure = null;
+        try {
+            // This owns tracker-charged Rust decode buffers. Release them before the
+            // job returns the tracker to its pool, even when another owner fails to close.
+            streamPartitionParquetExporter.clear();
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        } finally {
+            memoryTracker = null;
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, selectFactory);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, createOp);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, tempTableFactory);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownedPageFrameCursor);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     @Override
@@ -155,6 +181,11 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             pageFrameCursor = Misc.free(pageFrameCursor);
         }
         Misc.free(streamPartitionParquetExporter);
+        memoryTracker = null;
+    }
+
+    public @Nullable BindVariableService getBindVariableService() {
+        return bindVariableService;
     }
 
     public @Nullable CharSequence getBloomFilterColumns() {
@@ -207,6 +238,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public RecordMetadata getMetadata() {
         return metadata;
+    }
+
+    public @Nullable MemoryTracker getMemoryTracker() {
+        return memoryTracker;
     }
 
     public long getNow() {
@@ -287,8 +322,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             @Nullable String selectText,
             @Nullable CharSequence bloomFilterColumns,
             int bloomFilterColumnsPosition,
-            double bloomFilterFpp
+            double bloomFilterFpp,
+            @Nullable BindVariableService bindVariableService
     ) {
+        this.bindVariableService = bindVariableService;
         this.entry = entry;
         this.tableName = tableName;
         this.fileName = fileName;
@@ -317,14 +354,21 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.createOp = createOp;
     }
 
+    public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        this.memoryTracker = memoryTracker;
+        streamPartitionParquetExporter.setMemoryTracker(memoryTracker);
+    }
+
     public void setSelectFactory(RecordCursorFactory selectFactory) {
         this.selectFactory = selectFactory;
     }
 
     public void setUpStreamPartitionParquetExporter() {
         if (pageFrameCursor != null) {
-            // Enable streaming mode to use MADV_DONTNEED on mmap, avoiding page cache exhaustion
-            pageFrameCursor.setStreamingMode(true);
+            // SEQUENTIAL_EVICT: MADV_SEQUENTIAL/DONTNEED hints plus a hard
+            // cleanup backstop on pool return so the pooled reader doesn't
+            // accumulate mappings from a multi-partition export.
+            pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
             streamPartitionParquetExporter.setUp();
         }
     }
@@ -335,8 +379,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.pageFrameCursor = pageFrameCursor;
         this.metadata = metadata;
         this.descending = descending;
-        // Enable streaming mode to use MADV_DONTNEED on mmap, avoiding page cache exhaustion
-        pageFrameCursor.setStreamingMode(true);
+        // SEQUENTIAL_EVICT: MADV_SEQUENTIAL/DONTNEED hints plus a hard
+        // cleanup backstop on pool return so the pooled reader doesn't
+        // accumulate mappings from a multi-partition export.
+        pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
         streamPartitionParquetExporter.setUp();
     }
 
@@ -427,6 +473,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         private DirectUtf8Sink columnNames = new DirectUtf8Sink(32, false, MemoryTag.NATIVE_PARQUET_EXPORTER);
         private long currentFrameRowCount = 0;
         private long currentPartitionIndex = -1;
+        // Reused per frame whose parquet file is not mapped locally: the [parquetIdx, columnType]
+        // pairs requested from the decoder, and the buffers it decodes the row group into.
+        private DirectIntList decodeColumns = new DirectIntList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
+        private RowGroupBuffers decodeRowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private boolean exportFinished = false;
         // Cumulative count of rows written to Parquet row groups by Rust.
         // Used to determine when partition memory can be safely released.
@@ -439,22 +489,44 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         @Override
         public void clear() {
             // free memory after one query finished, will re-malloc on next query
-            Misc.free(columnNames);
-            Misc.free(columnData);
-            Misc.free(columnMetadata);
-            Misc.free(bloomFilterColumnIndexes);
-            closeWriter();
+            Throwable cleanupFailure = Misc.freeBestEffort(null, decodeRowGroupBuffers);
+            decodeRowGroupBuffers.setMemoryTracker(null);
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, columnNames);
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, columnData);
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, columnMetadata);
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, bloomFilterColumnIndexes);
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, decodeColumns);
+            try {
+                closeWriter();
+            } catch (Throwable th) {
+                if (cleanupFailure == null) {
+                    cleanupFailure = th;
+                } else if (th != cleanupFailure) {
+                    cleanupFailure.addSuppressed(th);
+                }
+            }
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
             rowsWrittenToRowGroups = 0;
             totalRows = 0;
-            freeOwnedPageFrameCursor();
+            try {
+                freeOwnedPageFrameCursor();
+            } catch (Throwable th) {
+                if (cleanupFailure == null) {
+                    cleanupFailure = th;
+                } else if (th != cleanupFailure) {
+                    cleanupFailure.addSuppressed(th);
+                }
+            }
             exportFinished = false;
+            CairoException.rethrowCleanupFailure(cleanupFailure);
         }
 
         @Override
         public void close() {
             closeWriter();
+            decodeColumns = Misc.free(decodeColumns);
+            decodeRowGroupBuffers = Misc.free(decodeRowGroupBuffers);
             freeOwnedPageFrameCursor();
             columnNames = Misc.free(columnNames);
             columnData = Misc.free(columnData);
@@ -470,8 +542,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             long buffer = finishStreamingParquetWrite(streamWriter);
             exportFinished = true;
             streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
-            streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
-            rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
+            streamExportCurrentSize = Unsafe.getLong(buffer);
+            rowsWrittenToRowGroups = Unsafe.getLong(buffer + Long.BYTES);
             assert writeCallback != null;
             writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
             clear();
@@ -480,8 +552,13 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
         public void freeOwnedPageFrameCursor() {
             if (tempTableFactory != null) {
-                tempTableFactory = Misc.free(tempTableFactory);
-                pageFrameCursor = Misc.free(pageFrameCursor);
+                final RecordCursorFactory tempTableFactory = CopyExportRequestTask.this.tempTableFactory;
+                CopyExportRequestTask.this.tempTableFactory = null;
+                final PageFrameCursor pageFrameCursor = CopyExportRequestTask.this.pageFrameCursor;
+                CopyExportRequestTask.this.pageFrameCursor = null;
+                Throwable cleanupFailure = Misc.freeBestEffort(null, tempTableFactory);
+                cleanupFailure = Misc.freeBestEffort(cleanupFailure, pageFrameCursor);
+                CairoException.rethrowCleanupFailure(cleanupFailure);
             }
         }
 
@@ -491,6 +568,11 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
         public long getCurrentPartitionIndex() {
             return currentPartitionIndex;
+        }
+
+        @TestOnly
+        public RowGroupBuffers getDecodeRowGroupBuffers() {
+            return decodeRowGroupBuffers;
         }
 
         public long getRowsWrittenToRowGroups() {
@@ -509,8 +591,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     long buffer = writeStreamingParquetChunk(streamWriter, 0, 0);
                     if (buffer != 0) {
                         streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
-                        streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
-                        rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
+                        streamExportCurrentSize = Unsafe.getLong(buffer);
+                        rowsWrittenToRowGroups = Unsafe.getLong(buffer + Long.BYTES);
                     } else {
                         streamExportCurrentPtr = 0;
                         streamExportCurrentSize = 0;
@@ -529,6 +611,11 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         public void setCurrentPartitionIndex(long currentPartitionIndex, long frameRowCount) {
             this.currentPartitionIndex = currentPartitionIndex;
             this.currentFrameRowCount = frameRowCount;
+        }
+
+        public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+            decodeRowGroupBuffers.close();
+            decodeRowGroupBuffers.setMemoryTracker(memoryTracker);
         }
 
         public void setUp() {
@@ -560,9 +647,12 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 columnNames.put(columnName);
                 columnMetadata.add(columnNames.size() - startSize);
                 final int columnType = meta.getColumnType(i);
-                // GenericRecordMetadata (hybrid/cursor paths) returns i;
                 // table metadata returns the physical writer column index.
-                final int writerIdx = meta.getWriterIndex(i);
+                int writerIdx = meta.getWriterIndex(i);
+                if (writerIdx < 0) {
+                    // GenericRecordMetadata (hybrid/cursor paths) returns -1, use i instead
+                    writerIdx = i;
+                }
 
                 // A SYMBOL column needs symbol-table metadata when it is a
                 // real table column.  In the hybrid path (baseColumnMap != null)
@@ -580,10 +670,17 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     if (!symbolTable.containsNullValue()) {
                         symbolColumnType |= 1 << 31;
                     }
-                    columnMetadata.add((long) writerIdx << 32 | symbolColumnType);
+                    // Mask to 32 bits: symbolColumnType can have bit 31 set (no-null flag),
+                    // making it negative. Without the mask, Java sign-extends it to 64 bits
+                    // before the OR, clobbering writerIdx in the upper 32 bits.
+                    columnMetadata.add((long) writerIdx << 32 | (symbolColumnType & 0xFFFFFFFFL));
                 } else {
-                    columnMetadata.add((long) writerIdx << 32 | columnType);
+                    columnMetadata.add((long) writerIdx << 32 | (columnType & 0xFFFFFFFFL));
                 }
+                // Per-column parquet encoding config (third long); the JNI side reads it
+                // and stores it in Column::parquet_encoding_config so the writer can honour
+                // PARQUET_ENCODING(...) overrides.
+                columnMetadata.add(meta.getColumnMetadata(i).getParquetEncodingConfig());
             }
 
             long bloomFilterIndexesPtr = 0;
@@ -615,7 +712,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     parquetVersion,
                     bloomFilterIndexesPtr,
                     bloomFilterCount,
-                    fpp
+                    fpp,
+                    0.0
             );
         }
 
@@ -625,8 +723,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             long buffer = writeStreamingParquetChunk(streamWriter, prebuiltColumnData.getAddress(), frameRowCount);
             while (buffer != 0) {
                 streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
-                streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
-                rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
+                streamExportCurrentSize = Unsafe.getLong(buffer);
+                rowsWrittenToRowGroups = Unsafe.getLong(buffer + Long.BYTES);
                 writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
                 buffer = writeStreamingParquetChunk(streamWriter, 0, 0);
             }
@@ -643,9 +741,18 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
 
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    long localColTop = frame.getPageAddress(i) > 0 ? 0 : frameRowCount;
                     final int columnType = metadata.getColumnType(i);
                     final long pageAddress = frame.getPageAddress(i);
+                    // Var-size columns may have an empty .d file when all values are inlined
+                    // into the aux vector (see FwdTableReaderPageFrameCursor for the producer
+                    // contract); use the aux address as the column-top detector to avoid
+                    // materialising live rows as NULL.
+                    final long localColTop;
+                    if (ColumnType.isVarSize(columnType)) {
+                        localColTop = frame.getAuxPageAddress(i) > 0 ? 0 : frameRowCount;
+                    } else {
+                        localColTop = pageAddress > 0 ? 0 : frameRowCount;
+                    }
 
                     // Assert alignment for SIMD operations in Rust parquet encoder
                     assert pageAddress == 0 || isAlignedForColumnType(pageAddress, columnType)
@@ -677,8 +784,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 long buffer = writeStreamingParquetChunk(streamWriter, columnData.getAddress(), frameRowCount);
                 while (buffer != 0) {
                     streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
-                    streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
-                    rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
+                    streamExportCurrentSize = Unsafe.getLong(buffer);
+                    rowsWrittenToRowGroups = Unsafe.getLong(buffer + Long.BYTES);
                     writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
                     buffer = writeStreamingParquetChunk(
                             streamWriter,
@@ -702,32 +809,83 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     }
                 }
 
-                long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER);
-                long buffer = writeStreamingParquetChunkFromRowGroup(
-                        streamWriter,
-                        allocator,
-                        columnData.getAddress(),
-                        frame.getParquetPartitionDecoder().getFileAddr(),
-                        frame.getParquetPartitionDecoder().getFileSize(),
-                        frame.getParquetRowGroup(),
-                        frame.getParquetRowGroupLo(),
-                        frame.getParquetRowGroupHi()
-                );
-                while (buffer != 0) {
-                    streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
-                    streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
-                    rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
-                    writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
-                    buffer = writeStreamingParquetChunkFromRowGroup(
+                final long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER);
+                final ParquetDecoder parquetDecoder = frame.getParquetDecoder();
+                if (parquetDecoder.getFileAddr() != 0) {
+                    // The parquet file is mapped locally, so fast-copy the row group bytes
+                    // straight from the mmap.
+                    long buffer = writeStreamingParquetChunkFromRowGroup(
                             streamWriter,
                             allocator,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
+                            columnData.getAddress(),
+                            parquetDecoder.getFileAddr(),
+                            parquetDecoder.getFileSize(),
+                            frame.getParquetRowGroup(),
+                            frame.getParquetRowGroupLo(),
+                            frame.getParquetRowGroupHi()
                     );
+                    while (buffer != 0) {
+                        streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
+                        streamExportCurrentSize = Unsafe.getLong(buffer);
+                        rowsWrittenToRowGroups = Unsafe.getLong(buffer + Long.BYTES);
+                        writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
+                        buffer = writeStreamingParquetChunkFromRowGroup(
+                                streamWriter,
+                                allocator,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0
+                        );
+                    }
+                } else {
+                    // The parquet file is not mapped locally (getFileAddr() == 0). Decode the row
+                    // group through the decoder, which acquires and pins a decode resource, then
+                    // encode from the decoded buffers. The native side copies them into
+                    // encoder-owned storage, so the decode resource can be released as soon as
+                    // decode returns.
+                    final int rowLo = frame.getParquetRowGroupLo();
+                    final int rowHi = frame.getParquetRowGroupHi();
+                    final int rowCount = rowHi - rowLo;
+                    if (rowCount > 0) {
+                        decodeColumns.reopen();
+                        decodeColumns.clear();
+                        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                            // Materialized column types only (never VARCHAR_SLICE) so the decoded
+                            // buffers are self-owned and survive the decode-resource release below.
+                            decodeColumns.add(i);
+                            decodeColumns.add(metadata.getColumnType(i));
+                        }
+                        decodeRowGroupBuffers.reopen();
+                        parquetDecoder.decodeRowGroup(decodeRowGroupBuffers, decodeColumns, frame.getParquetRowGroup(), rowLo, rowHi);
+                        final long decodeResource = parquetDecoder.takeDecodeResource();
+                        try {
+                            long buffer = writeStreamingParquetChunkFromRowGroupBuffers(
+                                    streamWriter,
+                                    allocator,
+                                    columnData.getAddress(),
+                                    decodeRowGroupBuffers.ptr(),
+                                    rowCount
+                            );
+                            while (buffer != 0) {
+                                streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
+                                streamExportCurrentSize = Unsafe.getLong(buffer);
+                                rowsWrittenToRowGroups = Unsafe.getLong(buffer + Long.BYTES);
+                                writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
+                                buffer = writeStreamingParquetChunkFromRowGroupBuffers(
+                                        streamWriter,
+                                        allocator,
+                                        0,
+                                        0,
+                                        0
+                                );
+                            }
+                        } finally {
+                            parquetDecoder.releaseDecodeResource(decodeResource);
+                        }
+                    }
                 }
             }
             totalRows += currentFrameRowCount;
@@ -737,22 +895,14 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
 
         private static int getRequiredAlignmentForSimd(int columnType) {
-            switch (ColumnType.tagOf(columnType)) {
+            return switch (ColumnType.tagOf(columnType)) {
                 // Types using Simd<i64, 8> or Simd<f64, 8>
-                case ColumnType.LONG:
-                case ColumnType.DOUBLE:
-                case ColumnType.TIMESTAMP:
-                case ColumnType.DATE:
-                    return 8;
+                case ColumnType.LONG, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.DATE -> 8;
                 // Types using Simd<i32, 16> or Simd<f32, 16>
-                case ColumnType.INT:
-                case ColumnType.FLOAT:
-                case ColumnType.SYMBOL:
-                    return 4;
+                case ColumnType.INT, ColumnType.FLOAT, ColumnType.SYMBOL -> 4;
                 // All other types use scalar paths - no SIMD alignment required
-                default:
-                    return 1;
-            }
+                default -> 1;
+            };
         }
 
         /**

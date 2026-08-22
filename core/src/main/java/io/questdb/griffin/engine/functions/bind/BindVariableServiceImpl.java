@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,8 +25,10 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.BindVariableService;
@@ -38,6 +40,7 @@ import io.questdb.griffin.engine.functions.UndefinedFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -46,6 +49,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -96,6 +100,162 @@ public class BindVariableServiceImpl implements BindVariableService {
         this.varcharVarPool = new ObjectPool<>(VarcharBindVariable::new, poolSize);
         this.arrayVarPool = new ObjectPool<>(ArrayBindVariable::new, poolSize); // todo: this might be excessive, smaller pool size might be enough
         this.decimalVarPool = new ObjectPool<>(DecimalBindVariable::new, poolSize);
+    }
+
+    /**
+     * snapshot() creates an independent deep copy of the given
+     * BindVariableService's indexed and named variable values. The returned
+     * instance owns its own Function objects, so it is safe to use on a
+     * different thread after the source is cleared. snapshot() does not
+     * deep-copy ARRAY values; these types are not expected in COPY subquery
+     * bind variables.
+     */
+    public static BindVariableServiceImpl snapshot(
+            BindVariableService source,
+            CairoConfiguration configuration
+    ) throws SqlException {
+        if (source == null) {
+            return null;
+        }
+        BindVariableServiceImpl copy = new BindVariableServiceImpl(configuration);
+        Decimal256 dec = null;
+
+        // indexed variables ($1, $2, ...)
+        int count = source.getIndexedVariableCount();
+        for (int i = 0; i < count; i++) {
+            dec = snapshotIndexedFunction(source.getFunction(i), i, copy, dec);
+        }
+
+        // named variables — keys are stored without colon prefix,
+        // but getFunction() expects the colon prefix for lookup
+        ReadOnlyObjList<CharSequence> names = source.getNamedVariables();
+        StringSink nameBuf = new StringSink();
+        for (int i = 0, n = names.size(); i < n; i++) {
+            CharSequence name = names.getQuick(i);
+            nameBuf.clear();
+            nameBuf.put(':').put(name);
+            Function f = source.getFunction(nameBuf);
+            if (f != null) {
+                dec = snapshotNamedFunction(f, name, copy, dec);
+            }
+        }
+
+        return copy;
+    }
+
+    private static BinarySequence copyBinarySequence(BinarySequence src) {
+        if (src == null) {
+            return null;
+        }
+        long len = src.length();
+        if (len > Integer.MAX_VALUE) {
+            throw CairoException.nonCritical().put("BINARY bind variable too large to snapshot [length=").put(len).put(']');
+        }
+        byte[] buf = new byte[(int) len];
+        for (int i = 0; i < len; i++) {
+            buf[i] = src.byteAt(i);
+        }
+        return new BinarySequence() {
+            @Override
+            public byte byteAt(long index) {
+                return buf[(int) index];
+            }
+
+            @Override
+            public long length() {
+                return buf.length;
+            }
+        };
+    }
+
+    private static Decimal256 snapshotIndexedFunction(
+            Function f,
+            int index,
+            BindVariableServiceImpl copy,
+            Decimal256 dec
+    ) throws SqlException {
+        if (f == null) {
+            return dec;
+        }
+        int type = f.getType();
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.BOOLEAN -> copy.setBoolean(index, f.getBool(null));
+            case ColumnType.BYTE -> copy.setByte(index, f.getByte(null));
+            case ColumnType.SHORT -> copy.setShort(index, f.getShort(null));
+            case ColumnType.CHAR -> copy.setChar(index, f.getChar(null));
+            case ColumnType.INT -> copy.setInt(index, f.getInt(null));
+            case ColumnType.IPv4 -> copy.setIPv4(index, f.getIPv4(null));
+            case ColumnType.LONG -> copy.setLong(index, f.getLong(null));
+            case ColumnType.DATE -> copy.setDate(index, f.getDate(null));
+            case ColumnType.TIMESTAMP -> copy.setTimestampWithType(index, type, f.getTimestamp(null));
+            case ColumnType.FLOAT -> copy.setFloat(index, f.getFloat(null));
+            case ColumnType.DOUBLE -> copy.setDouble(index, f.getDouble(null));
+            case ColumnType.STRING, ColumnType.SYMBOL -> copy.setStr(index, f.getStrA(null));
+            case ColumnType.VARCHAR -> copy.setVarchar(index, f.getVarcharA(null));
+            case ColumnType.LONG256 -> {
+                Long256 val = f.getLong256A(null);
+                copy.setLong256(index, val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
+            }
+            case ColumnType.UUID -> copy.setUuid(index, f.getLong128Lo(null), f.getLong128Hi(null));
+            case ColumnType.BINARY -> copy.setBin(index, copyBinarySequence(f.getBin(null)));
+            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
+                    copy.setGeoHash(index, f.getGeoLong(null), type);
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> {
+                if (dec == null) {
+                    dec = new Decimal256();
+                }
+                f.getDecimal256(null, dec);
+                copy.setDecimal(index, dec.getHh(), dec.getHl(), dec.getLh(), dec.getLl(), type);
+            }
+            default -> // UNDEFINED, ARRAY, or unknown — define with type only (no value)
+                    copy.define(index, type, 0);
+        }
+        return dec;
+    }
+
+    private static Decimal256 snapshotNamedFunction(
+            Function f,
+            CharSequence name,
+            BindVariableServiceImpl copy,
+            Decimal256 dec
+    ) throws SqlException {
+        int type = f.getType();
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.BOOLEAN -> copy.setBoolean(name, f.getBool(null));
+            case ColumnType.BYTE -> copy.setByte(name, f.getByte(null));
+            case ColumnType.SHORT -> copy.setShort(name, f.getShort(null));
+            case ColumnType.CHAR -> copy.setChar(name, f.getChar(null));
+            case ColumnType.INT -> copy.setInt(name, f.getInt(null));
+            // no named IPv4 setter exists on the BindVariableService interface
+            case ColumnType.LONG -> copy.setLong(name, f.getLong(null));
+            case ColumnType.DATE -> copy.setDate(name, f.getDate(null));
+            case ColumnType.TIMESTAMP -> copy.setTimestampWithType(name, type, f.getTimestamp(null));
+            case ColumnType.FLOAT -> copy.setFloat(name, f.getFloat(null));
+            case ColumnType.DOUBLE -> copy.setDouble(name, f.getDouble(null));
+            case ColumnType.STRING, ColumnType.SYMBOL -> copy.setStr(name, f.getStrA(null));
+            case ColumnType.VARCHAR -> copy.setVarchar(name, f.getVarcharA(null));
+            case ColumnType.LONG256 -> {
+                Long256 val = f.getLong256A(null);
+                copy.setLong256(name, val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
+            }
+            case ColumnType.UUID -> copy.setUuid(name, f.getLong128Lo(null), f.getLong128Hi(null));
+            case ColumnType.BINARY -> copy.setBin(name, copyBinarySequence(f.getBin(null)));
+            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
+                    copy.setGeoHash(name, f.getGeoLong(null), type);
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> {
+                if (dec == null) {
+                    dec = new Decimal256();
+                }
+                f.getDecimal256(null, dec);
+                copy.setDecimal(name, dec.getHh(), dec.getHl(), dec.getLh(), dec.getLl(), type);
+            }
+            default -> {
+                // UNDEFINED, ARRAY, or unknown — skip
+            }
+        }
+        return dec;
     }
 
     @Override
@@ -237,7 +397,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public ObjList<CharSequence> getNamedVariables() {
+    public ReadOnlyObjList<CharSequence> getNamedVariables() {
         return namedVariables.keys();
     }
 
@@ -1045,6 +1205,31 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
+    private static void setDecimalFromStr(DecimalBindVariable function, @Nullable CharSequence value, int type) {
+        if (value == null) {
+            function.value.ofNull();
+            return;
+        }
+        try {
+            function.value.ofString(value, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type));
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, type);
+        }
+    }
+
+    private static void setDecimalFromVarchar(DecimalBindVariable function, @Nullable Utf8Sequence value, int type) {
+        if (value == null) {
+            function.value.ofNull();
+            return;
+        }
+        try {
+            // non-ASCII bytes are not valid decimal characters, so they are rejected by the parser
+            function.value.ofString(value.asAsciiCharSequence(), ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type));
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, type);
+        }
+    }
+
     private static void setDouble0(Function function, double value, int index, @Nullable CharSequence name) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
@@ -1301,11 +1486,8 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.UUID -> SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
             case ColumnType.ARRAY -> ((ArrayBindVariable) function).parseArray(value);
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
-                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> ((DecimalBindVariable) function).value.ofString(
-                    value,
-                    ColumnType.getDecimalPrecision(type),
-                    ColumnType.getDecimalScale(type)
-            );
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
+                    setDecimalFromStr((DecimalBindVariable) function, value, type);
             default -> reportError(function, ColumnType.STRING, index, name);
         }
     }
@@ -1419,6 +1601,14 @@ public class BindVariableServiceImpl implements BindVariableService {
                 break;
             case ColumnType.UUID:
                 SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
+                break;
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+            case ColumnType.DECIMAL128:
+            case ColumnType.DECIMAL256:
+                setDecimalFromVarchar((DecimalBindVariable) function, value, functionType);
                 break;
             default:
                 reportError(function, ColumnType.VARCHAR, index, name);

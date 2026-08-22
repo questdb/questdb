@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -63,22 +62,34 @@ public class SessionUserFunctionFactory implements FunctionFactory {
     }
 
     static class SessionUserFunction extends StrFunction {
-        private SecurityContext context;
+        private CharSequence sessionPrincipal;
 
         @Override
         public CharSequence getStrA(Record rec) {
-            return context.getSessionPrincipal();
+            return sessionPrincipal;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return context.getSessionPrincipal();
+            return sessionPrincipal;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            this.context = executionContext.getSecurityContext();
+            // Resolve once per cursor rather than once per row -- see CurrentUserFunction.init(). The session
+            // principal is invariant for a connection, so it certainly cannot change mid-traversal.
+            sessionPrincipal = executionContext.getSecurityContext().getSessionPrincipal();
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return true;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return true;
         }
 
         @Override

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -32,6 +32,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
@@ -39,8 +40,8 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.Vect;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
@@ -51,7 +52,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
 public class WalTxnDetails implements QuietCloseable {
     public static final long FORCE_FULL_COMMIT = Long.MAX_VALUE;
     public static final long LAST_ROW_COMMIT = Long.MAX_VALUE - 1;
-    private static final ThreadLocal<DirectString> DIRECT_STRING = new ThreadLocal<>(DirectString::new);
+    private static final CarrierLocal<DirectString> DIRECT_STRING = new CarrierLocal<>(DirectString::new);
     private static final int FLAG_IS_LAST_SEGMENT_USAGE = 0x2;
     private static final int FLAG_IS_OOO = 0x1;
     private static final int SEQ_TXN_OFFSET = 0;
@@ -71,6 +72,7 @@ public class WalTxnDetails implements QuietCloseable {
     public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_MAT_VIEW_PERIOD_HI + 1;
     private static final int SYMBOL_MAP_COLUMN_RECORD_HEADER_INTS = 6;
     private static final int SYMBOL_MAP_RECORD_HEADER_INTS = 4;
+    private final MicrosecondClock clock;
     private final CairoConfiguration config;
     private final long maxLookaheadRows;
     private final SymbolMapDiffCursorImpl symbolMapDiffCursor = new SymbolMapDiffCursorImpl();
@@ -102,7 +104,12 @@ public class WalTxnDetails implements QuietCloseable {
     public WalTxnDetails(CairoConfiguration configuration, long maxLookaheadRows) {
         walEventReader = new WalEventReader(configuration);
         this.config = configuration;
+        this.clock = configuration.getMicrosecondClock();
         this.maxLookaheadRows = maxLookaheadRows;
+    }
+
+    public static byte dedupModeOf(long walTxnTypeAndFlags) {
+        return (byte) (Numbers.decodeLowInt(walTxnTypeAndFlags) >> 24);
     }
 
     public static int loadTxns(TransactionLogCursor transactionLogCursor, int txnCount, DirectLongList txnList) {
@@ -138,6 +145,10 @@ public class WalTxnDetails implements QuietCloseable {
                     .put(", ").put(ex.getFlyweightMessage()).put(']');
         }
         return walEventCursor;
+    }
+
+    public static byte walTxnTypeOf(long walTxnTypeAndFlags) {
+        return (byte) Numbers.decodeHighInt(walTxnTypeAndFlags);
     }
 
     /**
@@ -239,21 +250,25 @@ public class WalTxnDetails implements QuietCloseable {
 
     /**
      * Calculates the count of transactions to apply in one go in {@link io.questdb.cairo.TableWriter}.
-     * Applying many transactions is also referenced as wrting a block of transactions.
+     * Applying many transactions is also referenced as writing a block of transactions.
      *
-     * @param seqTxn              - seqTxn to start the block from
-     * @param pressureControl     - pressure control to calculate the block size, pressure control can limit the block size
-     * @param maxBlockRecordCount - maximum number of transactions in the block
-     * @return - the number of transactions to apply in one go, e.g. the block size
+     * @param seqTxn              starting WAL sequence transaction number
+     * @param pressureControl     pressure control to calculate the block size, pressure control can limit the block size
+     * @param maxBlockRecordCount maximum number of records in the block
+     * @param inOrderMinTimestamp in-order optimization applies only to commits whose timestamps >= this value.
+     *                            Pass the last partition's max timestamp for native partitions (optimization applies
+     *                            only to appending data). Pass Long.MAX_VALUE when the last partition is parquet
+     *                            to disable in-order optimization entirely and batch more aggressively.
+     * @return the number of transactions to apply in one go, e.g. the block size
      */
-    public int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl, long maxBlockRecordCount) {
+    public int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl, long maxBlockRecordCount, long inOrderMinTimestamp) {
         int blockSize = 1;
         long lastSeqTxn = getLastSeqTxn();
         long totalRowCount = getSegmentRowHi(seqTxn) - getSegmentRowLo(seqTxn);
         maxBlockRecordCount = Math.min(maxBlockRecordCount, pressureControl.getMaxBlockRowCount() - 1);
 
         long lastWalSegment = getWalSegment(seqTxn);
-        boolean allInOrder = getTxnInOrder(seqTxn);
+        boolean allInOrder = getMinTimestamp(seqTxn) >= inOrderMinTimestamp && getTxnInOrder(seqTxn);
         long minTs = Long.MAX_VALUE;
         long maxTs = Long.MIN_VALUE;
 
@@ -268,7 +283,8 @@ public class WalTxnDetails implements QuietCloseable {
                         }
                         allInOrder = false;
                     } else {
-                        allInOrder = getTxnInOrder(nextTxn) && maxTs <= getMinTimestamp(nextTxn);
+                        allInOrder = getMinTimestamp(nextTxn) >= inOrderMinTimestamp
+                                && getTxnInOrder(nextTxn) && maxTs <= getMinTimestamp(nextTxn);
                         minTs = Math.min(minTs, getMinTimestamp(nextTxn));
                         maxTs = Math.max(maxTs, getMaxTimestamp(nextTxn));
                     }
@@ -276,7 +292,12 @@ public class WalTxnDetails implements QuietCloseable {
                 totalRowCount += getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
                 lastWalSegment = currentWalSegment;
 
-                if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT || totalRowCount > maxBlockRecordCount) {
+                if (totalRowCount > maxBlockRecordCount) {
+                    // Block is too big, commit what we have so far
+                    break;
+                }
+                if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT) {
+                    blockSize++;
                     break;
                 }
                 if (getDedupMode(nextTxn) == WAL_DEDUP_MODE_REPLACE_RANGE) {
@@ -292,7 +313,7 @@ public class WalTxnDetails implements QuietCloseable {
         // And the commit to timestamp includes the last transaction in the block
         // This is very basic heuristic and needs some read time testing to come with a more robust solution
         long lastTxn = seqTxn + blockSize - 1;
-        if (blockSize > 1 && getCommitToTimestamp(lastTxn) != FORCE_FULL_COMMIT) {
+        if (allInOrder && blockSize > 1 && getCommitToTimestamp(lastTxn) != FORCE_FULL_COMMIT) {
             while (blockSize > 1 && getCommitToTimestamp(lastTxn) < getMaxTimestamp(lastTxn) && totalRowCount > maxBlockRecordCount / 2) {
                 blockSize--;
                 lastTxn--;
@@ -326,8 +347,7 @@ public class WalTxnDetails implements QuietCloseable {
     }
 
     public byte getDedupMode(long seqTxn) {
-        int flags = Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
-        return (byte) (flags >> 24);
+        return dedupModeOf(getWalTxnTypeAndFlags(seqTxn));
     }
 
     public long getFullyCommittedTxn(long fromSeqTxn, long toSeqTxn, long maxCommittedTimestamp) {
@@ -408,7 +428,11 @@ public class WalTxnDetails implements QuietCloseable {
     }
 
     public byte getWalTxnType(long seqTxn) {
-        return (byte) Numbers.decodeHighInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
+        return walTxnTypeOf(getWalTxnTypeAndFlags(seqTxn));
+    }
+
+    public long getWalTxnTypeAndFlags(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE));
     }
 
     public boolean isLastSegmentUsage(long seqTxn) {
@@ -427,6 +451,12 @@ public class WalTxnDetails implements QuietCloseable {
         boolean isLastSegmentUse = false;
         long roHi = 0;
         long prevRoHi = -1;
+        // Non-overlap in-order check, consistent with calculateInsertTransactionBlock
+        // (:286-287): compare each txn's min against the aggregate max of the txns
+        // BEFORE it, hence the check runs ahead of the addTxn that folds this txn's
+        // own max in. For a single segment the slice iteration order is txn order ==
+        // time order, so internally sorted txns joined without overlap mean the whole
+        // row range is already sorted and block-apply can skip the O3 sort.
         boolean allInOrder = true;
 
         for (int i = 0; i < blockTransactionCount; i++) {
@@ -457,8 +487,8 @@ public class WalTxnDetails implements QuietCloseable {
             isLastSegmentUse = isLastSegmentUse | sortedBySegmentTxnSlice.isLastSegmentUse(i);
             roHi = sortedBySegmentTxnSlice.getRoHi(i);
             long committedRowsCount = roHi - roLo;
-            copyTasks.addTxn(roLo, relativeSeqTxn, committedRowsCount, copyTaskCount, minTimestamp, maxTimestamp);
             allInOrder = allInOrder && minTimestamp >= copyTasks.getMaxTimestamp() && sortedBySegmentTxnSlice.isTxnDataInOrder(i);
+            copyTasks.addTxn(roLo, relativeSeqTxn, committedRowsCount, copyTaskCount, minTimestamp, maxTimestamp);
 
             if (prevRoHi != -1 && prevRoHi != roLo) {
                 // In theory it's possible but in practice it should not happen
@@ -475,7 +505,12 @@ public class WalTxnDetails implements QuietCloseable {
         int walId = sortedBySegmentTxnSlice.getWalId(lastIndex);
 
         copyTasks.addSegment(walId, segmentId, segmentLo, roHi, isLastSegmentUse);
-        copyTasks.setAllTxnDataInOrder(allInOrder);
+        // Single segment iff no segment transition occurred (copyTaskCount stays
+        // 0); getSegmentCount() == copyTaskCount + 1. Only the single-segment
+        // fast-copy path (TableWriter, gated on getSegmentCount()==1) consumes this
+        // flag, and the non-overlap check is only meaningful there: multi-segment
+        // iteration is ordered by (wal, segment), not by time.
+        copyTasks.setAllTxnDataInOrder(copyTaskCount == 0 && allInOrder);
     }
 
     public void readObservableTxnMeta(
@@ -483,7 +518,8 @@ public class WalTxnDetails implements QuietCloseable {
             final TransactionLogCursor transactionLogCursor,
             final int rootLen,
             long appliedSeqTxn,
-            final long maxCommittedTimestamp
+            final long maxCommittedTimestamp,
+            final long deadlineMicros
     ) {
         final long lastLoadedSeqTxn = getLastSeqTxn();
         long loadFromSeqTxn = appliedSeqTxn + 1;
@@ -538,7 +574,9 @@ public class WalTxnDetails implements QuietCloseable {
                         maxLookaheadTxn
                 );
             }
-        } while (rowsToLoad > 0 && getLastSeqTxn() < transactionLogCursor.getMaxTxn());
+        } while (rowsToLoad > 0
+                && getLastSeqTxn() < transactionLogCursor.getMaxTxn()
+                && clock.getTicks() < deadlineMicros);
 
         if (transactionMeta.size() == initialSize) {
             // No transactions loaded, no need to do anything

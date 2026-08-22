@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -46,10 +46,17 @@ public class PGOids {
     public static final int BINARY_TYPE_DECIMAL8 = (1 << 31) | ColumnType.DECIMAL8;
     public static final int BINARY_TYPE_DOUBLE = (1 << 31) | ColumnType.DOUBLE;
     public static final int BINARY_TYPE_FLOAT = (1 << 31) | ColumnType.FLOAT;
+    public static final int BINARY_TYPE_GEOBYTE = (1 << 31) | ColumnType.GEOBYTE;
+    public static final int BINARY_TYPE_GEOINT = (1 << 31) | ColumnType.GEOINT;
+    public static final int BINARY_TYPE_GEOLONG = (1 << 31) | ColumnType.GEOLONG;
+    public static final int BINARY_TYPE_GEOSHORT = (1 << 31) | ColumnType.GEOSHORT;
     public static final int BINARY_TYPE_INT = (1 << 31) | ColumnType.INT;
     public static final int BINARY_TYPE_INTERVAL = (1 << 31) | ColumnType.INTERVAL;
+    public static final int BINARY_TYPE_IPv4 = (1 << 31) | ColumnType.IPv4;
     public static final int BINARY_TYPE_LONG = (1 << 31) | ColumnType.LONG;
+    public static final int BINARY_TYPE_LONG128 = (1 << 31) | ColumnType.LONG128;
     public static final int BINARY_TYPE_LONG256 = (1 << 31) | ColumnType.LONG256;
+    public static final int BINARY_TYPE_NULL = (1 << 31) | ColumnType.NULL;
     public static final int BINARY_TYPE_SHORT = (1 << 31) | ColumnType.SHORT;
     public static final int BINARY_TYPE_STRING = (1 << 31) | ColumnType.STRING;
     public static final int BINARY_TYPE_SYMBOL = (1 << 31) | ColumnType.SYMBOL;
@@ -302,7 +309,6 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.DECIMAL256, PG_NUMERIC); // NUMERIC
 
         TYPE_ARR_OIDS.extendAndSet(ColumnType.DOUBLE, PG_ARR_FLOAT8); // FLOAT8[]
-        TYPE_ARR_OIDS.extendAndSet(ColumnType.LONG, PG_ARR_INT8); // INT8[]
         TYPE_ARR_OIDS.extendAndSet(ColumnType.VARCHAR, PG_ARR_VARCHAR); // VARCHAR[]
 
         PG_TYPE_OIDS.add(PG_VARCHAR);

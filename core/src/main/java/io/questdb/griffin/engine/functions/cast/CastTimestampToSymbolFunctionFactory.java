@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -61,7 +61,11 @@ public class CastTimestampToSymbolFunctionFactory implements FunctionFactory {
     private static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
         private final StringSink sink = new StringSink();
-        private final LongIntHashMap symbolTableShortcut = new LongIntHashMap();
+        // The sentinel is Numbers.LONG_NULL rather than the default -1 so that -1
+        // (a perfectly legal TIMESTAMP input -- 1us before the epoch) can be stored
+        // as a key without colliding with the "empty slot" marker. LONG_NULL itself
+        // never reaches this map because it is filtered upstream in getInt()/getSymbol().
+        private final LongIntHashMap symbolTableShortcut = new LongIntHashMap(16, 0.5, Numbers.LONG_NULL);
         private final ObjList<String> symbols = new ObjList<>();
         private int next = 1;
 
@@ -110,7 +114,7 @@ public class CastTimestampToSymbolFunctionFactory implements FunctionFactory {
             sink.clear();
             sink.put(value);
             final String str = Chars.toString(sink);
-            symbols.add(Chars.toString(sink));
+            symbols.add(str);
             return str;
         }
 
@@ -134,6 +138,11 @@ public class CastTimestampToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
         public @Nullable SymbolTable newSymbolTable() {
             Func copy = new Func(arg);
             copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
@@ -141,6 +150,14 @@ public class CastTimestampToSymbolFunctionFactory implements FunctionFactory {
             copy.symbols.addAll(this.symbols);
             copy.next = this.next;
             return copy;
+        }
+
+        @Override
+        public boolean supportsKeyValueAccess() {
+            // getInt() mints a key with one probe on the decoded scalar, never by hashing the row's
+            // text, and valueOf() resolves it by indexing symbols. A key consumer such as QWP egress
+            // should therefore encode each distinct value once instead of re-encoding it per row.
+            return true;
         }
 
         @Override

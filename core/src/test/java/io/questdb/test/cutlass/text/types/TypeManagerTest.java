@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -181,6 +181,12 @@ public class TypeManagerTest extends AbstractTest {
     }
 
     @Test
+    public void testIllegalMethodParameterDecimalSurrogate() {
+        // the bare DECIMAL tag is a surrogate for overload resolution, it has no storage size
+        testIllegalParameterForGetTypeAdapter(ColumnType.DECIMAL);
+    }
+
+    @Test
     public void testIllegalMethodParameterGeoInt() {
         testIllegalParameterForGetTypeAdapter(ColumnType.GEOINT);
     }
@@ -201,6 +207,16 @@ public class TypeManagerTest extends AbstractTest {
     @Test
     public void testResourceNotFound() {
         assertFailure("/textloader/types/not_found.json", 0, "could not find input format config");
+    }
+
+    @Test
+    public void testStoredDecimalTypesHaveTypeAdapter() {
+        TypeManager typeManager = new TypeManager(new DefaultTextConfiguration(), utf16Sink, utf8Sink, decimal256);
+        // one precision per storage width, from DECIMAL8 up to DECIMAL256
+        for (int precision : new int[]{2, 4, 9, 18, 38, 76}) {
+            int type = ColumnType.getDecimalType(precision, 1);
+            Assert.assertEquals(type, typeManager.getTypeAdapter(type).getType());
+        }
     }
 
     @Test

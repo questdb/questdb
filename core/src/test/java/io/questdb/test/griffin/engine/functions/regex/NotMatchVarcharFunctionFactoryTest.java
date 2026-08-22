@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -36,12 +36,10 @@ public class NotMatchVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_varchar() name from long_sequence(2000))");
-            assertQuery(
-                    "name\n",
-                    "select * from x where name !~ null",
-                    false,
-                    true
-            );
+            assertQuery("select * from x where name !~ null")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("name\n");
         });
     }
 
@@ -61,23 +59,24 @@ public class NotMatchVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            final String expected = "name\n" +
-                    "8#3TsZ\n" +
-                    "zV衞͛Ԉ龘и\uDA89\uDFA4~\n" +
-                    "\uDBAE\uDD12ɜ|\n" +
-                    "\uDB59\uDF3B룒jᷚ\n" +
-                    "p-鳓w\n" +
-                    "h\uDAF5\uDE17qRӽ-\n" +
-                    "Ǆ Ԡ阷l싒8쮠\n" +
-                    "kɷ씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3\n" +
-                    "\uD908\uDECBŗ\uDB47\uDD9C\uDA96\uDF8F㔸\n" +
-                    "91g>\n" +
-                    "h볱9\n";
+            final String expected = """
+                    name
+                    8#3TsZ
+                    zV衞͛Ԉ龘и\uDA89\uDFA4~
+                    \uDBAE\uDD12ɜ|
+                    \uDB59\uDF3B룒jᷚ
+                    p-鳓w
+                    h\uDAF5\uDE17qRӽ-
+                    Ǆ Ԡ阷l싒8쮠
+                    kɷ씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3
+                    \uD908\uDECBŗ\uDB47\uDD9C\uDA96\uDF8F㔸
+                    91g>
+                    h볱9
+                    """;
             execute("create table x as (select rnd_varchar() name from long_sequence(20))");
-            assertSql(
-                    expected,
-                    "select * from x where name !~ '[ABCDEFGHIJKLMN]'"
-            );
+            assertQuery("select * from x where name !~ '[ABCDEFGHIJKLMN]'")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 }

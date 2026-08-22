@@ -123,10 +123,10 @@ to JIT functionality, use an x86-64 machine or run an x86-64 JDK under Rosetta e
 ### Setting up Java and `JAVA_HOME`
 
 `JAVA_HOME` is required by Maven. It is possible to have multiple versions of
-Java on the same platform. Please set up `JAVA_HOME` to point to Java 17.
+Java on the same platform. Please set up `JAVA_HOME` to point to Java 25.
 Other versions of Java will not work. If you are new to Java please check
 that `JAVA_HOME` is pointing to the root of the Java directory:
-`C:\Users\me\dev\jdk-17` and **not** `C:\Users\me\dev\jdk-17\bin\java`.
+`C:\Users\me\dev\jdk-25` and **not** `C:\Users\me\dev\jdk-25\bin\java`.
 
 Linux/macOS
 
@@ -152,8 +152,18 @@ mvn clean package -DskipTests -P build-web-console
 You can then run QuestDB with:
 
 ```bash
-java -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_dir>
+java --add-exports=java.base/jdk.internal.vm=io.questdb \
+  -p core/target/questdb-<version>-SNAPSHOT.jar \
+  -m io.questdb/io.questdb.ServerMain -d <root_dir>
 ```
+
+The `--add-exports=java.base/jdk.internal.vm=io.questdb` flag is required when
+launching the module jar with `-m`. QuestDB's worker threads use the
+JDK-internal `jdk.internal.vm.Continuation` API, and without the export the JVM
+fails at startup with an `IllegalAccessError` on
+`jdk.internal.vm.ContinuationScope` (the workers die and the server shuts down
+right after the "listening on ..." lines). Pass the flag once; a second
+`--add-exports` for the same package keeps only one target module.
 
 The web console will be available at [localhost:9000](http://localhost:9000).
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -128,6 +128,14 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean shouldMemoize() {
+            return true;
+        }
+
+        @Override
+        public boolean supportsKeyValueAccess() {
+            // The dictionary is a fixed list built once per cursor, so getInt() returns an index
+            // and valueOf() resolves it without touching text. A key consumer (QWP egress) should
+            // therefore take the key path and encode each distinct value once, not once per row.
             return true;
         }
 

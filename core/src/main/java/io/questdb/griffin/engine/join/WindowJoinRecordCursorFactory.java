@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,9 +27,12 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -60,7 +63,10 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.addSaturating;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.computeEffectiveBound;
 import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.findPrevailingForMasterRow;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.subtractSaturating;
 
 /**
  * Single-threaded WINDOW JOIN factory for general join conditions.
@@ -74,15 +80,22 @@ import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.
  * @see AsyncWindowJoinRecordCursorFactory for the multi-threaded variant
  */
 public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final WindowJoinRecordCursor cursor;
+    private final int hiSign;
+    private final char hiTimeUnit;
     private final boolean includePrevailing;
-    private final Function joinFilter;
-    private final JoinRecordMetadata joinMetadata;
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
-    private final SimpleMapValue value;
+    private final int loSign;
+    private final char loTimeUnit;
+    private final @Nullable TimestampDriver timestampDriver;
     private final long windowHi;
     private final long windowLo;
+    private WindowJoinRecordCursor cursor;
+    private Function joinFilter;
+    private JoinRecordMetadata joinMetadata;
+    private RecordCursorFactory masterFactory;
+    private RecordCursorFactory slaveFactory;
+    private SimpleMapValue value;
+    private @Nullable Function windowHiFunc;
+    private @Nullable Function windowLoFunc;
 
     public WindowJoinRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -95,6 +108,13 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             @Nullable IntList columnIndex,
             long windowLo,
             long windowHi,
+            @Nullable Function windowLoFunc,
+            @Nullable Function windowHiFunc,
+            int loSign,
+            int hiSign,
+            char loTimeUnit,
+            char hiTimeUnit,
+            @Nullable TimestampDriver timestampDriver,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull ArrayColumnTypes columnTypes,
             @Nullable Function joinFilter
@@ -108,6 +128,13 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             this.joinFilter = joinFilter;
             this.windowLo = windowLo;
             this.windowHi = windowHi;
+            this.windowLoFunc = windowLoFunc;
+            this.windowHiFunc = windowHiFunc;
+            this.loSign = loSign;
+            this.hiSign = hiSign;
+            this.loTimeUnit = loTimeUnit;
+            this.hiTimeUnit = hiTimeUnit;
+            this.timestampDriver = timestampDriver;
             this.includePrevailing = includePrevailing;
             this.value = new SimpleMapValue(columnTypes.getColumnCount());
             final int columnSplit = masterFactory.getMetadata().getColumnCount();
@@ -158,10 +185,14 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         TimeFrameCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             cursor.of(masterCursor, slaveCursor, executionContext);
         } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
+            // of() binds the per-query tracker and reopens the allocator before it can throw;
+            // close() frees it under that tracker and resets isOpen so the factory stays reusable.
+            Misc.free(cursor);
             throw ex;
         }
         return cursor;
@@ -182,7 +213,9 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.type("Window Join");
 
         sink.attr("window lo");
-        if (windowLo == 0) {
+        if (windowLoFunc != null) {
+            sink.val("dynamic");
+        } else if (windowLo == 0) {
             sink.val("current row");
         } else if (windowLo < 0) {
             sink.val(Math.abs(windowLo)).val(" following");
@@ -192,7 +225,9 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.val(includePrevailing ? " (include prevailing)" : " (exclude prevailing)");
 
         sink.attr("window hi");
-        if (windowHi == 0) {
+        if (windowHiFunc != null) {
+            sink.val("dynamic");
+        } else if (windowHi == 0) {
             sink.val("current row");
         } else if (windowHi < 0) {
             sink.val(Math.abs(windowHi)).val(" preceding");
@@ -209,15 +244,57 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.child(slaveFactory);
     }
 
+    // A join reads externally if either input does. getBaseFactory() cannot express this because it
+    // returns a single child, so the two-child propagation is explicit here, mirroring
+    // AbstractJoinRecordCursorFactory. Guards against a null child during teardown.
+    @Override
+    public boolean usesExternalDataSource() {
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        if (masterFactory != null && masterFactory.usesExternalDataSource()) {
+            return true;
+        }
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        return slaveFactory != null && slaveFactory.usesExternalDataSource();
+    }
+
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
-        Misc.free(joinFilter);
-        Misc.free(joinMetadata);
-        Misc.free(value);
+        final RecordMetadata metadata = detachMetadata();
+        final WindowJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function joinFilter = this.joinFilter;
+        this.joinFilter = null;
+        final JoinRecordMetadata joinMetadata = this.joinMetadata;
+        this.joinMetadata = null;
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        this.slaveFactory = null;
+        final SimpleMapValue value = this.value;
+        this.value = null;
+        final Function windowHiFunc = this.windowHiFunc;
+        this.windowHiFunc = null;
+        final Function windowLoFunc = this.windowLoFunc;
+        this.windowLoFunc = null;
+
+        Throwable failure = Misc.freeIfCloseableBestEffort(null, metadata);
+        failure = Misc.freeBestEffort(failure, masterFactory);
+        if (slaveFactory != masterFactory) {
+            failure = Misc.freeBestEffort(failure, slaveFactory);
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, joinFilter);
+        if (joinMetadata != metadata) {
+            failure = Misc.freeBestEffort(failure, joinMetadata);
+        }
+        failure = Misc.freeBestEffort(failure, value);
+        if (windowHiFunc != joinFilter) {
+            failure = Misc.freeBestEffort(failure, windowHiFunc);
+        }
+        if (windowLoFunc != joinFilter && windowLoFunc != windowHiFunc) {
+            failure = Misc.freeBestEffort(failure, windowLoFunc);
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class WindowJoinRecordCursor implements NoRandomAccessRecordCursor {
@@ -235,7 +312,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         private final ObjList<GroupByFunction> groupByFunctions;
         private final VirtualRecord groupByRecord;
         private final JoinRecord joinRecord;
-        private final WindowJoinSymbolTableSource joinSymbolTableSource;
+        private final JoinSymbolTableSource joinSymbolTableSource;
         private final Record record;
         protected SqlExecutionCircuitBreaker circuitBreaker;
         protected RecordCursor masterCursor;
@@ -258,13 +335,13 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             this.crossIndex = columnIndex;
             this.columnSplit = columnSplit;
             this.groupByFunctions = groupByFunctions;
-            this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+            this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
             this.value = value;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
-            isOpen = true;
+            isOpen = false;
             if (masterTimestampType == slaveTimestampType) {
                 masterTimestampScale = slaveTimestampScale = 1L;
             } else {
@@ -272,7 +349,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 slaveTimestampScale = ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale();
             }
             this.slaveTimeFrameHelper = new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTimestampScale);
-            this.joinSymbolTableSource = new WindowJoinSymbolTableSource(columnSplit);
+            this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
 
             this.internalJoinRecord = new JoinRecord(columnSplit);
             this.groupByRecord = new VirtualRecord(groupByFunctions);
@@ -294,9 +371,9 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
-            Misc.free(allocator);
             if (isOpen) {
                 isOpen = false;
+                Misc.free(allocator);
                 Misc.clearObjList(groupByFunctions);
                 masterCursor = Misc.free(masterCursor);
                 slaveCursor = Misc.free(slaveCursor);
@@ -327,11 +404,18 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
             // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-            long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
+            long effectiveLo = computeEffectiveBound(windowLoFunc, windowLo, masterRecord, loSign, loTimeUnit, timestampDriver);
+            long effectiveHi = computeEffectiveBound(windowHiFunc, windowHi, masterRecord, hiSign, hiTimeUnit, timestampDriver);
 
             groupByFunctionsUpdater.updateEmpty(value);
             value.setNew(true);
+
+            if (effectiveLo == Long.MIN_VALUE || effectiveHi == Long.MIN_VALUE) {
+                return true;
+            }
+
+            long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, effectiveLo), masterTimestampScale);
+            long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, effectiveHi), masterTimestampScale);
 
             long slaveRowIndex;
             if (includePrevailing) {
@@ -408,10 +492,9 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
+                allocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 allocator.reopen();
             }
-            this.masterCursor = masterCursor;
-            this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
             joinRecord.of(masterRecord, groupByRecord);
             slaveTimeFrameHelper.of(slaveCursor);
@@ -420,8 +503,18 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             if (joinFilter != null) {
                 joinFilter.init(joinSymbolTableSource, sqlExecutionContext);
             }
+            if (windowLoFunc != null) {
+                windowLoFunc.init(joinSymbolTableSource, sqlExecutionContext);
+            }
+            if (windowHiFunc != null) {
+                windowHiFunc.init(joinSymbolTableSource, sqlExecutionContext);
+            }
             Function.init(groupByFunctions, joinSymbolTableSource, sqlExecutionContext, null);
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+
+            // Adopt master/slave last so an init() throw above can't double-free them via the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 
@@ -461,11 +554,18 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
             // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-            long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
+            long effectiveLo = computeEffectiveBound(windowLoFunc, windowLo, masterRecord, loSign, loTimeUnit, timestampDriver);
+            long effectiveHi = computeEffectiveBound(windowHiFunc, windowHi, masterRecord, hiSign, hiTimeUnit, timestampDriver);
 
             groupByFunctionsUpdater.updateEmpty(value);
             value.setNew(true);
+
+            if (effectiveLo == Long.MIN_VALUE || effectiveHi == Long.MIN_VALUE) {
+                return true;
+            }
+
+            long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, effectiveLo), masterTimestampScale);
+            long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, effectiveHi), masterTimestampScale);
 
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
             final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();

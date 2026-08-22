@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -76,9 +76,11 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
             long rowsLo,
             char rowsLoUnit,
             int rowsLoExprPos,
+            int rowsLoKindPos,
             long rowsHi,
             char rowsHiUnit,
             int rowsHiExprPos,
+            int rowsHiKindPos,
             int exclusionKind,
             int exclusionKindPos,
             int timestampIndex,

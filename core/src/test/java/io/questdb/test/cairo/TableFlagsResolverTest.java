@@ -41,7 +41,10 @@ public class TableFlagsResolverTest {
         assertTrue(flags.isSystem(TelemetryTask.TABLE_NAME.toLowerCase()));
 
         assertTrue(flags.isSystem("sys.anything"));
+        assertTrue(flags.isSystem("sYs.anything"));
+        assertTrue(flags.isSystem("sYS.AnyThing"));
         assertTrue(flags.isSystem("sys."));
+        assertTrue(flags.isSystem("SYS."));
 
         assertFalse(flags.isSystem("anything"));
     }

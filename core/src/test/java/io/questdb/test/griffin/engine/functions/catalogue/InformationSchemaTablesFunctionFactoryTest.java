@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -39,17 +39,16 @@ public class InformationSchemaTablesFunctionFactoryTest extends AbstractCairoTes
             execute("create table " + TelemetryTask.TABLE_NAME + " (i int)");
 
 
-            assertQuery("table_catalog\ttable_schema\ttable_name\ttable_type\tself_referencing_column_name\treference_generation\tuser_defined_type_catalog\tuser_defined_type_schema\tuser_defined_type_name\tis_insertable_into\tis_typed\tcommit_action\n",
-                    "select * from information_schema.tables() order by table_name",
-                    null, true, false);
+            assertQuery("select * from information_schema.tables() order by table_name")
+                    .returns("table_catalog\ttable_schema\ttable_name\ttable_type\tself_referencing_column_name\treference_generation\tuser_defined_type_catalog\tuser_defined_type_schema\tuser_defined_type_name\tis_insertable_into\tis_typed\tcommit_action\n");
         });
     }
 
     @Test
     public void testSelectWhenThereAreNoTables() throws Exception {
-        assertMemoryLeak(() -> assertQuery("table_catalog\ttable_schema\ttable_name\ttable_type\tself_referencing_column_name\treference_generation\tuser_defined_type_catalog\tuser_defined_type_schema\tuser_defined_type_name\tis_insertable_into\tis_typed\tcommit_action\n",
-                "select * from information_schema.tables()",
-                null, false, false));
+        assertMemoryLeak(() -> assertQuery("select * from information_schema.tables()")
+                .noRandomAccess()
+                .returns("table_catalog\ttable_schema\ttable_name\ttable_type\tself_referencing_column_name\treference_generation\tuser_defined_type_catalog\tuser_defined_type_schema\tuser_defined_type_name\tis_insertable_into\tis_typed\tcommit_action\n"));
     }
 
     @Test
@@ -58,11 +57,34 @@ public class InformationSchemaTablesFunctionFactoryTest extends AbstractCairoTes
             execute("create table first_table(i int)");
             execute("create table second_table(i int)");
 
-            assertQuery("table_catalog\ttable_schema\ttable_name\ttable_type\tself_referencing_column_name\treference_generation\tuser_defined_type_catalog\tuser_defined_type_schema\tuser_defined_type_name\tis_insertable_into\tis_typed\tcommit_action\n" +
-                            "qdb\tpublic\tfirst_table\tBASE TABLE\t\t\t\t\t\ttrue\tfalse\t\n" +
-                            "qdb\tpublic\tsecond_table\tBASE TABLE\t\t\t\t\t\ttrue\tfalse\t\n",
-                    "select * from information_schema.tables() order by table_name",
-                    null, true, false);
+            assertQuery("select * from information_schema.tables() order by table_name")
+                    .returns("""
+                            table_catalog\ttable_schema\ttable_name\ttable_type\tself_referencing_column_name\treference_generation\tuser_defined_type_catalog\tuser_defined_type_schema\tuser_defined_type_name\tis_insertable_into\tis_typed\tcommit_action
+                            qdb\tpublic\tfirst_table\tBASE TABLE\t\t\t\t\t\ttrue\tfalse\t
+                            qdb\tpublic\tsecond_table\tBASE TABLE\t\t\t\t\t\ttrue\tfalse\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testTableTypesForViewKinds() throws Exception {
+        // PG tooling and BI clients key on table_type / is_insertable_into: a
+        // materialized view must report "MATERIALIZED VIEW", a view "VIEW", a
+        // live view "LIVE VIEW", and none of the three accept INSERTs.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mat_v AS (SELECT ts, max(v) FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            execute("CREATE VIEW plain_v AS (SELECT ts, max(v) FROM base SAMPLE BY 1h)");
+            execute("CREATE LIVE VIEW live_v FLUSH EVERY 1s START FROM NOW AS SELECT ts, v, count(*) OVER (PARTITION BY v ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
+
+            assertQuery("SELECT table_name, table_type, is_insertable_into FROM information_schema.tables() ORDER BY table_name")
+                    .returns("""
+                            table_name\ttable_type\tis_insertable_into
+                            base\tBASE TABLE\ttrue
+                            live_v\tLIVE VIEW\tfalse
+                            mat_v\tMATERIALIZED VIEW\tfalse
+                            plain_v\tVIEW\tfalse
+                            """);
         });
     }
 }

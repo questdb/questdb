@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -83,6 +83,13 @@ public class NowFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isRuntimeConstant() {
+            return true;
+        }
+
+        // init() reads the timestamp snapshot frozen by SqlExecutionContext.initNow() at
+        // statement entry, so every init() within one execution observes the same value.
+        @Override
+        public boolean isStableWithinExecution() {
             return true;
         }
 

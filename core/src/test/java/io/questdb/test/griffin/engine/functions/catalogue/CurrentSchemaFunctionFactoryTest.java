@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,27 +31,23 @@ public class CurrentSchemaFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCurrentSchemaFunc() throws Exception {
-        assertQuery(
-                "current_schema\n" +
-                        "public\n",
-                "select current_schema();",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select current_schema();")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        current_schema
+                        public
+                        """);
     }
 
     @Test
     public void testPrefixedCurrentSchemaFunc() throws Exception {
-        assertQuery(
-                "current_schema\n" +
-                        "public\n",
-                "select pg_catalog.current_schema();",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select pg_catalog.current_schema();")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        current_schema
+                        public
+                        """);
     }
 }

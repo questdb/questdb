@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -40,6 +40,7 @@ public final class StdoutSink implements Utf8Sink, Closeable {
     private final long limit = buffer + bufferCapacity;
     private long ptr = buffer;
     private final long stdout = Files.getStdOutFdInternal();
+    private int[] ryuE10;
 
     @Override
     public void close() {
@@ -69,7 +70,7 @@ public final class StdoutSink implements Utf8Sink, Closeable {
         if (ptr == limit) {
             flush();
         }
-        Unsafe.getUnsafe().putByte(ptr++, b);
+        Unsafe.putByte(ptr++, b);
         return this;
     }
 
@@ -89,5 +90,13 @@ public final class StdoutSink implements Utf8Sink, Closeable {
             }
         }
         return this;
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 }

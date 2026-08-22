@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -318,6 +318,34 @@ public interface TimestampDriver {
     int getIsoYear(long timestamp);
 
     /**
+     * Returns the largest value a designated timestamp column of this type can hold. The write
+     * path ({@code TableWriter}/{@code WalWriter} via {@link #validateBounds(long)}) rejects any
+     * larger value, so no partition ever stores a timestamp above this ceiling. Micros are capped
+     * at {@code 9999-12-31}; nanos have no cap below the {@code long} range, so this returns
+     * {@code Long.MAX_VALUE}.
+     *
+     * @return the inclusive maximum storable designated timestamp
+     */
+    long getMaxDesignatedTimestamp();
+
+    /**
+     * Returns the largest magnitude, counted in {@code unit}s, that {@link #from(long, char)}
+     * converts into this driver's units without losing the value. A count beyond this ceiling
+     * does not fail: {@code from()} multiplies by a per-unit constant without an overflow check,
+     * and narrows minutes and coarser units to {@code int} first, so the conversion wraps or
+     * truncates onto a value that keeps the shape of a legal one. Callers that convert a count
+     * taken from user input must test its magnitude against this ceiling and report the
+     * out-of-range input themselves, because {@code from()} cannot tell them.
+     * <p>
+     * The ceiling is symmetric: a count in {@code [-getMaxUnitValue(unit), getMaxUnitValue(unit)]}
+     * converts exactly, and every count outside it does not.
+     *
+     * @param unit the time unit character, as {@link #from(long, char)} reads it
+     * @return the inclusive maximum magnitude for the unit, or 0 when the unit is not recognized
+     */
+    long getMaxUnitValue(char unit);
+
+    /**
      * Gets the microseconds within the millisecond from a timestamp value.
      *
      * @param timestamp the timestamp value
@@ -533,11 +561,7 @@ public interface TimestampDriver {
             } catch (NumericException ignore) {
             }
 
-            // all formats are ascii
-            if (value.isAscii()) {
-                return castPGDates(value.asAsciiCharSequence(), ColumnType.VARCHAR, this);
-            }
-            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, getTimestampType());
+            return castPGDates(value, ColumnType.VARCHAR, this);
         }
         return Numbers.LONG_NULL;
     }

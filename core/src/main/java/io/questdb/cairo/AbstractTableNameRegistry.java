@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -50,6 +50,11 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
         tableNameToTableTokenMap.clear();
         dirNameToTableTokenMap.clear();
         Misc.free(nameStore);
+    }
+
+    @Override
+    public @Nullable ReverseTableMapItem getReverseMapItemByDirName(CharSequence dirName) {
+        return dirNameToTableTokenMap.get(dirName);
     }
 
     @Override

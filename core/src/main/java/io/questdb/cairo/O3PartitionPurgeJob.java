@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,18 +24,19 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.mp.Job;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
@@ -54,37 +55,60 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     private final static Log LOG = LogFactory.getLog(O3PartitionPurgeJob.class);
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
-    private final Utf8StringSink[] fileNameSinks;
+    private final Utf8StringSink fileNameSink;
     private final AtomicBoolean halted = new AtomicBoolean(false);
-    private final ObjList<DirectLongList> partitionList;
-    private final ObjList<TxReader> txnReaders;
+    private final DirectLongList partitionList;
+    private final TxReader txnReader;
 
-    public O3PartitionPurgeJob(CairoEngine engine, int workerCount) {
+    public O3PartitionPurgeJob(CairoEngine engine) {
         super(engine.getMessageBus().getO3PurgeDiscoveryQueue(), engine.getMessageBus().getO3PurgeDiscoverySubSeq());
         try {
             this.engine = engine;
             this.configuration = engine.getMessageBus().getConfiguration();
-            this.fileNameSinks = new Utf8StringSink[workerCount];
-            this.partitionList = new ObjList<>(workerCount);
-            this.txnReaders = new ObjList<>(workerCount);
-
-            for (int i = 0; i < workerCount; i++) {
-                fileNameSinks[i] = new Utf8StringSink();
-                partitionList.add(new DirectLongList(configuration.getPartitionPurgeListCapacity() * 2L, MemoryTag.NATIVE_O3));
-                txnReaders.add(new TxReader(configuration.getFilesFacade()));
-            }
+            // Single-instance per-iteration scratch. Under continuation rotation
+            // the framework mints a fresh instance per snapshot via
+            // cloneInstance(); concurrent access to this instance's scratch
+            // is therefore impossible.
+            this.fileNameSink = new Utf8StringSink();
+            this.partitionList = new DirectLongList(
+                    configuration.getPartitionPurgeListCapacity() * 2L,
+                    MemoryTag.NATIVE_O3
+            );
+            this.txnReader = new TxReader(configuration.getFilesFacade());
         } catch (Throwable th) {
             close();
             throw th;
         }
     }
 
+    /**
+     * Legacy constructor kept for callers that still pass a workerCount
+     * (pool-sizing hint). The hint is ignored; per-iteration scratch is
+     * single-instance now.
+     */
+    public O3PartitionPurgeJob(CairoEngine engine, int workerCount) {
+        this(engine);
+    }
+
+    @Override
+    public Job cloneInstance() {
+        return new O3PartitionPurgeJob(engine);
+    }
+
     @Override
     public void close() {
         if (halted.compareAndSet(false, true)) {
-            Misc.freeObjList(partitionList);
-            Misc.freeObjList(txnReaders);
+            Misc.free(partitionList);
+            Misc.free(txnReader);
         }
+    }
+
+    @Override
+    public void closeInstance() {
+        // cloneInstance() mints a fresh job per generation, so the pool frees
+        // each instance's native scratch through this hook at halt. The halted
+        // CAS in close() keeps the call idempotent.
+        close();
     }
 
     private static void parsePartitionDateVersion(
@@ -119,8 +143,12 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 long partitionTs = partitionByFormat.parse(fileNameSink.asAsciiCharSequence(), 0, index, EN_LOCALE);
                 partitionList.add(partitionTs);
             } catch (NumericException e) {
+                // A live view's table directory holds _checkpoints alongside its
+                // partitions, so without it here every discovery pass logs one
+                // "unknown directory" line per live view.
                 if (!Utf8s.startsWithAscii(fileNameSink, WalUtils.WAL_NAME_BASE) && !Utf8s.equalsAscii(WalUtils.SEQ_DIR, fileNameSink)
-                        && !Utf8s.equalsAscii("seq", fileNameSink)) {
+                        && !Utf8s.equalsAscii("seq", fileNameSink)
+                        && !Utf8s.equalsAscii(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME, fileNameSink)) {
                     LOG.info().$("unknown directory [table=").$(tableToken).$(", dir=").$(fileNameSink).I$();
                 }
                 partitionList.setPos(partitionList.size() - 1); // remove partition version record
@@ -253,13 +281,17 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     ) {
         // Partition is dropped or not fully committed.
         // It is only possible to delete when there are no readers
+        boolean checkpointInProgress = engine.getCheckpointStatus().isInProgress();
         long lastTxn = txReader.getTxn();
         for (int i = hi - 2, n = lo - 1; i > n; i -= 2) {
             long nameTxn = partitionList.get(i);
 
             // If the last committed transaction number is 4, TableWriter can write partition with ending .4 and .3
             // If the version on disk is .2 (nameTxn == 3) can remove it if the lastTxn > 3, e.g., when nameTxn < lastTxn
-            boolean rangeUnlocked = nameTxn < lastTxn && txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
+            // When a backup checkpoint is in progress, skip deletion — the checkpoint may reference
+            // these partitions via snapshotted metadata even if the scoreboard is not pinned yet.
+            boolean rangeUnlocked = !checkpointInProgress
+                    && nameTxn < lastTxn && txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
 
             path.trimTo(tableRootLen);
             TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn - 1);
@@ -345,6 +377,9 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         long lastCommittedPartitionName = txReader.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
         if (lastCommittedPartitionName > -1) {
             assert hi <= partitionList.size();
+            // When a backup checkpoint is in progress, skip deletion — the checkpoint may reference
+            // these partitions via snapshotted metadata even if the scoreboard is not pinned yet.
+            boolean checkpointInProgress = engine.getCheckpointStatus().isInProgress();
             // lo points to the beginning element in partitionList, hi next after last
             // each partition folder represented by a pair in the partitionList (partition version, partition timestamp)
             // Skip first pair, start from second and check if it can be deleted.
@@ -352,7 +387,8 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 long nextNameVersion = Math.min(lastCommittedPartitionName + 1, partitionList.get(i));
                 long previousNameVersion = partitionList.get(i - 2);
 
-                boolean rangeUnlocked = previousNameVersion < nextNameVersion
+                boolean rangeUnlocked = !checkpointInProgress
+                        && previousNameVersion < nextNameVersion
                         && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion);
 
                 // Sometimes TableWriter can create a partition folder before committing the transaction
@@ -437,15 +473,15 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
         final O3PartitionPurgeTask task = queue.get(cursor);
         discoverPartitions(
                 configuration.getFilesFacade(),
-                fileNameSinks[workerId],
-                partitionList.get(workerId),
+                fileNameSink,
+                partitionList,
                 configuration.getDbRoot(),
                 task.getTableToken(),
-                txnReaders.get(workerId),
+                txnReader,
                 task.getTimestampType(),
                 task.getPartitionBy()
         );

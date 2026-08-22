@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -36,7 +37,6 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
@@ -76,22 +76,13 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
             fromPrecision = ColumnType.getDecimalPrecision(type);
         }
 
+        @Override
         public float getFloat(Record rec) {
             arg.getDecimal256(rec, decimal256);
             if (decimal256.isNull()) {
                 return Float.NaN;
             }
-            sink.clear();
-            Decimal256.toSink(
-                    sink,
-                    decimal256.getHh(),
-                    decimal256.getHl(),
-                    decimal256.getLh(),
-                    decimal256.getLl(),
-                    fromScale,
-                    fromPrecision
-            );
-            return Numbers.parseFloat(sink);
+            return DecimalUtil.toFloat(sink, decimal256, fromScale, fromPrecision);
         }
 
         @Override
@@ -113,14 +104,13 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
             this.fromPrecision = ColumnType.getDecimalPrecision(type);
         }
 
+        @Override
         public float getFloat(Record rec) {
             arg.getDecimal128(rec, decimal128);
             if (decimal128.isNull()) {
                 return Float.NaN;
             }
-            sink.clear();
-            Decimal128.toSink(sink, decimal128.getHigh(), decimal128.getLow(), fromScale, fromPrecision);
-            return Numbers.parseFloat(sink);
+            return DecimalUtil.toFloat(sink, decimal128, fromScale, fromPrecision);
         }
 
         @Override
@@ -141,14 +131,13 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
             this.fromScale = ColumnType.getDecimalScale(type);
         }
 
+        @Override
         public float getFloat(Record rec) {
             long v = arg.getDecimal64(rec);
             if (Decimal64.isNull(v)) {
                 return Float.NaN;
             }
-            sink.clear();
-            Decimal64.toSink(sink, v, fromScale, fromPrecision);
-            return Numbers.parseFloat(sink);
+            return DecimalUtil.toFloat(sink, v, fromScale, fromPrecision);
         }
 
         @Override

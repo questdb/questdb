@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -72,7 +72,13 @@ public interface CompiledQuery {
     short CREATE_VIEW = REFRESH_MAT_VIEW + 1; // 34
     short COMPILE_VIEW = CREATE_VIEW + 1; // 35
     short ALTER_VIEW = COMPILE_VIEW + 1; // 36
-    short EMPTY = ALTER_VIEW + 1;
+    short ALTER_STORAGE_POLICY = ALTER_VIEW + 1; // 37
+    short TABLE_REBASE = ALTER_STORAGE_POLICY + 1; // 38
+    // Append new codes at the end. These values travel the wire on the QWP EXEC_DONE frame and
+    // persist in sys.telemetry, so renumbering an existing code gives it two meanings across an
+    // upgrade for as long as the telemetry retention window holds rows written by both binaries.
+    short CREATE_LIVE_VIEW = TABLE_REBASE + 1; // 39
+    short EMPTY = CREATE_LIVE_VIEW + 1;
     short TYPES_COUNT = EMPTY;
 
     void closeAllButSelect();

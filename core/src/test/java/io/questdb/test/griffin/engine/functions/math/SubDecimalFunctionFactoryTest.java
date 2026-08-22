@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -172,6 +172,33 @@ public class SubDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
                 new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(40, 2)),
                 ColumnType.getDecimalType(43, 2)
         );
+    }
+
+    @Test
+    public void testSubDecimal256ZeroOperandKeepsMaxScale() throws Exception {
+        // columns, so neither operand is rescaled at compile time and the zero reaches subtract()
+        // at the wider scale the minuend must still be promoted to
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DECIMAL(38,1), b DECIMAL(38,4))");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.5m, 0.0000m),
+                    (-1.5m, 0.0000m),
+                    (0.0m, 2.5000m),
+                    (0.0m, 0.0000m),
+                    (1.5m, 0.2500m)""");
+
+            assertQuery("SELECT a - b diff, b - a reversed, typeOf(a - b) type FROM t")
+                    .expectSize()
+                    .returns("""
+                            diff\treversed\ttype
+                            1.5000\t-1.5000\tDECIMAL(42,4)
+                            -1.5000\t1.5000\tDECIMAL(42,4)
+                            -2.5000\t2.5000\tDECIMAL(42,4)
+                            0.0000\t0.0000\tDECIMAL(42,4)
+                            1.2500\t-1.2500\tDECIMAL(42,4)
+                            """);
+        });
     }
 
     @Test

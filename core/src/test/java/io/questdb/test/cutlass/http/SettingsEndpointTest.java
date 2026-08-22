@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -106,6 +106,10 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
     }
 
     private static void assertPreferencesRequest(HttpClient httpClient, String preferences, SettingsStore.Mode mode, long version, int expectedStatusCode, String expectedHttpResponse) {
+        assertPreferencesRequest(httpClient, preferences, mode, version, null, null, expectedStatusCode, expectedHttpResponse);
+    }
+
+    private static void assertPreferencesRequest(HttpClient httpClient, String preferences, SettingsStore.Mode mode, long version, String username, String password, int expectedStatusCode, String expectedHttpResponse) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
 
         switch (mode) {
@@ -119,7 +123,11 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                 Assert.fail("Unexpected preferences update mode");
         }
 
-        request.url("/settings?version=" + version).withContent().put(preferences);
+        request.url("/settings?version=" + version);
+        if (username != null) {
+            request.authBasic(username, password);
+        }
+        request.withContent().put(preferences);
         ClientHttpUtils.assertResponse(request, expectedStatusCode, expectedHttpResponse);
     }
 
@@ -713,6 +721,37 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"preferences\":{" +
                             "}" +
                             "}");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSettingsReadOnlyForAuthenticatedUser() throws Exception {
+        // The settings-read-only restriction must survive the per-principal derivation. With http.user
+        // configured, ReadOnlyUsersAwareSecurityContextFactory no longer hands out the SETTINGS_READ_ONLY
+        // singleton: it derives a context from it via forPrincipal(), and newPrincipalContext() has to carry
+        // the settingsReadOnly flag across. If it did not, an authenticated user would silently regain WRITE
+        // access to /settings on an instance configured read-only.
+        //
+        // testSettingsReadOnly above cannot catch that: it is anonymous, so forPrincipal() short-circuits back
+        // to the untouched singleton and the derived path is never taken.
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.HTTP_SETTINGS_READONLY.getEnvVarName(), "true");
+                put(PropertyKey.HTTP_USER.getEnvVarName(), "foo");
+                put(PropertyKey.HTTP_PASSWORD.getEnvVarName(), "bar");
+            }})) {
+                serverMain.start();
+
+                final SettingsStore settingsStore = serverMain.getEngine().getSettingsStore();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    // the request authenticates, then the derived context's settings-read-only restriction denies it
+                    assertPreferencesRequest(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc\"}", OVERWRITE, 0L,
+                            "foo", "bar", HTTP_UNAUTHORIZED, "{\"error\":\"The /settings endpoint is read-only\"}\r\n");
+
+                    // and nothing reached the store
+                    assertPreferencesStore(settingsStore, 0, "\"preferences\":{}");
                 }
             }
         });

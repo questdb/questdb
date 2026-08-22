@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Utf8Sequence;
@@ -113,8 +114,13 @@ public class InStrVarcharArrayFunctionFactory implements FunctionFactory {
                 Utf8Sequence element = arrayView.getVarchar(i);
                 if (element == null) {
                     set.addNull();
+                    continue;
+                }
+                CharSequence value = Utf8s.utf8ToUtf16OrView(element, Misc.getThreadLocalSink());
+                if (value == null) {
+                    set.addNull();
                 } else {
-                    set.add(Utf8s.toString(element));
+                    set.add(value);
                 }
             }
         }

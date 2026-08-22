@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -62,7 +62,7 @@ public class LastNotNullVarcharGroupByFunction extends FirstVarcharGroupByFuncti
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId) {
+        if (srcRowId > destRowId || destValue.getBool(valueIndex + 2)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
             destValue.putBool(valueIndex + 2, false);

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,6 +31,8 @@ import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -38,14 +40,20 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.BitSet;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectSymbolMap;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.IntObjHashMap;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -53,49 +61,88 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
 public class WalReader implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalReader.class);
-    private final int columnCount;
-    private final ObjList<MemoryCMR> columns;
+    // Per-column size of the base table's committed ("clean") symbol dictionary as of the
+    // open segment, keyed by segment column index; 0 when the column carries no clean band.
+    // Keys below this bound resolve through cleanSymbolReaders, keys at or above it through
+    // symbolMaps. Reset per segment, so a stale entry cannot outlive its dictionary.
+    private final IntList cleanSymbolCounts = new IntList();
+    // Per-column reader over the base table's clean dictionary, hardlinked into the WAL
+    // directory. Opened on the first clean-band resolution rather than at bind time: a
+    // workload whose every row carries a symbol new to the current transaction resolves
+    // entirely out of the per-txn diff overlay and never opens these at all.
+    private final ObjList<SymbolMapReaderImpl> cleanSymbolReaders = new ObjList<>();
+    private final ObjList<MemoryCMR> columns = new ObjList<>();
+    private final CairoConfiguration configuration;
     private final WalDataCursor dataCursor = new WalDataCursor();
     private final FilesFacade ff;
+    // Membership index over mappedColumns, keyed by column index: buildMappedColumns() sets bit
+    // i iff mappedColumns holds i, and openSymbolMaps tests it once per SymbolMapDiff per DATA
+    // event record. Master folds every column's diff unconditionally - its openSymbolMaps has no
+    // membership test at all - so against master this reader changes two things: it skips the fold
+    // entirely for a column the projection does not name, and the test that decides that is a
+    // single bit read rather than a scan of the mapped set, so it does not grow with the
+    // projection's width. It still runs once per diff per DATA record, so a full refold pays it
+    // once per record per diff, which is the cost this reader adds over master's unconditional
+    // fold. Only buildMappedColumns() writes the index, in lockstep with mappedColumns, so
+    // the two cannot disagree. A bind reuses the words array and grows it - one Arrays.copyOf in
+    // BitSet.checkCapacity - only when it first projects a column index above the current
+    // capacity, so a steady-state bind allocates nothing.
+    private final BitSet mappedColumnFlags = new BitSet();
+    // The deduped, in-range column set openSegmentColumns() maps and openSymbolMaps folds
+    // when a projection is active: the caller's projection minus out-of-range entries, plus
+    // the designated timestamp. buildMappedColumns() rebuilds it per bind rather than caching
+    // it, so it can never go stale against a changed column count or timestamp index. That
+    // rebuild costs O(projection) for the dedup loop plus the Arrays.fill BitSet.clear() runs
+    // over the whole words array - which the widest column index this reader ever bound sizes,
+    // not the current projection, and which every bind pays, projected or not.
+    private final IntList mappedColumns = new IntList();
     private final SequencerMetadata metadata;
-    private final Path path;
-    private final int rootLen;
-    private final long rowCount;
-    private final ObjList<IntObjHashMap<CharSequence>> symbolMaps = new ObjList<>();
-    private final String tableName;
-    private final WalEventCursor walEventCursor;
+    private final Path path = new Path();
+    // The projection as the caller supplied it, kept verbatim so the next bind can tell a
+    // same-projection rebind (reuse the mappings) from a changed one (rebuild them).
+    private final IntList projectedColumns = new IntList();
+    private final ObjList<DirectSymbolMap> symbolMaps = new ObjList<>();
     private final WalEventReader walEventReader;
-    private final String walName;
+    private int columnCount;
+    private boolean hasProjection;
+    private int rootLen;
+    private long rowCount;
+    private int segmentId = -1;
+    // Monotonic count of DATA event records folded into the symbol maps across all
+    // of() calls on this reader. A full rebuild folds every record in the segment;
+    // an incremental fold folds only newly-appended records. Tests read it to prove
+    // the per-commit cost dropped from O(events) to O(new events); production ignores it.
+    private long symbolMapFoldedRecords;
+    // Event-file offset up to which the symbol maps are already folded, valid only
+    // for the immediately-preceding same-segment bind. -1 forces a full rebuild.
+    // Lets a same-segment rebind (the live-view drain re-opens one segment per base
+    // commit) fold ONLY newly-appended events instead of rescanning the whole event
+    // history each time - turning the per-commit symbol-map cost from O(events) into
+    // O(new events).
+    private long symbolMapsResumeOffset = -1;
+    // The directory the previous bind opened, which is what identifies a segment. The
+    // table name does not: the path is built from getDirName(), which is
+    // <name>~<tableId>, so DROP + CREATE of one name - or a blue/green rename swap -
+    // opens a different directory under an unchanged name, and a name-keyed identity
+    // would carry the previous table's symbol dictionary and event-file offset into the
+    // new one. Comparing the directory is free: TableToken holds it as a GcUtf8String
+    // whose toString() returns a cached String rather than materializing one.
+    private String tableDirName;
+    private String tableName;
+    private WalEventCursor walEventCursor;
+    private String walName;
+
+    public WalReader(CairoConfiguration configuration) {
+        this.configuration = configuration;
+        this.ff = configuration.getFilesFacade();
+        this.metadata = new SequencerMetadata(configuration, true);
+        this.walEventReader = new WalEventReader(configuration);
+    }
 
     public WalReader(CairoConfiguration configuration, TableToken tableToken, CharSequence walName, int segmentId, long rowCount) {
-        this.tableName = tableToken.getTableName();
-        this.walName = Chars.toString(walName);
-        this.rowCount = rowCount;
-
-        ff = configuration.getFilesFacade();
-        path = new Path();
-        path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(walName);
-        rootLen = path.size();
-
+        this(configuration);
         try {
-            metadata = new SequencerMetadata(configuration, true);
-            metadata.open(path.slash().put(segmentId), rootLen, tableToken);
-            columnCount = metadata.getColumnCount();
-            walEventReader = new WalEventReader(configuration);
-            LOG.debug().$("open [table=").$(tableToken).I$();
-            int pathLen = path.size();
-            walEventCursor = walEventReader.of(path.slash().put(segmentId), -1);
-            path.trimTo(pathLen);
-            openSymbolMaps(walEventCursor, configuration);
-            path.slash().put(segmentId);
-            walEventCursor.reset();
-
-            final int capacity = 2 * columnCount + 2;
-            columns = new ObjList<>(capacity);
-            columns.setPos(capacity + 2);
-            columns.setQuick(0, NullMemoryCMR.INSTANCE);
-            columns.setQuick(1, NullMemoryCMR.INSTANCE);
-            dataCursor.of(this);
+            of(tableToken, walName, segmentId, rowCount);
         } catch (Throwable e) {
             close();
             throw e;
@@ -107,7 +154,14 @@ public class WalReader implements Closeable {
         Misc.free(walEventReader);
         Misc.free(metadata);
         Misc.freeObjList(columns);
+        resetCleanSymbolBands();
+        Misc.freeObjList(symbolMaps);
         Misc.free(path);
+        // Invalidate the same-segment fast path: a reused instance must take the
+        // full rebind in of() rather than matching a freed segment.
+        segmentId = -1;
+        symbolMapsResumeOffset = -1;
+        tableDirName = null;
         LOG.debug().$("closed '").$safe(tableName).$('\'').$();
     }
 
@@ -128,17 +182,143 @@ public class WalReader implements Closeable {
     }
 
     public WalDataCursor getDataCursor() {
+        // A projected bind maps only part of the schema, and WalDataRecord can be asked for
+        // ANY column - it would read the null sentinel and report empty values rather than
+        // failing. Enforce the contract the projected of() overload documents instead of
+        // leaving it to the caller.
+        assert !hasProjection : "the data cursor cannot read a projected reader; bind without a projection";
         dataCursor.toTop();
         return dataCursor;
+    }
+
+    /**
+     * Returns the open segment's schema, reflecting the actual on-disk column layout of
+     * the mapped bytes - which can be newer than the base table's applied metadata when
+     * a structural change is committed but not yet applied.
+     */
+    public RecordMetadata getMetadata() {
+        return metadata;
     }
 
     public int getRealColumnCount() {
         return metadata.getRealColumnCount();
     }
 
-    public CharSequence getSymbolValue(int col, int key) {
-        IntObjHashMap<CharSequence> symbolMap = symbolMaps.getQuick(col);
-        return symbolMap.get(key);
+    /**
+     * Returns the number of symbol keys reachable for column {@code col} in the open
+     * segment, or 0 when the column has no symbols. For a column {@link #openSymbolMaps}
+     * folded, the key space is the base table's clean dictionary
+     * {@code [0, cleanSymbolCount)} followed by every data transaction's diff entries,
+     * whose keys continue from {@code cleanSymbolCount}. It is therefore dense, so the
+     * count doubles as an exclusive upper bound for a {@code 0..count-1} enumeration.
+     * <p>
+     * A projected bind folds ONLY the columns the projection reaches, so this answers 0 for
+     * every other column - it does not report that column's real dictionary. That empty answer
+     * is the contract, not an oversight: {@link #of} clears and re-folds on every projection
+     * change precisely so a map the current projection no longer reaches reads EMPTY rather
+     * than STALE, and {@code WalReaderRebindTest} observes an unfolded map through exactly
+     * this 0 (as does {@link #getSymbolKey}'s {@link SymbolTable#VALUE_NOT_FOUND}).
+     * <p>
+     * Do NOT guard the accessor with {@code assert !hasProjection || isColumnMapped(col)}: it
+     * would forbid the answer the paragraph above specifies. What holds callers to the
+     * mapped-column contract where the projection and the symbol-table set actually meet are two
+     * {@code assert} statements, so they run under {@code -ea} - tests and CI - and not in a
+     * production server: {@code WalSegmentPageFrameCursor.computeFrame} asserts a projected column
+     * was mapped before it binds a symbol table over it, and {@link #getDataCursor()} asserts it is
+     * never called on a projected reader, whose record can be asked for any column. The guard that
+     * does run in production is a different one: {@code WalSegmentPageFrameCursor.of()} reconciles
+     * the projection against the segment's own metadata by name and type and throws
+     * {@code TableReferenceOutOfDateException} for a projection this segment cannot satisfy, which
+     * is the only way an unmapped projected column is reachable from user input.
+     */
+    public int getSymbolCount(int col) {
+        DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;
+        return cleanSymbolCountOf(col) + (symbolMap != null ? symbolMap.size() : 0);
+    }
+
+    /**
+     * Returns the int key in {@code [0, hiExclusive)} whose stored value equals {@code value} in
+     * column {@code col}, else {@link SymbolTable#VALUE_NOT_FOUND}. The map lazily builds an
+     * off-heap reverse index that preserves the explicit WAL symbol keys.
+     * <p>
+     * {@code hiExclusive} is mandatory: the map is cumulative over the whole segment (last writer
+     * wins) while callers resolve for a single txn. The WAL writer restarts local symbol ids at the
+     * committed count on every commit, so two un-applied commits in one segment give the same key to
+     * different new symbols. An unbounded scan could therefore return a key valid in a DIFFERENT txn
+     * and match this txn's rows carrying that same local id. Callers pass their clean symbol count,
+     * so the lookup only resolves clean-dictionary keys (stable across every txn in the segment); a
+     * caller's own new symbols come from its per-txn diff overlay.
+     * <p>
+     * Serves mapped columns only: under a projection a column the projection does not reach has
+     * an unfolded map and resolves to {@link SymbolTable#VALUE_NOT_FOUND} by design. See
+     * {@link #getSymbolCount} for why that empty answer is the contract.
+     */
+    public int getSymbolKey(int col, CharSequence value, int hiExclusive) {
+        if (value == null || hiExclusive <= 0) {
+            return SymbolTable.VALUE_NOT_FOUND;
+        }
+        final int cleanSymbolCount = cleanSymbolCountOf(col);
+        if (cleanSymbolCount > 0) {
+            // The clean band answers through the dictionary's own on-disk hash index, which
+            // is bounded by the count the reader mapped - so a hit is already below
+            // cleanSymbolCount and only hiExclusive can cut it shorter.
+            final SymbolMapReaderImpl cleanReader = cleanSymbolReader(col);
+            if (cleanReader != null) {
+                final int key = cleanReader.keyOf(value);
+                if (key > -1 && key < hiExclusive) {
+                    return key;
+                }
+            }
+        }
+        final DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;
+        if (symbolMap == null || hiExclusive <= cleanSymbolCount) {
+            return SymbolTable.VALUE_NOT_FOUND;
+        }
+        final int key = symbolMap.keyOf(
+                value,
+                cleanSymbolCount,
+                Math.min(cleanSymbolCount + symbolMap.size(), hiExclusive)
+        );
+        return key > -1 ? key : SymbolTable.VALUE_NOT_FOUND;
+    }
+
+    /**
+     * Test-only: monotonic count of DATA event records folded into the symbol maps
+     * across every {@link #of} call on this reader. A full rebuild folds all records
+     * in the segment; an incremental same-segment fold folds only newly-appended
+     * records, so the total grows linearly instead of quadratically.
+     */
+    @TestOnly
+    public long getSymbolMapFoldedRecords() {
+        return symbolMapFoldedRecords;
+    }
+
+    /**
+     * Binds {@code view} to the bytes stored for {@code key} in column {@code col}. A key
+     * below the clean-dictionary bound reads the base table's mapped symbol files; the rest
+     * read the column's {@link DirectSymbolMap} of segment diff entries.
+     * <p>
+     * The underlying bytes are stable for the current segment - the diff map is populated
+     * once per {@link #of} call and read-only thereafter, and the clean dictionary is
+     * append-only below the bound - so the returned view stays valid until the next
+     * {@link #of} rebinds this reader, until {@link #close()}, or until the caller rebinds
+     * the view itself via another call. Callers that need two simultaneous views on the
+     * same column must supply two distinct {@link DirectString} instances.
+     * <p>
+     * Serves mapped columns only: under a projection a column the projection does not reach has
+     * an unfolded map and resolves to {@code null} by design. See {@link #getSymbolCount} for
+     * why that empty answer is the contract.
+     */
+    public CharSequence getSymbolValue(int col, int key, DirectString view) {
+        if (key < 0) {
+            return null;
+        }
+        if (key < cleanSymbolCountOf(col)) {
+            final SymbolMapReaderImpl cleanReader = cleanSymbolReader(col);
+            return cleanReader != null ? cleanReader.valueOf(key, view) : null;
+        }
+        DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;
+        return symbolMap != null ? symbolMap.valueOf(key, view) : null;
     }
 
     public String getTableName() {
@@ -155,6 +335,181 @@ public class WalReader implements Closeable {
 
     public String getWalName() {
         return walName;
+    }
+
+    /**
+     * Rebinds this reader to a new (table, wal, segment). Reuses internal buffers and
+     * off-heap symbol maps so a single instance can scan many segments without per-segment
+     * object allocation. Not safe to call while a previously returned data cursor, symbol
+     * view, or column pointer is still in use.
+     */
+    public WalReader of(TableToken tableToken, CharSequence walName, int segmentId, long rowCount) {
+        return of(tableToken, walName, segmentId, rowCount, null);
+    }
+
+    /**
+     * Rebinds this reader, mapping only the column FILES that {@code projection} names
+     * (base-table writer indexes) plus the designated timestamp. Every other column's slot
+     * holds {@link NullMemoryCMR#INSTANCE}, so {@link #getColumn} stays non-null but reads no
+     * bytes - a projected reader is therefore usable ONLY through {@link #getColumn} on
+     * projected indexes, never through {@link #getDataCursor()}, whose record can be asked
+     * for any column.
+     * <p>
+     * The projection narrows the symbol maps as well: {@link #openSymbolMaps} folds a
+     * {@code SymbolMapDiff} only for a column the projection reaches, and leaves every other
+     * column's map empty. A projected bind is therefore independent of symbol columns the
+     * caller never reads - their clean-band files sit at the WAL directory level, shared
+     * across segments, and {@code WalWriter.removeSymbolFiles} deletes them the moment the
+     * writer applies a DROP COLUMN, while segments already written keep emitting diffs for
+     * the column. Any rebind that CHANGES the projection - narrowing it as much as widening it -
+     * re-folds from the start of the event file, because a changed projection fails the
+     * same-segment test below. Narrowing takes that same full clear + refold, and that is what
+     * makes a map the new projection no longer reaches read as EMPTY rather than STALE: the clear
+     * drops what the previous, wider bind folded and the refold skips the column, so no leftover
+     * keys survive into the narrower bind.
+     * <p>
+     * This matters because a rebind is not cheap: {@code MemoryCMRImpl.of()} munmaps, closes
+     * the fd, re-opens and re-mmaps (it does not remap in place), and the live-view drain
+     * rebinds once per base commit. Mapping the whole schema made that cost scale with the
+     * base table's width rather than the view's, so a narrow view over a wide table paid
+     * four syscalls per base column - doubled for variable-width ones - on every commit.
+     * <p>
+     * Pass {@code null} to map every column, which is what {@link #getDataCursor()} callers
+     * need.
+     */
+    public WalReader of(
+            TableToken tableToken,
+            CharSequence walName,
+            int segmentId,
+            long rowCount,
+            @Transient @Nullable IntList projection
+    ) {
+        // A changed projection invalidates the retained column mappings the same way a
+        // different segment does: slots outside the new projection must fall back to the
+        // null sentinel, and slots newly inside it must be mapped rather than left on it.
+        final boolean sameProjection = projection == null
+                ? !hasProjection
+                : hasProjection && projectedColumns.equals(projection);
+        // Detect a rebind to the exact same (table, wal, segment) - only rowCount
+        // grew. The live view drain re-opens the same segment once per base commit,
+        // and many commits share a segment; keeping the column list lets
+        // openOrCreateMemory reuse the MemoryCMR instances (and the incremental symbol
+        // fold below resume instead of rescanning the event history) rather than
+        // reallocating them per commit. Note this does NOT avoid the munmap/mmap
+        // itself - MemoryCMRImpl.of() closes and re-maps unconditionally - which is
+        // why narrowing the mapped set via `projection` is what actually bounds the
+        // per-commit syscall cost. Computed before the fields are reassigned;
+        // columnCount is cross-checked after metadata.open in case the on-disk schema
+        // differs.
+        final boolean sameTableWalSegment = sameProjection
+                && this.walName != null
+                && this.tableDirName != null
+                && this.segmentId == segmentId
+                && Chars.equals(this.tableDirName, tableToken.getDirName())
+                && Chars.equals(this.walName, walName);
+        final int prevColumnCount = this.columnCount;
+        final long symbolResumeFrom = this.symbolMapsResumeOffset;
+
+        // Retract the identity and the incremental resume point before the first call
+        // that can throw. From here every exit but the last statement is a throw, and a
+        // rebind that fails part-way has already moved this reader off whatever segment
+        // it held: republishing only at the end means the next bind cannot match a
+        // half-open one and take the incremental path with an offset that belongs to a
+        // different event file. segmentId = -1 is the same sentinel close() uses.
+        this.segmentId = -1;
+        this.symbolMapsResumeOffset = -1;
+
+        boolean bound = false;
+        try {
+            this.hasProjection = projection != null;
+            this.projectedColumns.clear();
+            if (projection != null) {
+                this.projectedColumns.addAll(projection);
+            }
+            this.tableName = tableToken.getTableName();
+            this.tableDirName = tableToken.getDirName();
+            if (!sameTableWalSegment) {
+                this.walName = Chars.toString(walName);
+            }
+            this.rowCount = rowCount;
+
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(walName);
+            rootLen = path.size();
+
+            metadata.open(path.slash().put(segmentId), rootLen, tableToken);
+            columnCount = metadata.getColumnCount();
+            // After metadata.open: columnCount and the timestamp index are the segment's own.
+            // Ahead of openSymbolMaps, which folds only the columns this set names.
+            buildMappedColumns();
+            LOG.debug().$("open [table=").$(tableToken).I$();
+            int pathLen = path.size();
+            walEventCursor = walEventReader.of(path.slash().put(segmentId), -1);
+            path.trimTo(pathLen);
+            // Fold the segment's symbol diffs into the per-column maps. A same-segment
+            // rebind (same segment, only rowCount grew, same column count) folds ONLY the
+            // events appended since the last bind - resuming from the saved offset instead
+            // of clearing and rescanning the whole event history every base commit.
+            // openSymbolMaps returns the offset the walk stopped at (the trailing marker),
+            // which is where the next appended record will land - the resume point for the
+            // following bind.
+            final boolean incrementalSymbols = sameTableWalSegment
+                    && prevColumnCount == columnCount
+                    && symbolResumeFrom >= 0;
+            final long resumeOffset;
+            if (incrementalSymbols) {
+                walEventCursor.resumeFrom(symbolResumeFrom);
+                resumeOffset = openSymbolMaps(walEventCursor, false);
+            } else {
+                resumeOffset = openSymbolMaps(walEventCursor, true);
+            }
+            path.slash().put(segmentId);
+            // The symbol-map fold above leaves the event cursor at the trailing marker; its
+            // resume point is already captured in resumeOffset. Rewind it so
+            // getWalEventCursor() hands callers a cursor positioned at the first record.
+            walEventCursor.reset();
+
+            if (!sameTableWalSegment || prevColumnCount != columnCount) {
+                final int capacity = 2 * columnCount + 2;
+                // Different segment (or first bind): drop the prior segment's column
+                // mmaps; loadColumnAt() remaps on demand for this one.
+                Misc.freeObjList(columns);
+                columns.clear();
+                columns.setPos(capacity + 2);
+                columns.setQuick(0, NullMemoryCMR.INSTANCE);
+                columns.setQuick(1, NullMemoryCMR.INSTANCE);
+                if (hasProjection) {
+                    // Under a projection loadColumnAt() visits only the mapped set, so every
+                    // other slot keeps whatever setPos() left there - null. getColumn() does
+                    // no null check, so seed the sentinel instead: an unprojected column then
+                    // reads as empty rather than throwing. openOrCreateMemory treats the
+                    // sentinel as "not mapped yet" and allocates a real instance for the
+                    // slots the mapped set does cover.
+                    for (int i = 2, n = columns.size(); i < n; i++) {
+                        columns.setQuick(i, NullMemoryCMR.INSTANCE);
+                    }
+                }
+            }
+            // Same segment: keep the column list intact. dataCursor.of() below runs
+            // openSegment() -> loadColumnAt() for every column, and openOrCreateMemory
+            // remaps each retained mmap in place at the current rowCount.
+            dataCursor.of(this);
+
+            // Publish the identity and the resume point now that every step that can
+            // throw has succeeded.
+            this.segmentId = segmentId;
+            this.symbolMapsResumeOffset = resumeOffset;
+            bound = true;
+            return this;
+        } finally {
+            if (!bound) {
+                // A partial bind holds no usable segment. Drop the rest of the identity
+                // too, so the next bind rebuilds the column list and the dictionary
+                // instead of trusting a column count that describes the previous one.
+                this.tableDirName = null;
+                this.walName = null;
+                this.columnCount = 0;
+            }
+        }
     }
 
     public long openSegment() {
@@ -174,6 +529,92 @@ public class WalReader implements Closeable {
 
     public long size() {
         return rowCount;
+    }
+
+    // Rebuilds the effective mapped set: the caller's projection, minus entries this segment
+    // does not have, plus the designated timestamp. Out-of-range entries are dropped rather
+    // than rejected - WalSegmentPageFrameCursor binds first and reconciles the projection
+    // against the segment's own metadata immediately afterwards, throwing
+    // TableReferenceOutOfDateException when a referenced base column has drifted - so a
+    // stale index must simply not be mapped here. Duplicates are folded, so a projection
+    // naming one column twice (SELECT a, a) does not map and remap it twice per commit.
+    private void buildMappedColumns() {
+        mappedColumns.clear();
+        // Clear ahead of the early return below, so a bind that drops the projection cannot
+        // leave the previous bind's bits behind for the next projected one to read.
+        mappedColumnFlags.clear();
+        if (!hasProjection) {
+            return;
+        }
+        for (int i = 0, n = projectedColumns.size(); i < n; i++) {
+            final int columnIndex = projectedColumns.getQuick(i);
+            // getAndSet() both records membership and reports whether this index was already
+            // admitted, so the dedup costs one bit test rather than a scan of what is mapped
+            // so far.
+            if (columnIndex >= 0 && columnIndex < columnCount && !mappedColumnFlags.getAndSet(columnIndex)) {
+                mappedColumns.add(columnIndex);
+            }
+        }
+        // The designated timestamp joins the set whether or not the projection names it:
+        // loadColumnAt sizes it at double width and consumers reach for it by identity
+        // rather than by projected position, so a bound reader must never lack it.
+        final int timestampIndex = getTimestampIndex();
+        if (timestampIndex >= 0 && timestampIndex < columnCount && !mappedColumnFlags.getAndSet(timestampIndex)) {
+            mappedColumns.add(timestampIndex);
+        }
+    }
+
+    private int cleanSymbolCountOf(int col) {
+        return col < cleanSymbolCounts.size() ? cleanSymbolCounts.getQuick(col) : 0;
+    }
+
+    /**
+     * Returns the reader over the base table's clean symbol dictionary for column
+     * {@code col}, opening it on first use, or null when the column has no clean band in
+     * the open segment. The clean symbol files are hardlinked into the WAL directory, which
+     * is where {@code path} rests between binds - {@link #openSegment} trims back to
+     * {@code rootLen} - so this must not be called from inside {@link #of} while the path
+     * still carries a segment suffix.
+     * <p>
+     * Opening by path this late holds the WAL directory for as long as a view that still
+     * counts needs it, and no longer. {@code WalPurgeJob} clamps its purge floor to the
+     * consumed seqTxn of every live view it holds a floor for, and a view resolving symbols
+     * for a transaction has by definition not consumed it yet - but a dropped or invalidated
+     * view releases that floor ({@code WalPurgeJob.getSafeToPurgeUpToTxn} skips it), so a
+     * view dropped or invalidated part-way through a scan can have the segment purged under
+     * it and this open then raises inside the row loop rather than returning a reader. The
+     * raise aborts a refresh cycle whose view has already stopped counting - invalidation is
+     * terminal and the refresh scan skips a dropped or invalid view outright - so the scan it
+     * interrupts is one whose rows no later cycle would have carried anyway. The floor is not
+     * released while a view is merely behind, so a view that still refreshes always finds the
+     * directory. The only other caller of this class is test-only.
+     */
+    private SymbolMapReaderImpl cleanSymbolReader(int col) {
+        SymbolMapReaderImpl cleanReader = col < cleanSymbolReaders.size() ? cleanSymbolReaders.getQuick(col) : null;
+        if (cleanReader != null) {
+            return cleanReader;
+        }
+        final int cleanSymbolCount = cleanSymbolCountOf(col);
+        if (cleanSymbolCount == 0) {
+            return null;
+        }
+        cleanReader = new SymbolMapReaderImpl(
+                configuration,
+                path.trimTo(rootLen),
+                metadata.getColumnName(col),
+                COLUMN_NAME_TXN_NONE,
+                cleanSymbolCount
+        );
+        cleanSymbolReaders.extendAndSet(col, cleanReader);
+        return cleanReader;
+    }
+
+    // Reports whether the effective mapped set reaches columnIndex, in O(1). The negative
+    // test keeps a column index the event file should never carry out of BitSet.get(), which
+    // indexes its words array unchecked below zero; such an index names no column, so it is
+    // not mapped.
+    private boolean isColumnMapped(int columnIndex) {
+        return columnIndex >= 0 && mappedColumnFlags.get(columnIndex);
     }
 
     private void loadColumnAt(int columnIndex) {
@@ -232,47 +673,83 @@ public class WalReader implements Closeable {
     }
 
     private void openSegmentColumns() {
-        for (int i = 0; i < columnCount; i++) {
-            loadColumnAt(i);
+        if (!hasProjection) {
+            for (int i = 0; i < columnCount; i++) {
+                loadColumnAt(i);
+            }
+            return;
+        }
+        for (int i = 0, n = mappedColumns.size(); i < n; i++) {
+            loadColumnAt(mappedColumns.getQuick(i));
         }
     }
 
-    private void openSymbolMaps(WalEventCursor eventCursor, CairoConfiguration configuration) {
+    /**
+     * Folds the segment's DATA-transaction symbol diffs into the per-column maps and
+     * returns the event-file offset the walk stopped at (the resume point for the next
+     * same-segment bind). When {@code clear} is true the maps are reset first (a full
+     * rebuild from the header for a new segment / column-count change); when false the
+     * caller has already positioned {@code eventCursor} at the saved resume offset and
+     * only newly-appended events are folded. Under a projection this folds only the
+     * columns {@link #buildMappedColumns()} names; see {@link #of} for why. Folding is
+     * append-only and idempotent within a segment (local symbol keys are never remapped).
+     * <p>
+     * Only the diff entries land in the maps. The base table's clean dictionary - which
+     * scales with the base table's total symbol cardinality rather than with the segment -
+     * stays on disk and resolves through {@link #cleanSymbolReader}; this records its bound
+     * per column instead. The bound is taken from the first diff that carries one, matching
+     * the map state the fold would otherwise have built. A column the projection does not
+     * reach is skipped before that record, so it keeps no bound and opens no clean-band
+     * reader.
+     */
+    private long openSymbolMaps(WalEventCursor eventCursor, boolean clear) {
+        if (clear) {
+            // Preserve off-heap buffers but drop entries carried over from a prior segment.
+            for (int i = 0, n = symbolMaps.size(); i < n; i++) {
+                DirectSymbolMap m = symbolMaps.getQuick(i);
+                if (m != null) {
+                    m.clear();
+                }
+            }
+            // The clean band belongs to the segment being replaced: a prior segment's bound
+            // would route this one's diff keys into the wrong dictionary.
+            resetCleanSymbolBands();
+        }
         while (eventCursor.hasNext()) {
             if (WalTxnType.isDataType(eventCursor.getType())) {
+                symbolMapFoldedRecords++;
                 WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                 SymbolMapDiff symbolDiff = dataInfo.nextSymbolMapDiff();
                 while (symbolDiff != null) {
-                    int cleanSymbolCount = symbolDiff.getCleanSymbolCount();
                     int columnIndex = symbolDiff.getColumnIndex();
-                    final IntObjHashMap<CharSequence> symbolMap;
+                    if (hasProjection && !isColumnMapped(columnIndex)) {
+                        // The caller cannot reach this column - getSymbolValue/getSymbolKey
+                        // serve projected indexes only, and getDataCursor() rejects a
+                        // projected reader - so folding its diff buys nothing and couples
+                        // the bind to a clean-band file a concurrent DROP COLUMN deletes.
+                        // drain() steps the shared event cursor past this diff's entries so
+                        // the next diff reads from the right offset.
+                        symbolDiff.drain();
+                        symbolDiff = dataInfo.nextSymbolMapDiff();
+                        continue;
+                    }
+                    int cleanSymbolCount = symbolDiff.getCleanSymbolCount();
+                    DirectSymbolMap symbolMap = columnIndex < symbolMaps.size() ? symbolMaps.getQuick(columnIndex) : null;
 
-                    if (symbolMaps.size() <= columnIndex || symbolMaps.getQuick(columnIndex) == null) {
-                        symbolMap = new IntObjHashMap<>();
-                        if (cleanSymbolCount > 0) {
-                            try (
-                                    SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(
-                                            configuration,
-                                            path,
-                                            this.metadata.getColumnName(columnIndex),
-                                            COLUMN_NAME_TXN_NONE,
-                                            cleanSymbolCount
-                                    )
-                            ) {
-                                for (int key = 0; key < cleanSymbolCount; key++) {
-                                    CharSequence symbol = symbolMapReader.valueOf(key);
-                                    symbolMap.put(key, String.valueOf(symbol));
-                                }
-                            }
-                        }
+                    if (symbolMap == null) {
+                        symbolMap = new DirectSymbolMap(256, 8, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
                         symbolMaps.extendAndSet(columnIndex, symbolMap);
-                    } else {
-                        symbolMap = symbolMaps.getQuick(columnIndex);
+                    }
+                    // Both halves of the guard together mean "nothing resolves for this column
+                    // yet", which is what the eager load's `size() == 0` tested back when the
+                    // clean band shared the map with the diff entries.
+                    if (cleanSymbolCount > 0 && symbolMap.size() == 0 && cleanSymbolCountOf(columnIndex) == 0) {
+                        cleanSymbolCounts.extendAndSet(columnIndex, cleanSymbolCount);
                     }
 
                     SymbolMapDiffEntry entry = symbolDiff.nextEntry();
                     while (entry != null) {
-                        symbolMap.put(entry.getKey(), String.valueOf(entry.getSymbol()));
+                        symbolMap.put(entry.getKey(), entry.getSymbol());
                         entry = symbolDiff.nextEntry();
                     }
 
@@ -280,6 +757,21 @@ public class WalReader implements Closeable {
                 }
             }
         }
+        // Where the walk stopped: the trailing end-of-events marker (the next appended
+        // record overwrites it), so it is the resume point for the next same-segment bind.
+        return eventCursor.resumeOffset();
+    }
+
+    /**
+     * Drops every column's clean-dictionary binding. Zeroes the bounds in place rather than
+     * clearing the list: {@link IntList#extendAndSet} leaves the slots it skips untouched,
+     * so a cleared list would hand back a stale bound for a column whose diff arrives later.
+     */
+    private void resetCleanSymbolBands() {
+        for (int i = 0, n = cleanSymbolCounts.size(); i < n; i++) {
+            cleanSymbolCounts.setQuick(i, 0);
+        }
+        Misc.freeObjListAndClear(cleanSymbolReaders);
     }
 
     static int getPrimaryColumnIndex(int index) {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -63,22 +62,39 @@ public class CurrentUserFunctionFactory implements FunctionFactory {
     }
 
     static class CurrentUserFunction extends StrFunction {
-        private SecurityContext context;
+        private CharSequence principal;
 
         @Override
         public CharSequence getStrA(Record rec) {
-            return context.getPrincipal();
+            return principal;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return context.getPrincipal();
+            return principal;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            this.context = executionContext.getSecurityContext();
+            // Resolve once per cursor rather than once per row. The principal does not depend on the record,
+            // which is what isRuntimeConstant() asserts and what licenses evaluating it here (see
+            // Function#isRuntimeConstant); now() is the same shape. Reading it per row is not free: on the
+            // enterprise dispatching proxy getPrincipal() routes to a cached delegate, so every row paid an
+            // atomic load, a volatile load and a virtual call for a value that cannot change mid-traversal.
+            principal = executionContext.getSecurityContext().getPrincipal();
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            // The factory has always declared this; the function did not, so nothing downstream could act on
+            // it -- and the value was re-read on every row.
+            return true;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return true;
         }
 
         @Override

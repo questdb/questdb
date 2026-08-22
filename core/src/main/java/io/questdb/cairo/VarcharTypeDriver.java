@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -81,17 +81,21 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      */
     public static void appendPlainValue(long dataMemAddr, @Nullable Utf8Sequence value, boolean eraseAsciiFlag) {
         if (value == null) {
-            Unsafe.getUnsafe().putInt(dataMemAddr, TableUtils.NULL_LEN); // NULL
+            Unsafe.putInt(dataMemAddr, TableUtils.NULL_LEN); // NULL
             return;
         }
         final int hi = value.size();
         value.writeTo(dataMemAddr + Integer.BYTES, 0, hi);
         if (eraseAsciiFlag) {
-            Unsafe.getUnsafe().putInt(dataMemAddr, hi);
+            Unsafe.putInt(dataMemAddr, hi);
         } else {
-            final boolean ascii = value.isAscii();
+            // An empty varchar is ASCII by definition; force the flag so that an empty value
+            // writes a non-zero header (size 0 | high bit) instead of 0. getPlainValue treats a
+            // 0 header as absent/uninitialized memory (assert header != 0), so a 0 header for an
+            // empty non-ASCII value would trip that assertion on read.
+            final boolean ascii = value.isAscii() || hi == 0;
             // ASCII flag is signaled with the highest bit
-            Unsafe.getUnsafe().putInt(dataMemAddr, ascii ? hi | Integer.MIN_VALUE : hi);
+            Unsafe.putInt(dataMemAddr, ascii ? hi | Integer.MIN_VALUE : hi);
         }
     }
 
@@ -108,7 +112,12 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return;
         }
         final int size = value.size();
-        dataMem.putInt(value.isAscii() ? size | Integer.MIN_VALUE : size);
+        // An empty varchar is ASCII by definition; force the flag so that an empty value writes
+        // a non-zero header (size 0 | high bit) instead of 0. getPlainValue treats a 0 header as
+        // absent/uninitialized memory (assert header != 0), so a 0 header for an empty non-ASCII
+        // value would trip that assertion on read.
+        final boolean ascii = value.isAscii() || size == 0;
+        dataMem.putInt(ascii ? size | Integer.MIN_VALUE : size);
         dataMem.putVarchar(value, 0, size);
     }
 
@@ -184,6 +193,26 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     /**
+     * VARCHAR value size from a native aux header (inlined or split). The caller
+     * must have already excluded NULL via {@link #hasNullFlag(int)}.
+     */
+    public static int getInlinedOrSplitSize(int auxHeader) {
+        return hasInlinedFlag(auxHeader)
+                ? (auxHeader >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK
+                : (auxHeader >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
+    }
+
+    /**
+     * The first {@value #VARCHAR_INLINED_PREFIX_BYTES} value bytes of a split (non-inlined,
+     * non-Parquet) VARCHAR, read straight from the aux entry into the low bytes of a
+     * little-endian word with the high two bytes zeroed - no data-vector access. The caller
+     * must have already excluded NULL and the inlined and Parquet representations.
+     */
+    public static long getInlinedPrefixWord(long auxEntry) {
+        return Unsafe.getLong(auxEntry + INLINED_PREFIX_OFFSET) & VARCHAR_INLINED_PREFIX_MASK;
+    }
+
+    /**
      * Reads UTF8 varchar type from the memory with a header.
      *
      * @param dataMem memory with header and UTF8 bytes
@@ -191,7 +220,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      */
     public static Utf8Sequence getPlainValue(@NotNull MemoryR dataMem, long offset) {
         long address = dataMem.addressOf(offset);
-        int header = Unsafe.getUnsafe().getInt(address);
+        int header = Unsafe.getInt(address);
         assert header != 0;
         return isNull(header)
                 ? null
@@ -206,7 +235,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @return the provided UTF8 wrapper or null.
      */
     public static DirectUtf8Sequence getPlainValue(long dataMemAddr, @NotNull DirectUtf8String sequence) {
-        int header = Unsafe.getUnsafe().getInt(dataMemAddr);
+        int header = Unsafe.getInt(dataMemAddr);
         if (isNull(header)) {
             return null;
         }
@@ -232,7 +261,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @param dataMemAddr memory with header and UTF8 bytes
      */
     public static int getPlainValueSize(long dataMemAddr) {
-        int header = Unsafe.getUnsafe().getInt(dataMemAddr);
+        int header = Unsafe.getInt(dataMemAddr);
         if (isNull(header)) {
             return TableUtils.NULL_LEN;
         }
@@ -241,6 +270,54 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {
         return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
+    }
+
+    /**
+     * Address of a non-null {@code VARCHAR_SLICE} (Parquet) value's UTF-8 bytes: a
+     * direct pointer into the decompressed page/dict buffer. {@code auxEntry} is
+     * {@code auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum}.
+     */
+    public static long getSliceByteAddress(long auxEntry) {
+        return Unsafe.getLong(auxEntry + Long.BYTES);
+    }
+
+    /**
+     * VARCHAR value size from a {@code VARCHAR_SLICE} (Parquet) aux header. The
+     * caller must have already excluded NULL via {@link #hasNullFlag(int)}.
+     */
+    public static int getSliceSize(int auxHeader) {
+        return auxHeader >>> HEADER_FLAGS_WIDTH;
+    }
+
+    /**
+     * Reads a VarcharSlice value from the aux vector.
+     * VarcharSlice aux format: [length(i32), reserved(u32), pointer(u64)]
+     */
+    public static Utf8Sequence getSliceValue(long auxAddr, long rowNum, Utf8SplitString utf8SplitView) {
+        long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
+        int header = Unsafe.getInt(auxEntry);
+        if ((header & VARCHAR_HEADER_FLAG_NULL) != 0) {
+            return null;
+        }
+        int length = header >>> 4;
+        boolean ascii = (header & 2) != 0;
+        long ptr = Unsafe.getLong(auxEntry + 8);
+        return utf8SplitView.of(ptr, ptr, ptr + length, length, ascii);
+    }
+
+    /**
+     * Returns the size in bytes of a VarcharSlice value, or TableUtils.NULL_LEN for null.
+     */
+    public static int getSliceValueSize(long auxAddr, long rowNum) {
+        if (rowNum < 0) {
+            return TableUtils.NULL_LEN;
+        }
+        long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
+        int header = Unsafe.getInt(auxEntry);
+        if ((header & VARCHAR_HEADER_FLAG_NULL) != 0) {
+            return TableUtils.NULL_LEN;
+        }
+        return header >>> 4;
     }
 
     /**
@@ -291,7 +368,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      */
     public static Utf8Sequence getSplitValue(long auxAddr, long auxLim, long dataAddr, long dataLim, long rowNum, Utf8SplitString utf8SplitView) {
         long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
-        int raw = Unsafe.getUnsafe().getInt(auxEntry);
+        int raw = Unsafe.getInt(auxEntry);
         assert raw != 0;
         if (hasNullFlag(raw)) {
             return null;
@@ -310,6 +387,17 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     /**
+     * Address of a non-null native VARCHAR value's UTF-8 bytes: the inline bytes in
+     * the aux entry for a fully-inlined value, otherwise the full value in the data
+     * vector. {@code auxEntry} is {@code auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum}.
+     */
+    public static long getValueByteAddress(int auxHeader, long auxEntry, long dataAddr) {
+        return hasInlinedFlag(auxHeader)
+                ? auxEntry + FULLY_INLINED_STRING_OFFSET
+                : dataAddr + getDataOffset(auxEntry);
+    }
+
+    /**
      * Reads a UTF-8 value size from a VARCHAR column.
      *
      * @param auxAddr base pointer of the auxiliary vector
@@ -321,7 +409,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return TableUtils.NULL_LEN;
         }
         long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
-        int raw = Unsafe.getUnsafe().getInt(auxEntry);
+        int raw = Unsafe.getInt(auxEntry);
         if (hasNullFlag(raw)) {
             return TableUtils.NULL_LEN;
         }
@@ -353,6 +441,14 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
         }
         return (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
+    }
+
+    public static boolean hasInlinedFlag(int auxHeader) {
+        return (auxHeader & HEADER_FLAG_INLINED) == HEADER_FLAG_INLINED;
+    }
+
+    public static boolean hasNullFlag(int auxHeader) {
+        return (auxHeader & VARCHAR_HEADER_FLAG_NULL) == VARCHAR_HEADER_FLAG_NULL;
     }
 
     @Override
@@ -448,9 +544,10 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return 0;
     }
 
+    @Override
     public long getDataVectorOffset(long auxMemAddr, long row) {
         long auxEntry = auxMemAddr + VARCHAR_AUX_WIDTH_BYTES * row;
-        assert Unsafe.getUnsafe().getInt(auxEntry) != 0;
+        assert Unsafe.getInt(auxEntry) != 0;
         return getDataOffset(auxEntry);
     }
 
@@ -655,7 +752,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     private static long getDataOffset(long auxEntry) {
-        return Unsafe.getUnsafe().getLong(auxEntry + Long.BYTES) >>> 16;
+        return Unsafe.getLong(auxEntry + Long.BYTES) >>> 16;
     }
 
     private static long getDataOffset(MemoryR auxMem, long offset) {
@@ -663,7 +760,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     private static long getDataVectorSize(long auxEntry) {
-        final int raw = Unsafe.getUnsafe().getInt(auxEntry);
+        final int raw = Unsafe.getInt(auxEntry);
         assert raw != 0;
         final long dataOffset = getDataOffset(auxEntry);
         if (hasNullOrInlinedFlag(raw)) {
@@ -679,14 +776,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     private static boolean hasAsciiFlag(int auxHeader) {
         return (auxHeader & HEADER_FLAG_ASCII) == HEADER_FLAG_ASCII;
-    }
-
-    private static boolean hasInlinedFlag(int auxHeader) {
-        return (auxHeader & HEADER_FLAG_INLINED) == HEADER_FLAG_INLINED;
-    }
-
-    private static boolean hasNullFlag(int auxHeader) {
-        return (auxHeader & VARCHAR_HEADER_FLAG_NULL) == VARCHAR_HEADER_FLAG_NULL;
     }
 
     private static boolean hasNullOrInlinedFlag(int auxHeader) {

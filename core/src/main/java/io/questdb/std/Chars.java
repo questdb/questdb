@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -205,7 +205,7 @@ public final class Chars {
     public static void copyStrChars(CharSequence value, int pos, int len, long address) {
         for (int i = 0; i < len; i++) {
             char c = value.charAt(i + pos);
-            Unsafe.getUnsafe().putChar(address + 2L * i, c);
+            Unsafe.putChar(address + 2L * i, c);
         }
     }
 

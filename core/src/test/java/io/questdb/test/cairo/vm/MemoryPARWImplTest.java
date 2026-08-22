@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.MemoryPARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.tools.TestUtils;
@@ -92,12 +93,12 @@ public class MemoryPARWImplTest {
                 actual.copyTo(buffer, 0, 1024);
 
                 for (int i = 0; i < N; i++) {
-                    assertEquals(seq.byteAt(i), Unsafe.getUnsafe().getByte(buffer + i));
+                    assertEquals(seq.byteAt(i), Unsafe.getByte(buffer + i));
                 }
 
                 // rest of the buffer must not be overwritten
                 for (int i = N; i < 1024; i++) {
-                    assertEquals(5, Unsafe.getUnsafe().getByte(buffer + i));
+                    assertEquals(5, Unsafe.getByte(buffer + i));
                 }
 
                 // copy from middle
@@ -105,12 +106,12 @@ public class MemoryPARWImplTest {
                 actual.copyTo(buffer, O, 1024);
 
                 for (int i = 0; i < N - O; i++) {
-                    assertEquals(seq.byteAt(i + O), Unsafe.getUnsafe().getByte(buffer + i));
+                    assertEquals(seq.byteAt(i + O), Unsafe.getByte(buffer + i));
                 }
 
                 // rest of the buffer must not be overwritten
                 for (int i = N - O; i < 1024; i++) {
-                    assertEquals(5, Unsafe.getUnsafe().getByte(buffer + i));
+                    assertEquals(5, Unsafe.getByte(buffer + i));
                 }
             } finally {
                 Unsafe.free(buffer, 1024, MemoryTag.NATIVE_DEFAULT);
@@ -172,7 +173,7 @@ public class MemoryPARWImplTest {
                 long address = mem.addressOf(offset);
                 offset += len;
                 while (len > 0 & i < N) {
-                    assertEquals(i++, Unsafe.getUnsafe().getShort(address));
+                    assertEquals(i++, Unsafe.getShort(address));
                     address += 2;
                     len -= 2;
                 }
@@ -891,6 +892,13 @@ public class MemoryPARWImplTest {
     }
 
     @Test
+    public void testMalformedUtf8IsRejectedAtomically() {
+        // 64/0 takes the floating-sink path, 8/1 the split-page path
+        assertMalformedUtf8IsRejected(64, 0);
+        assertMalformedUtf8IsRejected(8, 1);
+    }
+
+    @Test
     public void testMaxPages() {
         int pageSize = 256;
         int maxPages = 3;
@@ -1042,6 +1050,35 @@ public class MemoryPARWImplTest {
         Assert.assertEquals(10, Vm.getStorageLength("xyz"));
         assertEquals(4, Vm.getStorageLength(""));
         assertEquals(4, Vm.getStorageLength(null));
+    }
+
+    private static void assertMalformedUtf8IsRejected(int pageSize, int prefixSize) {
+        final long ptr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putByte(ptr, (byte) '1');
+            Unsafe.putByte(ptr + 1, (byte) 0xC3);
+
+            try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                for (int i = 0; i < prefixSize; i++) {
+                    mem.putByte((byte) 0);
+                }
+
+                final long rejectedOffset = mem.getAppendOffset();
+                try {
+                    mem.putStrUtf8(new DirectUtf8String().of(ptr, ptr + 2));
+                    Assert.fail("expected the malformed value to be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
+                }
+                // the rejected value consumed no space, so the next write lands where it would have
+                Assert.assertEquals(rejectedOffset, mem.getAppendOffset());
+
+                mem.putStr("next");
+                TestUtils.assertEquals("next", mem.getStrA(rejectedOffset));
+            }
+        } finally {
+            Unsafe.free(ptr, 2, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     private void testStrRnd(long offset, long pageSize) {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -59,6 +59,26 @@ public class WriterRowUtils {
         putDecimal0(index, value, tag, row);
     }
 
+    public static void putDecimalChar(int index, Decimal256 decimalSink, char decimalValue, int columnType, TableWriter.Row row) {
+        if (decimalValue == 0) {
+            putNullDecimal(row, index, columnType);
+            return;
+        }
+        if (decimalValue < '0' || decimalValue > '9') {
+            throw ImplicitCastException.inconvertibleValue(decimalValue, ColumnType.CHAR, columnType);
+        }
+        decimalSink.ofLong(decimalValue - '0', 0);
+        try {
+            decimalSink.rescale(ColumnType.getDecimalScale(columnType));
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(decimalValue, ColumnType.CHAR, columnType);
+        }
+        if (!decimalSink.comparePrecision(ColumnType.getDecimalPrecision(columnType))) {
+            throw ImplicitCastException.inconvertibleValue(decimalValue, ColumnType.CHAR, columnType);
+        }
+        putDecimal0(index, decimalSink, ColumnType.tagOf(columnType), row);
+    }
+
     /**
      * Puts decimal value into a row column. The Decimal should already have the right scale and precision.
      *
@@ -88,7 +108,24 @@ public class WriterRowUtils {
         } catch (NumericException e) {
             throw ImplicitCastException.inconvertibleValue(decimalValue, ColumnType.STRING, columnType);
         }
-        putDecimal0(index, decimalSink, ColumnType.tagOf(columnType), row);
+        putDecimalQuick(index, decimalSink, ColumnType.tagOf(columnType), row);
+    }
+
+    public static void putDecimalVarchar(int index, Decimal256 decimalSink, Utf8Sequence decimalValue, int columnType, TableWriter.Row row) {
+        if (decimalValue == null) {
+            putNullDecimal(row, index, columnType);
+            return;
+        }
+
+        final int precision = ColumnType.getDecimalPrecision(columnType);
+        final int scale = ColumnType.getDecimalScale(columnType);
+        try {
+            // non-ASCII bytes are not valid decimal characters, so the parser rejects them
+            decimalSink.ofString(decimalValue.asAsciiCharSequence(), precision, scale);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(decimalValue, ColumnType.VARCHAR, columnType);
+        }
+        putDecimalQuick(index, decimalSink, ColumnType.tagOf(columnType), row);
     }
 
     public static void putGeoHash(int index, long value, int columnType, TableWriter.Row row) {
@@ -159,7 +196,13 @@ public class WriterRowUtils {
     }
 
     public static void putNullDecimal(TableWriter.Row row, int col, int toType) {
-        putNullDecimal(row, col, ColumnType.tagOf(toType));
+        final short toTag = ColumnType.tagOf(toType);
+        if (!ColumnType.isDecimalType(toTag)) {
+            // the tag overload can only name a tag, and a geohash needs its bit count to render
+            throw CairoException.nonCritical()
+                    .put("cannot store decimal into column type: ").put(ColumnType.nameOf(toType));
+        }
+        putNullDecimal(row, col, toTag);
     }
 
     public static void putNullDecimal(TableWriter.Row row, int col, short toTag) {
@@ -182,6 +225,9 @@ public class WriterRowUtils {
             case ColumnType.DECIMAL256:
                 row.putDecimal256(col, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
                 break;
+            default:
+                throw CairoException.critical(0)
+                        .put("cannot store decimal into column type: ").put(ColumnType.nameOf(toTag));
         }
     }
 
@@ -202,9 +248,12 @@ public class WriterRowUtils {
             case ColumnType.DECIMAL128:
                 row.putDecimal128(index, value.getLh(), value.getLl());
                 break;
-            default:
+            case ColumnType.DECIMAL256:
                 row.putDecimal256(index, value.getHh(), value.getHl(), value.getLh(), value.getLl());
                 break;
+            default:
+                throw CairoException.critical(0)
+                        .put("cannot store decimal into column type: ").put(ColumnType.nameOf(tag));
         }
     }
 }

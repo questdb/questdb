@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -56,7 +56,6 @@ import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.Utf8StringObjHashMap;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
@@ -79,19 +78,20 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final DefaultColumnTypes defaultColumnTypes;
     private final CairoEngine engine;
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsUtf16;
-    private final LineWalAppender lineWalAppender;
     private final long[] loadByWriterThread;
-    private final NetworkIOJob[] netIoJobs;
+    private final ObjList<NetworkIOJob> netIoJobs;
     private final Path path = new Path();
     private final MPSequence[] pubSeq;
     private final RingQueue<LineTcpMeasurementEvent>[] queue;
-    private final DirectUtf8Sink sink = new DirectUtf8Sink(16);
     private final long spinLockTimeoutMs;
     private final StringSink[] tableNameSinks;
     private final TableStructureAdapter tableStructureAdapter;
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
     private final Telemetry<TelemetryTask> telemetry;
+    // appenders hold mutable scratch state and must not be shared across threads,
+    // hence one appender per network IO worker, indexed by the worker id
+    private final ObjList<LineWalAppender> walAppenders;
     private final long writerIdleTimeout;
 
     public LineTcpMeasurementScheduler(
@@ -110,12 +110,12 @@ public class LineTcpMeasurementScheduler implements Closeable {
             this.spinLockTimeoutMs = cairoConfiguration.getSpinLockTimeout();
             this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
             final int networkSharedPoolSize = sharedPoolNetwork.getWorkerCount();
-            this.netIoJobs = new NetworkIOJob[networkSharedPoolSize];
+            this.netIoJobs = new ObjList<>(networkSharedPoolSize);
             this.tableNameSinks = new StringSink[networkSharedPoolSize];
             for (int i = 0; i < networkSharedPoolSize; i++) {
                 tableNameSinks[i] = new StringSink();
                 NetworkIOJob netIoJob = createNetworkIOJob(dispatcher, i);
-                netIoJobs[i] = netIoJob;
+                netIoJobs.add(netIoJob);
                 sharedPoolNetwork.assign(i, netIoJob);
                 sharedPoolNetwork.freeOnExit(netIoJob);
             }
@@ -178,13 +178,16 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     cairoConfiguration.getWalEnabledDefault()
             );
             writerIdleTimeout = lineConfiguration.getWriterIdleTimeout();
-            lineWalAppender = new LineWalAppender(
-                    autoCreateNewColumns,
-                    configuration.isStringToCharCastAllowed(),
-                    configuration.getTimestampUnit(),
-                    sink,
-                    cairoConfiguration.getMaxFileNameLength()
-            );
+            walAppenders = new ObjList<>(networkSharedPoolSize);
+            for (int i = 0; i < networkSharedPoolSize; i++) {
+                walAppenders.add(new LineWalAppender(
+                        autoCreateNewColumns,
+                        configuration.isStringToCharCastAllowed(),
+                        configuration.getTimestampUnit(),
+                        cairoConfiguration.getMaxFileNameLength(),
+                        cairoConfiguration.getMaxSqlRecompileAttempts()
+                ));
+            }
         } catch (Throwable t) {
             close();
             throw t;
@@ -204,17 +207,17 @@ public class LineTcpMeasurementScheduler implements Closeable {
         Misc.free(path);
         Misc.free(ddlMem);
         for (int i = 0, n = assignedTables.length; i < n; i++) {
-            Misc.freeObjList(assignedTables[i]);
-            assignedTables[i].clear();
+            if (assignedTables[i] != null) {
+                Misc.freeObjList(assignedTables[i]);
+                assignedTables[i].clear();
+            }
         }
         //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = queue.length; i < n; i++) {
             Misc.free(queue[i]);
         }
-        for (int i = 0, n = netIoJobs.length; i < n; i++) {
-            netIoJobs[i].close();
-        }
-        Misc.free(sink);
+        Misc.freeObjList(netIoJobs);
+        Misc.freeObjList(walAppenders);
     }
 
     public boolean doMaintenance(
@@ -330,7 +333,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
         if (tud.isWal()) {
             try {
-                lineWalAppender.appendToWal(securityContext, parser, tud);
+                walAppenders.getQuick(netIoJob.getWorkerId()).appendToWal(securityContext, parser, tud);
             } catch (CommitFailedException ex) {
                 if (ex.isTableDropped()) {
                     // table dropped, nothing to worry about
@@ -486,15 +489,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             }
                             continue; // go for another spin
                         }
-                        if (tableToken.isView()) {
+                        if (tableToken.getType() != TableToken.Type.TABLE) {
                             throw CairoException.nonCritical()
-                                    .put("cannot modify view [view=")
-                                    .put(tableToken.getTableName())
-                                    .put(']');
-                        }
-                        if (tableToken.isMatView()) {
-                            throw CairoException.nonCritical()
-                                    .put("cannot modify materialized view [view=")
+                                    .put("cannot modify ").put(tableToken.getType().keyword()).put(" [view=")
                                     .put(tableToken.getTableName())
                                     .put(']');
                         }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -118,7 +118,7 @@ public class ModeBooleanGroupByFunction extends BooleanFunction implements Unary
 
     @Override
     public boolean supportsParallelism() {
-        return true;
+        return UnaryFunction.super.supportsParallelism();
     }
 
     @Override

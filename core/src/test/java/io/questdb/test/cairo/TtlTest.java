@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,7 +25,10 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assume;
 import org.junit.Test;
@@ -36,6 +39,7 @@ import java.util.Arrays;
 import java.util.Collection;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 @RunWith(Parameterized.class)
@@ -53,6 +57,34 @@ public class TtlTest extends AbstractCairoTest {
         return Arrays.asList(new Object[][]{
                 {WalMode.WITH_WAL}, {WalMode.NO_WAL}
         });
+    }
+
+    @Test
+    public void testAlterSetTtlBeyondNanosRangeKeepsAllPartitions() throws Exception {
+        // The ALTER form of testDayTtlBeyondNanosRangeKeepsAllPartitions: one DDL statement
+        // used to wipe every non-active partition of a nanosecond-timestamp table.
+        execute("CREATE TABLE tango (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY" + wal);
+        execute("""
+                INSERT INTO tango VALUES
+                ('2024-01-01T00:00:00.000000000Z'),
+                ('2024-01-02T00:00:00.000000000Z'),
+                ('2024-01-03T00:00:00.000000000Z')
+                """);
+        drainWalQueue();
+        execute("ALTER TABLE tango SET TTL 106_752 DAYS");
+        execute("INSERT INTO tango VALUES ('2024-01-03T01:00:00.000000000Z')");
+        drainWalQueue();
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
+                        ts
+                        2024-01-01T00:00:00.000000000Z
+                        2024-01-02T00:00:00.000000000Z
+                        2024-01-03T00:00:00.000000000Z
+                        2024-01-03T01:00:00.000000000Z
+                        """);
     }
 
     @Test
@@ -123,19 +155,25 @@ public class TtlTest extends AbstractCairoTest {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR" + wal);
         execute("INSERT INTO tango VALUES (0), (3_600_000_000), (7_200_000_001)");
         drainWalQueue();
-        assertSql("ts\n" +
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("ts\n" +
                         "1970-01-01T00:00:00.000000Z\n" +  // with TTL of 1 hour, this row would be evictable
                         "1970-01-01T01:00:00.000000Z\n" +
-                        "1970-01-01T02:00:00.000001Z\n",
-                "tango");
+                        "1970-01-01T02:00:00.000001Z\n");
         execute("ALTER TABLE tango SET TTL 1H");
         drainWalQueue();
-        assertSql("""
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
                         ts
                         1970-01-01T01:00:00.000000Z
                         1970-01-01T02:00:00.000001Z
-                        """,
-                "tango");
+                        """);
     }
 
     @Test
@@ -193,13 +231,15 @@ public class TtlTest extends AbstractCairoTest {
     public void testCreateTableLike() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 2 HOURS " + wal);
         execute("CREATE TABLE samba (LIKE tango)");
-        assertSql("""
+        assertQuery("SHOW CREATE TABLE samba")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
                         ddl
                         CREATE TABLE 'samba' (\s
                         \tts TIMESTAMP
                         ) timestamp(ts) PARTITION BY HOUR TTL 2 HOURS%s
-                        """.formatted(walMode == WalMode.WITH_WAL ? ";" : wal),
-                "SHOW CREATE TABLE samba");
+                        """.formatted(walMode == WalMode.WITH_WAL ? ";" : wal));
     }
 
     @Test
@@ -207,25 +247,95 @@ public class TtlTest extends AbstractCairoTest {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T23:00:00'), ('1970-01-02T00:59:59.999999')");
         drainWalQueue();
-        assertSql("""
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
                         ts
                         1970-01-01T00:00:00.000000Z
                         1970-01-01T23:00:00.000000Z
                         1970-01-02T00:59:59.999999Z
-                        """,
-                "tango");
+                        """);
     }
 
     @Test
     public void testDayOneMicrosBeyondTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1D");
         execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T23:00:00'), ('1970-01-02T01:00:00')");
-        assertSql("""
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
                         ts
                         1970-01-01T23:00:00.000000Z
                         1970-01-02T01:00:00.000000Z
-                        """,
-                "tango");
+                        """);
+    }
+
+    @Test
+    public void testDayTtlBeyondMicrosRangeKeepsAllPartitions() throws Exception {
+        // Control for the nanos case. CommonUtils.toHoursOrMonths caps DAYS at
+        // Integer.MAX_VALUE / 24 = 89_478_485, so this is the widest DAYS TTL the parser
+        // accepts; micros' getMaxUnitValue('h') is Integer.MAX_VALUE, above the 2_147_483_640
+        // hours it converts to, so it still converts exactly. The saturation branch is
+        // unreachable on a microsecond table and nothing here may change.
+        execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 89_478_485 DAYS" + wal);
+        execute("""
+                INSERT INTO tango VALUES
+                ('2024-01-01T00:00:00.000000Z'),
+                ('2024-01-02T00:00:00.000000Z'),
+                ('2024-01-03T00:00:00.000000Z')
+                """);
+        drainWalQueue();
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
+                        ts
+                        2024-01-01T00:00:00.000000Z
+                        2024-01-02T00:00:00.000000Z
+                        2024-01-03T00:00:00.000000Z
+                        """);
+    }
+
+    @Test
+    public void testDayTtlBeyondNanosRangeKeepsAllPartitions() throws Exception {
+        // 106_752 DAYS is 2_562_048 hours, exactly one past NanosTimestampDriver's
+        // getMaxUnitValue('h') ceiling of 2_562_047 - the smallest DAYS value that trips it.
+        // CommonUtils.toHoursOrMonths caps DAYS at Integer.MAX_VALUE / 24, so the DDL is
+        // accepted, and the unchecked `hours * Nanos.HOUR_NANOS` in
+        // NanosTimestampDriver.fromHours then wraps:
+        //   2_562_048 * 3_600_000_000_000 = 9_223_372_800_000_000_000 (Long.MAX_VALUE + 763_145_224_193)
+        //                                 -> -9_223_371_273_709_551_616
+        // isOlderThanTtl then evaluates `maxTimestamp - partitionBoundary >= <negative>`, which
+        // is always true, so every non-active partition is dropped on the next commit - silent
+        // total data loss from one DDL statement.
+        //
+        // A TTL longer than the timestamp type can express must expire nothing instead. The
+        // nanosecond domain spans ~584 years, but the largest age a positive long of nanos can
+        // hold is ~292 years, so an age past the ceiling cannot be computed as a difference at
+        // all - `maxTimestamp - partitionBoundary` wraps before it ever gets there.
+        execute("CREATE TABLE tango (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY TTL 106_752 DAYS" + wal);
+        execute("""
+                INSERT INTO tango VALUES
+                ('2024-01-01T00:00:00.000000000Z'),
+                ('2024-01-02T00:00:00.000000000Z'),
+                ('2024-01-03T00:00:00.000000000Z')
+                """);
+        drainWalQueue();
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
+                        ts
+                        2024-01-01T00:00:00.000000000Z
+                        2024-01-02T00:00:00.000000000Z
+                        2024-01-03T00:00:00.000000000Z
+                        """);
     }
 
     @Test
@@ -245,13 +355,16 @@ public class TtlTest extends AbstractCairoTest {
             drainWalQueue();
 
             // All rows should exist after initial insert
-            assertSql("""
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts
                             2024-05-31T12:00:00.000000Z
                             2024-06-01T00:00:00.000000Z
                             2024-06-01T11:00:00.000000Z
-                            """,
-                    "tango");
+                            """);
 
             // Now insert a future timestamp (year 2100)
             // Without wall clock protection, this would cause all existing data to be evicted
@@ -263,14 +376,17 @@ public class TtlTest extends AbstractCairoTest {
             // With wall clock protection (default), TTL should use min(maxTimestamp, wallClock)
             // which is 2024-06-01T12:00:00, so the existing data should NOT be evicted
             // because it's within 1 day of the wall clock time
-            assertSql("""
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts
                             2024-05-31T12:00:00.000000Z
                             2024-06-01T00:00:00.000000Z
                             2024-06-01T11:00:00.000000Z
                             2100-01-01T00:00:00.000000Z
-                            """,
-                    "tango");
+                            """);
         } finally {
             setCurrentMicros(-1);
         }
@@ -293,13 +409,16 @@ public class TtlTest extends AbstractCairoTest {
             drainWalQueue();
 
             // All rows should exist after initial insert
-            assertSql("""
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts
                             2024-05-31T12:00:00.000000000Z
                             2024-06-01T00:00:00.000000000Z
                             2024-06-01T11:00:00.000000000Z
-                            """,
-                    "tango");
+                            """);
 
             // Now insert a future timestamp (year 2100)
             // Without wall clock protection, this would cause all existing data to be evicted
@@ -311,14 +430,17 @@ public class TtlTest extends AbstractCairoTest {
             // With wall clock protection (default), TTL should use min(maxTimestamp, wallClock)
             // which is 2024-06-01T12:00:00, so the existing data should NOT be evicted
             // because it's within 1 day of the wall clock time
-            assertSql("""
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts
                             2024-05-31T12:00:00.000000000Z
                             2024-06-01T00:00:00.000000000Z
                             2024-06-01T11:00:00.000000000Z
                             2100-01-01T00:00:00.000000000Z
-                            """,
-                    "tango");
+                            """);
         } finally {
             setCurrentMicros(-1);
         }
@@ -342,13 +464,16 @@ public class TtlTest extends AbstractCairoTest {
                     "('2024-06-01T11:00:00.000000Z')");
 
             // All rows should exist after initial insert
-            assertSql("""
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts
                             2024-05-31T12:00:00.000000Z
                             2024-06-01T00:00:00.000000Z
                             2024-06-01T11:00:00.000000Z
-                            """,
-                    "tango");
+                            """);
 
             // Now insert a future timestamp (year 2100)
             // With wall clock DISABLED, TTL uses only maxTimestamp (2100-01-01)
@@ -356,11 +481,14 @@ public class TtlTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES ('2100-01-01T00:00:00.000000Z')");
 
             // All old data should be evicted because it's more than 1 day before 2100-01-01
-            assertSql("""
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts
                             2100-01-01T00:00:00.000000Z
-                            """,
-                    "tango");
+                            """);
         } finally {
             node1.setProperty(PropertyKey.CAIRO_TTL_USE_WALL_CLOCK, true);
         }
@@ -373,13 +501,13 @@ public class TtlTest extends AbstractCairoTest {
             execute("ALTER TABLE tango SET TTL 1 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[26] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("ALTER TABLE tango SET TTL 25 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[26] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         execute("DROP TABLE tango");
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK");
@@ -387,19 +515,19 @@ public class TtlTest extends AbstractCairoTest {
             execute("ALTER TABLE tango SET TTL 1 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[26] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("ALTER TABLE tango SET TTL 1 DAY");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[26] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("ALTER TABLE tango SET TTL 12 DAY");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[26] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         execute("DROP TABLE tango");
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH");
@@ -407,19 +535,19 @@ public class TtlTest extends AbstractCairoTest {
             execute("ALTER TABLE tango SET TTL 1 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[26] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("ALTER TABLE tango SET TTL 30 DAY");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[26] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("ALTER TABLE tango SET TTL 4 WEEK");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[26] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         execute("DROP TABLE tango");
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
@@ -427,100 +555,97 @@ public class TtlTest extends AbstractCairoTest {
             execute("ALTER TABLE tango SET TTL 1000 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[26] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("ALTER TABLE tango SET TTL 365 DAY");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[26] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("ALTER TABLE tango SET TTL 52 WEEK");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[26] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("ALTER TABLE tango SET TTL 13 MONTH");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[26] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[26] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
     }
 
     @Test
     public void testGranularityInvalidCreate() throws Exception {
-        assertException(
-                "CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 1 HOUR",
-                69,
-                "TTL value must be an integer multiple of partition size"
-        );
+        assertQuery("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 1 HOUR")
+                .fails(69, "TTL value must be an integer multiple of the partition size (its time interval)");
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY TTL 25 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[69] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[69] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK TTL 1 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[70] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK TTL 1 DAY");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[70] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY WEEK TTL 12 DAY");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[70] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH TTL 1 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[71] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[71] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH TTL 30 DAY");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[71] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[71] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH TTL 4 WEEK");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[71] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[71] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR TTL 1000 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[70] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR TTL 365 DAY");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[70] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR TTL 52 WEEK");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[70] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR TTL 13 MONTH");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[70] TTL value must be an integer multiple of the partition size (its time interval)", e.getMessage());
         }
     }
 
@@ -551,13 +676,16 @@ public class TtlTest extends AbstractCairoTest {
     public void testHourExactlyAtTtl() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR");
         execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T01:00:00'), ('1970-01-01T01:59:59.999999')");
-        assertSql("""
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
                         ts
                         1970-01-01T00:00:00.000000Z
                         1970-01-01T01:00:00.000000Z
                         1970-01-01T01:59:59.999999Z
-                        """,
-                "tango");
+                        """);
     }
 
     @Test
@@ -565,12 +693,42 @@ public class TtlTest extends AbstractCairoTest {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1H" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00'), ('1970-01-01T01:00:00'), ('1970-01-01T02:00:00')");
         drainWalQueue();
-        assertSql("""
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
                         ts
                         1970-01-01T01:00:00.000000Z
                         1970-01-01T02:00:00.000000Z
-                        """,
-                "tango");
+                        """);
+    }
+
+    @Test
+    public void testHourTtlBeyondNanosRangeKeepsAllPartitions() throws Exception {
+        // The DAYS cap is not what makes an over-range TTL reachable, so do not rely on it: the
+        // HOUR unit is range-checked nowhere. CommonUtils.toHoursOrMonths returns the value
+        // unchanged for HOUR, and PartitionBy.validateTtlGranularity waives granularity for
+        // PARTITION BY HOUR, so the parser's own Integer.MAX_VALUE ceiling is the only limit -
+        // 838x past NanosTimestampDriver's getMaxUnitValue('h') of 2_562_047.
+        execute("CREATE TABLE tango (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY HOUR TTL 2_147_483_647 HOURS" + wal);
+        execute("""
+                INSERT INTO tango VALUES
+                ('1970-01-01T00:00:00.000000000Z'),
+                ('1970-01-01T01:00:00.000000000Z'),
+                ('1970-01-01T02:00:00.000000000Z')
+                """);
+        drainWalQueue();
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
+                        ts
+                        1970-01-01T00:00:00.000000000Z
+                        1970-01-01T01:00:00.000000000Z
+                        1970-01-01T02:00:00.000000000Z
+                        """);
     }
 
     @Test
@@ -578,12 +736,15 @@ public class TtlTest extends AbstractCairoTest {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 HOUR" + wal);
         execute("INSERT INTO tango SELECT (x*1_000_000*60*60)::TIMESTAMP ts FROM long_sequence(72);");
         drainWalQueue();
-        assertSql("""
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
                         ts
                         1970-01-03T23:00:00.000000Z
                         1970-01-04T00:00:00.000000Z
-                        """,
-                "tango");
+                        """);
     }
 
     @Test
@@ -591,13 +752,16 @@ public class TtlTest extends AbstractCairoTest {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 MONTH" + wal);
         execute("INSERT INTO tango VALUES ('1970-02-01T04:20:00.0Z'), ('1970-02-10T04:20:00.0Z'), ('1970-03-01T04:59:59.999999Z')");
         drainWalQueue();
-        assertSql("""
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
                         ts
                         1970-02-01T04:20:00.000000Z
                         1970-02-10T04:20:00.000000Z
                         1970-03-01T04:59:59.999999Z
-                        """,
-                "tango");
+                        """);
     }
 
     @Test
@@ -605,12 +769,15 @@ public class TtlTest extends AbstractCairoTest {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1M" + wal);
         execute("INSERT INTO tango VALUES ('1970-02-01T04:20:00.0Z'), ('1970-02-10T04:20:00.0Z'), ('1970-03-01T05:00:00')");
         drainWalQueue();
-        assertSql("""
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
                         ts
                         1970-02-10T04:20:00.000000Z
                         1970-03-01T05:00:00.000000Z
-                        """,
-                "tango");
+                        """);
     }
 
     @Test
@@ -619,9 +786,57 @@ public class TtlTest extends AbstractCairoTest {
         execute("INSERT INTO tango SELECT rnd_timestamp('1970-01-01', '1970-12-01', 0) ts from long_sequence(2_000_000)");
         execute("INSERT INTO tango values ('1970-12-02')");
         drainWalQueue();
-        assertQuery("name\n1970-12-02\n",
-                "SELECT name FROM (SHOW PARTITIONS FROM tango)",
-                "", false, true);
+        assertQuery("SELECT name FROM (SHOW PARTITIONS FROM tango)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("name\n1970-12-02\n");
+    }
+
+    @Test
+    public void testTtlEvictionDivergesTheDedupBaseSignal() throws Exception {
+        Assume.assumeTrue(walMode == WalMode.WITH_WAL);
+
+        // enforceTtl runs in the commit's own housekeeping, after the WAL rows land, so
+        // a DATA commit that appends a row AND expires a partition skips nothing and
+        // dedups nothing - the two outcomes the dedup-base divergence signal used to be
+        // derived from. A live view coupled to this base reads that signal to decide
+        // whether it may refresh straight off the raw WAL stream; unless the eviction
+        // marks the range diverged, it routes over rows the applied base has dropped.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY" + wal);
+            execute("INSERT INTO tango VALUES ('1970-01-01T00:00:00')");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("tango");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            final long coveredAfterAppend = tracker.getDedupSignalCoveredSeqTxn();
+            assertTrue("the append must have been recorded", coveredAfterAppend > 0);
+            assertEquals(
+                    "a plain appending commit matches its raw WAL stream",
+                    Numbers.LONG_NULL,
+                    tracker.getDedupSignalDivergenceSeqTxn()
+            );
+
+            // Lands in a new partition and pushes the first one one microsecond past its TTL.
+            execute("INSERT INTO tango VALUES ('1970-01-02T01:00:00')");
+            drainWalQueue();
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts
+                            1970-01-02T01:00:00.000000Z
+                            """);
+
+            final long covered = tracker.getDedupSignalCoveredSeqTxn();
+            assertEquals("the evicting commit must have been recorded", coveredAfterAppend + 1, covered);
+            assertEquals(
+                    "TTL dropped a partition the raw WAL stream still carries",
+                    covered,
+                    tracker.getDedupSignalDivergenceSeqTxn()
+            );
+        });
     }
 
     @Test
@@ -723,22 +938,46 @@ public class TtlTest extends AbstractCairoTest {
     @Test
     public void testTablesFunction() throws Exception {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR" + wal);
-        assertSql("ttlValue\tttlUnit\n0\tHOUR\n", "select ttlValue, ttlUnit from tables()");
+        assertQuery("select ttlValue, ttlUnit from tables()")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("ttlValue\tttlUnit\n0\tHOUR\n");
         execute("ALTER TABLE tango SET TTL 2 HOURS");
         drainWalQueue();
-        assertSql("ttlValue\tttlUnit\n2\tHOUR\n", "select ttlValue, ttlUnit from tables()");
+        assertQuery("select ttlValue, ttlUnit from tables()")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("ttlValue\tttlUnit\n2\tHOUR\n");
         execute("ALTER TABLE tango SET TTL 2 DAYS");
         drainWalQueue();
-        assertSql("ttlValue\tttlUnit\n2\tDAY\n", "select ttlValue, ttlUnit from tables()");
+        assertQuery("select ttlValue, ttlUnit from tables()")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("ttlValue\tttlUnit\n2\tDAY\n");
         execute("ALTER TABLE tango SET TTL 2 WEEKS");
         drainWalQueue();
-        assertSql("ttlValue\tttlUnit\n2\tWEEK\n", "select ttlValue, ttlUnit from tables()");
+        assertQuery("select ttlValue, ttlUnit from tables()")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("ttlValue\tttlUnit\n2\tWEEK\n");
         execute("ALTER TABLE tango SET TTL 2 MONTHS");
         drainWalQueue();
-        assertSql("ttlValue\tttlUnit\n2\tMONTH\n", "select ttlValue, ttlUnit from tables()");
+        assertQuery("select ttlValue, ttlUnit from tables()")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("ttlValue\tttlUnit\n2\tMONTH\n");
         execute("ALTER TABLE tango SET TTL 2 YEARS");
         drainWalQueue();
-        assertSql("ttlValue\tttlUnit\n2\tYEAR\n", "select ttlValue, ttlUnit from tables()");
+        assertQuery("select ttlValue, ttlUnit from tables()")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("ttlValue\tttlUnit\n2\tYEAR\n");
     }
 
     @Test
@@ -746,13 +985,16 @@ public class TtlTest extends AbstractCairoTest {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 WEEK" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01'), ('1970-01-03'), ('1970-01-08T00:59:59.999999')");
         drainWalQueue();
-        assertSql("""
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
                         ts
                         1970-01-01T00:00:00.000000Z
                         1970-01-03T00:00:00.000000Z
                         1970-01-08T00:59:59.999999Z
-                        """,
-                "tango");
+                        """);
     }
 
     @Test
@@ -760,12 +1002,15 @@ public class TtlTest extends AbstractCairoTest {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1W" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01'), ('1970-01-03'), ('1970-01-08T01:00:00')");
         drainWalQueue();
-        assertSql("""
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
                         ts
                         1970-01-03T00:00:00.000000Z
                         1970-01-08T01:00:00.000000Z
-                        """,
-                "tango");
+                        """);
     }
 
     @Test
@@ -773,13 +1018,16 @@ public class TtlTest extends AbstractCairoTest {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 YEAR" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01T04:20:00.0Z'), ('1970-12-01'), ('1971-01-01T04:59:59.999999')");
         drainWalQueue();
-        assertSql("""
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
                         ts
                         1970-01-01T04:20:00.000000Z
                         1970-12-01T00:00:00.000000Z
                         1971-01-01T04:59:59.999999Z
-                        """,
-                "tango");
+                        """);
     }
 
     @Test
@@ -787,11 +1035,14 @@ public class TtlTest extends AbstractCairoTest {
         execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR TTL 1Y" + wal);
         execute("INSERT INTO tango VALUES ('1970-01-01T04:20:00.0Z'), ('1970-12-01'), ('1971-01-01T05:00:00')");
         drainWalQueue();
-        assertSql("""
+        assertQuery("tango")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("""
                         ts
                         1970-12-01T00:00:00.000000Z
                         1971-01-01T05:00:00.000000Z
-                        """,
-                "tango");
+                        """);
     }
 }

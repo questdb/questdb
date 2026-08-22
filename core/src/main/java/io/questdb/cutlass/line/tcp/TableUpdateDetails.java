@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
@@ -65,13 +66,14 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.concurrent.locks.Lock;
 
 import static io.questdb.cairo.TableUtils.ANY_TABLE_VERSION;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
-    private static final DirectUtf8SymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
+    private static final DirectUtf8SymbolLookup NOT_FOUND_LOOKUP = _ -> SymbolTable.VALUE_NOT_FOUND;
     private final long commitInterval;
     private final boolean commitOnClose;
     private final DefaultColumnTypes defaultColumnTypes;
@@ -82,7 +84,6 @@ public class TableUpdateDetails implements Closeable {
     // Set only for WAL tables, i.e. when writerThreadId == -1.
     private final SecurityContext ownSecurityContext;
     private final Utf8String tableNameUtf8;
-    private final TableToken tableToken;
     private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private final long writerTickRowsCountMod;
@@ -97,6 +98,7 @@ public class TableUpdateDetails implements Closeable {
     private MetadataService metadataService;
     private int networkIOOwnerCount = 0;
     private long nextCommitTime;
+    private TableToken tableToken;
     private volatile boolean writerInError;
     private int writerThreadId;
 
@@ -106,7 +108,7 @@ public class TableUpdateDetails implements Closeable {
             @Nullable SecurityContext ownSecurityContext,
             TableWriterAPI writer,
             int writerThreadId,
-            NetworkIOJob[] netIoJobs,
+            ObjList<NetworkIOJob> netIoJobs,
             DefaultColumnTypes defaultColumnTypes,
             Utf8String tableNameUtf8
     ) {
@@ -126,11 +128,11 @@ public class TableUpdateDetails implements Closeable {
         this.commitInterval = configuration.getCommitInterval();
         this.nextCommitTime = millisecondClock.getTicks() + commitInterval;
 
-        final int n = netIoJobs.length;
+        final int n = netIoJobs.size();
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
             //noinspection resource
-            this.localDetailsArray[i] = new ThreadLocalDetails(netIoJobs[i].getSymbolCachePool());
+            this.localDetailsArray[i] = new ThreadLocalDetails(netIoJobs.getQuick(i).getSymbolCachePool());
         }
         this.tableNameUtf8 = tableNameUtf8;
         this.commitOnClose = true;
@@ -164,6 +166,7 @@ public class TableUpdateDetails implements Closeable {
         this.metadataService = writer.supportsMultipleWriters() ? null : (MetadataService) writer;
         this.commitInterval = commitInterval;
         this.nextCommitTime = millisecondClock.getTicks() + this.commitInterval;
+        //noinspection resource
         this.localDetailsArray = new ThreadLocalDetails[]{new ThreadLocalDetails(symbolCachePool)};
         this.tableNameUtf8 = tableNameUtf8;
     }
@@ -200,8 +203,16 @@ public class TableUpdateDetails implements Closeable {
             if (writerAPI != null) {
                 try {
                     if (commitOnClose) {
-                        authorizeCommit();
-                        writerAPI.commit();
+                        final Lock lock = engine.getRoleSwitchReadLock();
+                        lock.lock();
+                        try {
+                            if (!engine.isReadOnlyMode()) {
+                                authorizeCommit();
+                                writerAPI.commit();
+                            }
+                        } finally {
+                            lock.unlock();
+                        }
                     }
                 } catch (CairoException ex) {
                     if (!ex.isTableDropped()) {
@@ -221,21 +232,50 @@ public class TableUpdateDetails implements Closeable {
 
     public void commit(boolean withLag) throws CommitFailedException {
         if (writerAPI.getUncommittedRowCount() > 0) {
+            // Cheap early-out: if the node is already read-only before we attempt to
+            // acquire the lock, skip the lock acquire entirely. This is NOT the
+            // authoritative refusal -- the in-lock re-check below is.
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.readOnlyAccess();
+            }
+            // Hold the role-switch lock across the authoritative re-check and the
+            // actual commit. The role-flip path in EntCairoEngine acquires the same
+            // lock around the REPLICA flag publish, so either:
+            //   (a) the flip runs first: we see REPLICA on the in-lock re-check and
+            //       refuse without committing; or
+            //   (b) we run first: we commit as PRIMARY and the flip waits; when the
+            //       flip publishes REPLICA afterwards the row is already safely committed
+            //       on the (still-PRIMARY-at-that-moment) node.
+            // This closes the TOCTOU window between the gate-read and writerAPI.commit().
+            final Lock lock = engine.getRoleSwitchReadLock();
+            lock.lock();
             try {
-                authorizeCommit();
-                if (withLag) {
-                    writerAPI.ic();
-                } else {
-                    writerAPI.commit();
+                // Authoritative in-lock re-check. The read-only refusal is thrown from outside
+                // the commit try/catch below so it propagates as-is (ILP-TCP disconnects, ILP-HTTP
+                // returns SECURITY_ERROR) and is never confused with a genuine ACL denial from
+                // authorizeCommit(): a real authorization failure must still roll back the writer
+                // and surface as a wrapped CommitFailedException, exactly as before this gate existed.
+                if (engine.isReadOnlyMode()) {
+                    throw CairoException.readOnlyAccess();
                 }
-            } catch (CairoException ex) {
-                if (!ex.isTableDropped()) {
+                try {
+                    authorizeCommit();
+                    if (withLag) {
+                        writerAPI.ic();
+                    } else {
+                        writerAPI.commit();
+                    }
+                } catch (CairoException ex) {
+                    if (!ex.isTableDropped()) {
+                        handleCommitException(ex);
+                    }
+                    throw CommitFailedException.instance(ex, ex.isTableDropped());
+                } catch (Throwable ex) {
                     handleCommitException(ex);
+                    throw CommitFailedException.instance(ex, false);
                 }
-                throw CommitFailedException.instance(ex, ex.isTableDropped());
-            } catch (Throwable ex) {
-                handleCommitException(ex);
-                throw CommitFailedException.instance(ex, false);
+            } finally {
+                lock.unlock();
             }
         }
         if (isWal() && tableToken != engine.getTableTokenIfExists(tableToken.getTableName())) {
@@ -251,12 +291,32 @@ public class TableUpdateDetails implements Closeable {
         return lastMeasurementMillis;
     }
 
+    /**
+     * Returns the sequencer txn assigned to the most recent commit on the
+     * underlying writer, or -1 if none.
+     */
+    public long getLastSeqTxn() {
+        return writerAPI != null ? writerAPI.getLastSeqTxn() : -1L;
+    }
+
+    public int getSegmentId() {
+        return writerAPI != null ? writerAPI.getSegmentId() : -1;
+    }
+
+    public int getWalId() {
+        return writerAPI != null ? writerAPI.getWalId() : -1;
+    }
+
     public MillisecondClock getMillisecondClock() {
         return millisecondClock;
     }
 
     public int getNetworkIOOwnerCount() {
         return networkIOOwnerCount;
+    }
+
+    public long getNextCommitTime() {
+        return nextCommitTime;
     }
 
     public String getTableNameUtf16() {
@@ -269,6 +329,10 @@ public class TableUpdateDetails implements Closeable {
 
     public TableToken getTableToken() {
         return tableToken;
+    }
+
+    public TableWriterAPI getWriter() {
+        return writerAPI;
     }
 
     public int getWriterThreadId() {
@@ -305,6 +369,10 @@ public class TableUpdateDetails implements Closeable {
         return writerInError;
     }
 
+    public void markMeasurement() {
+        lastMeasurementMillis = millisecondClock.getTicks();
+    }
+
     public void removeReference(int workerId) {
         if (!isWal()) {
             networkIOOwnerCount--;
@@ -339,6 +407,17 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
+    /**
+     * Rebinds this entry's table token. Called by QWP salvage after
+     * {@code goActive()} replayed a RENAME into the writer: the salvage commit
+     * and its insert authorization must run under the renamed table's identity,
+     * not the name this entry was cached under. The entry is evicted right
+     * after the salvage, so the rebound token never serves another lookup.
+     */
+    public void updateTableToken(TableToken tableToken) {
+        this.tableToken = tableToken;
+    }
+
     private void authorizeCommit() {
         if (ownSecurityContext != null) {
             ownSecurityContext.authorizeInsert(tableToken);
@@ -362,7 +441,7 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    long commitIfIntervalElapsed(long wallClockMillis) throws CommitFailedException {
+    public long commitIfIntervalElapsed(long wallClockMillis) throws CommitFailedException {
         if (wallClockMillis < nextCommitTime) {
             return nextCommitTime;
         }
@@ -380,7 +459,7 @@ public class TableUpdateDetails implements Closeable {
         return nextCommitTime;
     }
 
-    void commitIfMaxUncommittedRowsCountReached() throws CommitFailedException {
+    public void commitIfMaxUncommittedRowsCountReached() throws CommitFailedException {
         final long rowsSinceCommit = writerAPI.getUncommittedRowCount();
         if (rowsSinceCommit < getMetaMaxUncommittedRows()) {
             if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {
@@ -424,17 +503,21 @@ public class TableUpdateDetails implements Closeable {
         return timestampIndex;
     }
 
-    TableWriterAPI getWriter() {
-        return writerAPI;
-    }
-
     void releaseWriter(boolean commit) {
         if (writerAPI != null) {
             try {
                 if (commit) {
                     LOG.debug().$("release commit [table=").$(tableToken).I$();
-                    authorizeCommit();
-                    writerAPI.commit();
+                    final Lock lock = engine.getRoleSwitchReadLock();
+                    lock.lock();
+                    try {
+                        if (!engine.isReadOnlyMode()) {
+                            authorizeCommit();
+                            writerAPI.commit();
+                        }
+                    } finally {
+                        lock.unlock();
+                    }
                 }
             } catch (Throwable ex) {
                 LOG.error().$("writer commit failed, force closing it [table=").$(tableToken).$(",ex=").$(ex).I$();
@@ -493,7 +576,7 @@ public class TableUpdateDetails implements Closeable {
                         new TableColumnMetadata(
                                 columnNameUtf16,
                                 columnType,
-                                false,
+                                IndexType.NONE,
                                 0,
                                 false,
                                 null,
@@ -563,7 +646,7 @@ public class TableUpdateDetails implements Closeable {
                             new TableColumnMetadata(
                                     that.getColumnName(i),
                                     that.getColumnType(i),
-                                    that.isColumnIndexed(i),
+                                    that.getColumnIndexType(i),
                                     that.getIndexValueBlockCapacity(i),
                                     that.isSymbolTableStatic(i),
                                     that.getMetadata(i),

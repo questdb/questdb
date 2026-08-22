@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -142,6 +142,14 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putInt(valueIndex + 1, SymbolTable.VALUE_IS_NULL);
+    }
+
+    @Override
+    public boolean supportsKeyValueAccess() {
+        // The key is already materialised in the aggregation map, so getInt() is a plain map read
+        // and valueOf() resolves it through the aggregated argument - neither touches the row's
+        // text. A key consumer such as QWP egress should encode each distinct value once.
+        return true;
     }
 
     @Override

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,10 +24,13 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
@@ -40,7 +43,7 @@ import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -54,6 +57,7 @@ import static io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor.calc
 public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final int columnCount;
     private final IntList columnIndexes;
+    private final ColumnMapping columnMapping = new ColumnMapping();
     private final LongList columnPageAddresses = new LongList();
     private final IntList columnSizeShifts;
     private final DirectLongList filterList;
@@ -72,7 +76,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private PartitionFrameCursor partitionFrameCursor;
     private TableReader reader;
     private long reenterPageFrameRowLimit;
-    private PartitionDecoder reenterParquetDecoder;
+    private ParquetPartitionDecoder reenterParquetDecoder;
     private boolean reenterPartitionFrame = false;
     private long reenterPartitionHi;
     private int reenterPartitionIndex;
@@ -120,8 +124,13 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
-    public IntList getColumnIndexes() {
-        return columnIndexes;
+    public ColumnMapping getColumnMapping() {
+        return columnMapping;
+    }
+
+    @Override
+    public LongList getIntervals() {
+        return partitionFrameCursor != null ? partitionFrameCursor.getIntervals() : null;
     }
 
     @Override
@@ -137,6 +146,16 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     @Override
     public TableReader getTableReader() {
         return reader;
+    }
+
+    @Override
+    public boolean hasActivePushdownFilter() {
+        return pushdownFilterConditions != null && pushdownFilterConditions.size() > 0;
+    }
+
+    @Override
+    public boolean hasIntervalFilter() {
+        return partitionFrameCursor != null && partitionFrameCursor.hasIntervalFilter();
     }
 
     @Override
@@ -179,7 +198,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     frame.rowGroupLo = -1;
                     frame.rowGroupHi = -1;
                     if (frame.format == PartitionFormat.PARQUET) {
-                        reenterParquetDecoder = partitionFrame.getParquetDecoder();
+                        reenterParquetDecoder = partitionFrame.getParquetMetaDecoder();
                     } else {
                         reenterParquetDecoder = null;
                     }
@@ -197,11 +216,12 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
-    public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows) throws SqlException {
+    public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) throws SqlException {
         this.partitionFrameCursor = partitionFrameCursor;
-        reader = partitionFrameCursor.getTableReader();
-        this.pageFrameMinRows = pageFrameMinRows;
-        this.pageFrameMaxRows = pageFrameMaxRows;
+        this.reader = partitionFrameCursor.getTableReader();
+        TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
+        this.pageFrameMinRows = executionContext.getPageFrameMinRows();
+        this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
         if (pushdownFilterConditions != null) {
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
@@ -339,8 +359,16 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     private @Nullable TableReaderPageFrame computeParquetFrame(long partitionLo, long partitionHi) {
-        final PartitionDecoder.Metadata metadata = reenterParquetDecoder.metadata();
+        final ParquetMetaFileReader metadata = reenterParquetDecoder.metadata();
         final int rowGroupCount = metadata.getRowGroupCount();
+
+        if (partitionHi > metadata.getPartitionRowCount()) {
+            throw CairoException.critical(0)
+                    .put("parquet partition row count mismatch [partitionHi=").put(partitionHi)
+                    .put(", parquetRowCount=").put(metadata.getPartitionRowCount())
+                    .put(", partitionIndex=").put(reenterPartitionIndex)
+                    .put(']');
+        }
 
         int targetGroup = -1;
         long targetGroupStart = 0;
@@ -395,7 +423,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         while (targetGroup >= 0) {
             if (filterBufEnd != -1 && ParquetRowGroupFilter.canSkipRowGroup(
-                    targetGroup, reenterParquetDecoder, filterList, filterBufEnd)) {
+                    targetGroup,
+                    metadata,
+                    filterList,
+                    filterBufEnd
+            )) {
                 partitionHi = targetGroupStart;
                 if (partitionHi <= partitionLo) {
                     this.reenterPartitionFrame = false;
@@ -441,14 +473,21 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         final byte format = partitionFrame.getPartitionFormat();
         if (format == PartitionFormat.PARQUET) {
             clearAddresses();
-            reenterParquetDecoder = partitionFrame.getParquetDecoder();
+            reenterParquetDecoder = partitionFrame.getParquetMetaDecoder();
             reenterPageFrameRowLimit = 0;
             cachedRowGroupIndex = -1;
             cachedRowGroupStartRow = 0;
             assert reenterParquetDecoder != null;
             filterBufEnd = -1;
             if (filterList != null && ParquetRowGroupFilter.prepareFilterList(
-                    reenterParquetDecoder.metadata(), pushdownFilterConditions, filterList, filterValues)) {
+                    reenterParquetDecoder.metadata(),
+                    pushdownFilterConditions,
+                    filterList,
+                    filterValues,
+                    // native-table partitions: resolve the Parquet column by stable id so a
+                    // renamed column maps correctly despite the frozen Parquet name.
+                    true
+            )) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
             }
             return computeParquetFrame(lo, hi);
@@ -480,11 +519,6 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
-            return reader.getBitmapIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
-        }
-
-        @Override
         public int getColumnCount() {
             return columnCount;
         }
@@ -492,6 +526,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public byte getFormat() {
             return format;
+        }
+
+        @Override
+        public IndexReader getIndexReader(int columnIndex, int direction) {
+            return reader.getIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
         }
 
         @Override
@@ -505,7 +544,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public PartitionDecoder getParquetPartitionDecoder() {
+        public ParquetPartitionDecoder getParquetDecoder() {
             assert reenterParquetDecoder != null || format != PartitionFormat.PARQUET;
             return reenterParquetDecoder;
         }

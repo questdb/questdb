@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -50,6 +50,7 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
 
     @Override
     public boolean hasNext() {
+        circuitBreaker.statefulThrowExceptionIfTripped();
         if (!isFindPending) {
             findRecord();
             hasNext = isRecordFound;
@@ -72,7 +73,7 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
         isRecordFound = false;
         isFindPending = false;
         // prepare for page frame iteration
-        super.init();
+        super.init(executionContext.getMemoryTracker());
     }
 
     @Override

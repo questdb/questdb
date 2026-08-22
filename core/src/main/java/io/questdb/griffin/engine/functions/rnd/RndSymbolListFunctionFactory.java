@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -74,7 +74,8 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return next();
+            final int key = next();
+            return symbols.getQuick(key) == null ? SymbolTable.VALUE_IS_NULL : key;
         }
 
         @Override
@@ -115,6 +116,23 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean shouldMemoize() {
+            // Every accessor draws a fresh value, so getInt() and getSymbol() on one row disagree.
+            // A consumer that reads both - an all-symbol UNION resolves the re-symbolised key
+            // against the row's own text - would otherwise see two different values for one row.
+            return true;
+        }
+
+        @Override
+        public boolean supportsKeyValueAccess() {
+            // The dictionary is a fixed list built once per cursor, so getInt() returns an index
+            // for a value, or VALUE_IS_NULL for a null slot, and valueOf() resolves it without
+            // touching text. A key consumer (QWP egress) should therefore take the key path and
+            // encode each distinct value once, not once per row.
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_symbol(").val((Sinkable) symbols).val(')');
         }
@@ -126,7 +144,7 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            return symbolKey != -1 ? symbols.getQuick(symbolKey) : null;
+            return symbolKey > -1 ? symbols.getQuick(symbolKey) : null;
         }
 
         private int next() {

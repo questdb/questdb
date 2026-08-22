@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.window;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -35,8 +36,10 @@ import io.questdb.griffin.engine.functions.window.CountConstWindowFunctionFactor
 import io.questdb.griffin.engine.functions.window.CountDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.CountFunctionFactoryHelper;
 import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.FirstValueLongWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.MaxLongWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory;
 import io.questdb.log.Log;
@@ -74,7 +77,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         TestDefaults.createLongFunction(x -> x.getLong(2)),
                         TestDefaults.createMemoryCARW(),
                         2,
-                        0
+                        0,
+                        null,
+                        false,
+                        configuration
                 ),
                 Double::sum
         );
@@ -95,7 +101,9 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         rangeLo,
                         rangeHi,
                         TestDefaults.createLongFunction(x -> x.getLong(2)),
-                        TestDefaults.createMemoryCARW()
+                        TestDefaults.createMemoryCARW(),
+                        null,
+                        false
                 ),
                 Double::sum
         );
@@ -159,7 +167,9 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
                         TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
                         rangeLo,
-                        rangeHi
+                        rangeHi,
+                        null,
+                        false
                 ),
                 Long::sum,
                 CountConstWindowFunctionFactory.isRecordNotNull
@@ -207,7 +217,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         2,
                         0,
                         TestDefaults.createLongFunction(x -> x.getLong(2)),
-                        CountDoubleWindowFunctionFactory.isRecordNotNull
+                        CountDoubleWindowFunctionFactory.isRecordNotNull,
+                        null,
+                        false,
+                        configuration
                 ),
                 Long::sum,
                 CountDoubleWindowFunctionFactory.isRecordNotNull
@@ -230,7 +243,9 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         rangeHi,
                         TestDefaults.createLongFunction(x -> x.getLong(2)),
                         TestDefaults.createMemoryCARW(),
-                        CountDoubleWindowFunctionFactory.isRecordNotNull
+                        CountDoubleWindowFunctionFactory.isRecordNotNull,
+                        null,
+                        false
                 ),
                 Long::sum,
                 CountConstWindowFunctionFactory.isRecordNotNull
@@ -331,6 +346,50 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstValueLayoutHasNoLiveViewFlagOutsideLiveView() {
+        // The sibling of testMaxMinValueLayoutHasNoLiveViewFlagOutsideLiveView, for the same
+        // reason. The live-view ANCHOR contract needs an explicit "initialized" byte so
+        // resetPartition can re-arm a partition without deleting its entry; MapValue.isNew()
+        // flips on first access and is too coarse. That byte belongs to the live-view layout
+        // ONLY - LiveViewWindow is the sole dispatcher of resetPartition - so carrying it in
+        // the shared layout makes every ordinary first_value(x) OVER (PARTITION BY ...) query
+        // pay an extra per-row byte load and a wider map entry it can never read.
+        //
+        // The cost is not marginal: Unordered4Map sizes entries as align4b(4 + valueSize), so
+        // a 9th value byte pushes them 12 -> 16 bytes; Unordered8Map (align8b(8 + valueSize))
+        // goes 16 -> 24.
+        Assert.assertEquals(
+                "non-live-view first_value(DOUBLE) value layout must stay [DOUBLE]",
+                1,
+                FirstValueDoubleWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES.getColumnCount()
+        );
+        Assert.assertEquals(
+                ColumnType.DOUBLE,
+                FirstValueDoubleWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES.getColumnType(0)
+        );
+        Assert.assertEquals(
+                "non-live-view first_value(LONG) value layout must stay [LONG]",
+                1,
+                FirstValueLongWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES.getColumnCount()
+        );
+        Assert.assertEquals(
+                ColumnType.LONG,
+                FirstValueLongWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES.getColumnType(0)
+        );
+
+        // The live-view layout keeps both extra bytes: the initialized flag at slot 1 (read
+        // only behind the liveView gate) and the tombstone at slot 2 (anchor-driven compaction).
+        Assert.assertEquals(3, FirstValueDoubleWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES_LV.getColumnCount());
+        Assert.assertEquals(ColumnType.DOUBLE, FirstValueDoubleWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES_LV.getColumnType(0));
+        Assert.assertEquals(ColumnType.BYTE, FirstValueDoubleWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES_LV.getColumnType(1));
+        Assert.assertEquals(ColumnType.BYTE, FirstValueDoubleWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES_LV.getColumnType(2));
+        Assert.assertEquals(3, FirstValueLongWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES_LV.getColumnCount());
+        Assert.assertEquals(ColumnType.LONG, FirstValueLongWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES_LV.getColumnType(0));
+        Assert.assertEquals(ColumnType.BYTE, FirstValueLongWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES_LV.getColumnType(1));
+        Assert.assertEquals(ColumnType.BYTE, FirstValueLongWindowFunctionFactory.FIRST_VALUE_COLUMN_TYPES_LV.getColumnType(2));
+    }
+
+    @Test
     public void testLastNotNullOverPartitionRangeFuzz() throws Exception {
         fuzzTestBase(
                 TestUtils.generateRandom(LOG),
@@ -357,7 +416,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                             TestDefaults.createLongFunction(x -> x.getLong(2)),
                             TestDefaults.createMemoryCARW(),
                             2,
-                            0
+                            0,
+                            null,
+                            false,
+                            configuration
                     );
                 },
                 (a, b) -> a
@@ -389,7 +451,9 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                             rangeLo,
                             rangeHi,
                             TestDefaults.createLongFunction(x -> x.getLong(2)),
-                            TestDefaults.createMemoryCARW()
+                            TestDefaults.createMemoryCARW(),
+                            null,
+                            false
                     );
                 },
                 (a, b) -> a
@@ -474,7 +538,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                             TestDefaults.createLongFunction(x -> x.getLong(2)),
                             TestDefaults.createMemoryCARW(),
                             2,
-                            0
+                            0,
+                            null,
+                            false,
+                            configuration
                     );
                 },
                 (a, b) -> a
@@ -504,7 +571,9 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                             rangeLo,
                             rangeHi,
                             TestDefaults.createLongFunction(x -> x.getLong(2)),
-                            TestDefaults.createMemoryCARW()
+                            TestDefaults.createMemoryCARW(),
+                            null,
+                            false
                     );
                 },
                 (a, b) -> a
@@ -559,6 +628,49 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaxMinValueLayoutHasNoLiveViewFlagOutsideLiveView() {
+        // The live-view ANCHOR contract needs resetPartition to re-arm a partition without
+        // deleting its entry: MapValue.isNew() flips on first access and is too coarse for
+        // repeated resets within one partition. What says "re-armed" is the value slot's own
+        // null sentinel - NaN or LONG_NULL - which no contributing row can write, so the two
+        // layouts differ by the tombstone byte alone.
+        //
+        // That byte belongs to the live-view layout ONLY. resetPartition never runs outside a live
+        // view - a live view drives the ZERO_PASS streaming factory, and LiveViewWindow is the sole
+        // dispatcher of resetPartition - so carrying the byte in the shared layout would make every
+        // ordinary max()/min() OVER (PARTITION BY ...) query pay for a flag it can never read: an
+        // extra per-row byte load plus a wider map entry on a hot path, for nothing. Unordered8Map
+        // sizes entries as align8b(8 + valueSize), so a 9th value byte pushes them 16 -> 24 bytes;
+        // Unordered4Map (align4b(4 + valueSize)) goes 12 -> 16.
+        //
+        // Pin both layouts so the live-view byte cannot leak back into the shared one. min() reuses
+        // these same constants (MinDouble/MinLong delegate to the Max factories), so this covers it.
+        Assert.assertEquals(
+                "non-live-view max/min(DOUBLE) value layout must stay [DOUBLE]",
+                1,
+                MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES.getColumnCount()
+        );
+        Assert.assertEquals(ColumnType.DOUBLE, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES.getColumnType(0));
+        Assert.assertEquals(
+                "non-live-view max/min(LONG) value layout must stay [LONG]",
+                1,
+                MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES.getColumnCount()
+        );
+        Assert.assertEquals(ColumnType.LONG, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES.getColumnType(0));
+
+        // The live-view layout keeps both extra bytes: the initialized flag at slot 1 (read only
+        // behind the liveView gate) and the tombstone at slot 2 (anchor-driven map compaction).
+        Assert.assertEquals(3, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnCount());
+        Assert.assertEquals(ColumnType.DOUBLE, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(0));
+        Assert.assertEquals(ColumnType.BYTE, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(1));
+        Assert.assertEquals(ColumnType.BYTE, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(2));
+        Assert.assertEquals(3, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnCount());
+        Assert.assertEquals(ColumnType.LONG, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(0));
+        Assert.assertEquals(ColumnType.BYTE, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(1));
+        Assert.assertEquals(ColumnType.BYTE, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(2));
+    }
+
+    @Test
     public void testMaxOverPartitionRangeFuzz() throws Exception {
         fuzzTestBase(
                 TestUtils.generateRandom(LOG),
@@ -580,7 +692,9 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         2,
                         0,
                         MaxDoubleWindowFunctionFactory.GREATER_THAN,
-                        MaxDoubleWindowFunctionFactory.NAME
+                        MaxDoubleWindowFunctionFactory.NAME,
+                        null,
+                        false
                 ),
                 Double::max
         );
@@ -600,8 +714,11 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 configuration.getSqlWindowInitialRangeBufferSize(),
                 0,
                 MaxDoubleWindowFunctionFactory.GREATER_THAN,
-                MaxDoubleWindowFunctionFactory.NAME
+                MaxDoubleWindowFunctionFactory.NAME,
+                null,
+                false
         );
+        f.reopen();
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1, 2, (long) 1));
         Assert.assertEquals(Double.NaN, f.getDouble(null), 0);
 
@@ -632,7 +749,9 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         TestDefaults.createMemoryCARW(),
                         TestDefaults.createMemoryCARW(),
                         MaxDoubleWindowFunctionFactory.GREATER_THAN,
-                        MaxDoubleWindowFunctionFactory.NAME
+                        MaxDoubleWindowFunctionFactory.NAME,
+                        null,
+                        false
                 ),
                 Double::max
         );
@@ -704,6 +823,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 MaxDoubleWindowFunctionFactory.GREATER_THAN,
                 MaxDoubleWindowFunctionFactory.NAME
         );
+        f.reopen();
         long a = -1930193130;
         long b = -1137976524;
         long c = -1137976524;
@@ -727,8 +847,11 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 2,
                 0,
                 MaxDoubleWindowFunctionFactory.GREATER_THAN,
-                MaxDoubleWindowFunctionFactory.NAME
+                MaxDoubleWindowFunctionFactory.NAME,
+                null,
+                false
         );
+        f.reopen();
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1472, 6, (long) 1));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 15169, 6, (long) 2));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 18579, 6, (long) 3));
@@ -751,8 +874,11 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 1024,
                 0,
                 MaxDoubleWindowFunctionFactory.GREATER_THAN,
-                MaxDoubleWindowFunctionFactory.NAME
+                MaxDoubleWindowFunctionFactory.NAME,
+                null,
+                false
         );
+        f.reopen();
         long a = -1930193130;
         long b = -1137976524;
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 46, 19, a));
@@ -782,7 +908,9 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         2,
                         0,
                         MinDoubleWindowFunctionFactory.LESS_THAN,
-                        MinDoubleWindowFunctionFactory.NAME
+                        MinDoubleWindowFunctionFactory.NAME,
+                        null,
+                        false
                 ),
                 Double::min
         );
@@ -802,8 +930,11 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 configuration.getSqlWindowInitialRangeBufferSize(),
                 0,
                 MinDoubleWindowFunctionFactory.LESS_THAN,
-                MinDoubleWindowFunctionFactory.NAME
+                MinDoubleWindowFunctionFactory.NAME,
+                null,
+                false
         );
+        f.reopen();
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1, 2, (long) 1));
         Assert.assertEquals(Double.NaN, f.getDouble(null), 0);
 
@@ -834,7 +965,9 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         TestDefaults.createMemoryCARW(),
                         TestDefaults.createMemoryCARW(),
                         MinDoubleWindowFunctionFactory.LESS_THAN,
-                        MinDoubleWindowFunctionFactory.NAME
+                        MinDoubleWindowFunctionFactory.NAME,
+                        null,
+                        false
                 ),
                 Double::min
         );
@@ -906,6 +1039,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 MinDoubleWindowFunctionFactory.LESS_THAN,
                 MinDoubleWindowFunctionFactory.NAME
         );
+        f.reopen();
         long a = -1930193130;
         long b = -1137976524;
         long c = -1137976524;
@@ -929,8 +1063,11 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 2,
                 0,
                 MinDoubleWindowFunctionFactory.LESS_THAN,
-                MinDoubleWindowFunctionFactory.NAME
+                MinDoubleWindowFunctionFactory.NAME,
+                null,
+                false
         );
+        f.reopen();
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1472, 6, (long) 1));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 15169, 6, (long) 2));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 18579, 6, (long) 3));
@@ -953,8 +1090,11 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 1024,
                 0,
                 MinDoubleWindowFunctionFactory.LESS_THAN,
-                MinDoubleWindowFunctionFactory.NAME
+                MinDoubleWindowFunctionFactory.NAME,
+                null,
+                false
         );
+        f.reopen();
         long a = -1930193130;
         long b = -1137976524;
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 46, 19, a));
@@ -973,8 +1113,12 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 TestDefaults.createLongFunction(x -> x.getLong(2)),
                 TestDefaults.createMemoryCARW(),
                 1024,
-                0
+                0,
+                null,
+                false,
+                configuration
         );
+        f.reopen();
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1, 2, (long) 1));
         Assert.assertEquals(Double.NaN, f.getDouble(null), 0);
 
@@ -995,6 +1139,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 TestDefaults.createMemoryCARW(),
                 0
         );
+        f.reopen();
         long a = -1930193130;
         long b = -1137976524;
         long c = -1137976524;
@@ -1015,8 +1160,12 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 TestDefaults.createLongFunction(x -> x.getLong(2)),
                 TestDefaults.createMemoryCARW(),
                 2,
-                0
+                0,
+                null,
+                false,
+                configuration
         );
+        f.reopen();
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1472, 6, (long) 1));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 15169, 6, (long) 2));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 18579, 6, (long) 3));
@@ -1036,8 +1185,12 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 TestDefaults.createLongFunction(x -> x.getLong(2)),
                 TestDefaults.createMemoryCARW(),
                 1024,
-                0
+                0,
+                null,
+                false,
+                configuration
         );
+        f.reopen();
         long a = -1930193130;
         long b = -1137976524;
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 46, 19, a));
@@ -1081,6 +1234,11 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
         }
 
         try (BaseWindowFunction f = windowFunctionFactory.apply(rangeLo, rangeHi)) {
+            // Partition functions construct with a closed (lazy) map; reopen as the
+            // owning window cursor would before driving the function.
+            if (f instanceof Reopenable) {
+                ((Reopenable) f).reopen();
+            }
             for (int s = 0; s < records.length; s++) {
                 try {
                     f.computeNext(records[s]);
@@ -1160,6 +1318,11 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
         }
 
         try (BaseWindowFunction f = windowFunctionFactory.apply(rangeLo, rangeHi)) {
+            // Partition functions construct with a closed (lazy) map; reopen as the
+            // owning window cursor would before driving the function.
+            if (f instanceof Reopenable) {
+                ((Reopenable) f).reopen();
+            }
             for (int s = 0; s < records.length; s++) {
                 try {
                     f.computeNext(records[s]);

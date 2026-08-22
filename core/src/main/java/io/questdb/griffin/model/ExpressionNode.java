@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -59,6 +59,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public boolean innerPredicate = false;
     public int intrinsicValue = IntrinsicModel.UNDEFINED;
     public boolean isConstantExpression;
+    public int lateralDepth;
     public ExpressionNode lhs;
     // The expression parser (ExpressionParser.onNode) guarantees:
     // - paramCount == 1: rhs is non-null, lhs is null.
@@ -68,8 +69,16 @@ public class ExpressionNode implements Mutable, Sinkable {
     public int paramCount;
     public int position;
     public int precedence;
-    public QueryModel queryModel;
+    public IQueryModel queryModel;
     public ExpressionNode rhs;
+    // Compile-time link (like intrinsicValue): set on a scalar sub-query QUERY node used as a
+    // designated-timestamp pruning bound, so the residual filter re-compiled from this same node
+    // reads the pruning bound's single frozen value instead of opening the sub-query again.
+    public ScalarTimestampBoundHolder scalarBoundHolder;
+    // Compile-time link (like scalarBoundHolder): set on a scalar sub-query QUERY node whose
+    // speculative pruning-bound compile was declined, so the residual filter re-compiled from this
+    // same node reuses that already-generated sub-query instead of generating it a second time.
+    public ScalarSubQueryCompileCache scalarBoundCompileCache;
     public CharSequence token;
     public int type;
     public WindowExpression windowExpression;
@@ -88,6 +97,45 @@ public class ExpressionNode implements Mutable, Sinkable {
         return (a.type == FUNCTION || a.type == LITERAL ? Chars.equalsIgnoreCase(a.token, b.token) : Chars.equals(a.token, b.token))
                 && compareArgsExact(a, b)
                 && compareWindowExpressions(a.windowExpression, b.windowExpression);
+    }
+
+    public static boolean compareNodesGroupBy(
+            ExpressionNode groupByExpr,
+            ExpressionNode columnExpr,
+            IQueryModel translatingModel
+    ) {
+        if (groupByExpr == null && columnExpr == null) {
+            return true;
+        }
+
+        if (groupByExpr == null || columnExpr == null || groupByExpr.type != columnExpr.type) {
+            return false;
+        }
+
+        if (!Chars.equals(groupByExpr.token, columnExpr.token)) {
+            int index = translatingModel.getAliasToColumnMap().keyIndex(columnExpr.token);
+            if (index > -1) {
+                return false;
+            }
+
+            final QueryColumn qc = translatingModel.getAliasToColumnMap().valueAt(index);
+            final CharSequence tok = groupByExpr.token;
+            final CharSequence qcTok = qc.getAst().token;
+            if (Chars.equals(qcTok, tok)) {
+                return true;
+            }
+
+            int dot = Chars.indexOfLastUnquoted(tok, '.');
+            if (dot > -1
+                    && translatingModel.getModelAliasIndex(tok, 0, dot) > -1
+                    && Chars.equals(qcTok, tok, dot + 1, tok.length())) {
+                return compareArgs(groupByExpr, columnExpr, translatingModel);
+            }
+
+            return false;
+        }
+
+        return compareArgs(groupByExpr, columnExpr, translatingModel);
     }
 
     public static boolean compareWindowExpressions(WindowExpression a, WindowExpression b) {
@@ -140,6 +188,38 @@ public class ExpressionNode implements Mutable, Sinkable {
             }
         }
         return true;
+    }
+
+    public static ExpressionNode deepClone(final ObjectPool<ExpressionNode> pool, final ExpressionNode node) {
+        if (node == null) {
+            return null;
+        }
+        ExpressionNode copy = pool.next();
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            copy.args.add(ExpressionNode.deepClone(pool, node.args.get(i)));
+        }
+        copy.token = node.token;
+        copy.queryModel = node.queryModel;
+        copy.precedence = node.precedence;
+        copy.position = node.position;
+        copy.lhs = ExpressionNode.deepClone(pool, node.lhs);
+        copy.rhs = ExpressionNode.deepClone(pool, node.rhs);
+        copy.type = node.type;
+        copy.paramCount = node.paramCount;
+        copy.intrinsicValue = node.intrinsicValue;
+        // shared by reference on purpose: every re-compile of this sub-query node - including ones
+        // fed a cloned filter expression - must read the same frozen pruning-bound value
+        copy.scalarBoundHolder = node.scalarBoundHolder;
+        // shared by reference like scalarBoundHolder: whichever clone is compiled first claims the
+        // parked compile, and later clones (per-worker filters) find the slot empty and generate
+        // their own copy, which they need anyway - a sub-query factory is not thread-safe
+        copy.scalarBoundCompileCache = node.scalarBoundCompileCache;
+        copy.isConstantExpression = node.isConstantExpression;
+        copy.innerPredicate = node.innerPredicate;
+        copy.implemented = node.implemented;
+        copy.windowExpression = node.windowExpression; // shallow copy - WindowColumn is pooled
+        copy.lateralDepth = node.lateralDepth;
+        return copy;
     }
 
     /**
@@ -208,69 +288,6 @@ public class ExpressionNode implements Mutable, Sinkable {
         return hash;
     }
 
-    public static boolean compareNodesGroupBy(
-            ExpressionNode groupByExpr,
-            ExpressionNode columnExpr,
-            QueryModel translatingModel
-    ) {
-        if (groupByExpr == null && columnExpr == null) {
-            return true;
-        }
-
-        if (groupByExpr == null || columnExpr == null || groupByExpr.type != columnExpr.type) {
-            return false;
-        }
-
-        if (!Chars.equals(groupByExpr.token, columnExpr.token)) {
-            int index = translatingModel.getAliasToColumnMap().keyIndex(columnExpr.token);
-            if (index > -1) {
-                return false;
-            }
-
-            final QueryColumn qc = translatingModel.getAliasToColumnMap().valueAt(index);
-            final CharSequence tok = groupByExpr.token;
-            final CharSequence qcTok = qc.getAst().token;
-            if (Chars.equals(qcTok, tok)) {
-                return true;
-            }
-
-            int dot = Chars.indexOfLastUnquoted(tok, '.');
-            if (dot > -1
-                    && translatingModel.getModelAliasIndex(tok, 0, dot) > -1
-                    && Chars.equals(qcTok, tok, dot + 1, tok.length())) {
-                return compareArgs(groupByExpr, columnExpr, translatingModel);
-            }
-
-            return false;
-        }
-
-        return compareArgs(groupByExpr, columnExpr, translatingModel);
-    }
-
-    public static ExpressionNode deepClone(final ObjectPool<ExpressionNode> pool, final ExpressionNode node) {
-        if (node == null) {
-            return null;
-        }
-        ExpressionNode copy = pool.next();
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            copy.args.add(ExpressionNode.deepClone(pool, node.args.get(i)));
-        }
-        copy.token = node.token;
-        copy.queryModel = node.queryModel;
-        copy.precedence = node.precedence;
-        copy.position = node.position;
-        copy.lhs = ExpressionNode.deepClone(pool, node.lhs);
-        copy.rhs = ExpressionNode.deepClone(pool, node.rhs);
-        copy.type = node.type;
-        copy.paramCount = node.paramCount;
-        copy.intrinsicValue = node.intrinsicValue;
-        copy.isConstantExpression = node.isConstantExpression;
-        copy.innerPredicate = node.innerPredicate;
-        copy.implemented = node.implemented;
-        copy.windowExpression = node.windowExpression; // shallow copy - WindowColumn is pooled
-        return copy;
-    }
-
     @Override
     public void clear() {
         args.clear();
@@ -287,6 +304,9 @@ public class ExpressionNode implements Mutable, Sinkable {
         innerPredicate = false;
         implemented = false;
         windowExpression = null;
+        lateralDepth = 0;
+        scalarBoundHolder = null;
+        scalarBoundCompileCache = null;
     }
 
     public ExpressionNode copyFrom(final ExpressionNode other) {
@@ -303,9 +323,12 @@ public class ExpressionNode implements Mutable, Sinkable {
         this.type = other.type;
         this.paramCount = other.paramCount;
         this.intrinsicValue = other.intrinsicValue;
+        this.scalarBoundHolder = other.scalarBoundHolder;
+        this.scalarBoundCompileCache = other.scalarBoundCompileCache;
         this.isConstantExpression = other.isConstantExpression;
         this.innerPredicate = other.innerPredicate;
         this.windowExpression = other.windowExpression;
+        this.lateralDepth = other.lateralDepth;
         return this;
     }
 
@@ -609,7 +632,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     private static boolean compareArgs(
             ExpressionNode groupByExpr,
             ExpressionNode columnExpr,
-            QueryModel translatingModel
+            IQueryModel translatingModel
     ) {
         final int groupByArgsSize = groupByExpr.args.size();
         final int selectNodeArgsSize = columnExpr.args.size();

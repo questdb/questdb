@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -46,6 +46,16 @@ class MaterializedRecord implements Record {
     @Override
     public ArrayView getArray(int col, int columnType) {
         return baseRecord.getArray(col, columnType);
+    }
+
+    @Override
+    public int getArrayDimLen(int col, int columnType, int dim) {
+        return baseRecord.getArrayDimLen(col, columnType, dim);
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+        return baseRecord.getArrayDouble1d2d(col, columnType, idx0, idx1);
     }
 
     @Override

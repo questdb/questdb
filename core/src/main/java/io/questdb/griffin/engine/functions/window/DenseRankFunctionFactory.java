@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -69,6 +69,7 @@ public class DenseRankFunctionFactory extends AbstractWindowFunctionFactory {
                         windowContext.getPartitionBySink(),
                         configuration,
                         true,
+                        windowContext.isLiveView(),
                         NAME);
             } else {
                 // Rank() over (order by xxx)

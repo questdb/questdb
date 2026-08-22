@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.std.LongList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -43,6 +44,36 @@ public interface PartitionFrameCursor extends QuietCloseable, SymbolTableSource 
      * @return the table reader
      */
     TableReader getTableReader();
+
+    /**
+     * The designated-timestamp intervals this cursor confines its frames to, or null when
+     * it applies no interval filter or cannot describe the one it applies. Flat (lo, hi)
+     * pairs in the timestamp column's own units, CLOSED at both ends, ascending and
+     * disjoint; an EMPTY list means the filter admits nothing, which is distinct from the
+     * null "no filter" answer.
+     * <p>
+     * A caller may only rely on this together with {@link #hasIntervalFilter()}: a non-null
+     * list means the cursor's rows are exactly the table rows whose timestamp falls in one
+     * of these intervals, so a caller holding rows of its own can apply the same filter to
+     * them and stay row-for-row consistent with the scan.
+     * <p>
+     * The list belongs to the cursor and is not a copy: an implementation may re-point or
+     * rewrite it on the next {@code of()} / {@code getCursor()}. Read it, or copy it, before
+     * reopening the cursor.
+     */
+    default @Nullable LongList getIntervals() {
+        return null;
+    }
+
+    /**
+     * Returns true if this cursor applies interval filtering to partitions.
+     * When true, the cursor may produce narrowed row ranges per partition
+     * and skip partitions entirely, making page frame counts unpredictable
+     * from metadata alone.
+     */
+    default boolean hasIntervalFilter() {
+        return false;
+    }
 
     /**
      * @return the next element in the partition frame
@@ -73,6 +104,18 @@ public interface PartitionFrameCursor extends QuietCloseable, SymbolTableSource 
      */
     default boolean supportsSizeCalculation() {
         return false;
+    }
+
+    /**
+     * Positions the cursor at the given partition index. The next call to
+     * {@link #next(long)} will return the frame for this partition. Iteration
+     * is limited to this single partition — subsequent {@link #next(long)}
+     * calls return {@code null} once the partition is exhausted.
+     *
+     * @param partitionIndex the target partition index
+     */
+    default void toPartition(int partitionIndex) {
+        throw new UnsupportedOperationException();
     }
 
     /**

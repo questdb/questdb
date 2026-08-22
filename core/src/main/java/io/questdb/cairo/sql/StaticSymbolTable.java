@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -29,4 +29,9 @@ public interface StaticSymbolTable extends SymbolTable, SymbolLookup {
     boolean containsNullValue();
 
     int getSymbolCount();
+
+    @Override
+    default boolean supportsKeyValueAccess() {
+        return true;
+    }
 }

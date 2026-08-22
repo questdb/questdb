@@ -3,6 +3,7 @@ use std::slice;
 use crate::parquet::error::fmt_err;
 use crate::parquet::error::ParquetResult;
 use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY};
+use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::KeyValue;
 use parquet2::metadata::SchemaDescriptor;
@@ -13,22 +14,44 @@ use parquet2::schema::types::{
 };
 use parquet2::schema::Repetition;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
+use qdb_parquet_meta::SeqTxn;
+
+/// Bit 30 of the JNI `column_type` integer marks the designated-timestamp column
+/// as carrying a 16-byte-strided merge index (`(i64 ts, i64 rowId)` per entry)
+/// rather than a contiguous `[i64]`. Set by the Java O3 merge path; consumed by
+/// `Column::from_raw_data`.
+///
+/// Mirrored on the Java side as
+/// `io.questdb.cairo.O3PartitionJob.PARQUET_TIMESTAMP_STRIDED_16` — keep in sync.
+pub const COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT: i32 = 0x4000_0000;
+
+/// Mask of the low 30 bits of the JNI `column_type` integer that hold the
+/// actual QuestDB column type id. Bit 31 carries the `not_null_hint` flag and
+/// bit 30 carries [`COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT`].
+pub const COLUMN_TYPE_ID_MASK: i32 = 0x3FFF_FFFF;
 
 pub fn column_type_to_parquet_type(
     column_id: i32,
     column_name: &str,
     column_type: ColumnType,
     designated_timestamp: bool,
-    required: bool,
     raw_array_encoding: bool,
 ) -> ParquetResult<ParquetType> {
     let name = column_name.to_string();
-    // Types that don't have null values in QuestDB always use Required repetition
-    let is_notnull_type = matches!(
-        column_type.tag(),
-        ColumnTypeTag::Boolean | ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char
-    );
-    let repetition = if designated_timestamp || required || is_notnull_type {
+    // BOOLEAN/BYTE/SHORT/CHAR have no in-band null sentinel in QuestDB, but they are declared
+    // Optional so that rows in the column-top region can be flagged as parquet-NULL via
+    // def-level = 0. Without this, an ALTER from one of these types to a nullable target
+    // (e.g. SHORT -> INT, BOOLEAN -> INT) cannot distinguish a real value 0/false from a
+    // column-top row, and the latter would materialise as 0 instead of the target's null
+    // sentinel -- diverging from native ALTER. Only the designated timestamp stays Required
+    // (it is never null). For BOOLEAN the bit-packed value stream stores non-null rows only;
+    // see encoders::plain::encode_boolean_nullable.
+    //
+    // Symbol columns are always Optional even when Column::not_null_hint is true (no
+    // nulls). The `not_null_hint` flag is only a write-time hint that lets the encoder
+    // emit a fast all-ones RLE run for definition levels instead of computing
+    // per-row values. See encoders::symbol::encode().
+    let repetition = if designated_timestamp {
         Repetition::Required
     } else {
         Repetition::Optional
@@ -63,7 +86,7 @@ pub fn column_type_to_parquet_type(
             name,
             PhysicalType::Int32,
             repetition,
-            Some(PrimitiveConvertedType::Int16),
+            Some(PrimitiveConvertedType::Uint16),
             Some(PrimitiveLogicalType::Integer(IntegerType::UInt16)),
             Some(column_id),
         )?),
@@ -145,16 +168,17 @@ pub fn column_type_to_parquet_type(
             None,
             Some(column_id),
         )?),
-        ColumnTypeTag::String | ColumnTypeTag::Symbol | ColumnTypeTag::Varchar => {
-            Ok(ParquetType::try_from_primitive(
-                name,
-                PhysicalType::ByteArray,
-                repetition,
-                Some(PrimitiveConvertedType::Utf8),
-                Some(PrimitiveLogicalType::String),
-                Some(column_id),
-            )?)
-        }
+        ColumnTypeTag::String
+        | ColumnTypeTag::Symbol
+        | ColumnTypeTag::Varchar
+        | ColumnTypeTag::VarcharSlice => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::ByteArray,
+            repetition,
+            Some(PrimitiveConvertedType::Utf8),
+            Some(PrimitiveLogicalType::String),
+            Some(column_id),
+        )?),
         ColumnTypeTag::Array => {
             if raw_array_encoding {
                 // encode in native QDB array format
@@ -198,7 +222,7 @@ pub fn column_type_to_parquet_type(
                     );
                     if i < dim - 1 {
                         root_type = ParquetType::from_group(
-                            "list".to_string(),
+                            "element".to_string(),
                             Repetition::Required,
                             Some(GroupConvertedType::List),
                             Some(GroupLogicalType::List),
@@ -280,7 +304,7 @@ pub fn column_type_to_parquet_type(
             name,
             PhysicalType::Int32,
             repetition,
-            None,
+            Some(PrimitiveConvertedType::Uint32),
             Some(PrimitiveLogicalType::Integer(IntegerType::UInt32)),
             Some(column_id),
         )?),
@@ -324,10 +348,35 @@ pub struct Column {
     pub secondary_data: &'static [u8],
     pub symbol_offsets: &'static [u64],
     pub designated_timestamp: bool,
-    /// Passed by QuestDB during writes to indicate that the column contains no null values.
-    /// Currently only Symbol dataType columns support this flag.
-    pub required: bool,
+    /// Hint from QuestDB indicating that the column currently contains no null values.
+    /// Only Symbol columns use this flag. It does NOT affect the parquet schema
+    /// Repetition (symbols are always Optional) — it only lets the encoder take a
+    /// fast path that writes an all-ones RLE run for definition levels instead of
+    /// computing per-row values.
+    pub not_null_hint: bool,
+    /// When true, `primary_data` is a 16-byte-strided merge index where each
+    /// entry is `(i64 timestamp, i64 rowId)` and only the timestamp at offset 0
+    /// is consumed. Set only on the designated timestamp column when QuestDB
+    /// hands its O3 merge index directly to the encoder. Lets the encoder read
+    /// timestamps in place without a Java-side malloc + scatter pass.
+    /// Respected by the Plain, DeltaBinaryPacked, and RleDictionary encode paths.
+    pub strided_timestamp_16: bool,
     pub designated_timestamp_ascending: bool,
+    pub parquet_encoding_config: ParquetEncodingConfig,
+}
+
+/// Tagged container that tells an encoder which physical layout backs the
+/// designated-timestamp column's primary data. Used purely as a dispatch
+/// label at the encoder entry: `match` once at the top, then call the
+/// generic inner encoder with a concrete (monomorphized) iterator type.
+#[derive(Clone, Copy, Debug)]
+pub enum TimestampValues<'a> {
+    /// `primary_data` reinterpreted as a contiguous `[i64; N]`.
+    Contiguous(&'a [i64]),
+    /// `primary_data` reinterpreted as `[(i64 ts, i64 rowId); N]`. The encoder
+    /// iterates `.iter().map(|p| p[0])` to pull timestamps; the second i64 is
+    /// the original O3 row id, irrelevant to encoding.
+    Strided16(&'a [[i64; 2]]),
 }
 
 impl Column {
@@ -343,40 +392,56 @@ impl Column {
         secondary_data_ptr: *const u8,
         secondary_data_size: usize,
         symbol_offsets_ptr: *const u64,
-        symbol_offsets_size: usize,
+        symbol_offsets_count: usize,
         designated_timestamp: bool,
         designated_timestamp_ascending: bool,
+        parquet_encoding_config: i32,
     ) -> ParquetResult<Self> {
-        assert!(
-            !primary_data_ptr.is_null() || primary_data_size == 0,
-            "primary_data_ptr inconsistent with primary_data_size"
-        );
-        assert!(
-            !secondary_data_ptr.is_null() || secondary_data_size == 0,
-            "secondary_data_ptr inconsistent with secondary_data_size"
-        );
-        assert!(
-            !symbol_offsets_ptr.is_null() || symbol_offsets_size == 0,
-            "symbol_offsets_ptr inconsistent with symbol_offsets_size"
-        );
+        if primary_data_ptr.is_null() && primary_data_size != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "from_raw_data: null primary_data_ptr with non-zero size {}",
+                primary_data_size
+            ));
+        }
+        if secondary_data_ptr.is_null() && secondary_data_size != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "from_raw_data: null secondary_data_ptr with non-zero size {}",
+                secondary_data_size
+            ));
+        }
+        if symbol_offsets_ptr.is_null() && symbol_offsets_count != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "from_raw_data: null symbol_offsets_ptr with non-zero count {}",
+                symbol_offsets_count
+            ));
+        }
 
-        let required = column_type < 0;
-        let column_type: ColumnType = (column_type & 0x7FFFFFFF).try_into()?;
+        let not_null_hint = column_type < 0;
+        // Bit 30: strided-timestamp flag (set by Java when handing the O3 merge
+        // index in place — primary_data is N * 16 bytes, ts at offset 0).
+        let strided_timestamp_16 = (column_type & COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT) != 0;
+        let column_type: ColumnType = (column_type & COLUMN_TYPE_ID_MASK).try_into()?;
 
         let primary_data = if primary_data_ptr.is_null() {
             &[]
         } else {
+            // SAFETY: JNI caller guarantees a valid pointer and length. Memory remains valid for the JNI call duration.
             unsafe { slice::from_raw_parts(primary_data_ptr, primary_data_size) }
         };
         let secondary_data = if secondary_data_ptr.is_null() {
             &[]
         } else {
+            // SAFETY: JNI caller guarantees a valid pointer and length. Memory remains valid for the JNI call duration.
             unsafe { slice::from_raw_parts(secondary_data_ptr, secondary_data_size) }
         };
         let symbol_offsets = if symbol_offsets_ptr.is_null() {
             &[]
         } else {
-            unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_size) }
+            // SAFETY: JNI caller guarantees a valid pointer and length. Memory remains valid for the JNI call duration.
+            unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_count) }
         };
 
         Ok(Column {
@@ -389,9 +454,58 @@ impl Column {
             secondary_data,
             symbol_offsets,
             designated_timestamp,
-            required,
+            not_null_hint,
+            strided_timestamp_16,
             designated_timestamp_ascending,
+            parquet_encoding_config: ParquetEncodingConfig::from_raw(parquet_encoding_config),
         })
+    }
+
+    /// Narrow a single-partition strided merge-index timestamp column to the
+    /// row-group window `[first, last)` selected by `write_chunk`.
+    ///
+    /// The strided timestamp encoder iterates its entire `primary_data`, so
+    /// when a partition is split across multiple row groups each row group must
+    /// receive only its own slice of the merge index; otherwise every row group
+    /// re-emits the whole timestamp column. The strided layout is always
+    /// single-partition with no column top, so the window is a plain sub-slice.
+    pub fn strided_row_group_slice(&self, first: usize, last: usize) -> ParquetResult<Column> {
+        debug_assert!(self.strided_timestamp_16);
+        const ENTRY_BYTES: usize = std::mem::size_of::<[i64; 2]>();
+        let row_count = self.primary_data.len() / ENTRY_BYTES;
+        if first > last || last > row_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "strided timestamp row-group bounds [{}, {}) out of range for {} rows",
+                first,
+                last,
+                row_count
+            ));
+        }
+        let mut sliced = *self;
+        sliced.primary_data = &self.primary_data[first * ENTRY_BYTES..last * ENTRY_BYTES];
+        sliced.row_count = last - first;
+        Ok(sliced)
+    }
+
+    /// Returns the timestamp values backing this column. Cheap O(1) — just a
+    /// reinterpret of `primary_data`. Callers gate on `data_type` being a
+    /// timestamp-shaped i64 column.
+    pub fn timestamp_values(&self) -> TimestampValues<'_> {
+        // SAFETY: Data originates from JNI/Java memory-mapped column data,
+        // which is page-aligned. The byte content represents valid `i64`s
+        // (or `[i64; 2]` entries when the strided flag is set).
+        unsafe {
+            if self.strided_timestamp_16 {
+                TimestampValues::Strided16(crate::parquet_write::util::transmute_slice(
+                    self.primary_data,
+                ))
+            } else {
+                TimestampValues::Contiguous(crate::parquet_write::util::transmute_slice(
+                    self.primary_data,
+                ))
+            }
+        }
     }
 }
 
@@ -403,6 +517,8 @@ pub struct Partition {
 pub fn to_parquet_schema(
     partition: &Partition,
     raw_array_encoding: bool,
+    squash_tracker: i64,
+    seq_txn: SeqTxn,
 ) -> ParquetResult<(SchemaDescriptor, Vec<KeyValue>)> {
     let parquet_types = partition
         .columns
@@ -413,7 +529,6 @@ pub fn to_parquet_schema(
                 c.name,
                 c.data_type,
                 c.designated_timestamp,
-                c.required,
                 raw_array_encoding,
             )
         })
@@ -427,6 +542,17 @@ pub fn to_parquet_schema(
             None
         };
 
+        let ascii = if column.data_type.tag() == ColumnTypeTag::Varchar
+            && !column.secondary_data.is_empty()
+        {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid values of the target type.
+            let aux: &[[u8; 16]] = unsafe { super::util::transmute_slice(column.secondary_data) };
+            Some(super::varchar::is_column_ascii(aux))
+        } else {
+            None
+        };
+
         let column_type = if column.designated_timestamp {
             column
                 .data_type
@@ -434,10 +560,17 @@ pub fn to_parquet_schema(
         } else {
             column.data_type
         };
-        qdb_meta
-            .schema
-            .push(QdbMetaCol { column_type, column_top: column.column_top, format });
+        qdb_meta.schema.push(QdbMetaCol {
+            column_type,
+            column_top: column.column_top,
+            format,
+            ascii,
+            id: Some(column.id),
+        });
     }
+
+    qdb_meta.squash_tracker = squash_tracker;
+    qdb_meta.seq_txn = seq_txn.get();
 
     let encoded_qdb_meta = qdb_meta.serialize()?;
     let questdb_keyval = KeyValue::new(QDB_META_KEY.to_string(), encoded_qdb_meta);
@@ -452,16 +585,775 @@ pub fn to_encodings(partition: &Partition) -> Vec<Encoding> {
     partition
         .columns
         .iter()
-        .map(|c| encoding_map(c.data_type))
+        .map(|c| {
+            if let Some(enc) = c.parquet_encoding_config.encoding() {
+                validate_encoding(c.data_type, enc)
+            } else if c.designated_timestamp {
+                validate_encoding(c.data_type, Encoding::DeltaBinaryPacked)
+            } else {
+                encoding_map(c.data_type)
+            }
+        })
         .collect()
 }
 
-fn encoding_map(data_type: ColumnType) -> Encoding {
+/// Check whether the given encoding_id is valid for the column type tag.
+/// encoding_id values: 0=DEFAULT, 1=PLAIN, 2=RLE_DICTIONARY,
+/// 3=DELTA_LENGTH_BYTE_ARRAY, 4=DELTA_BINARY_PACKED, 5=BYTE_STREAM_SPLIT.
+/// Returns true if encoding_id 0 (DEFAULT), or if the encoding is accepted
+/// by `validate_encoding` for the given column type tag.
+pub fn is_encoding_valid_for_column_tag(encoding_id: i32, col_type_tag: i32) -> bool {
+    if encoding_id == 0 {
+        return true;
+    }
+    let encoding = match encoding_id {
+        1 => Encoding::Plain,
+        2 => Encoding::RleDictionary,
+        3 => Encoding::DeltaLengthByteArray,
+        4 => Encoding::DeltaBinaryPacked,
+        5 => Encoding::ByteStreamSplit,
+        _ => return false,
+    };
+    let tag = match ColumnTypeTag::try_from(col_type_tag as u8) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    let col_type = ColumnType::new(tag, 0);
+    validate_encoding(col_type, encoding) == encoding
+}
+
+/// Validate that the given encoding is supported for the column type.
+/// Falls back to the default encoding if the combination is unsupported.
+fn validate_encoding(data_type: ColumnType, encoding: Encoding) -> Encoding {
+    let valid = match encoding {
+        Encoding::Plain => !matches!(
+            data_type.tag(),
+            ColumnTypeTag::Symbol | ColumnTypeTag::Varchar
+        ),
+        Encoding::RleDictionary => !matches!(
+            data_type.tag(),
+            ColumnTypeTag::Boolean | ColumnTypeTag::Array
+        ),
+        Encoding::DeltaLengthByteArray => matches!(
+            data_type.tag(),
+            ColumnTypeTag::String | ColumnTypeTag::Binary | ColumnTypeTag::Varchar
+        ),
+        Encoding::DeltaBinaryPacked => matches!(
+            data_type.tag(),
+            ColumnTypeTag::Byte
+                | ColumnTypeTag::Short
+                | ColumnTypeTag::Char
+                | ColumnTypeTag::Int
+                | ColumnTypeTag::Long
+                | ColumnTypeTag::Date
+                | ColumnTypeTag::Timestamp
+                | ColumnTypeTag::IPv4
+                | ColumnTypeTag::GeoByte
+                | ColumnTypeTag::GeoShort
+                | ColumnTypeTag::GeoInt
+                | ColumnTypeTag::GeoLong
+        ),
+        _ => false,
+    };
+    if valid {
+        encoding
+    } else {
+        encoding_map(data_type)
+    }
+}
+
+pub fn to_compressions(partition: &Partition) -> Vec<Option<CompressionOptions>> {
+    partition
+        .columns
+        .iter()
+        .map(|c| c.parquet_encoding_config.compression())
+        .collect()
+}
+
+/// Packed per-column parquet encoding config from Java.
+///
+/// Bit layout (i32):
+/// - Bits 0-7: encoding id (matches ParquetEncoding.ENCODING_* on the Java side)
+/// - Bits 8-15: compression codec id (matches ParquetCompression constants, offset +1)
+/// - Bits 16-23: compression level
+/// - Bit 24: explicit flag (1 = user-specified override, 0 = use defaults)
+/// - Bit 25: bloom filter flag (1 = column should have a bloom filter)
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ParquetEncodingConfig(i32);
+
+const ENCODING_MASK: u32 = 0xFF;
+const COMPRESSION_SHIFT: u32 = 8;
+const COMPRESSION_MASK: u32 = 0xFF;
+const LEVEL_SHIFT: u32 = 16;
+const LEVEL_MASK: u32 = 0xFF;
+const EXPLICIT_FLAG: u32 = 1 << 24;
+
+impl ParquetEncodingConfig {
+    /// Create a config from the raw packed i32 received from JNI.
+    pub fn from_raw(raw: i32) -> Self {
+        Self(raw)
+    }
+
+    /// Build an explicit config from encoding, compression, and semantic level.
+    /// The level is packed with +1 offset (0 = not set sentinel, 1 = level 0, etc.),
+    /// matching the Java packing convention. Pass -1 for "no level specified".
+    #[cfg(test)]
+    pub fn new(encoding: i32, compression: i32, level: i32) -> Self {
+        let packed_level = if level >= 0 { (level + 1) as u32 } else { 0u32 };
+        Self(
+            ((encoding as u32 & ENCODING_MASK)
+                | ((compression as u32 & COMPRESSION_MASK) << COMPRESSION_SHIFT)
+                | ((packed_level & LEVEL_MASK) << LEVEL_SHIFT)
+                | EXPLICIT_FLAG) as i32,
+        )
+    }
+
+    /// Return the raw packed i32 value.
+    pub fn raw(self) -> i32 {
+        self.0
+    }
+
+    /// Whether the config was explicitly set by the user.
+    pub fn is_explicit(self) -> bool {
+        (self.0 as u32 & EXPLICIT_FLAG) != 0
+    }
+
+    /// Extract per-column encoding override.
+    /// Returns None if the config uses default encoding (encoding byte == 0 or not explicitly set).
+    pub fn encoding(self) -> Option<Encoding> {
+        if !self.is_explicit() {
+            return None;
+        }
+        let encoding_id = self.0 as u32 & ENCODING_MASK;
+        match encoding_id {
+            0 => None, // default
+            1 => Some(Encoding::Plain),
+            2 => Some(Encoding::RleDictionary),
+            3 => Some(Encoding::DeltaLengthByteArray),
+            4 => Some(Encoding::DeltaBinaryPacked),
+            5 => Some(Encoding::ByteStreamSplit),
+            _ => None,
+        }
+    }
+
+    /// Extract per-column compression override.
+    /// Returns None if the config uses default/global compression.
+    pub fn compression(self) -> Option<CompressionOptions> {
+        if !self.is_explicit() {
+            return None;
+        }
+        let codec_id = (self.0 as u32 >> COMPRESSION_SHIFT) & COMPRESSION_MASK;
+        let level = (self.0 as u32 >> LEVEL_SHIFT) & LEVEL_MASK;
+        match codec_id {
+            0 => None, // use global default
+            1 => Some(CompressionOptions::Uncompressed),
+            2 => Some(CompressionOptions::Snappy),
+            3 => Some(CompressionOptions::Gzip(
+                parquet2::compression::GzipLevel::try_new(if level > 0 {
+                    (level - 1) as u8
+                } else {
+                    6
+                })
+                .ok(),
+            )),
+            4 => Some(CompressionOptions::Brotli(
+                parquet2::compression::BrotliLevel::try_new(if level > 0 { level - 1 } else { 1 })
+                    .ok(),
+            )),
+            5 => Some(CompressionOptions::Zstd(
+                parquet2::compression::ZstdLevel::try_new(if level > 0 {
+                    (level - 1) as i32
+                } else {
+                    1
+                })
+                .ok(),
+            )),
+            6 => Some(CompressionOptions::Lz4Raw),
+            _ => None,
+        }
+    }
+}
+
+impl From<i32> for ParquetEncodingConfig {
+    fn from(raw: i32) -> Self {
+        Self::from_raw(raw)
+    }
+}
+
+pub(crate) fn encoding_map(data_type: ColumnType) -> Encoding {
     match data_type.tag() {
         ColumnTypeTag::Symbol => Encoding::RleDictionary,
-        ColumnTypeTag::Binary => Encoding::DeltaLengthByteArray,
-        ColumnTypeTag::String => Encoding::DeltaLengthByteArray,
-        ColumnTypeTag::Varchar => Encoding::DeltaLengthByteArray,
+        ColumnTypeTag::Binary | ColumnTypeTag::Varchar | ColumnTypeTag::String => {
+            Encoding::DeltaLengthByteArray
+        }
         _ => Encoding::Plain,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Build the leaf path_in_schema for a single LIST-encoded array column.
+    fn array_leaf_path(dim: i32, name: &str) -> Vec<String> {
+        let col_type =
+            qdb_core::col_type::encode_array_type(ColumnTypeTag::Double, dim).expect("array type");
+        let pt =
+            column_type_to_parquet_type(1, name, col_type, false, false).expect("parquet type");
+        let descr = SchemaDescriptor::new("schema".to_string(), vec![pt]);
+        let cols = descr.columns();
+        assert_eq!(cols.len(), 1, "an array maps to exactly one leaf column");
+        cols[0].path_in_schema.clone()
+    }
+
+    // A nested array's intermediate LIST element node must be named "element",
+    // not "list", so the leaf path matches the canonical 3-level encoding that
+    // name-based tooling (e.g. PyIceberg add_files) expects.
+    #[test]
+    fn array_list_element_nodes_are_named_element() {
+        // 1D is already canonical; the fix must leave it untouched.
+        assert_eq!(array_leaf_path(1, "x"), ["x", "list", "element"]);
+
+        // 2D (order-book bids/asks): the outer list's element node is "element",
+        // giving the canonical bids.list.element.list.element.
+        assert_eq!(
+            array_leaf_path(2, "bids"),
+            ["bids", "list", "element", "list", "element"]
+        );
+
+        // 3D: every intermediate list element node is "element".
+        assert_eq!(
+            array_leaf_path(3, "c"),
+            ["c", "list", "element", "list", "element", "list", "element"]
+        );
+    }
+
+    #[test]
+    fn ipv4_schema_carries_uint32_annotations() {
+        let pt = column_type_to_parquet_type(
+            7,
+            "ip",
+            ColumnType::new(ColumnTypeTag::IPv4, 0),
+            false,
+            false,
+        )
+        .expect("parquet type");
+        let descr = SchemaDescriptor::new("schema".to_string(), vec![pt]);
+        let primitive_type = &descr.columns()[0].descriptor.primitive_type;
+
+        assert_eq!(primitive_type.physical_type, PhysicalType::Int32);
+        assert_eq!(
+            primitive_type.converted_type,
+            Some(PrimitiveConvertedType::Uint32)
+        );
+        assert_eq!(
+            primitive_type.logical_type,
+            Some(PrimitiveLogicalType::Integer(IntegerType::UInt32))
+        );
+        // IPv4 is nullable in QuestDB, so its leaf must stay Optional; a flip to Required
+        // would silently break null IPv4 def-levels.
+        assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    }
+
+    #[test]
+    fn test_encoding_default() {
+        assert_eq!(ParquetEncodingConfig::from_raw(0).encoding(), None);
+    }
+
+    #[test]
+    fn test_encoding_not_explicit() {
+        // encoding byte set but explicit flag not set
+        assert_eq!(ParquetEncodingConfig::from_raw(1).encoding(), None);
+    }
+
+    #[test]
+    fn test_encoding_plain() {
+        assert_eq!(
+            ParquetEncodingConfig::new(1, 0, -1).encoding(),
+            Some(Encoding::Plain)
+        );
+    }
+
+    #[test]
+    fn test_encoding_rle_dictionary() {
+        assert_eq!(
+            ParquetEncodingConfig::new(2, 0, -1).encoding(),
+            Some(Encoding::RleDictionary)
+        );
+    }
+
+    #[test]
+    fn test_encoding_delta_length_byte_array() {
+        assert_eq!(
+            ParquetEncodingConfig::new(3, 0, -1).encoding(),
+            Some(Encoding::DeltaLengthByteArray)
+        );
+    }
+
+    #[test]
+    fn test_encoding_delta_binary_packed() {
+        assert_eq!(
+            ParquetEncodingConfig::new(4, 0, -1).encoding(),
+            Some(Encoding::DeltaBinaryPacked)
+        );
+    }
+
+    #[test]
+    fn test_encoding_byte_stream_split() {
+        assert_eq!(
+            ParquetEncodingConfig::new(5, 0, -1).encoding(),
+            Some(Encoding::ByteStreamSplit)
+        );
+    }
+
+    #[test]
+    fn test_encoding_zero_explicit() {
+        // explicit flag set but encoding is 0 -> use default
+        assert_eq!(ParquetEncodingConfig::new(0, 0, -1).encoding(), None);
+    }
+
+    #[test]
+    fn strided_row_group_slice_narrows_to_window() {
+        // 10 merge-index entries (ts, rowId). Slicing must preserve the ts of
+        // exactly the requested window and update row_count, so write_chunk's
+        // per-row-group window is honored instead of re-emitting the column.
+        let pairs: Vec<[i64; 2]> = (0..10i64).map(|i| [1_000 + i, i]).collect();
+        let column_type = ColumnType::new(ColumnTypeTag::Timestamp, 0).code()
+            | COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT;
+        let col = Column::from_raw_data(
+            0,
+            "ts",
+            column_type,
+            0,
+            pairs.len(),
+            pairs.as_ptr() as *const u8,
+            std::mem::size_of_val(pairs.as_slice()),
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
+            true,
+            true,
+            0,
+        )
+        .expect("ts column");
+
+        let second_group = col.strided_row_group_slice(3, 7).expect("slice");
+        assert_eq!(second_group.row_count, 4);
+        match second_group.timestamp_values() {
+            TimestampValues::Strided16(s) => {
+                assert_eq!(s.len(), 4);
+                assert_eq!(s[0][0], 1_003);
+                assert_eq!(s[3][0], 1_006);
+            }
+            TimestampValues::Contiguous(_) => panic!("expected strided layout"),
+        }
+
+        // Full range keeps every row.
+        assert_eq!(
+            col.strided_row_group_slice(0, 10).expect("full").row_count,
+            10
+        );
+
+        // Out-of-range or inverted bounds are rejected, never a panic under JNI.
+        assert!(col.strided_row_group_slice(5, 11).is_err());
+        assert!(col.strided_row_group_slice(7, 3).is_err());
+    }
+
+    #[test]
+    fn test_encoding_unknown_id() {
+        assert_eq!(ParquetEncodingConfig::new(99, 0, -1).encoding(), None);
+    }
+
+    #[test]
+    fn test_compression_default() {
+        assert_eq!(ParquetEncodingConfig::from_raw(0).compression(), None);
+    }
+
+    #[test]
+    fn test_compression_not_explicit() {
+        assert_eq!(ParquetEncodingConfig::from_raw(1 << 8).compression(), None);
+    }
+
+    #[test]
+    fn test_compression_uncompressed() {
+        let c = ParquetEncodingConfig::new(0, 1, -1).compression();
+        assert_eq!(c, Some(CompressionOptions::Uncompressed));
+    }
+
+    #[test]
+    fn test_compression_snappy() {
+        let c = ParquetEncodingConfig::new(0, 2, -1).compression();
+        assert_eq!(c, Some(CompressionOptions::Snappy));
+    }
+
+    #[test]
+    fn test_compression_lz4_raw() {
+        let c = ParquetEncodingConfig::new(0, 6, -1).compression();
+        assert_eq!(c, Some(CompressionOptions::Lz4Raw));
+    }
+
+    #[test]
+    fn test_compression_zstd_default_level() {
+        let c = ParquetEncodingConfig::new(0, 5, -1).compression();
+        match c {
+            Some(CompressionOptions::Zstd(_)) => {}
+            other => panic!("expected Zstd, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_compression_zstd_custom_level() {
+        let c = ParquetEncodingConfig::new(0, 5, 3).compression();
+        match c {
+            Some(CompressionOptions::Zstd(_)) => {}
+            other => panic!("expected Zstd, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_compression_gzip() {
+        let c = ParquetEncodingConfig::new(0, 3, -1).compression();
+        match c {
+            Some(CompressionOptions::Gzip(_)) => {}
+            other => panic!("expected Gzip, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_compression_brotli() {
+        let c = ParquetEncodingConfig::new(0, 4, -1).compression();
+        match c {
+            Some(CompressionOptions::Brotli(_)) => {}
+            other => panic!("expected Brotli, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_compression_gzip_level_zero() {
+        // level 0 = "store without compression", must not become default (6)
+        let c = ParquetEncodingConfig::new(0, 3, 0).compression();
+        match c {
+            Some(CompressionOptions::Gzip(Some(level))) => {
+                assert_eq!(level, parquet2::compression::GzipLevel::try_new(0).unwrap());
+            }
+            other => panic!("expected Gzip(Some(GzipLevel(0))), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_compression_brotli_level_zero() {
+        // level 0 is a valid Brotli level, must not become default (1)
+        let c = ParquetEncodingConfig::new(0, 4, 0).compression();
+        match c {
+            Some(CompressionOptions::Brotli(Some(level))) => {
+                assert_eq!(
+                    level,
+                    parquet2::compression::BrotliLevel::try_new(0).unwrap()
+                );
+            }
+            other => panic!("expected Brotli(Some(BrotliLevel(0))), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_compression_unknown_codec() {
+        assert_eq!(ParquetEncodingConfig::new(0, 99, -1).compression(), None);
+    }
+
+    #[test]
+    fn test_combined_encoding_and_compression() {
+        let config = ParquetEncodingConfig::new(5, 5, 3); // BYTE_STREAM_SPLIT + ZSTD level 3
+        assert_eq!(config.encoding(), Some(Encoding::ByteStreamSplit));
+        match config.compression() {
+            Some(CompressionOptions::Zstd(_)) => {}
+            other => panic!("expected Zstd, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_compression_codec_zero_explicit() {
+        // explicit flag set, compression codec is 0 -> use global default
+        assert_eq!(ParquetEncodingConfig::new(1, 0, -1).compression(), None);
+    }
+
+    fn col_type(tag: ColumnTypeTag) -> ColumnType {
+        ColumnType::new(tag, 0)
+    }
+
+    #[test]
+    fn test_validate_encoding_plain_valid() {
+        for tag in [
+            ColumnTypeTag::Boolean,
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Char,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Long,
+            ColumnTypeTag::Date,
+            ColumnTypeTag::Timestamp,
+            ColumnTypeTag::Float,
+            ColumnTypeTag::Double,
+            ColumnTypeTag::String,
+            ColumnTypeTag::Binary,
+            ColumnTypeTag::Long128,
+            ColumnTypeTag::Uuid,
+            ColumnTypeTag::Long256,
+            ColumnTypeTag::IPv4,
+            ColumnTypeTag::GeoByte,
+            ColumnTypeTag::GeoShort,
+            ColumnTypeTag::GeoInt,
+            ColumnTypeTag::GeoLong,
+        ] {
+            assert_eq!(
+                validate_encoding(col_type(tag), Encoding::Plain),
+                Encoding::Plain,
+                "Plain should be valid for {:?}",
+                tag
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_encoding_plain_invalid() {
+        // SYMBOL should fall back to RleDictionary
+        assert_eq!(
+            validate_encoding(col_type(ColumnTypeTag::Symbol), Encoding::Plain),
+            Encoding::RleDictionary
+        );
+        // VARCHAR should fall back to DeltaLengthByteArray
+        assert_eq!(
+            validate_encoding(col_type(ColumnTypeTag::Varchar), Encoding::Plain),
+            Encoding::DeltaLengthByteArray
+        );
+    }
+
+    #[test]
+    fn test_validate_encoding_rle_dictionary_valid() {
+        for tag in [
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Char,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Long,
+            ColumnTypeTag::Date,
+            ColumnTypeTag::Timestamp,
+            ColumnTypeTag::Float,
+            ColumnTypeTag::Double,
+            ColumnTypeTag::String,
+            ColumnTypeTag::Symbol,
+            ColumnTypeTag::Binary,
+            ColumnTypeTag::Varchar,
+            ColumnTypeTag::Long128,
+            ColumnTypeTag::Uuid,
+            ColumnTypeTag::Long256,
+            ColumnTypeTag::IPv4,
+            ColumnTypeTag::GeoByte,
+            ColumnTypeTag::GeoShort,
+            ColumnTypeTag::GeoInt,
+            ColumnTypeTag::GeoLong,
+            ColumnTypeTag::Decimal8,
+            ColumnTypeTag::Decimal16,
+            ColumnTypeTag::Decimal32,
+            ColumnTypeTag::Decimal64,
+            ColumnTypeTag::Decimal128,
+            ColumnTypeTag::Decimal256,
+        ] {
+            assert_eq!(
+                validate_encoding(col_type(tag), Encoding::RleDictionary),
+                Encoding::RleDictionary,
+                "RleDictionary should be valid for {:?}",
+                tag
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_encoding_rle_dictionary_invalid() {
+        // Boolean should fall back to Plain
+        assert_eq!(
+            validate_encoding(col_type(ColumnTypeTag::Boolean), Encoding::RleDictionary),
+            Encoding::Plain
+        );
+        // Array should fall back to Plain
+        assert_eq!(
+            validate_encoding(col_type(ColumnTypeTag::Array), Encoding::RleDictionary),
+            Encoding::Plain
+        );
+    }
+
+    #[test]
+    fn test_validate_encoding_delta_length_byte_array_valid() {
+        for tag in [
+            ColumnTypeTag::String,
+            ColumnTypeTag::Binary,
+            ColumnTypeTag::Varchar,
+        ] {
+            assert_eq!(
+                validate_encoding(col_type(tag), Encoding::DeltaLengthByteArray),
+                Encoding::DeltaLengthByteArray,
+                "DeltaLengthByteArray should be valid for {:?}",
+                tag
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_encoding_delta_length_byte_array_invalid() {
+        assert_eq!(
+            validate_encoding(col_type(ColumnTypeTag::Int), Encoding::DeltaLengthByteArray),
+            Encoding::Plain
+        );
+        assert_eq!(
+            validate_encoding(
+                col_type(ColumnTypeTag::Float),
+                Encoding::DeltaLengthByteArray
+            ),
+            Encoding::Plain
+        );
+    }
+
+    #[test]
+    fn test_validate_encoding_delta_binary_packed_valid() {
+        for tag in [
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Char,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Long,
+            ColumnTypeTag::Date,
+            ColumnTypeTag::Timestamp,
+            ColumnTypeTag::IPv4,
+            ColumnTypeTag::GeoByte,
+            ColumnTypeTag::GeoShort,
+            ColumnTypeTag::GeoInt,
+            ColumnTypeTag::GeoLong,
+        ] {
+            assert_eq!(
+                validate_encoding(col_type(tag), Encoding::DeltaBinaryPacked),
+                Encoding::DeltaBinaryPacked,
+                "DeltaBinaryPacked should be valid for {:?}",
+                tag
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_encoding_delta_binary_packed_invalid() {
+        assert_eq!(
+            validate_encoding(col_type(ColumnTypeTag::Float), Encoding::DeltaBinaryPacked),
+            Encoding::Plain
+        );
+        assert_eq!(
+            validate_encoding(col_type(ColumnTypeTag::Double), Encoding::DeltaBinaryPacked),
+            Encoding::Plain
+        );
+        assert_eq!(
+            validate_encoding(col_type(ColumnTypeTag::String), Encoding::DeltaBinaryPacked),
+            Encoding::DeltaLengthByteArray
+        );
+    }
+
+    #[test]
+    fn test_validate_encoding_byte_stream_split_falls_back() {
+        // ByteStreamSplit is not supported for any type, should fall back
+        assert_eq!(
+            validate_encoding(col_type(ColumnTypeTag::Float), Encoding::ByteStreamSplit),
+            Encoding::Plain
+        );
+        assert_eq!(
+            validate_encoding(col_type(ColumnTypeTag::Int), Encoding::ByteStreamSplit),
+            Encoding::Plain
+        );
+        assert_eq!(
+            validate_encoding(col_type(ColumnTypeTag::Symbol), Encoding::ByteStreamSplit),
+            Encoding::RleDictionary
+        );
+    }
+
+    const ALL_TAGS: [ColumnTypeTag; 30] = [
+        ColumnTypeTag::Boolean,
+        ColumnTypeTag::Byte,
+        ColumnTypeTag::Short,
+        ColumnTypeTag::Char,
+        ColumnTypeTag::Int,
+        ColumnTypeTag::Long,
+        ColumnTypeTag::Date,
+        ColumnTypeTag::Timestamp,
+        ColumnTypeTag::Float,
+        ColumnTypeTag::Double,
+        ColumnTypeTag::String,
+        ColumnTypeTag::Symbol,
+        ColumnTypeTag::Long256,
+        ColumnTypeTag::GeoByte,
+        ColumnTypeTag::GeoShort,
+        ColumnTypeTag::GeoInt,
+        ColumnTypeTag::GeoLong,
+        ColumnTypeTag::Binary,
+        ColumnTypeTag::Uuid,
+        ColumnTypeTag::Long128,
+        ColumnTypeTag::IPv4,
+        ColumnTypeTag::Varchar,
+        ColumnTypeTag::Array,
+        ColumnTypeTag::Decimal8,
+        ColumnTypeTag::Decimal16,
+        ColumnTypeTag::Decimal32,
+        ColumnTypeTag::Decimal64,
+        ColumnTypeTag::Decimal128,
+        ColumnTypeTag::Decimal256,
+        ColumnTypeTag::VarcharSlice,
+    ];
+
+    #[test]
+    fn test_is_encoding_valid_default_always_true() {
+        for tag in ALL_TAGS {
+            assert!(
+                is_encoding_valid_for_column_tag(0, tag as i32),
+                "DEFAULT should be valid for {:?}",
+                tag
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_encoding_valid_unknown_encoding() {
+        assert!(!is_encoding_valid_for_column_tag(
+            99,
+            ColumnTypeTag::Int as i32
+        ));
+        assert!(!is_encoding_valid_for_column_tag(
+            -1,
+            ColumnTypeTag::Int as i32
+        ));
+    }
+
+    #[test]
+    fn test_is_encoding_valid_unknown_column_tag() {
+        assert!(!is_encoding_valid_for_column_tag(1, 255));
+        assert!(!is_encoding_valid_for_column_tag(1, 0));
+    }
+
+    #[test]
+    fn test_is_encoding_valid_matches_validate_encoding() {
+        let encodings = [
+            (1, Encoding::Plain),
+            (2, Encoding::RleDictionary),
+            (3, Encoding::DeltaLengthByteArray),
+            (4, Encoding::DeltaBinaryPacked),
+            (5, Encoding::ByteStreamSplit),
+        ];
+        for tag in ALL_TAGS {
+            let ct = col_type(tag);
+            for &(enc_id, enc) in &encodings {
+                let expected = validate_encoding(ct, enc) == enc;
+                assert_eq!(
+                    is_encoding_valid_for_column_tag(enc_id, tag as i32),
+                    expected,
+                    "mismatch for encoding_id={} tag={:?}",
+                    enc_id,
+                    tag
+                );
+            }
+        }
     }
 }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -95,6 +95,7 @@ public class LineHttpTudCache implements QuietCloseable {
         }
         if (distressed) {
             tableUpdateDetails.clear();
+            distressed = false;
         }
     }
 
@@ -239,11 +240,8 @@ public class LineHttpTudCache implements QuietCloseable {
             }
             tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
         }
-        if (tableToken != null && tableToken.isView()) {
-            throw parseException.of("cannot modify view", tableToken.getTableName());
-        }
-        if (tableToken != null && tableToken.isMatView()) {
-            throw parseException.of("cannot modify materialized view", tableToken.getTableName());
+        if (tableToken != null && tableToken.getType() != TableToken.Type.TABLE) {
+            throw parseException.of("cannot modify " + tableToken.getType().keyword(), tableToken.getTableName());
         }
         return tableToken;
     }

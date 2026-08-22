@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,8 +30,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultLocalCacheSnapshotFactory;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
@@ -39,12 +39,13 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.CharSequenceObjMap;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
@@ -82,26 +83,27 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CursorFunction(new ColumnsCursorFactory(TYPE_TO_NAME));
+        return new CursorFunction(new ColumnsCursorFactory(TYPE_TO_NAME, configuration));
     }
 
     static class ColumnsCursorFactory extends AbstractRecordCursorFactory {
         private final ColumnRecordCursor cursor;
-        private final CharSequenceObjHashMap<CairoTable> tableCache = new CharSequenceObjHashMap<>();
+        private final CharSequenceObjMap<CairoTable> tableCache;
         private long tableCacheVersion = -1;
 
-        ColumnsCursorFactory(IntFunction<String> typeToName) {
+        ColumnsCursorFactory(IntFunction<String> typeToName, CairoConfiguration configuration) {
             super(METADATA);
+            tableCache = DefaultLocalCacheSnapshotFactory.INSTANCE.newInstance(configuration);
             this.cursor = new ColumnRecordCursor(tableCache, typeToName);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             final CairoEngine engine = executionContext.getCairoEngine();
-            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
-                tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);
-            }
-            cursor.toTop();
+            // Reconciles against the table registry before snapshotting, so the
+            // catalogue is complete even mid startup hydration.
+            tableCacheVersion = engine.getMetadataCache().snapshot(tableCache, tableCacheVersion);
+            cursor.of(executionContext.getCircuitBreaker());
             return cursor;
         }
 
@@ -117,15 +119,21 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
         private static class ColumnRecordCursor implements NoRandomAccessRecordCursor {
             private final ColumnsRecord record = new ColumnsRecord();
-            private final CharSequenceObjHashMap<CairoTable> tableCache;
+            private final CharSequenceObjMap<CairoTable> tableCache;
             private final IntFunction<String> typeToName;
+            private SqlExecutionCircuitBreaker circuitBreaker;
             private int columnIdx;
             private int iteratorIdx;
             private CairoTable table;
 
-            private ColumnRecordCursor(CharSequenceObjHashMap<CairoTable> tableCache, IntFunction<String> typeToName) {
+            private ColumnRecordCursor(CharSequenceObjMap<CairoTable> tableCache, IntFunction<String> typeToName) {
                 this.tableCache = tableCache;
                 this.typeToName = typeToName;
+            }
+
+            public void of(SqlExecutionCircuitBreaker circuitBreaker) {
+                this.circuitBreaker = circuitBreaker;
+                toTop();
             }
 
             @Override
@@ -141,6 +149,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
             @Override
             public boolean hasNext() {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 do {
                     if (table == null && !nextTable()) {
                         return false;

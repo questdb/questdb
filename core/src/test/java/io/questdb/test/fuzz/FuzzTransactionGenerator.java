@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,10 +26,14 @@ package io.questdb.test.fuzz;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
@@ -60,6 +64,8 @@ public class FuzzTransactionGenerator {
             double probabilityOfDataInsert,
             double probabilityOfSameTimestamp,
             double probabilityOfDropPartition,
+            double probabilityOfConvertPartitionToParquet,
+            double probabilityOfConvertPartitionToNative,
             double probabilityOfTruncate,
             double probabilityOfDropTable,
             double probabilityOfSetTtl,
@@ -68,7 +74,10 @@ public class FuzzTransactionGenerator {
             double probabilityOfQuery,
             int maxStrLenForStrColumns,
             String[] symbols,
-            int metaVersion
+            int metaVersion,
+            double probabilityOfSetParquetEncoding,
+            double probabilityOfAddCoveringIndex,
+            double probabilityOfSetTableFormat
     ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
@@ -82,17 +91,27 @@ public class FuzzTransactionGenerator {
                 + probabilityOfColumnTypeChange
                 + probabilityOfTruncate
                 + probabilityOfDropPartition
+                + probabilityOfConvertPartitionToParquet
+                + probabilityOfConvertPartitionToNative
+                + probabilityOfAddCoveringIndex
                 + probabilityOfDataInsert
                 + probabilityOfSymbolAccessValidation
-                + probabilityOfQuery;
+                + probabilityOfQuery
+                + probabilityOfSetTableFormat
+                + probabilityOfSetParquetEncoding;
         probabilityOfAddingNewColumn = probabilityOfAddingNewColumn / sumOfProbabilities;
         probabilityOfRemovingColumn = probabilityOfRemovingColumn / sumOfProbabilities;
         probabilityOfRenamingColumn = probabilityOfRenamingColumn / sumOfProbabilities;
         probabilityOfColumnTypeChange = probabilityOfColumnTypeChange / sumOfProbabilities;
         probabilityOfTruncate = probabilityOfTruncate / sumOfProbabilities;
         probabilityOfDropPartition = probabilityOfDropPartition / sumOfProbabilities;
+        probabilityOfConvertPartitionToParquet = probabilityOfConvertPartitionToParquet / sumOfProbabilities;
+        probabilityOfConvertPartitionToNative = probabilityOfConvertPartitionToNative / sumOfProbabilities;
+        probabilityOfAddCoveringIndex = probabilityOfAddCoveringIndex / sumOfProbabilities;
         probabilityOfSymbolAccessValidation = probabilityOfSymbolAccessValidation / sumOfProbabilities;
         probabilityOfQuery = probabilityOfQuery / sumOfProbabilities;
+        probabilityOfSetParquetEncoding = probabilityOfSetParquetEncoding / sumOfProbabilities;
+        probabilityOfSetTableFormat = probabilityOfSetTableFormat / sumOfProbabilities;
         // effectively, probabilityOfDataInsert is as follows, but we don't need this value:
         // probabilityOfDataInsert = probabilityOfDataInsert / sumOfProbabilities;
 
@@ -116,6 +135,20 @@ public class FuzzTransactionGenerator {
             transactionCount++;
         }
 
+        // Decide if SET PARQUET ENCODING will be generated
+        boolean generateSetParquetEncoding = rnd.nextDouble() < probabilityOfSetParquetEncoding;
+        int setParquetEncodingIteration = generateSetParquetEncoding ? rnd.nextInt(transactionCount) : -1;
+        if (generateSetParquetEncoding) {
+            transactionCount++;
+        }
+
+        // Decide if SET FORMAT PARQUET|NATIVE will be generated
+        boolean generateSetTableFormat = rnd.nextDouble() < probabilityOfSetTableFormat;
+        int setTableFormatIteration = generateSetTableFormat ? rnd.nextInt(transactionCount) : -1;
+        if (generateSetTableFormat) {
+            transactionCount++;
+        }
+
         long estimatedTotalRows = rowCount + initialRowCount;
 
         for (int i = 0; i < transactionCount; i++) {
@@ -129,6 +162,18 @@ public class FuzzTransactionGenerator {
                 continue;
             }
 
+            Assert.assertNotNull(meta);
+
+            if (i == setParquetEncodingIteration) {
+                if (generateSetParquetEncoding(transactionList, metaVersion, waitBarrierVersion, rnd, meta)) {
+                    waitBarrierVersion++;
+                }
+                continue;
+            }
+            if (i == setTableFormatIteration) {
+                generateSetTableFormat(transactionList, metaVersion, waitBarrierVersion++, rnd);
+                continue;
+            }
             final double rndDouble = rnd.nextDouble();
             double aggregateProbability = 0;
             boolean wantSomething = false;
@@ -163,8 +208,18 @@ public class FuzzTransactionGenerator {
 
             aggregateProbability += probabilityOfDropPartition;
             boolean wantToDropPartition = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToDropPartition;
 
-            Assert.assertNotNull(meta);
+            aggregateProbability += probabilityOfConvertPartitionToParquet;
+            boolean wantToConvertPartitionToParquet = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToConvertPartitionToParquet;
+
+            aggregateProbability += probabilityOfConvertPartitionToNative;
+            boolean wantToConvertPartitionToNative = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToConvertPartitionToNative;
+
+            aggregateProbability += probabilityOfAddCoveringIndex;
+            boolean wantToAddCoveringIndex = !wantSomething && rndDouble < aggregateProbability;
 
             if (wantToRemoveColumn) {
                 RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
@@ -186,6 +241,12 @@ public class FuzzTransactionGenerator {
                 generateTruncateTable(transactionList, metaVersion, waitBarrierVersion++);
             } else if (wantToDropPartition) {
                 generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
+            } else if (wantToConvertPartitionToParquet) {
+                generateConvertPartitionToParquet(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
+            } else if (wantToConvertPartitionToNative) {
+                generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
+            } else if (wantToAddCoveringIndex) {
+                generateAddCoveringIndex(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
             } else if (wantToAddNewColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else if (wantToChangeColumnType && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
@@ -284,7 +345,7 @@ public class FuzzTransactionGenerator {
             to.add(new TableColumnMetadata(
                     from.getColumnName(i),
                     columnType,
-                    from.isColumnIndexed(i),
+                    from.getColumnIndexType(i),
                     from.getIndexValueBlockCapacity(i),
                     from.isSymbolTableStatic(i),
                     GenericRecordMetadata.copyOf(from.getMetadata(i))
@@ -301,7 +362,7 @@ public class FuzzTransactionGenerator {
                         new TableColumnMetadata(
                                 sequencerMetadata.getColumnName(i),
                                 sequencerMetadata.getColumnType(i),
-                                sequencerMetadata.isColumnIndexed(i),
+                                sequencerMetadata.getColumnIndexType(i),
                                 sequencerMetadata.getIndexValueBlockCapacity(i),
                                 sequencerMetadata.isSymbolTableStatic(i),
                                 sequencerMetadata.getMetadata(i),
@@ -315,6 +376,82 @@ public class FuzzTransactionGenerator {
         }
         return null;
     }
+
+    private static void generateAddCoveringIndex(
+            ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
+            Rnd rnd, RecordMetadata meta
+    ) {
+        IntList symbolCols = new IntList();
+        for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
+            int colType = meta.getColumnType(i);
+            if (colType > 0 && ColumnType.isSymbol(colType) && !IndexType.isIndexed(meta.getColumnIndexType(i))) {
+                symbolCols.add(i);
+            }
+        }
+        if (symbolCols.size() == 0) {
+            return;
+        }
+        int symCol = symbolCols.getQuick(rnd.nextInt(symbolCols.size()));
+
+        IntList candidates = new IntList();
+        int tsIdx = meta.getTimestampIndex();
+        for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
+            int colType = meta.getColumnType(i);
+            if (colType > 0 && i != symCol && i != tsIdx && ColumnType.tagOf(colType) != ColumnType.LONG128) {
+                candidates.add(i);
+            }
+        }
+        if (candidates.size() == 0) {
+            return;
+        }
+        int includeCount = Math.min(1 + rnd.nextInt(3), candidates.size());
+        IntList includeIndices = new IntList();
+        for (int i = 0; i < includeCount; i++) {
+            int pick = rnd.nextInt(candidates.size());
+            includeIndices.add(candidates.getQuick(pick));
+            candidates.removeIndex(pick);
+        }
+
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.operationList.add(new FuzzAddCoveringIndexOperation(symCol, includeIndices));
+        transaction.structureVersion = metadataVersion;
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.rollback = true;
+        transactionList.add(transaction);
+    }
+
+    private static void generateConvertPartitionToNative(
+            ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
+            long lastTimestamp, Rnd rnd
+    ) {
+        long cutoffTimestamp = lastTimestamp;
+        if (rnd.nextInt(100) <= 20) {
+            cutoffTimestamp -= DAY_MICROS;
+        }
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.operationList.add(new FuzzConvertPartitionToNativeOperation(cutoffTimestamp));
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.structureVersion = metadataVersion;
+        transaction.waitAllDone = true;
+        transactionList.add(transaction);
+    }
+
+    private static void generateConvertPartitionToParquet(
+            ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
+            long lastTimestamp, Rnd rnd
+    ) {
+        long cutoffTimestamp = lastTimestamp;
+        if (rnd.nextInt(100) <= 20) {
+            cutoffTimestamp -= DAY_MICROS;
+        }
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.operationList.add(new FuzzConvertPartitionToParquetOperation(cutoffTimestamp));
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.structureVersion = metadataVersion;
+        transaction.waitAllDone = true;
+        transactionList.add(transaction);
+    }
+
 
     private static void generateDropPartition(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
@@ -380,6 +517,88 @@ public class FuzzTransactionGenerator {
         return null;
     }
 
+    private static boolean generateSetParquetEncoding(
+            ObjList<FuzzTransaction> transactionList,
+            int metadataVersion,
+            int waitBarrierVersion,
+            Rnd rnd,
+            RecordMetadata meta
+    ) {
+        // Pick a random non-timestamp column
+        int colCount = meta.getColumnCount();
+        int tsIndex = meta.getTimestampIndex();
+        int startIndex = rnd.nextInt(colCount);
+        for (int i = 0; i < colCount; i++) {
+            int colIndex = (startIndex + i) % colCount;
+            if (colIndex == tsIndex) {
+                continue;
+            }
+            int colType = meta.getColumnType(colIndex);
+            if (colType < 0) {
+                continue;
+            }
+            String colName = meta.getColumnName(colIndex);
+
+            // Pick a random valid encoding for this column type
+            int encoding = 0;
+            if (rnd.nextBoolean()) {
+                int validCount = 0;
+                for (int e = 1; e < ParquetEncoding.MAX_ENUM_INT; e++) {
+                    if (ParquetEncoding.isValidForColumnType(e, colType)) {
+                        validCount++;
+                    }
+                }
+                if (validCount > 0) {
+                    int pick = rnd.nextInt(validCount);
+                    for (int e = 1; e < ParquetEncoding.MAX_ENUM_INT; e++) {
+                        if (ParquetEncoding.isValidForColumnType(e, colType)) {
+                            if (pick == 0) {
+                                encoding = e;
+                                break;
+                            }
+                            pick--;
+                        }
+                    }
+                }
+            }
+
+            // Pick random compression
+            int compression = -1;
+            int level = 0;
+            if (rnd.nextBoolean()) {
+                int[] codecs = {
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        ParquetCompression.COMPRESSION_SNAPPY,
+                        ParquetCompression.COMPRESSION_ZSTD,
+                        ParquetCompression.COMPRESSION_LZ4_RAW
+                };
+                compression = codecs[rnd.nextInt(codecs.length)];
+                if (compression == ParquetCompression.COMPRESSION_ZSTD) {
+                    level = 1 + rnd.nextInt(ParquetCompression.ZSTD_MAX_COMPRESSION_LEVEL);
+                }
+            }
+
+            FuzzTransaction transaction = new FuzzTransaction();
+            transaction.waitBarrierVersion = waitBarrierVersion;
+            transaction.structureVersion = metadataVersion;
+            transaction.operationList.add(new FuzzSetParquetEncodingOperation(colName, encoding, compression, level));
+            transactionList.add(transaction);
+            return true;
+        }
+        return false;
+    }
+
+    private static void generateSetTableFormat(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd) {
+        boolean parquet = rnd.nextBoolean();
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.structureVersion = metadataVersion;
+        transaction.waitAllDone = true;
+        transaction.reopenTable = true;
+        transaction.operationList.add(new FuzzSetTableFormatOperation(parquet));
+        transactionList.add(transaction);
+    }
+
     private static void generateSetTtl(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd) {
         int ttlDays = rnd.nextInt(2) + 1;
         FuzzTransaction transaction = new FuzzTransaction();
@@ -427,7 +646,27 @@ public class FuzzTransactionGenerator {
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
         int newType = generateNewColumnType(rnd);
-        boolean indexFlag = newType == ColumnType.SYMBOL && rnd.nextDouble() < 0.9;
+        byte indexType;
+        if (newType == ColumnType.SYMBOL && rnd.nextDouble() < 0.9) {
+            // 50/50 split between BITMAP and POSTING variants so the fuzz
+            // exercises both index families. POSTING further fans out across
+            // the three encoding modes (adaptive, delta, EF) to cover all
+            // bitpack code paths.
+            double pick = rnd.nextDouble();
+            if (pick < 0.5) {
+                indexType = IndexType.BITMAP;
+            } else if (pick < 0.7) {
+                indexType = IndexType.POSTING;
+            } else if (pick < 0.85) {
+                indexType = IndexType.POSTING_DELTA;
+            } else {
+                indexType = IndexType.POSTING_EF;
+            }
+        } else {
+            indexType = IndexType.NONE;
+        }
+        // CAPACITY is parser-rejected for POSTING but the metadata field
+        // still must be >= 2 to pass _meta validation, so always pass 256.
         int indexValueBlockCapacity = 256;
         boolean symbolTableStatic = rnd.nextBoolean();
 
@@ -439,7 +678,7 @@ public class FuzzTransactionGenerator {
                 break;
             }
         }
-        transaction.operationList.add(new FuzzAddColumnOperation(newColName, newType, indexFlag, indexValueBlockCapacity, symbolTableStatic));
+        transaction.operationList.add(new FuzzAddColumnOperation(newColName, newType, indexType, indexValueBlockCapacity, symbolTableStatic));
         transaction.structureVersion = metadataVersion;
         transaction.waitBarrierVersion = waitBarrierVersion;
         transactionList.add(transaction);
@@ -449,7 +688,7 @@ public class FuzzTransactionGenerator {
         newMeta.add(new TableColumnMetadata(
                 newColName,
                 newType,
-                indexFlag,
+                indexType,
                 indexValueBlockCapacity,
                 symbolTableStatic,
                 null,

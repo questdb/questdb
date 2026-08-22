@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -112,15 +112,6 @@ public class TextPlanSink extends BasePlanSink {
     public void of(RecordCursorFactory factory, SqlExecutionContext executionContext) {
         clear();
         this.executionContext = executionContext;
-        if (executionContext.getBindVariableService() == null) {//web console
-            this.childIndent = "&nbsp;&nbsp;&nbsp;&nbsp;";
-            this.attrIndent = "&nbsp;&nbsp;";
-            this.sink = htmlSink;
-        } else { // pg wire
-            this.childIndent = "    ";
-            this.attrIndent = "  ";
-            this.sink = textSink;
-        }
 
         if (factory != null) {
             factoryStack.push(factory);

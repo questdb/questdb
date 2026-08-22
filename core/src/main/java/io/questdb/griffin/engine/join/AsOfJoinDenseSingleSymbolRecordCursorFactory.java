@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -39,7 +39,6 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 
 public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoinDenseRecordCursorFactoryBase {
-
     private final SymbolJoinKeyMapping joinKeyMapping;
     private final int slaveSymbolColumnIndex;
 
@@ -60,8 +59,8 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
         Map fwdScanKeyToRowId = null;
         Map bwdScanKeyToRowId = null;
         try {
-            fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
-            bwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
+            fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE, false, false);
+            bwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE, false, false);
             this.cursor = new AsOfJoinDenseSingleSymbolRecordCursor(
                     columnSplit,
                     fwdScanKeyToRowId,

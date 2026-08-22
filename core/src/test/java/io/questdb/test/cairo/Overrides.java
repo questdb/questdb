@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -34,6 +34,7 @@ import io.questdb.PropertyKey;
 import io.questdb.ServerConfigurationException;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cutlass.json.JsonException;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -64,6 +65,7 @@ public class Overrides {
     private boolean isHiddenTelemetryTable = false;
     private boolean mangleTableDirNames = true;
     private CairoConfiguration propsConfig;
+    private QwpServerInfoProvider qwpServerInfoProvider = null;
     private RostiAllocFacade rostiAllocFacade = null;
     private long spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
 
@@ -111,6 +113,10 @@ public class Overrides {
         return null;
     }
 
+    public QwpServerInfoProvider getQwpServerInfoProvider() {
+        return qwpServerInfoProvider;
+    }
+
     public RostiAllocFacade getRostiAllocFacade() {
         return rostiAllocFacade;
     }
@@ -140,6 +146,7 @@ public class Overrides {
         factoryProvider = null;
         env = null;
         isHiddenTelemetryTable = false;
+        qwpServerInfoProvider = null;
         properties.clear();
         changed = true;
         spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
@@ -180,6 +187,10 @@ public class Overrides {
 
     public void setProperty(ConfigPropertyKey propertyKey, boolean value) {
         setProperty(propertyKey, value ? "true" : "false");
+    }
+
+    public void setQwpServerInfoProvider(QwpServerInfoProvider provider) {
+        this.qwpServerInfoProvider = provider;
     }
 
     public void setRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
@@ -288,9 +299,9 @@ public class Overrides {
         properties.setProperty(PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD.getPropertyPath(), "0");
         properties.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE.getPropertyPath(), "4096");
         properties.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES.getPropertyPath(), "1024");
-        properties.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES.getPropertyPath(), "1024");
-        properties.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES.getPropertyPath(), "1024");
-        properties.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES.getPropertyPath(), "128");
+        properties.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath(), "16g");
+        properties.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath(), "128m");
+        properties.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(), "64m");
         properties.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE.getPropertyPath(), "1024");
         properties.setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE.getPropertyPath(), "32");
         properties.setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY.getPropertyPath(), "64");

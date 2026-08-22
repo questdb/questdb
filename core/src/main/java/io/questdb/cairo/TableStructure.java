@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,8 +24,11 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.std.IntList;
 import io.questdb.cairo.view.ViewDefinition;
+import org.jetbrains.annotations.NotNull;
 
 public interface TableStructure {
 
@@ -36,6 +39,14 @@ public interface TableStructure {
     int getColumnType(int columnIndex);
 
     int getIndexBlockCapacity(int columnIndex);
+
+    default int getParquetEncodingConfig(int columnIndex) {
+        return 0;
+    }
+
+    default LiveViewDefinition getLiveViewDefinition() {
+        return null;
+    }
 
     default MatViewDefinition getMatViewDefinition() {
         return null;
@@ -50,6 +61,15 @@ public interface TableStructure {
     boolean getSymbolCacheFlag(int columnIndex);
 
     int getSymbolCapacity(int columnIndex);
+
+    /**
+     * Returns the default storage format for new partitions.
+     * {@link TableUtils#TABLE_FORMAT_NATIVE} (default) or
+     * {@link TableUtils#TABLE_FORMAT_PARQUET}.
+     */
+    default int getTableFormat() {
+        return TableUtils.TABLE_FORMAT_NATIVE;
+    }
 
     CharSequence getTableName();
 
@@ -76,9 +96,32 @@ public interface TableStructure {
     default void init(TableToken tableToken) {
     }
 
+    /**
+     * Returns the index type for the column.
+     *
+     * @param columnIndex the column index
+     * @return the index type (see {@link IndexType})
+     */
+    byte getIndexType(int columnIndex);
+
+    default IntList getCoveringColumnIndices(int columnIndex) {
+        return null;
+    }
+
+    default boolean isCovering(int columnIndex) {
+        IntList indices = getCoveringColumnIndices(columnIndex);
+        return indices != null && indices.size() > 0;
+    }
+
     boolean isDedupKey(int columnIndex);
 
-    boolean isIndexed(int columnIndex);
+    default boolean isIndexed(int columnIndex) {
+        return IndexType.isIndexed(getIndexType(columnIndex));
+    }
+
+    default boolean isLiveView() {
+        return false;
+    }
 
     default boolean isMatView() {
         return false;
@@ -89,4 +132,7 @@ public interface TableStructure {
     }
 
     boolean isWalEnabled();
+
+    default void onCreated(@NotNull CairoEngine engine, @NotNull TableToken tableToken) {
+    }
 }

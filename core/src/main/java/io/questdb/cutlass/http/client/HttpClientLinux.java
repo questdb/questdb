@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -36,16 +36,28 @@ public class HttpClientLinux extends HttpClient {
 
     public HttpClientLinux(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         super(configuration, socketFactory);
-        epoll = new Epoll(
-                configuration.getEpollFacade(),
-                configuration.getWaitQueueCapacity()
-        );
+        try {
+            epoll = new Epoll(
+                    configuration.getEpollFacade(),
+                    configuration.getWaitQueueCapacity()
+            );
+        } catch (Throwable th) {
+            // super() has already taken the socket, both buffers and the response parser. A throw
+            // here leaves a half-built client the caller never receives, so nothing would close it.
+            closeBaseQuietly(th);
+            throw th;
+        }
     }
 
     @Override
     public void close() {
-        super.close();
-        epoll = Misc.free(epoll);
+        // Free epoll in a finally: super.close() disconnects first, and an extension socket that
+        // throws there used to leak the poller for good, since close() is the only thing that frees it.
+        try {
+            super.close();
+        } finally {
+            epoll = Misc.free(epoll);
+        }
     }
 
     protected void ioWait(int timeout, int op) {

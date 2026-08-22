@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,5 +25,11 @@
 package io.questdb.griffin.engine.orderby;
 
 public interface DynamicLimitCursor {
-    void updateLimits(long limit, long skipFirst, long skipLast);
+    /**
+     * Re-binds the selection for the next execution of a cached factory. Every argument is
+     * re-derived per execution, so an implementation must not cache any of them across
+     * executions - in particular {@code isFirstN} flips when a bind variable changes the
+     * limit's sign, and any first-N-only optimisation has to be re-gated on it here.
+     */
+    void updateLimits(boolean isFirstN, long limit, long skipFirst, long skipLast);
 }

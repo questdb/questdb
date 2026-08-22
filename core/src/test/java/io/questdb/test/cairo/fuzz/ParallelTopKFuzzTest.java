@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,14 +25,28 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StatefulAtom;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.AsyncTopKAtom;
+import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
@@ -49,9 +63,19 @@ import static io.questdb.test.cairo.fuzz.ParallelGroupByFuzzTest.assertQueries;
 // in CI frequently along with other fuzz tests.
 @RunWith(Parameterized.class)
 public class ParallelTopKFuzzTest extends AbstractCairoTest {
+    private static final String[] FIXED8_COLUMNS = {
+            "col_bool", "col_byte", "col_short", "col_char", "col_int", "col_float",
+            "col_sym", "col_sym_null", "col_ipv4", "col_long", "col_double", "col_date",
+            "col_geobyte", "col_geoshort", "col_geoint", "col_geolong",
+            "col_dec8", "col_dec16", "col_dec32", "col_dec64",
+    };
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
     private static final int ROW_COUNT = 10 * PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
+    // Variable-length sort keys: encoded parallel top-K spills these into a key heap.
+    private static final String[] VAR_COLUMNS = {"col_str", "col_varchar"};
+    // Wide fixed keys (> 8 bytes): FIXED_16 / FIXED_32 encoded entries.
+    private static final String[] WIDE_COLUMNS = {"col_dec128", "col_dec256", "col_uuid", "col_long256", "col_long128"};
     private final boolean convertToParquet;
     private final boolean enableJitCompiler;
     private final boolean enableParallelTopK;
@@ -107,19 +131,148 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
         Assume.assumeTrue(enableJitCompiler);
         testParallelTopK(
                 "SELECT * FROM tab ORDER BY key DESC, price ASC LIMIT 3;",
-                "ts\tkey\tprice\tquantity\tcolTop\n" +
-                        "1970-01-01T00:57:36.000000Z\tk4\t4.0\t4\tnull\n" +
-                        "1970-01-01T02:09:36.000000Z\tk4\t9.0\t9\tnull\n" +
-                        "1970-01-01T03:21:36.000000Z\tk4\t14.0\t14\tnull\n"
+                """
+                        ts\tkey\tprice\tquantity\tcolTop
+                        1970-01-01T00:57:36.000000Z\tk4\t4.0\t4\tnull
+                        1970-01-01T02:09:36.000000Z\tk4\t9.0\t9\tnull
+                        1970-01-01T03:21:36.000000Z\tk4\t14.0\t14\tnull
+                        """
         );
+    }
+
+    /**
+     * Validates the parallel encoded top-K against the serial tree-chain
+     * reference. Single-column keys exercise the frame batch encoder for every
+     * fixed-width-8 type; projecting only the sort column keeps the comparison
+     * deterministic on duplicate keys, while the unique col_id covers full-row
+     * emission. Multi-word decimal keys cover the per-row generic encoder.
+     */
+    @Test
+    public void testParallelTopKEncodedTypes() throws Exception {
+        // assertTopKMatch sets the parallel flag per side, so the run is independent of enableParallelTopK.
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        final int rowCount = 3_000 + rnd.nextInt(7_000);
+                        createTypeMatrixTable(engine, sqlExecutionContext, rowCount);
+                        final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) sqlExecutionContext;
+
+                        for (String col : FIXED8_COLUMNS) {
+                            for (int d = 0; d < 2; d++) {
+                                final String desc = d == 1 ? " DESC" : "";
+                                final int k = 1 + rnd.nextInt(200);
+                                assertTopKMatch(engine, ctx, "SELECT " + col + " FROM tab ORDER BY " + col + desc + " LIMIT " + k);
+                            }
+                        }
+                        for (String col : WIDE_COLUMNS) {
+                            for (int d = 0; d < 2; d++) {
+                                final String desc = d == 1 ? " DESC" : "";
+                                final int k = 1 + rnd.nextInt(200);
+                                assertTopKMatch(engine, ctx, "SELECT " + col + " FROM tab ORDER BY " + col + desc + " LIMIT " + k);
+                            }
+                        }
+                        // Variable-length keys (STRING/VARCHAR) take the encoded key-heap top-K path.
+                        // The single-column projection keeps the LIMIT cut tie-safe: tied rows share
+                        // the projected value, so the result is identical regardless of which survive.
+                        for (String col : VAR_COLUMNS) {
+                            for (int d = 0; d < 2; d++) {
+                                final String desc = d == 1 ? " DESC" : "";
+                                final int k = 1 + rnd.nextInt(200);
+                                assertTopKMatch(engine, ctx, "SELECT " + col + " FROM tab ORDER BY " + col + desc + " LIMIT " + k);
+                            }
+                        }
+
+                        // A fixed multi-column key wider than 32 bytes spills onto the key-heap
+                        // (variable) path; the unique col_id makes the cut total and deterministic.
+                        assertTopKMatch(engine, ctx, "SELECT col_long256, col_id FROM tab ORDER BY col_long256, col_id LIMIT " + (1 + rnd.nextInt(200)));
+
+                        // Unique keys make the full emitted rows deterministic.
+                        assertTopKMatch(engine, ctx, "SELECT * FROM tab ORDER BY col_id LIMIT " + (1 + rnd.nextInt(200)));
+                        assertTopKMatch(engine, ctx, "SELECT * FROM tab ORDER BY col_id DESC LIMIT " + (1 + rnd.nextInt(200)));
+
+                        // LIMIT past the row count clamps the emit window to the row count.
+                        assertTopKMatch(engine, ctx, "SELECT * FROM tab ORDER BY col_id LIMIT " + (rowCount + 1_000));
+
+                        // A filter that rejects every row leaves an empty emit window.
+                        assertTopKMatch(engine, ctx, "SELECT col_long FROM tab WHERE col_long > 1_000_000 ORDER BY col_long LIMIT 10");
+
+                        // The filter reducer feeds the batch encoder its filtered row list.
+                        assertTopKMatch(
+                                engine, ctx,
+                                "SELECT col_long FROM tab WHERE col_long >= 3 ORDER BY col_long LIMIT " + (1 + rnd.nextInt(200))
+                        );
+                        assertTopKMatch(
+                                engine, ctx,
+                                "SELECT col_double FROM tab WHERE col_long >= 3 ORDER BY col_double DESC LIMIT " + (1 + rnd.nextInt(200))
+                        );
+
+                        // Multi-column keys take the per-row generic encoder.
+                        assertTopKMatch(
+                                engine, ctx,
+                                "SELECT * FROM tab ORDER BY col_int, col_sym, col_id LIMIT " + (1 + rnd.nextInt(200))
+                        );
+
+                        // A single matched row exercises the count<=1 no-sort branch and single-entry emit.
+                        assertTopKMatch(engine, ctx, "SELECT col_int FROM tab WHERE col_id = 1 ORDER BY col_int LIMIT 1");
+
+                        // LIMIT 1 and LIMIT past the row count on a duplicate-key fixed-8 column.
+                        assertTopKMatch(engine, ctx, "SELECT col_int FROM tab ORDER BY col_int LIMIT 1");
+                        assertTopKMatch(engine, ctx, "SELECT col_int FROM tab ORDER BY col_int DESC LIMIT " + (rowCount + 1_000));
+
+                        // A sort key carrying a column top: the original rows are NULL for col_top so
+                        // their frames take the colAddr==0 per-row fallback, while the rows inserted
+                        // after ADD COLUMN populate fresh frames that take the batch encoder. A native
+                        // table keeps the column top guaranteed regardless of the parquet parameter.
+                        engine.execute(
+                                "CREATE TABLE tab_top AS (SELECT x col_id, (x * 1_000_000L)::timestamp ts" +
+                                        " FROM long_sequence(" + rowCount + ")) TIMESTAMP(ts) PARTITION BY HOUR",
+                                ctx
+                        );
+                        engine.execute("ALTER TABLE tab_top ADD COLUMN col_top DOUBLE", ctx);
+                        // col_top_v exercises the variable-key column-top fallback: encodeVarcharBatch
+                        // declines the colAddr==0 frames of the original rows, so they take the per-row path.
+                        engine.execute("ALTER TABLE tab_top ADD COLUMN col_top_v VARCHAR", ctx);
+                        engine.execute(
+                                "INSERT INTO tab_top(ts, col_top, col_top_v, col_id) SELECT" +
+                                        " ((1_000_000L + x) * 1_000_000L)::timestamp, rnd_double(2), rnd_varchar(1, 24, 2), " + rowCount + "L + x" +
+                                        " FROM long_sequence(5_000)",
+                                ctx
+                        );
+                        assertTopKMatch(engine, ctx, "SELECT col_top FROM tab_top ORDER BY col_top LIMIT " + (1 + rnd.nextInt(200)));
+                        assertTopKMatch(engine, ctx, "SELECT col_top FROM tab_top ORDER BY col_top DESC LIMIT " + (1 + rnd.nextInt(200)));
+                        assertTopKMatch(engine, ctx, "SELECT col_top_v FROM tab_top ORDER BY col_top_v LIMIT " + (1 + rnd.nextInt(200)));
+                        assertTopKMatch(engine, ctx, "SELECT col_top_v FROM tab_top ORDER BY col_top_v DESC LIMIT " + (1 + rnd.nextInt(200)));
+
+                        // A volume large enough that each of the 4 workers crosses the 4096-entry
+                        // compaction trigger, so per-worker sort-and-truncate plus threshold rejection
+                        // fire before the owner merge - the distributed top-K discard path that the
+                        // small matrix table never reaches. A unique key keeps the full rows deterministic.
+                        engine.execute(
+                                "CREATE TABLE big AS (SELECT x id, (x * 1_000_000L)::timestamp ts" +
+                                        " FROM long_sequence(40_000)) TIMESTAMP(ts) PARTITION BY HOUR",
+                                ctx
+                        );
+                        assertTopKMatch(engine, ctx, "SELECT * FROM big ORDER BY id LIMIT 50");
+                        assertTopKMatch(engine, ctx, "SELECT * FROM big ORDER BY id DESC LIMIT 50");
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test
     public void testParallelTopKFilter() throws Exception {
         testParallelTopK(
                 "SELECT * FROM tab WHERE key = 'k0' ORDER BY price DESC LIMIT 1;",
-                "ts\tkey\tprice\tquantity\tcolTop\n" +
-                        "1970-02-10T12:00:00.000000Z\tk0\t4050.0\t4050\t4050.0\n"
+                """
+                        ts\tkey\tprice\tquantity\tcolTop
+                        1970-02-10T12:00:00.000000Z\tk0\t4050.0\t4050\t4050.0
+                        """
         );
     }
 
@@ -127,10 +280,12 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
     public void testParallelTopKIntrinsicsFilter() throws Exception {
         testParallelTopK(
                 "SELECT * FROM tab WHERE ts in '1970-02' ORDER BY colTop LIMIT 3;",
-                "ts\tkey\tprice\tquantity\tcolTop\n" +
-                        "1970-02-01T00:00:00.000000Z\tk0\t3100.0\t3100\t3100.0\n" +
-                        "1970-02-01T00:14:24.000000Z\tk1\t3101.0\t3101\t3101.0\n" +
-                        "1970-02-01T00:28:48.000000Z\tk2\t3102.0\t3102\t3102.0\n"
+                """
+                        ts\tkey\tprice\tquantity\tcolTop
+                        1970-02-01T00:00:00.000000Z\tk0\t3100.0\t3100\t3100.0
+                        1970-02-01T00:14:24.000000Z\tk1\t3101.0\t3101\t3101.0
+                        1970-02-01T00:28:48.000000Z\tk2\t3102.0\t3102\t3102.0
+                        """
         );
     }
 
@@ -141,11 +296,104 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
         // The query won't use the parallel factory due to virtual base factory.
         testParallelTopK(
                 "SELECT * FROM tab ORDER BY concat(key, 'foobar'), ts DESC LIMIT 3;",
-                "ts\tkey\tprice\tquantity\tcolTop\n" +
-                        "1970-02-10T12:00:00.000000Z\tk0\t4050.0\t4050\t4050.0\n" +
-                        "1970-02-10T10:48:00.000000Z\tk0\t4045.0\t4045\t4045.0\n" +
-                        "1970-02-10T09:36:00.000000Z\tk0\t4040.0\t4040\t4040.0\n"
+                """
+                        ts\tkey\tprice\tquantity\tcolTop
+                        1970-02-10T12:00:00.000000Z\tk0\t4050.0\t4050\t4050.0
+                        1970-02-10T10:48:00.000000Z\tk0\t4045.0\t4045\t4045.0
+                        1970-02-10T09:36:00.000000Z\tk0\t4040.0\t4040\t4040.0
+                        """
         );
+    }
+
+    /**
+     * Validates the parallel tree-chain top-K against the serial encoded reference. Every other test
+     * in this class leaves {@code cairo.sql.orderby.sort.enabled} at its default {@code true}, so
+     * {@link io.questdb.griffin.engine.table.AsyncTopKAtom} always routes to the encoded buffer and
+     * the per-worker {@code LimitedSizeLongTreeChain} arm is only ever reached by the serial oracle -
+     * never through the atom, never with four worker chains feeding an owner merge. Disabling encoded
+     * sort flips the atom onto the tree while the parallel gate in {@code SqlCodeGenerator}, which
+     * does not consult that flag, keeps the async factory in place.
+     * <p>
+     * The oracle is the serial <em>encoded</em> sort, so the implementation under test is not its own
+     * reference.
+     */
+    @Test
+    public void testParallelTopKTreeChain() throws Exception {
+        // assertTopKTreeChainMatch sets both flags per side, so the run is independent of the
+        // enableParallelTopK parameter.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) sqlExecutionContext;
+                        // 40_000 rows over PAGE_FRAME_MAX_ROWS-sized frames give every worker chain
+                        // enough entries to hit its limit repeatedly, so the incremental min/max cache
+                        // and the eviction path run many times per worker and again in the owner merge.
+                        engine.execute(
+                                "CREATE TABLE tree AS (SELECT x id, (x % 97) g, ('v' || x)::varchar v," +
+                                        " (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000))" +
+                                        " TIMESTAMP(ts) PARTITION BY HOUR",
+                                ctx
+                        );
+
+                        // A unique key makes the LIMIT cut total, so the full emitted rows are
+                        // deterministic on both sides.
+                        assertTopKTreeChainMatch(engine, ctx, "SELECT * FROM tree ORDER BY id LIMIT 50");
+                        assertTopKTreeChainMatch(engine, ctx, "SELECT * FROM tree ORDER BY id DESC LIMIT 50");
+
+                        // Duplicate keys: project only the sort column so which tied rows survive the
+                        // cut cannot make the two sides differ.
+                        assertTopKTreeChainMatch(engine, ctx, "SELECT g FROM tree ORDER BY g LIMIT 200");
+                        assertTopKTreeChainMatch(engine, ctx, "SELECT g FROM tree ORDER BY g DESC LIMIT 200");
+
+                        // The filter reducer feeds the tree its filtered row list, and the varchar key
+                        // goes through the compiled comparator rather than a fixed-width one.
+                        assertTopKTreeChainMatch(engine, ctx, "SELECT id, v FROM tree WHERE g > 3 ORDER BY v, id LIMIT 100");
+
+                        // LIMIT past the row count clamps the emit window to the row count.
+                        assertTopKTreeChainMatch(engine, ctx, "SELECT * FROM tree ORDER BY id DESC LIMIT 41_000");
+
+                        // A filter that rejects every row leaves an empty emit window, so the owner
+                        // merges four empty chains.
+                        assertTopKTreeChainMatch(engine, ctx, "SELECT id FROM tree WHERE id > 1_000_000 ORDER BY id LIMIT 10");
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelTopKVarcharSplitPrefixCollision() throws Exception {
+        // Regression for the prefix-6 reject: 'aaaaaa' (6 bytes, inlined) dominates so each
+        // worker's top-K boundary becomes a 6-byte key once it compacts, while the longer
+        // 'aaaaaazzzzzz' (12 bytes, split storage) shares those six prefix bytes and sorts
+        // above it under DESC. The split-VARCHAR reject only sees the six inline prefix bytes,
+        // so it must defer such a candidate to the full compare rather than drop it on the
+        // masked-prefix tie. The 30k rows make every worker cross the 4096 compaction trigger
+        // and the collisions are spread past it so they hit the reject with the boundary set.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) sqlExecutionContext;
+                        engine.execute(
+                                "CREATE TABLE vt AS (SELECT" +
+                                        " CASE WHEN x % 600 = 0 THEN 'aaaaaazzzzzz' ELSE 'aaaaaa' END v," +
+                                        " (x * 1_000_000L)::timestamp ts" +
+                                        " FROM long_sequence(30_000)) TIMESTAMP(ts) PARTITION BY HOUR",
+                                ctx
+                        );
+                        assertTopKMatch(engine, ctx, "SELECT v FROM vt ORDER BY v DESC LIMIT 100");
+                        assertTopKMatch(engine, ctx, "SELECT v FROM vt ORDER BY v LIMIT 100");
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test
@@ -157,9 +405,136 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
                     bindVariableService.setStr("asym", "k0");
                 },
                 "SELECT * FROM tab WHERE key = :asym ORDER BY price DESC LIMIT 1;",
-                "ts\tkey\tprice\tquantity\tcolTop\n" +
-                        "1970-02-10T12:00:00.000000Z\tk0\t4050.0\t4050\t4050.0\n"
+                """
+                        ts\tkey\tprice\tquantity\tcolTop
+                        1970-02-10T12:00:00.000000Z\tk0\t4050.0\t4050\t4050.0
+                        """
         );
+    }
+
+    private void assertTopKMatch(CairoEngine engine, SqlExecutionContextImpl ctx, String query) throws Exception {
+        ctx.setParallelTopKEnabled(true);
+        final StringSink plan = new StringSink();
+        TestUtils.printSql(engine, ctx, "EXPLAIN " + query, plan);
+        TestUtils.assertContains(plan, "Async");
+        TestUtils.assertContains(plan, "Top K");
+
+        final StringSink actual = new StringSink();
+        TestUtils.printSql(engine, ctx, query, actual);
+
+        ctx.setParallelTopKEnabled(false);
+        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, false);
+        try {
+            final StringSink expected = new StringSink();
+            TestUtils.printSql(engine, ctx, query, expected);
+            TestUtils.assertEquals(query, expected, actual);
+        } finally {
+            node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
+            ctx.setParallelTopKEnabled(true);
+        }
+    }
+
+    private void assertTopKTreeChainMatch(CairoEngine engine, SqlExecutionContextImpl ctx, String query) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, false);
+        ctx.setParallelTopKEnabled(true);
+        final StringSink actual = new StringSink();
+        try {
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                boolean isAsyncTopK = false;
+                for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+                    if (f instanceof AsyncTopKRecordCursorFactory) {
+                        isAsyncTopK = true;
+                        break;
+                    }
+                }
+                Assert.assertTrue("query is no longer routed to the parallel top-K factory: " + query, isAsyncTopK);
+
+                final StatefulAtom atom = TestUtils.findAtom(factory, query);
+                Assert.assertTrue(query, atom instanceof AsyncTopKAtom);
+                final AsyncTopKAtom topKAtom = (AsyncTopKAtom) atom;
+                // Without this the test silently degrades into another encoded-buffer run, which
+                // testParallelTopKEncodedTypes already covers, and the tree arm goes back to being
+                // reachable only from the serial side.
+                Assert.assertFalse("expected the tree-chain atom for: " + query, topKAtom.isEncoded());
+                Assert.assertEquals(4, topKAtom.getWorkerCount());
+                Assert.assertEquals(4, topKAtom.getPerWorkerChains().size());
+                Assert.assertNotNull(topKAtom.getOwnerChain());
+
+                // Drain the same factory the assertions above describe. TestUtils.printSql
+                // recompiles, so printing through it would leave those assertions describing a
+                // different execution than the one that produced the rows.
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    final RecordMetadata metadata = factory.getMetadata();
+                    actual.clear();
+                    CursorPrinter.println(metadata, actual);
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        TestUtils.println(record, metadata, actual);
+                    }
+                }
+            }
+
+            // The oracle: serial encoded sort, an independent implementation.
+            node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
+            ctx.setParallelTopKEnabled(false);
+            // Pin the oracle's routing too. Without this the comparison could silently degrade to
+            // tree against tree and stop being a cross-check at all. "Async" on its own is not the
+            // discriminator - a filtered query still reduces through the async filter on this side -
+            // so pin the encoded sort and the absence of any top-K factory.
+            final StringSink oraclePlan = new StringSink();
+            TestUtils.printSql(engine, ctx, "EXPLAIN " + query, oraclePlan);
+            TestUtils.assertContains(oraclePlan, "Encode sort light");
+            Assert.assertFalse("the oracle must not route to a top-K factory: " + query, Chars.contains(oraclePlan, "Top K"));
+            final StringSink expected = new StringSink();
+            TestUtils.printSql(engine, ctx, query, expected);
+            TestUtils.assertEquals(query, expected, actual);
+        } finally {
+            node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
+            ctx.setParallelTopKEnabled(true);
+        }
+    }
+
+    private void createTypeMatrixTable(CairoEngine engine, SqlExecutionContext ctx, int rowCount) throws SqlException {
+        engine.execute(
+                "CREATE TABLE tab AS (SELECT" +
+                        " rnd_boolean() col_bool," +
+                        " rnd_byte() col_byte," +
+                        " rnd_short() col_short," +
+                        " rnd_char() col_char," +
+                        " rnd_int(0, 10, 2) col_int," +
+                        " rnd_float(2) col_float," +
+                        " rnd_symbol(16, 2, 6, 0) col_sym," +
+                        " rnd_symbol(16, 2, 6, 2) col_sym_null," +
+                        " rnd_ipv4() col_ipv4," +
+                        " rnd_long(0, 10, 2) col_long," +
+                        " rnd_double(2) col_double," +
+                        " rnd_date(0, 100_000_000_000L, 2) col_date," +
+                        " rnd_geohash(5) col_geobyte," +
+                        " rnd_geohash(10) col_geoshort," +
+                        " rnd_geohash(20) col_geoint," +
+                        " rnd_geohash(40) col_geolong," +
+                        " rnd_decimal(2, 1, 2) col_dec8," +
+                        " rnd_decimal(4, 2, 2) col_dec16," +
+                        " rnd_decimal(9, 3, 2) col_dec32," +
+                        " rnd_decimal(18, 4, 2) col_dec64," +
+                        " rnd_decimal(38, 5, 2) col_dec128," +
+                        " rnd_decimal(76, 6, 2) col_dec256," +
+                        " rnd_uuid4() col_uuid," +
+                        " rnd_long256() col_long256," +
+                        " to_long128(rnd_long(), rnd_long()) col_long128," +
+                        " rnd_str(1, 24, 2) col_str," +
+                        " rnd_varchar(1, 24, 2) col_varchar," +
+                        " x col_id," +
+                        " timestamp_sequence(0, 1_000_000) ts" +
+                        " FROM long_sequence(" + rowCount + ")) TIMESTAMP(ts) PARTITION BY HOUR",
+                ctx
+        );
+        if (convertToParquet) {
+            // A row in a later partition makes the generated partitions convertible.
+            engine.execute("INSERT INTO tab(ts) VALUES ('2000-01-01')", ctx);
+            engine.execute("ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts < '2000-01-01'", ctx);
+        }
     }
 
     private void testParallelTopK(String... queriesAndExpectedResults) throws Exception {

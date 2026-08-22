@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -72,7 +72,7 @@ public class LowerCaseUtf8SequenceObjHashMapTest {
                 }
                 // copy each string to the memory
                 int len = s.length();
-                Unsafe.getUnsafe().putInt(p, len);
+                Unsafe.putInt(p, len);
                 Utf8s.strCpyAscii(s, len, p + 4);
                 p += 4 + len;
             }
@@ -166,7 +166,7 @@ public class LowerCaseUtf8SequenceObjHashMapTest {
             assert utf8Bytes.length == 2;
             for (int i = 0; i < N; i++) {
                 for (int j = 0; j < 2; j++) {
-                    Unsafe.getUnsafe().putByte(mem + (long) 2 * i + j, utf8Bytes[j]);
+                    Unsafe.putByte(mem + (long) 2 * i + j, utf8Bytes[j]);
                 }
             }
 
@@ -226,7 +226,78 @@ public class LowerCaseUtf8SequenceObjHashMapTest {
                 Assert.assertEquals(0, map.size());
             }
         });
+    }
 
+    @Test
+    public void testRemoveAtQuickMaintainsMapAndKeyListConsistency() {
+        LowerCaseUtf8SequenceObjHashMap<Integer> map = newMap();
+        removeAtQuick(map, 0);
+        assertMap(map, "e", "b", "c", "d");
 
+        map = newMap();
+        removeAtQuick(map, 2);
+        assertMap(map, "a", "b", "e", "d");
+
+        map = newMap();
+        removeAtQuick(map, 4);
+        assertMap(map, "a", "b", "c", "d");
+
+        map = newMap();
+        removeAtQuick(map, 1);
+        assertMap(map, "a", "e", "c", "d");
+        removeAtQuick(map, 1);
+        assertMap(map, "a", "d", "c");
+
+        map = newMap();
+        removeAtQuick(map, 0);
+        assertMap(map, "e", "b", "c", "d");
+        removeAtQuick(map, 0);
+        assertMap(map, "d", "b", "c");
+        removeAtQuick(map, 0);
+        assertMap(map, "c", "b");
+        removeAtQuick(map, 0);
+        assertMap(map, "b");
+        removeAtQuick(map, 0);
+        assertMap(map);
+    }
+
+    private static void assertMap(LowerCaseUtf8SequenceObjHashMap<Integer> map, String... expectedKeys) {
+        Assert.assertEquals(expectedKeys.length, map.size());
+        Assert.assertEquals(expectedKeys.length, map.keys().size());
+        for (int i = 0; i < expectedKeys.length; i++) {
+            String expectedKey = expectedKeys[i];
+            Assert.assertEquals(expectedKey, map.keys().getQuick(i).toString());
+            Assert.assertEquals(expectedKey.charAt(0) - 'a' + 1, (int) map.valueQuick(i));
+        }
+        for (char key = 'a'; key <= 'e'; key++) {
+            int expectedValue = key - 'a' + 1;
+            Integer actualValue = map.get(new Utf8String(Character.toString(key)));
+            boolean isExpected = false;
+            for (String expectedKey : expectedKeys) {
+                if (expectedKey.charAt(0) == key) {
+                    isExpected = true;
+                    break;
+                }
+            }
+            if (isExpected) {
+                Assert.assertEquals(expectedValue, (int) actualValue);
+            } else {
+                Assert.assertNull(actualValue);
+            }
+        }
+    }
+
+    private static LowerCaseUtf8SequenceObjHashMap<Integer> newMap() {
+        LowerCaseUtf8SequenceObjHashMap<Integer> map = new LowerCaseUtf8SequenceObjHashMap<>();
+        for (char key = 'a'; key <= 'e'; key++) {
+            map.put(new Utf8String(Character.toString(key)), key - 'a' + 1);
+        }
+        return map;
+    }
+
+    private static void removeAtQuick(LowerCaseUtf8SequenceObjHashMap<Integer> map, int listIndex) {
+        Utf8String key = Utf8String.newInstance(map.keys().getQuick(listIndex));
+        map.removeAtQuick(map.keyIndex(key), listIndex);
+        Assert.assertNull(map.get(key));
     }
 }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -36,7 +36,6 @@ import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractOperation implements AsyncWriterCommand, QuietCloseable {
     private static final long NO_CORRELATION_ID = -1L;
-    protected @Nullable TableToken tableToken;
     @Nullable
     SecurityContext securityContext;
     @Nullable
@@ -44,18 +43,26 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     @Nullable
     CharSequence sqlText;
     int tableNamePosition;
+    @Nullable
+    TableToken tableToken;
     private String cmdName;
     private int cmdType;
     private long correlationId;
     private int tableId;
     private long tableVersion;
 
+    /**
+     * Authorizes the operation against the current security context.
+     * Cached operations must be re-authorized on every execution.
+     */
+    public abstract void authorize();
+
     public void clearCommandCorrelationId() {
         setCommandCorrelationId(NO_CORRELATION_ID);
     }
 
     public void clearSecurityContext() {
-        Misc.clear(securityContext);
+        securityContext = Misc.clear(securityContext);
     }
 
     @Override
@@ -109,6 +116,19 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         return tableVersion;
     }
 
+    public boolean isForceWalBypass() {
+        return false;
+    }
+
+    /**
+     * Whether this operation may bypass the WAL and apply directly to the table (like
+     * {@code FORCE DROP PARTITION}) when the table is hard-suspended. Lets maintenance run on a
+     * frozen table that otherwise denies WAL writes. Data writes (e.g. UPDATE) return false.
+     */
+    public boolean isForceableWhenSuspended() {
+        return false;
+    }
+
     @Override
     public void serialize(TableWriterTask task) {
         task.of(cmdType, tableId, tableToken);
@@ -148,9 +168,5 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         this.tableVersion = tableVersion;
         this.tableNamePosition = tableNamePosition;
         this.correlationId = NO_CORRELATION_ID;
-    }
-
-    public boolean isForceWalBypass() {
-        return false;
     }
 }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -41,6 +41,16 @@ public class UnionRecord extends AbstractUnionRecord {
             return recordA.getArray(col, columnType);
         }
         return recordB.getArray(col, columnType);
+    }
+
+    @Override
+    public int getArrayDimLen(int col, int columnType, int dim) {
+        return useA ? recordA.getArrayDimLen(col, columnType, dim) : recordB.getArrayDimLen(col, columnType, dim);
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+        return useA ? recordA.getArrayDouble1d2d(col, columnType, idx0, idx1) : recordB.getArrayDouble1d2d(col, columnType, idx0, idx1);
     }
 
     @Override

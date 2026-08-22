@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -91,6 +91,17 @@ public interface QuaternaryFunction extends Function {
     @Override
     default boolean isRandom() {
         return getFunc0().isRandom() || getFunc1().isRandom() || getFunc2().isRandom() || getFunc3().isRandom();
+    }
+
+    // Within-execution stability composes independently of determinism: an arg may be
+    // non-deterministic yet stable (bind variable, now()), or appear deterministic through
+    // isNonDeterministic() yet be unstable (a cursor arg wrapping an rnd_* projection).
+    @Override
+    default boolean isStableWithinExecution() {
+        return getFunc0().isStableWithinExecution()
+                && getFunc1().isStableWithinExecution()
+                && getFunc2().isStableWithinExecution()
+                && getFunc3().isStableWithinExecution();
     }
 
     @Override

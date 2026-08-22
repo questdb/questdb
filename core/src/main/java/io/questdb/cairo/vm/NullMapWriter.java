@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -59,6 +59,14 @@ public class NullMapWriter implements MapWriter {
     @Override
     public MemoryR getSymbolValuesMemory() {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean isCacheAllocated() {
+        // Agrees with isCached(), so a caller that reads the two disagreeing as a column
+        // missing a cache it asked for finds nothing to recover on a writer that stands in
+        // for a column with no symbol map at all - and never reaches updateCacheFlag() here.
+        return true;
     }
 
     @Override

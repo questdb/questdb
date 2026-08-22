@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -49,6 +49,22 @@ public class JoinRecord implements Record {
             return master.getArray(col, columnType);
         }
         return slave.getArray(col - split, columnType);
+    }
+
+    @Override
+    public int getArrayDimLen(int col, int columnType, int dim) {
+        if (col < split) {
+            return master.getArrayDimLen(col, columnType, dim);
+        }
+        return slave.getArrayDimLen(col - split, columnType, dim);
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+        if (col < split) {
+            return master.getArrayDouble1d2d(col, columnType, idx0, idx1);
+        }
+        return slave.getArrayDouble1d2d(col - split, columnType, idx0, idx1);
     }
 
     @Override

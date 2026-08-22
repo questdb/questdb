@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -33,7 +33,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class NumericException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     public static final NumericException INSTANCE = new NumericException();
-    private static final io.questdb.std.ThreadLocal<NumericException> tlInstance = new ThreadLocal<>(NumericException::new);
+    private static final CarrierLocal<NumericException> tlInstance = new CarrierLocal<>(NumericException::new);
     private final StringSink message = new StringSink();
     private int messagePosition = 0;
 

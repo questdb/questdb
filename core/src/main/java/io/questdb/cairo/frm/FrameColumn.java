@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -72,4 +72,14 @@ public interface FrameColumn extends Closeable {
     int getStorageType();
 
     void setRecycleBin(RecycleBin<FrameColumn> pool);
+
+    /**
+     * Posting-index hook: tag chain entries published during the next
+     * {@link #append} or {@link #appendNulls} with the supplied upcoming
+     * {@code _txn}. A value below 0 means "unwired" and the column falls
+     * back to its default (legacy) tagging. No-op for column types that
+     * do not own a posting index writer.
+     */
+    default void setUpcomingTableTxn(long upcomingTableTxn) {
+    }
 }

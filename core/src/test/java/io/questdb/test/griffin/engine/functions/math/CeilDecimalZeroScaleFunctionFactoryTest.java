@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -42,6 +42,15 @@ import org.junit.Test;
 public class CeilDecimalZeroScaleFunctionFactoryTest extends AbstractCairoTest {
     private final ObjList<Function> args = new ObjList<>();
     private final CeilDecimalZeroScaleFunctionFactory factory = new CeilDecimalZeroScaleFunctionFactory();
+
+    @Test
+    public void testCeilExactValueIsNotRoundedUp() throws Exception {
+        // the ceiling divides the unscaled value by 10^29, and that division takes Knuth's add-back
+        // below the top quotient digit; a remainder left behind there lifts a value that has none
+        assertQuery("SELECT ceil('1799763213631808680437004663521279'::DECIMAL(63,29)) c")
+                .expectSize()
+                .returns("c\n1799763213631808680437004663521279\n");
+    }
 
     @Test
     public void testCeilNegative() {

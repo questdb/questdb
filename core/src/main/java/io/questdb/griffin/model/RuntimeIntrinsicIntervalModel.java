@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -38,6 +38,24 @@ public interface RuntimeIntrinsicIntervalModel extends QuietCloseable, Plannable
     LongList calculateIntervals(SqlExecutionContext sqlExecutionContext) throws SqlException;
 
     TimestampDriver getTimestampDriver();
+
+    /**
+     * Fail-safe determinism contract mirroring {@code RecordCursorFactory#isNonDeterministic()}:
+     * returns {@code true} unless the model can prove its intervals are stable across two
+     * evaluations (static intervals, or dynamic bounds that are all deterministic).
+     */
+    default boolean isNonDeterministic() {
+        return true;
+    }
+
+    /**
+     * Returns {@code true} if repeated interval calculations within one query execution produce
+     * the same intervals. The default stays fail-safe by deriving from determinism; runtime
+     * models may prove the weaker property for execution-scoped bound functions.
+     */
+    default boolean isStableWithinExecution() {
+        return !isNonDeterministic();
+    }
 
     boolean isStatic();
 }

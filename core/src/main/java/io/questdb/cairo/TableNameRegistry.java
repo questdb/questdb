@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -65,6 +65,18 @@ public interface TableNameRegistry extends Closeable {
      * @return true if table name was removed, false otherwise
      */
     boolean dropTable(TableToken token);
+
+    /**
+     * Returns the reverse-map entry for a directory name: the token plus whether the table it names
+     * has been dropped. {@link #getTokenByDirName(CharSequence)} and
+     * {@link #getTableTokenByDirName(CharSequence)} are both projections of this entry, so a caller
+     * that needs the token AND the dropped flag resolves them here in ONE map read rather than
+     * hashing the same key twice.
+     *
+     * @param dirName directory name
+     * @return the entry, or null when the registry has no record of the directory
+     */
+    @Nullable ReverseTableMapItem getReverseMapItemByDirName(CharSequence dirName);
 
     /**
      * Returns table token by table name. If table does not exist, returns null.
@@ -135,6 +147,8 @@ public interface TableNameRegistry extends Closeable {
      * @return table token or null if table name with the same tableId, private name is already registered
      */
     TableToken lockTableName(String tableName, String dirName, int tableId, boolean isView, boolean isMatView, boolean isWal);
+
+    TableToken lockTableName(String tableName, String dirName, int tableId, boolean isView, boolean isMatView, boolean isLiveView, boolean isWal);
 
     /**
      * Purges token from registry after table, and it's WAL segments have been removed on disk. This method is

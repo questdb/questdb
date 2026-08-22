@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -66,49 +65,125 @@ import org.junit.Test;
 public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testGeomeanAllNull() throws SqlException {
+    public void testGeomeanAgainstExpAvgLnFormula() throws Exception {
+        // Verify that geomean(x) = exp(avg(ln(x))) for positive values
+        execute("create table tab as (" +
+                "select " +
+                "  rnd_symbol('A','B','C') sym, " +
+                "  abs(rnd_double()) + 0.001 value " +
+                "from long_sequence(1000))");
+
+        assertQuery(
+                """
+                        select
+                            sym,
+                            abs(geomean(value) - exp(avg(ln(value)))) < 0.0000001 as is_equal
+                        from tab
+                        group by sym
+                        order by sym
+                        """
+        )
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        sym\tis_equal
+                        A\ttrue
+                        B\ttrue
+                        C\ttrue
+                        """);
+    }
+
+    @Test
+    public void testGeomeanAllNull() throws Exception {
         execute("create table tab (value double)");
 
         execute("insert into tab values (null)");
         execute("insert into tab values (null)");
         execute("insert into tab values (null)");
 
-        assertSql(
-                """
+        assertQuery("select geomean(value) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         geomean
                         null
-                        """,
-                "select geomean(value) from tab"
-        );
+                        """);
     }
 
     @Test
-    public void testGeomeanEmptyTable() throws SqlException {
+    public void testGeomeanConstantArgument() throws Exception {
+        // When the argument is a constant, the factory returns DoubleConstant directly
+        // geomean(c) = c for any positive constant c
+        execute("create table tab (x int)");
+        execute("insert into tab values (1), (2), (3)");
+
+        // Verify the result is correct: geomean(5.0) = 5.0
+        assertQuery("select geomean(5.0) from tab")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        geomean
+                        5.0
+                        """);
+
+        // Verify with negative constant - should return null (NaN)
+        assertQuery("select geomean(-5.0) from tab")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        geomean
+                        null
+                        """);
+
+        // Verify with zero constant - should return null (NaN)
+        assertQuery("select geomean(0.0) from tab")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        geomean
+                        null
+                        """);
+
+        // Verify with null constant
+        assertQuery("select geomean(null) from tab")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        geomean
+                        null
+                        """);
+    }
+
+    @Test
+    public void testGeomeanEmptyTable() throws Exception {
         execute("create table tab (value double)");
 
-        assertSql(
-                """
+        assertQuery("select geomean(value) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         geomean
                         null
-                        """,
-                "select geomean(value) from tab"
-        );
+                        """);
     }
 
     @Test
-    public void testGeomeanMathematicalVerification() throws SqlException {
+    public void testGeomeanMathematicalVerification() throws Exception {
         // Geometric mean of 2, 8 = sqrt(2 * 8) = sqrt(16) = 4
         execute("create table tab (value double)");
         execute("insert into tab values (2.0)");
         execute("insert into tab values (8.0)");
 
-        assertSql(
-                """
+        assertQuery("select round(geomean(value), 10) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         round
                         4.0
-                        """,
-                "select round(geomean(value), 10) from tab"
-        );
+                        """);
 
         // Geometric mean of 1, 3, 9 = (1 * 3 * 9)^(1/3) = 27^(1/3) = 3
         execute("drop table tab");
@@ -117,13 +192,14 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         execute("insert into tab values (3.0)");
         execute("insert into tab values (9.0)");
 
-        assertSql(
-                """
+        assertQuery("select round(geomean(value), 10) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         round
                         3.0
-                        """,
-                "select round(geomean(value), 10) from tab"
-        );
+                        """);
 
         // Geometric mean of 4, 4, 4, 4 = 4
         execute("drop table tab");
@@ -133,13 +209,14 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         execute("insert into tab values (4.0)");
         execute("insert into tab values (4.0)");
 
-        assertSql(
-                """
+        assertQuery("select round(geomean(value), 10) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         round
                         4.0
-                        """,
-                "select round(geomean(value), 10) from tab"
-        );
+                        """);
     }
 
     @Test
@@ -152,18 +229,16 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, geomean(value) from tab group by sym order by sym";
 
                         // Verify the query plan shows parallel execution
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "explain " + sql,
-                                sink,
-                                """
-                                        QUERY PLAN
-                                        Sort light
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .assertsPlan("""
+                                        Encode sort light
                                           keys: [sym]
                                             Async Group By workers: 4
                                               keys: [sym]
@@ -172,8 +247,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tab
-                                        """
-                        );
+                                        """);
                     },
                     configuration,
                     LOG
@@ -193,24 +267,23 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, geomean(value) from tab group by sym order by sym";
 
                         // All results should be null since all values are null
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                sql,
-                                sink,
-                                """
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         sym\tgeomean
                                         A\tnull
                                         B\tnull
                                         C\tnull
                                         D\tnull
                                         E\tnull
-                                        """
-                        );
+                                        """);
                     },
                     configuration,
                     LOG
@@ -230,18 +303,16 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, geomean(value) from tab group by sym order by sym";
 
                         // Verify the query plan shows parallel execution
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "explain " + sql,
-                                sink,
-                                """
-                                        QUERY PLAN
-                                        Sort light
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .assertsPlan("""
+                                        Encode sort light
                                           keys: [sym]
                                             Async Group By workers: 4
                                               keys: [sym]
@@ -250,8 +321,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: tab
-                                        """
-                        );
+                                        """);
 
                         // Run query and verify results are consistent
                         TestUtils.assertSqlCursors(
@@ -280,24 +350,23 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, geomean(value) from tab group by sym order by sym";
 
                         // All results should be null (NaN displayed as null) since each group has negative values
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                sql,
-                                sink,
-                                """
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         sym\tgeomean
                                         A\tnull
                                         B\tnull
                                         C\tnull
                                         D\tnull
                                         E\tnull
-                                        """
-                        );
+                                        """);
                     },
                     configuration,
                     LOG
@@ -318,7 +387,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, geomean(value) from tab group by sym order by sym";
 
                         // Run query - this exercises merge with null values
@@ -348,7 +417,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select sym, geomean(value) from tab group by sym order by sym";
 
                         // Run parallel query and verify it produces consistent results
@@ -367,7 +436,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGeomeanSimple() throws SqlException {
+    public void testGeomeanSimple() throws Exception {
         execute("create table tab (value double)");
 
         execute("insert into tab values (1.0)");
@@ -375,32 +444,34 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         execute("insert into tab values (4.0)");
 
         // Geometric mean of 1, 2, 4 = (1 * 2 * 4)^(1/3) = 8^(1/3) = 2
-        assertSql(
-                """
+        assertQuery("select geomean(value) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         geomean
                         2.0
-                        """,
-                "select geomean(value) from tab"
-        );
+                        """);
     }
 
     @Test
-    public void testGeomeanSingleValue() throws SqlException {
+    public void testGeomeanSingleValue() throws Exception {
         execute("create table tab (value double)");
         execute("insert into tab values (5.0)");
 
         // Geometric mean of single value is that value
-        assertSql(
-                """
+        assertQuery("select round(geomean(value), 10) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         round
                         5.0
-                        """,
-                "select round(geomean(value), 10) from tab"
-        );
+                        """);
     }
 
     @Test
-    public void testGeomeanWithGroupBy() throws SqlException {
+    public void testGeomeanWithGroupBy() throws Exception {
         execute("create table tab (sym symbol, value double)");
 
         // Group A: geomean(2, 8) = sqrt(16) = 4
@@ -412,18 +483,18 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         execute("insert into tab values ('B', 3.0)");
         execute("insert into tab values ('B', 9.0)");
 
-        assertSql(
-                """
+        assertQuery("select sym, round(geomean(value), 10) from tab order by sym")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         sym\tround
                         A\t4.0
                         B\t3.0
-                        """,
-                "select sym, round(geomean(value), 10) from tab order by sym"
-        );
+                        """);
     }
 
     @Test
-    public void testGeomeanWithMixedValidAndInvalid() throws SqlException {
+    public void testGeomeanWithMixedValidAndInvalid() throws Exception {
         execute("create table tab (sym symbol, value double)");
 
         // Group A: has negative value -> null (NaN displayed as null)
@@ -441,19 +512,19 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         execute("insert into tab values ('C', 0.0)");
         execute("insert into tab values ('C', 8.0)");
 
-        assertSql(
-                """
+        assertQuery("select sym, round(geomean(value), 10) from tab order by sym")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         sym\tround
                         A\tnull
                         B\t3.0
                         C\tnull
-                        """,
-                "select sym, round(geomean(value), 10) from tab order by sym"
-        );
+                        """);
     }
 
     @Test
-    public void testGeomeanWithNegativeValue() throws SqlException {
+    public void testGeomeanWithNegativeValue() throws Exception {
         execute("create table tab (value double)");
 
         execute("insert into tab values (2.0)");
@@ -461,17 +532,18 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         execute("insert into tab values (8.0)");
 
         // Negative value -> null (NaN displayed as null)
-        assertSql(
-                """
+        assertQuery("select geomean(value) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         geomean
                         null
-                        """,
-                "select geomean(value) from tab"
-        );
+                        """);
     }
 
     @Test
-    public void testGeomeanWithNullValues() throws SqlException {
+    public void testGeomeanWithNullValues() throws Exception {
         execute("create table tab (value double)");
 
         execute("insert into tab values (null)");
@@ -480,17 +552,18 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         execute("insert into tab values (null)");
 
         // Null values are ignored, geomean(2, 8) = 4
-        assertSql(
-                """
+        assertQuery("select geomean(value) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         geomean
                         4.0
-                        """,
-                "select geomean(value) from tab"
-        );
+                        """);
     }
 
     @Test
-    public void testGeomeanWithZeroValue() throws SqlException {
+    public void testGeomeanWithZeroValue() throws Exception {
         execute("create table tab (value double)");
 
         execute("insert into tab values (2.0)");
@@ -498,83 +571,13 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         execute("insert into tab values (8.0)");
 
         // Zero value -> null (NaN displayed as null)
-        assertSql(
-                """
+        assertQuery("select geomean(value) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         geomean
                         null
-                        """,
-                "select geomean(value) from tab"
-        );
-    }
-
-    @Test
-    public void testGeomeanAgainstExpAvgLnFormula() throws SqlException {
-        // Verify that geomean(x) = exp(avg(ln(x))) for positive values
-        execute("create table tab as (" +
-                "select " +
-                "  rnd_symbol('A','B','C') sym, " +
-                "  abs(rnd_double()) + 0.001 value " +
-                "from long_sequence(1000))");
-
-        assertSql(
-                """
-                        sym\tis_equal
-                        A\ttrue
-                        B\ttrue
-                        C\ttrue
-                        """,
-                """
-                        select
-                            sym,
-                            abs(geomean(value) - exp(avg(ln(value)))) < 0.0000001 as is_equal
-                        from tab
-                        group by sym
-                        order by sym
-                        """
-        );
-    }
-
-    @Test
-    public void testGeomeanConstantArgument() throws SqlException {
-        // When the argument is a constant, the factory returns DoubleConstant directly
-        // geomean(c) = c for any positive constant c
-        execute("create table tab (x int)");
-        execute("insert into tab values (1), (2), (3)");
-
-        // Verify the result is correct: geomean(5.0) = 5.0
-        assertSql(
-                """
-                        geomean
-                        5.0
-                        """,
-                "select geomean(5.0) from tab"
-        );
-
-        // Verify with negative constant - should return null (NaN)
-        assertSql(
-                """
-                        geomean
-                        null
-                        """,
-                "select geomean(-5.0) from tab"
-        );
-
-        // Verify with zero constant - should return null (NaN)
-        assertSql(
-                """
-                        geomean
-                        null
-                        """,
-                "select geomean(0.0) from tab"
-        );
-
-        // Verify with null constant
-        assertSql(
-                """
-                        geomean
-                        null
-                        """,
-                "select geomean(null) from tab"
-        );
+                        """);
     }
 }

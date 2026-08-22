@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -55,19 +55,17 @@ public class FunctionComplexityTest extends AbstractCairoTest {
             // a::DOUBLE on a column has complexity COMPLEXITY_CAST + COMPLEXITY_COLUMN = 4,
             // which exceeds default threshold (3) and triggers materialization
             execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts)");
-            assertPlanNoLeakCheck(
-                    "SELECT a::DOUBLE AS x FROM t ORDER BY x",
-                    """
-                            Sort light
+            assertQuery("SELECT a::DOUBLE AS x FROM t ORDER BY x")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Encode sort light
                               keys: [x]
-                                Materialize sort keys
-                                    VirtualRecord
-                                      functions: [a::double]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
-                            """
-            );
+                                VirtualRecord
+                                  functions: [a::double]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """);
         });
     }
 

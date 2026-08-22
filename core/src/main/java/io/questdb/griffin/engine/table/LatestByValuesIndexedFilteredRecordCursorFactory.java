@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
@@ -38,7 +39,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDeferredTreeSetRecordCursorFactory {
-    private final Function filter;
+    private Function filter;
 
     public LatestByValuesIndexedFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -95,8 +96,18 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(filter);
-        Misc.free(cursor);
+        final PageFrameRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

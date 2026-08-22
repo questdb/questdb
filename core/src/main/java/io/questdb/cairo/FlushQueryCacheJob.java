@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -44,7 +44,7 @@ public class FlushQueryCacheJob extends AbstractQueueConsumerJob<Object> {
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
         try {
             if (httpServer != null) {
                 LOG.info().$("flushing HTTP server select cache").$();

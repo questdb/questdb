@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -76,6 +77,13 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
         return false;
     }
 
+    // Reads a file outside the database: contents can change between cursor opens with no
+    // transaction to observe, so a materialized view cannot be defined over it.
+    @Override
+    public boolean usesExternalDataSource() {
+        return true;
+    }
+
     @Override
     public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
         this.pushdownFilterConditions = pushdownFilterConditions;
@@ -89,8 +97,18 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
 
     @Override
     protected void _close() {
-        cursor = Misc.free(cursor);
-        path = Misc.free(path);
-        Misc.freeObjListAndClear(pushdownFilterConditions);
+        final ReadParquetRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Path path = this.path;
+        this.path = null;
+        final ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions = this.pushdownFilterConditions;
+        this.pushdownFilterConditions = null;
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = Misc.freeBestEffort(failure, path);
+        failure = Misc.freeObjListBestEffort(failure, pushdownFilterConditions);
+        if (pushdownFilterConditions != null) {
+            pushdownFilterConditions.clear();
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

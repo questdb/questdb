@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,6 +27,7 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
@@ -44,6 +45,7 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
+    private final boolean coveringIndexEnabled;
     private TableReader baseTableReader;
     private TableToken viewTableToken;
 
@@ -56,12 +58,20 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
             setParallelWindowJoinEnabled(false);
             setParallelReadParquetEnabled(false);
         }
+        this.coveringIndexEnabled = engine.getConfiguration().isMatViewCoveringIndexEnabled();
         this.securityContext = new ReadOnlySecurityContext() {
             @Override
             public void authorizeInsert(TableToken tableToken) {
                 if (!tableToken.equals(viewTableToken)) {
                     throw CairoException.authorization().put("Write permission denied").setCacheable(true);
                 }
+            }
+
+            @Override
+            protected SecurityContext newPrincipalContext(CharSequence principal) {
+                // this refresh context is never re-derived per principal; return this so forPrincipal keeps
+                // the view-scoped authorizeInsert override instead of downgrading to plain read-only
+                return this;
             }
         };
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
@@ -96,18 +106,23 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
                         baseTableReader.getMetadataVersion()
                 );
             }
-            return getCairoEngine().getReaderAtTxn(baseTableReader);
+            return getCairoEngine().getReaderAtTxn(baseTableReader, this);
         }
-        return getCairoEngine().getReader(tableToken, version);
+        return getCairoEngine().getReader(tableToken, version, this.getReaderPoolSupervisor());
     }
 
     @Override
     public TableReader getReader(TableToken tableToken) {
         if (tableToken.equals(baseTableReader.getTableToken())) {
             // Base table reader txn is fixed throughout the mat view refresh.
-            return getCairoEngine().getReaderAtTxn(baseTableReader);
+            return getCairoEngine().getReaderAtTxn(baseTableReader, this);
         }
-        return getCairoEngine().getReader(tableToken);
+        return getCairoEngine().getReader(tableToken, this.getReaderPoolSupervisor());
+    }
+
+    @Override
+    public boolean isCoveringIndexEnabled() {
+        return coveringIndexEnabled;
     }
 
     @Override
@@ -127,8 +142,8 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         }
         // Cannot re-use function instances, they will be cached in the query plan
         // and then can be re-used in another execution context.
-        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(1, timestampType, 0));
-        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, timestampType, 0));
+        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(1, timestampType, 0), 0);
+        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, timestampType, 0), 0);
     }
 
     @Override
@@ -136,10 +151,10 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         // no-op
     }
 
-    // tsLo is inclusive, tsHi is exclusive
-    public void setRange(long tsLo, long tsHi, int timestampType) throws SqlException {
-        getBindVariableService().setTimestampWithType(1, timestampType, tsLo);
-        getBindVariableService().setTimestampWithType(2, timestampType, tsHi - 1);
+    // timestampLo is inclusive, timestampHi is exclusive
+    public void setRange(long timestampLo, long timestampHi, int timestampType) throws SqlException {
+        getBindVariableService().setTimestampWithType(1, timestampType, timestampLo);
+        getBindVariableService().setTimestampWithType(2, timestampType, timestampHi - 1);
     }
 
     @Override

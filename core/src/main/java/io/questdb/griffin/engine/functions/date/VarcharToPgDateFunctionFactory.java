@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -69,12 +69,17 @@ public class VarcharToPgDateFunctionFactory implements FunctionFactory {
         public long getDate(Record rec) {
             Utf8Sequence value = arg.getVarcharA(rec);
             try {
-                if (value != null && value.isAscii()) {
+                if (value != null) {
                     return DateFormatUtils.PG_DATE_FORMAT.parse(value.asAsciiCharSequence(), EN_LOCALE);
                 }
             } catch (NumericException ignore) {
             }
             return Numbers.LONG_NULL;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return VarcharDateFunctionUtils.isVarcharGetterThreadSafe(arg);
         }
 
         @Override

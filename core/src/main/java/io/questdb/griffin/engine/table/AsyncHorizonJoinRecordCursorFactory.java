@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -29,7 +29,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnFilter;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
@@ -51,7 +51,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -60,16 +59,15 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.IntHashSet;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
@@ -82,15 +80,16 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final UnorderedPageFrameReducer FILTER_AND_REDUCE = AsyncHorizonJoinRecordCursorFactory::filterAndReduce;
     private static final UnorderedPageFrameReducer REDUCE = AsyncHorizonJoinRecordCursorFactory::reduce;
-    private final AsyncHorizonJoinRecordCursor cursor;
-    private final UnorderedPageFrameSequence<AsyncHorizonJoinAtom> frameSequence;
+    private AsyncHorizonJoinRecordCursor cursor;
+    private UnorderedPageFrameSequence<AsyncHorizonJoinAtom> frameSequence;
     // Combined metadata (master + offsets pseudo-table + slave) used for GROUP BY function column references in toPlan
-    private final JoinRecordMetadata horizonJoinMetadata;
-    private final RecordCursorFactory masterFactory;
+    private JoinRecordMetadata horizonJoinMetadata;
+    private RecordCursorFactory masterFactory;
     // Pre-computed offset values (in microseconds)
-    private final LongList offsets;
-    private final ObjList<Function> recordFunctions;
-    private final RecordCursorFactory slaveFactory;
+    private final long[] offsets;
+    private ObjList<Function> recordFunctions;
+    private AsyncHorizonJoinResources resources;
+    private RecordCursorFactory slaveFactory;
     private final int workerCount;
 
     public AsyncHorizonJoinRecordCursorFactory(
@@ -102,39 +101,23 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull JoinRecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
-            @NotNull LongList offsets,
+            long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
-            @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             @NotNull ObjList<Function> recordFunctions,
             @NotNull ObjList<Function> keyFunctions,
-            @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
             @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
-            @Transient @Nullable ColumnTypes masterAsOfJoinColumnTypes,
-            @Transient @Nullable ColumnFilter masterAsOfJoinColumnFilter,
-            @Transient @Nullable ColumnTypes slaveAsOfJoinColumnTypes,
-            @Transient @Nullable ColumnFilter slaveAsOfJoinColumnFilter,
-            @Transient @Nullable BitSet asOfWriteSymbolAsString,
-            @Transient @Nullable BitSet asOfWriteStringAsVarcharMaster,
-            @Transient @Nullable BitSet asOfWriteStringAsVarcharSlave,
-            @Transient @Nullable BitSet writeTimestampAsNanosMaster,
-            @Transient @Nullable BitSet writeTimestampAsNanosSlave,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
             @Transient @NotNull ListColumnFilter groupByColumnFilter,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function filter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
+            @NotNull AsyncHorizonJoinResources resources,
             int workerCount
     ) {
         super(metadata);
@@ -144,6 +127,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             this.slaveFactory = slaveFactory;
             this.offsets = offsets;
             this.recordFunctions = recordFunctions;
+            this.resources = resources;
             this.workerCount = workerCount;
 
             // Compute timestamp scale factors for cross-resolution support
@@ -156,6 +140,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 slaveTsScale = ColumnType.getTimestampDriver(slaveTsType).toNanosScale();
             }
 
+            final boolean hasFilter = resources.getFilter() != null;
             final AsyncHorizonJoinAtom atom = new AsyncHorizonJoinAtom(
                     asm,
                     configuration,
@@ -168,31 +153,15 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     asOfJoinKeyTypes,
                     masterAsOfJoinMapSinkClass,
                     slaveAsOfJoinMapSinkClass,
-                    masterAsOfJoinColumnTypes,
-                    masterAsOfJoinColumnFilter,
-                    slaveAsOfJoinColumnTypes,
-                    slaveAsOfJoinColumnFilter,
-                    asOfWriteSymbolAsString,
-                    asOfWriteStringAsVarcharMaster,
-                    asOfWriteStringAsVarcharSlave,
-                    writeTimestampAsNanosMaster,
-                    writeTimestampAsNanosSlave,
                     masterColumnCount,
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
                     groupByColumnFilter,
                     keyFunctions,
-                    perWorkerKeyFunctions,
                     columnSources,
                     columnIndexes,
                     groupByFunctions,
-                    perWorkerGroupByFunctions,
-                    compiledFilter,
-                    bindVarMemory,
-                    bindVarFunctions,
-                    filter,
-                    filterUsedColumnIndexes,
-                    perWorkerFilters,
+                    resources,
                     masterTsScale,
                     slaveTsScale,
                     workerCount
@@ -203,7 +172,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     configuration,
                     messageBus,
                     atom,
-                    filter != null ? FILTER_AND_REDUCE : REDUCE,
+                    hasFilter ? FILTER_AND_REDUCE : REDUCE,
                     workerCount
             );
 
@@ -214,9 +183,15 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     slaveFactory
             );
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
+    }
+
+    @Override
+    @TestOnly
+    public AsyncHorizonJoinAtom getAtom() {
+        return frameSequence.getAtom();
     }
 
     @Override
@@ -227,8 +202,15 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         frameSequence.of(masterFactory, executionContext, ORDER_ASC);
-        cursor.of(frameSequence, executionContext);
-        return cursor;
+        try {
+            cursor.of(frameSequence, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
+            // so the cached factory stays reusable.
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -244,7 +226,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             sink.type("Async Horizon Join");
         }
         sink.meta("workers").val(workerCount);
-        sink.meta("offsets").val(offsets.size());
+        sink.meta("offsets").val(offsets.length);
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         // GroupByFunctions reference columns from the combined markout metadata (master + sequence + slave)
         sink.setMetadata(horizonJoinMetadata);
@@ -342,15 +324,18 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
 
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory;
-        if (useLateMaterialization) {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        }
-        record.init(frameMemory);
 
+        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
+        // inside the try that releases the slot, see PerWorkerLocks.acquireSlot().
         try {
+            final PageFrameMemory frameMemory;
+            if (useLateMaterialization) {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            }
+            record.init(frameMemory);
+
             final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
             final GroupByMapFragment groupByMapFragment = atom.getFragment(slotId);
             final RecordSink groupByMapSink = atom.getMapSink(slotId);
@@ -362,7 +347,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             // Apply filter to master rows
             final DirectLongList rows = filterCtx.getFilteredRows(slotId);
             rows.clear();
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(
@@ -403,8 +388,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
             // Get horizon timestamp iterator and initialize for filtered rows
             final AsyncHorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
-            record.setRowIndex(0);
-            long baseRowId = record.getRowId();
+            long baseRowId = Rows.toRowID(frameIndex, 0);
             horizonIterator.ofFiltered(frameMemory.getPageAddress(masterTimestampColumnIndex), rows);
 
             // Process horizon timestamps in sorted order for sequential ASOF lookups
@@ -422,27 +406,38 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     horizonJoinRecord,
                     groupByMapFragment,
                     groupByMapSink,
-                    functionUpdater
+                    functionUpdater,
+                    circuitBreaker
             );
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
     /**
-     * Process all horizon timestamps in sorted order using bidirectional scanning.
+     * Process all horizon timestamps in sorted order using adaptive scanning.
      * <p>
      * This method iterates through pre-sorted (horizonTs, masterRowIdx, offsetIdx) tuples.
-     * It uses a "dense ASOF" approach optimized for the common case where most keys
-     * appear in the "recent" slave rows:
+     * For keyed ASOF JOINs, it adaptively chooses between two strategies:
      * <p>
-     * 1. First tuple: Find ASOF position, backward scan until key match, set watermarks
-     * 2. Subsequent tuples: Forward scan to new ASOF position (caching keys),
-     * then lookup in cache. On cache miss, continue backward scan.
+     * 1. <b>Backward-only mode</b> (default): when the ASOF position changes, clear the
+     * key cache and reset the backward watermark. Each position change costs ~K backward
+     * scan rows for K distinct keys. Wins when K is small.
      * <p>
-     * Each slave row is scanned at most once per frame (either forward or backward).
-     * Watermarks are tracked internally by the helper and reset via toTop().
+     * 2. <b>Forward scan mode</b>: forward-scan all slave rows between consecutive ASOF
+     * positions, populating the key map. Cost = O(gap). Wins when K is large or rare keys
+     * cause deep backward scans.
+     * <p>
+     * Each frame starts in backward-only mode. The algorithm switches to forward scan mode
+     * for the remainder of the frame when either: (a) backward scan cost at a position exceeds
+     * gap * SWITCH_FACTOR (relative check, within a partition), or (b) backward scan cost
+     * exceeds BWD_SCAN_ABSOLUTE_THRESHOLD (absolute check, handles cross-partition boundaries
+     * where the relative check cannot trigger). This avoids expensive backward scans for
+     * high-cardinality key spaces or data with rare/infrequent keys.
      */
     private static void processHorizonTimestamps(
             AsyncHorizonJoinAtom atom,
@@ -458,7 +453,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             HorizonJoinRecord horizonJoinRecord,
             GroupByMapFragment groupByMapFragment,
             RecordSink groupByMapSink,
-            GroupByFunctionsUpdater functionUpdater
+            GroupByFunctionsUpdater functionUpdater,
+            SqlExecutionCircuitBreaker circuitBreaker
     ) {
         atom.resetLocalStats(groupByMapFragment.slotId);
 
@@ -471,7 +467,6 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         final SymbolTranslatingRecord symbolTranslatingRecord =
                 masterKeyRecord instanceof SymbolTranslatingRecord rec ? rec : null;
 
-        // Reset helper state and clear the ASOF join map for this frame
         slaveTimeFrameHelper.toTop();
         if (keyedAsOfJoin) {
             asOfJoinMap.clear();
@@ -480,72 +475,32 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         final long masterTsScale = atom.getMasterTimestampScale();
 
         while (horizonIterator.next()) {
-            // horizonTs is in master's resolution (master_ts + offset)
+            circuitBreaker.statefulThrowExceptionIfTripped();
             final long horizonTs = horizonIterator.getHorizonTimestamp();
             final long masterRowIdx = horizonIterator.getMasterRowIndex();
             final int offsetIdx = horizonIterator.getOffsetIndex();
             final long offset = atom.getOffset(offsetIdx);
 
-            // Position master record at the correct row
-            masterRecord.setRowIndex(masterRowIdx, horizonIterator.getMasterRowCompactIndex());
+            masterRecord.setFilteredRowIndex(masterRowIdx, horizonIterator.getMasterRowCompactIndex());
             final long masterRowId = baseRowId + masterRowIdx;
 
-            // Scale horizon timestamp for ASOF lookup (when master/slave have different timestamp types)
             final long scaledHorizonTs = scaleTimestamp(horizonTs, masterTsScale);
-
-            // Find ASOF row for this horizon timestamp (sequential due to sorted iteration)
             long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs);
 
-            long matchRowId = Long.MIN_VALUE;
+            long matchRowId;
             if (keyedAsOfJoin) {
-                // Keyed ASOF JOIN with bidirectional scanning
-                if (asOfRowId != Long.MIN_VALUE) {
-                    if (slaveTimeFrameHelper.getForwardWatermark() == Long.MIN_VALUE) {
-                        // First tuple: backward scan from ASOF position to find matching key
-                        matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
-                                asOfRowId,
-                                masterKeyRecord,
-                                masterAsOfJoinMapSink,
-                                slaveAsOfJoinMapSink,
-                                asOfJoinMap,
-                                symbolTranslatingRecord
-                        );
-                        // Initialize forward watermark to ASOF position for subsequent forward scans
-                        slaveTimeFrameHelper.initForwardWatermark(asOfRowId);
-                    } else {
-                        // Subsequent tuples: forward scan first (updates internal watermark)
-                        slaveTimeFrameHelper.forwardScanToPosition(
-                                asOfRowId,
-                                slaveAsOfJoinMapSink,
-                                asOfJoinMap
-                        );
-
-                        // Look up the key in the cache
-                        MapKey cacheKey = asOfJoinMap.withKey();
-                        cacheKey.put(masterKeyRecord, masterAsOfJoinMapSink);
-                        MapValue cacheValue = cacheKey.findValue();
-
-                        if (cacheValue != null) {
-                            matchRowId = cacheValue.getLong(0);
-                        } else {
-                            // Cache miss: continue backward scan (uses internal watermark)
-                            matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
-                                    asOfRowId,
-                                    masterKeyRecord,
-                                    masterAsOfJoinMapSink,
-                                    slaveAsOfJoinMapSink,
-                                    asOfJoinMap,
-                                    symbolTranslatingRecord
-                            );
-                        }
-                    }
-                }
+                matchRowId = slaveTimeFrameHelper.findKeyedAsOfMatch(
+                        asOfRowId,
+                        masterKeyRecord,
+                        masterAsOfJoinMapSink,
+                        slaveAsOfJoinMapSink,
+                        asOfJoinMap,
+                        symbolTranslatingRecord
+                );
             } else {
-                // Timestamp-only ASOF JOIN: ASOF row IS the match
                 matchRowId = asOfRowId;
             }
 
-            // Aggregate the result
             Record matchedSlaveRecord = null;
             if (matchRowId != Long.MIN_VALUE) {
                 slaveTimeFrameHelper.recordAt(matchRowId);
@@ -594,10 +549,13 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
         final AsyncFilterContext filterCtx = atom.getFilterContext();
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        record.init(frameMemory);
 
+        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
+        // inside the try that releases the slot, see PerWorkerLocks.acquireSlot().
         try {
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            record.init(frameMemory);
+
             final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
             final GroupByMapFragment groupByMapFragment = atom.getFragment(slotId);
             final RecordSink groupByMapSink = atom.getMapSink(slotId);
@@ -614,8 +572,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
             // Get horizon timestamp iterator and initialize for this frame
             final AsyncHorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
-            record.setRowIndex(0);
-            long baseRowId = record.getRowId();
+            long baseRowId = Rows.toRowID(frameIndex, 0);
             horizonIterator.of(frameMemory.getPageAddress(masterTimestampColumnIndex), 0, frameRowCount);
 
             // Process horizon timestamps in sorted order for sequential ASOF lookups
@@ -633,21 +590,48 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     horizonJoinRecord,
                     groupByMapFragment,
                     groupByMapSink,
-                    functionUpdater
+                    functionUpdater,
+                    circuitBreaker
             );
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
     @Override
     protected void _close() {
-        Misc.free(frameSequence);
-        Misc.free(cursor);
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(horizonJoinMetadata);
-        Misc.freeObjList(recordFunctions);
+        final AsyncHorizonJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final UnorderedPageFrameSequence<AsyncHorizonJoinAtom> frameSequence = this.frameSequence;
+        this.frameSequence = null;
+        final JoinRecordMetadata horizonJoinMetadata = this.horizonJoinMetadata;
+        this.horizonJoinMetadata = null;
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final ObjList<Function> recordFunctions = this.recordFunctions;
+        this.recordFunctions = null;
+        final AsyncHorizonJoinResources resources = this.resources;
+        this.resources = null;
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        this.slaveFactory = null;
+
+        Throwable cleanupFailure = null;
+        // Free cursor before frameSequence: a cursor left half-open by a failed
+        // getCursor() still references frameSequence and reset()s it on close().
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameSequence);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, masterFactory);
+        if (slaveFactory != masterFactory) {
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFactory);
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, horizonJoinMetadata);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, resources);
+        // recordFunctions includes groupByFunctions (same object references)
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, recordFunctions);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 }

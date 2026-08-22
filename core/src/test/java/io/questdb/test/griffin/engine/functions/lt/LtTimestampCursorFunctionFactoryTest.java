@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -41,14 +41,108 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiRowCursorFails() throws Exception {
+        // a scalar sub-query yielding more than one row is an error, reported at the sub-query position
+        assertMemoryLeak(() -> {
+            execute("create table x as (select timestamp_sequence(0, 2500000) ts from long_sequence(2))");
+            // timestamp cursor column
+            assertQuery("select * from x where ts < (select ts from x)")
+                    .fails(28, "scalar sub-query returned more than one row");
+            // string cursor column
+            assertQuery("select * from x where ts < (select '1970-01-01' from x)")
+                    .fails(28, "scalar sub-query returned more than one row");
+            // varchar cursor column (separately implemented reader)
+            assertQuery("select * from x where ts < (select '1970-01-01'::varchar from x)")
+                    .fails(28, "scalar sub-query returned more than one row");
+        });
+    }
+
+    @Test
+    public void testMultiRowCursorFailsOnDesignatedTimestamp() throws Exception {
+        // On a designated-timestamp column, ts < (select ...) is extracted as an interval intrinsic and
+        // evaluated by RuntimeIntervalModel instead of the cursor-comparison factory. A scalar sub-query
+        // must still reject more than one row here rather than silently taking an arbitrary first row,
+        // and the error must point at the offending sub-query, same as the factory path does.
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select timestamp_sequence(0, 2500000) ts from long_sequence(5)" +
+                    ") timestamp(ts) partition by day");
+            assertQuery("select * from x where ts < (select ts from x limit 2)")
+                    .fails(28, "scalar sub-query returned more than one row");
+            assertQuery("select * from x where ts <= (select ts from x limit 2)")
+                    .fails(29, "scalar sub-query returned more than one row");
+        });
+    }
+
+    @Test
+    public void testInclusiveBoundAtTypeMaximumSelectsFullDomain() throws Exception {
+        // ts <= (select scalar at Long.MAX_VALUE) encodes an inclusive runtime bound with no
+        // adjustment, so it must not wrap around and must select the full non-null domain, for
+        // both the microsecond and the nanosecond designated timestamp drivers. The strict
+        // (ts > scalar) wrap-around guard is covered separately; the negated arm of that guard
+        // is unreachable because no subtract operation encodes a positive adjustment.
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select timestamp_sequence(0, 2500000) ts from long_sequence(5)" +
+                    ") timestamp(ts) partition by day");
+            assertQuery("select count() c from x where ts <= (select 9223372036854775807::timestamp)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n5\n");
+            execute("create table y as (" +
+                    "select timestamp_sequence(0, 2500000)::timestamp_ns ts from long_sequence(5)" +
+                    ") timestamp(ts) partition by day");
+            assertQuery("select count() c from y where ts <= (select 9223372036854775807::timestamp_ns)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n5\n");
+        });
+    }
+
+    @Test
+    public void testStrictBoundAtTypeMinimumMatchesNothing() throws Exception {
+        // The MIN-side mirror of the `ts > Long.MAX_VALUE` wrap: `ts < Long.MIN_VALUE` would
+        // wrap the interval high bound to Long.MAX_VALUE and select every row - if it were
+        // expressible. It is not: Long.MIN_VALUE doubles as the timestamp NULL sentinel, so the
+        // exact MIN epoch literal is rejected at parse time and every functional route hits the
+        // NULL check before the adjustment. These are reachability sentinels: if literal
+        // parsing ever starts accepting the MIN epoch value, analyzeTimestampLess needs the
+        // same wrap guard as analyzeTimestampGreater, and this test will flag it.
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
+                    ") timestamp(ts) partition by day");
+            execute("create table y as (" +
+                    "select timestamp_sequence(0, 2500000)::timestamp_ns ts from long_sequence(2)" +
+                    ") timestamp(ts) partition by day");
+
+            // a strict bound one past the domain minimum: the high bound adjusts down to
+            // Long.MIN_VALUE without wrapping and matches nothing
+            assertQuery("select count() c from x where ts < -9223372036854775807")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n0\n");
+            assertQuery("select count() c from y where ts < -9223372036854775807")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n0\n");
+
+            // the exact MIN epoch literal does not parse as a timestamp - the wrap is unreachable
+            assertException("select count() c from x where ts < -9223372036854775808", 35, "Invalid date");
+        });
+    }
+
+    @Test
     public void testCompareTimestampWithString() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
                     "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(10)" +
                     ") timestamp(ts) partition by day");
 
-            assertSql(
-                    """
+            assertQuery("select * from x where ts < (select '1970-01-03T21:26')")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
                             8#3TsZ\t1970-01-01T00:00:02.500000Z
@@ -60,16 +154,16 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             Z 4xL?4\t1970-01-01T00:00:17.500000Z
                             p-鳓w\t1970-01-01T00:00:20.000000Z
                             h\uDAF5\uDE17qRӽ-\t1970-01-01T00:00:22.500000Z
-                            """,
-                    "select * from x where ts < (select '1970-01-03T21:26')"
-            );
+                            """);
 
             execute("create table y as (" +
                     "select rnd_varchar() a,timestamp_sequence_ns(0, 2500000000) ts from long_sequence(10)" +
                     ") timestamp(ts) partition by day");
 
-            assertSql(
-                    """
+            assertQuery("select * from y where ts < (select '1970-01-03T21:26')")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             Ǆ Ԡ阷l싒8쮠\t1970-01-01T00:00:00.000000000Z
                             kɷ씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3\t1970-01-01T00:00:02.500000000Z
@@ -81,9 +175,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             LQ+bO\t1970-01-01T00:00:17.500000000Z
                             h볱9\t1970-01-01T00:00:20.000000000Z
                             a\uDA76\uDDD4*\uDB87\uDF60-ă堝ᢣ΄B\t1970-01-01T00:00:22.500000000Z
-                            """,
-                    "select * from y where ts < (select '1970-01-03T21:26')"
-            );
+                            """);
         });
     }
 
@@ -94,27 +186,27 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
                     ") timestamp(ts) partition by day");
 
-            assertSql(
-                    """
+            assertQuery("select * from x where ts >= (select '1970-01-01T00:00:00.000000Z')")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
                             8#3TsZ\t1970-01-01T00:00:02.500000Z
-                            """,
-                    "select * from x where ts >= (select '1970-01-01T00:00:00.000000Z')"
-            );
+                            """);
 
             execute("create table y as (" +
                     "select rnd_varchar() a,timestamp_sequence_ns(0, 2500000000) ts from long_sequence(2)" +
                     ") timestamp(ts) partition by day");
 
-            assertSql(
-                    """
+            assertQuery("select * from y where ts >= (select '1970-01-01T00:00:00.000000000Z')")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:00.000000000Z
                             ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:02.500000000Z
-                            """,
-                    "select * from y where ts >= (select '1970-01-01T00:00:00.000000000Z')"
-            );
+                            """);
         });
     }
 
@@ -127,8 +219,10 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
             execute("create table y as (" +
                     "select rnd_varchar() a,timestamp_sequence_ns(0, 2500000000) ts from long_sequence(10)" +
                     ") timestamp(ts) partition by day");
-            assertSql(
-                    """
+            assertQuery("select * from x where ts < (select max(ts) from x)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
                             8#3TsZ\t1970-01-01T00:00:02.500000Z
@@ -139,11 +233,11 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             \uDB59\uDF3B룒jᷚ\t1970-01-01T00:00:15.000000Z
                             Z 4xL?4\t1970-01-01T00:00:17.500000Z
                             p-鳓w\t1970-01-01T00:00:20.000000Z
-                            """,
-                    "select * from x where ts < (select max(ts) from x)"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from x where ts < (select max(ts) from y)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
                             8#3TsZ\t1970-01-01T00:00:02.500000Z
@@ -154,11 +248,11 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             \uDB59\uDF3B룒jᷚ\t1970-01-01T00:00:15.000000Z
                             Z 4xL?4\t1970-01-01T00:00:17.500000Z
                             p-鳓w\t1970-01-01T00:00:20.000000Z
-                            """,
-                    "select * from x where ts < (select max(ts) from y)"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from y where ts < (select max(ts) from x)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             Ǆ Ԡ阷l싒8쮠\t1970-01-01T00:00:00.000000000Z
                             kɷ씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3\t1970-01-01T00:00:02.500000000Z
@@ -169,11 +263,11 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             l5J\\d;\t1970-01-01T00:00:15.000000000Z
                             LQ+bO\t1970-01-01T00:00:17.500000000Z
                             h볱9\t1970-01-01T00:00:20.000000000Z
-                            """,
-                    "select * from y where ts < (select max(ts) from x)"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from y where ts < (select max(ts) from y)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             Ǆ Ԡ阷l싒8쮠\t1970-01-01T00:00:00.000000000Z
                             kɷ씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3\t1970-01-01T00:00:02.500000000Z
@@ -184,9 +278,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             l5J\\d;\t1970-01-01T00:00:15.000000000Z
                             LQ+bO\t1970-01-01T00:00:17.500000000Z
                             h볱9\t1970-01-01T00:00:20.000000000Z
-                            """,
-                    "select * from y where ts < (select max(ts) from y)"
-            );
+                            """);
         });
     }
 
@@ -200,34 +292,34 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     "select rnd_varchar() a,timestamp_sequence_ns(0, 2500000000) ts from long_sequence(2)" +
                     ") timestamp(ts) partition by day");
 
-            assertSql(
-                    """
+            assertQuery("select * from x where ts >= (select max(ts) from x)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             8#3TsZ\t1970-01-01T00:00:02.500000Z
-                            """,
-                    "select * from x where ts >= (select max(ts) from x)"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from x where ts >= (select max(ts) from y)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             8#3TsZ\t1970-01-01T00:00:02.500000Z
-                            """,
-                    "select * from x where ts >= (select max(ts) from y)"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from y where ts >= (select max(ts) from x)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:02.500000000Z
-                            """,
-                    "select * from y where ts >= (select max(ts) from x)"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from y where ts >= (select max(ts) from y)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:02.500000000Z
-                            """,
-                    "select * from y where ts >= (select max(ts) from y)"
-            );
+                            """);
         });
     }
 
@@ -238,8 +330,10 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(10)" +
                     ") timestamp(ts) partition by day");
 
-            assertSql(
-                    """
+            assertQuery("select * from x where ts < (select '1970-01-03T20:14'::varchar)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
                             8#3TsZ\t1970-01-01T00:00:02.500000Z
@@ -251,16 +345,16 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             Z 4xL?4\t1970-01-01T00:00:17.500000Z
                             p-鳓w\t1970-01-01T00:00:20.000000Z
                             h\uDAF5\uDE17qRӽ-\t1970-01-01T00:00:22.500000Z
-                            """,
-                    "select * from x where ts < (select '1970-01-03T20:14'::varchar)"
-            );
+                            """);
 
             execute("create table y as (" +
                     "select rnd_varchar() a,timestamp_sequence_ns(0, 2500000000) ts from long_sequence(10)" +
                     ") timestamp(ts) partition by day");
 
-            assertSql(
-                    """
+            assertQuery("select * from y where ts < (select '1970-01-03T20:14'::varchar)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             Ǆ Ԡ阷l싒8쮠\t1970-01-01T00:00:00.000000000Z
                             kɷ씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3\t1970-01-01T00:00:02.500000000Z
@@ -272,9 +366,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             LQ+bO\t1970-01-01T00:00:17.500000000Z
                             h볱9\t1970-01-01T00:00:20.000000000Z
                             a\uDA76\uDDD4*\uDB87\uDF60-ă堝ᢣ΄B\t1970-01-01T00:00:22.500000000Z
-                            """,
-                    "select * from y where ts < (select '1970-01-03T20:14'::varchar)"
-            );
+                            """);
         });
     }
 
@@ -292,50 +384,42 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by day"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from x where ts < (select ts::varchar from x order by ts desc limit 1) limit 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
                             8#3TsZ\t1970-01-01T00:00:02.500000Z
                             zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z
-                            """,
-                    "select * from x where ts < (select ts::varchar from x order by ts desc limit 2) limit 3",
-                    "ts",
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from x where ts < (select ts::varchar from y order by ts desc limit 1) limit 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
                             8#3TsZ\t1970-01-01T00:00:02.500000Z
                             zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z
-                            """,
-                    "select * from x where ts < (select ts::varchar from y order by ts desc limit 2) limit 3",
-                    "ts",
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from y where ts < (select ts::varchar from x order by ts desc limit 1) limit 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             V0&&;\t1970-01-01T00:00:00.000000000Z
                             5䄛~\uDA5A\uDCB4끻\uDBD9\uDC84\uD8F3\uDE52\uDB96\uDC4Dx\t1970-01-01T00:00:02.500000000Z
                             uﮭ3\uD8C8\uDD30\uDBDA\uDEC6\uE937簡믗\t1970-01-01T00:00:05.000000000Z
-                            """,
-                    "select * from y where ts < (select ts::varchar from x order by ts desc limit 2) limit 3",
-                    "ts",
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from y where ts < (select ts::varchar from y order by ts desc limit 1) limit 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             V0&&;\t1970-01-01T00:00:00.000000000Z
                             5䄛~\uDA5A\uDCB4끻\uDBD9\uDC84\uD8F3\uDE52\uDB96\uDC4Dx\t1970-01-01T00:00:02.500000000Z
                             uﮭ3\uD8C8\uDD30\uDBDA\uDEC6\uE937簡믗\t1970-01-01T00:00:05.000000000Z
-                            """,
-                    "select * from y where ts < (select ts::varchar from y order by ts desc limit 2) limit 3",
-                    "ts",
-                    true
-            );
+                            """);
         });
     }
 
@@ -348,22 +432,22 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by day"
             );
 
-            assertSql(
-                    """
+            assertQuery("select * from x where ts >= (select '1970-01-01T00:00:00.000000Z'::varchar)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
                             8#3TsZ\t1970-01-01T00:00:02.500000Z
-                            """,
-                    "select * from x where ts >= (select '1970-01-01T00:00:00.000000Z'::varchar)"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from x where ts >= (select '1970-01-01T00:00:00.000000000Z'::varchar)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
                             8#3TsZ\t1970-01-01T00:00:02.500000Z
-                            """,
-                    "select * from x where ts >= (select '1970-01-01T00:00:00.000000000Z'::varchar)"
-            );
+                            """);
 
             execute(
                     "create table y as (" +
@@ -371,22 +455,22 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by day"
             );
 
-            assertSql(
-                    """
+            assertQuery("select * from y where ts >= (select '1970-01-01T00:00:00.000000Z'::varchar)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:00.000000000Z
                             ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:02.500000000Z
-                            """,
-                    "select * from y where ts >= (select '1970-01-01T00:00:00.000000Z'::varchar)"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("select * from y where ts >= (select '1970-01-01T00:00:00.000000000Z'::varchar)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:00.000000000Z
                             ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:02.500000000Z
-                            """,
-                    "select * from y where ts >= (select '1970-01-01T00:00:00.000000000Z'::varchar)"
-            );
+                            """);
         });
     }
 
@@ -404,12 +488,14 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     public void testPreventIntImplicitCastingToTimestampInSubQuery() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (i int)");
+            execute("insert into tab values (1), (2), (3)");
 
-            assertException(
-                    "select * from tab where i < (select max(i) from tab)",
-                    24,
-                    "left operand must be a TIMESTAMP, found: INT"
-            );
+            // int left operand routes to the dedicated int/cursor overload (<(IC)); it is a valid
+            // numeric comparison (never an implicit cast to TIMESTAMP). Rows are present so the
+            // assertion exercises the IC comparison itself, not merely that it compiles.
+            assertQuery("select * from tab where i < (select max(i) from tab)") // < 3
+                    .noLeakCheck()
+                    .returns("i\n1\n2\n");
         });
     }
 
@@ -420,11 +506,20 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
                     ") timestamp(ts) partition by day");
 
-            assertException(
-                    "select * from x where a < (select '1970-01-01T00:00:00.000000Z'::varchar)",
-                    22,
-                    "left operand must be a TIMESTAMP, found: VARCHAR"
-            );
+            assertQuery("select * from x where a < (select '1970-01-01T00:00:00.000000Z'::varchar)")
+                    .fails(22, "left operand must be a DOUBLE or FLOAT, found: VARCHAR");
+        });
+    }
+
+    @Test
+    public void testPreventStringImplicitCastingToTimestampInSubQuery() throws Exception {
+        // A STRING left operand re-routes to <(DC) exactly like VARCHAR: the DC guard rejects a
+        // non-DOUBLE/FLOAT left operand, so the error flips from "must be a TIMESTAMP" to
+        // "must be a DOUBLE or FLOAT". Lock the routing so it cannot silently regress.
+        assertMemoryLeak(() -> {
+            execute("create table x (a string, ts timestamp) timestamp(ts) partition by day");
+            assertQuery("select * from x where a < (select '1970-01-01T00:00:00.000000Z'::string)")
+                    .fails(22, "left operand must be a DOUBLE or FLOAT, found: STRING");
         });
     }
 
@@ -437,19 +532,39 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
 
             String expected = "a\tts\n";
 
-            assertSql(expected, "select * from x where ts < (select null)");
-            assertSql(expected, "select * from x where ts < (select null::timestamp)");
-            assertSql(expected, "select * from x where ts < (select null::timestamp_ns)");
-            assertSql(expected, "select * from x where ts < (select null::string)");
-            assertSql(expected, "select * from x where ts < (select null::varchar)");
+            assertQuery("select * from x where ts < (select null)")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select * from x where ts < (select null::timestamp)")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select * from x where ts < (select null::timestamp_ns)")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select * from x where ts < (select null::string)")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select * from x where ts < (select null::varchar)")
+                    .noLeakCheck()
+                    .returns(expected);
             // no rows selected in the cursor
-            assertSql(expected, "select * from x where ts < (select 1::timestamp from x where 1 <> 1)");
-            assertSql(expected, "select * from x where ts < (select '11' from x where 1 <> 1)");
-            assertSql(expected, "select * from x where ts < (select '11'::varchar from x where 1 <> 1)");
-            assertException("select * from x where ts < (select 'hello')", 28, "the cursor selected invalid timestamp value: hello");
-            assertException("select * from x where ts < (select 'hello'::varchar)", 28, "the cursor selected invalid timestamp value: hello");
-            assertException("select * from x where ts < (select 'hello'::varchar, 10 x)", 28, "select must provide exactly one column");
-            assertException("select * from x where ts < (select 10 x)", 28, "cannot compare TIMESTAMP and INT");
+            assertQuery("select * from x where ts < (select 1::timestamp from x where 1 <> 1)")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select * from x where ts < (select '11' from x where 1 <> 1)")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select * from x where ts < (select '11'::varchar from x where 1 <> 1)")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select * from x where ts < (select 'hello')")
+                    .fails(28, "the cursor selected invalid timestamp value: hello");
+            assertQuery("select * from x where ts < (select 'hello'::varchar)")
+                    .fails(28, "the cursor selected invalid timestamp value: hello");
+            assertQuery("select * from x where ts < (select 'hello'::varchar, 10 x)")
+                    .fails(28, "select must provide exactly one column");
+            assertQuery("select * from x where ts < (select 10 x)")
+                    .fails(28, "cannot compare TIMESTAMP and INT");
         });
     }
 
@@ -461,9 +576,9 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ")");
 
             // thread-safe
-            assertSql(
-                    """
-                            QUERY PLAN
+            assertQuery("select * from x where ts::string::timestamp < (select null)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ts::string::timestamp < cursor\s
                                 VirtualRecord
@@ -472,13 +587,11 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """,
-                    "explain select * from x where ts::string::timestamp < (select null)"
-            );
+                            """);
 
-            assertSql(
-                    """
-                            QUERY PLAN
+            assertQuery("select * from x where ts::string::timestamp < (select 1::timestamp)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ts::string::timestamp < cursor\s
                                 VirtualRecord
@@ -487,13 +600,11 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """,
-                    "explain select * from x where ts::string::timestamp < (select 1::timestamp)"
-            );
+                            """);
 
-            assertSql(
-                    """
-                            QUERY PLAN
+            assertQuery("select * from x where ts::string::timestamp < (select '2015-03-11'::string)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ts::string::timestamp < cursor\s
                                 VirtualRecord
@@ -502,13 +613,11 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """,
-                    "explain select * from x where ts::string::timestamp < (select '2015-03-11'::string)"
-            );
+                            """);
 
-            assertSql(
-                    """
-                            QUERY PLAN
+            assertQuery("select * from x where ts::string::timestamp < (select '2015-03-12'::varchar)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ts::string::timestamp < cursor\s
                                 VirtualRecord
@@ -517,15 +626,13 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """,
-                    "explain select * from x where ts::string::timestamp < (select '2015-03-12'::varchar)"
-            );
+                            """);
 
             // thread-safe
 
-            assertSql(
-                    """
-                            QUERY PLAN
+            assertQuery("select * from x where ts < (select null)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ts [thread-safe] < cursor\s
                                 VirtualRecord
@@ -534,13 +641,11 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """,
-                    "explain select * from x where ts < (select null)"
-            );
+                            """);
 
-            assertSql(
-                    """
-                            QUERY PLAN
+            assertQuery("select * from x where ts < (select 1::timestamp)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ts [thread-safe] < cursor\s
                                 VirtualRecord
@@ -549,13 +654,11 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """,
-                    "explain select * from x where ts < (select 1::timestamp)"
-            );
+                            """);
 
-            assertSql(
-                    """
-                            QUERY PLAN
+            assertQuery("select * from x where ts < (select '2015-03-11'::string)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ts [thread-safe] < cursor\s
                                 VirtualRecord
@@ -564,13 +667,11 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """,
-                    "explain select * from x where ts < (select '2015-03-11'::string)"
-            );
+                            """);
 
-            assertSql(
-                    """
-                            QUERY PLAN
+            assertQuery("select * from x where ts < (select '2015-03-12'::varchar)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ts [thread-safe] < cursor\s
                                 VirtualRecord
@@ -579,9 +680,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
-                            """,
-                    "explain select * from x where ts < (select '2015-03-12'::varchar)"
-            );
+                            """);
         });
     }
 }

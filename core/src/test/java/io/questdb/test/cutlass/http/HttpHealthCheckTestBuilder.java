@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -60,7 +60,7 @@ public class HttpHealthCheckTestBuilder {
 
             if (injectUnhandledError) {
                 final AtomicBoolean alreadyErrored = new AtomicBoolean();
-                workerPool.assign((workerId, runStatus) -> {
+                workerPool.assign(ignore -> {
                     if (!alreadyErrored.getAndSet(true)) {
                         throw new NullPointerException("you'd better not handle me");
                     }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -43,6 +43,7 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -54,36 +55,54 @@ import static io.questdb.cutlass.line.tcp.LineProtocolException.*;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.DUPLICATED_COLUMN;
 
-public class LineWalAppender {
+/**
+ * Appends parsed line protocol measurements to WAL tables.
+ * <p>
+ * Instances hold mutable scratch buffers and are not thread-safe: each thread
+ * of execution must use its own appender. {@link LineTcpMeasurementScheduler}
+ * keeps one appender per network IO worker and LineHttpProcessorState owns one
+ * per connection.
+ */
+public class LineWalAppender implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LineWalAppender.class);
     private final boolean autoCreateNewColumns;
-    private final Decimal256 decimal256;
-    private final Long256Impl long256;
+    private final Decimal256 decimal256 = new Decimal256();
+    private final Long256Impl long256 = new Long256Impl();
     private final int maxFileNameLength;
+    private final int maxMetadataChangeRetries;
     private final boolean stringToCharCastAllowed;
-    private final DirectUtf8Sink utf8Sink; // owned by LineHttpProcessorState or LineTcpMeasurementScheduler
+    private final DirectUtf8Sink utf8Sink = new DirectUtf8Sink(16);
     private byte timestampUnit;
 
-    public LineWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, byte timestampUnit, DirectUtf8Sink utf8Sink, int maxFileNameLength) {
+    public LineWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, byte timestampUnit, int maxFileNameLength, int maxMetadataChangeRetries) {
         this.autoCreateNewColumns = autoCreateNewColumns;
         this.stringToCharCastAllowed = stringToCharCastAllowed;
         this.maxFileNameLength = maxFileNameLength;
+        this.maxMetadataChangeRetries = maxMetadataChangeRetries;
         this.timestampUnit = timestampUnit;
-        this.long256 = new Long256Impl();
-        this.decimal256 = new Decimal256();
-        this.utf8Sink = utf8Sink;
     }
 
     public void appendToWal(SecurityContext securityContext, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
-        while (!tud.isDropped()) {
+        for (int retryCount = 0; !tud.isDropped(); retryCount++) {
             try {
                 appendToWal0(securityContext, parser, tud);
-                break;
+                return;
             } catch (MetadataChangedException e) {
-                // do another retry, metadata has changed while processing the line
-                // and all the resolved column indexes have been invalidated
+                if (retryCount == maxMetadataChangeRetries) {
+                    throw CairoException.nonCritical().put("metadata changed too many times during WAL append");
+                }
+            } catch (CairoException e) {
+                if (e.isMalformedUtf8()) {
+                    throw LineProtocolException.malformedUtf8(tud.getTableNameUtf16(), e.getFlyweightMessage());
+                }
+                throw e;
             }
         }
+    }
+
+    @Override
+    public void close() {
+        utf8Sink.close();
     }
 
     public void setTimestampAdapter(byte precision) {
@@ -144,9 +163,10 @@ public class LineWalAppender {
                             try {
                                 int newColumnType = ld.getColumnType(ld.getColNameUtf8(), ent);
                                 if (newColumnType == ColumnType.DECIMAL) {
+                                    // the surrogate DECIMAL carries no precision or scale, so it cannot back a column
                                     throw CairoException.nonCritical()
                                             .put("decimal columns cannot be created automatically [table=")
-                                            .put(writer.getTableToken())
+                                            .put(tud.getTableNameUtf16())
                                             .put(", columnName=")
                                             .put(columnNameUtf16)
                                             .put(']');
@@ -518,6 +538,9 @@ public class LineWalAppender {
                         }
                         break;
                     case LineTcpParser.ENTITY_TYPE_DECIMAL:
+                        if (!ColumnType.isDecimalType(ColumnType.tagOf(colType))) {
+                            throw castError(tud.getTableNameUtf16(), "DECIMAL", colType, ent.getName());
+                        }
                         Decimal256 decimal = ent.getDecimalValue();
                         if (decimal.isNull()) {
                             DecimalUtil.storeNull(r, columnIndex, colType);
@@ -552,6 +575,13 @@ public class LineWalAppender {
             LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$safe(th.getFlyweightMessage()).$(", trace: ").$((Throwable) th).I$();
             if (r != null) {
                 r.cancel();
+            }
+            if (th.isMalformedUtf8()) {
+                // Bad input, not a broken writer. As a bare CairoException this hits the
+                // scheduler's catch-all, which drops the writer -- one bad byte would churn the
+                // writer per line. LineProtocolException skips the line instead, as castError()
+                // already does. Other CairoExceptions still propagate, so real faults surface.
+                throw LineProtocolException.malformedUtf8(tud.getTableNameUtf16(), th.getFlyweightMessage());
             }
             throw th;
         } catch (Throwable th) {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -85,7 +85,7 @@ public interface Utf16Sink extends CharSink<Utf16Sink> {
 
     default Utf16Sink put(long lo, long hi) {
         for (long addr = lo; addr < hi; addr += Character.BYTES) {
-            put(Unsafe.getUnsafe().getChar(addr));
+            put(Unsafe.getChar(addr));
         }
         return this;
     }

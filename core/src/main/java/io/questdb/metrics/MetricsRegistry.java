@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,6 +27,8 @@ package io.questdb.metrics;
 public interface MetricsRegistry extends Target {
 
     void addTarget(Target target);
+
+    void removeTarget(Target target);
 
     AtomicLongGauge newAtomicLongGauge(CharSequence name);
 

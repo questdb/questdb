@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,20 +30,22 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewRegistry;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
-import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
@@ -57,12 +59,14 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 
 import java.io.Closeable;
+import java.util.concurrent.TimeUnit;
 
 public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalPurgeJob.class);
     private final TableSequencerAPI.TableSequencerCallback broadSweepRef;
     private final long checkInterval;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
+    private final ObjList<LiveViewInstance> liveViewSink = new ObjList<>();
     private final Clock clock;
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
@@ -71,7 +75,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final MillisecondClock millisecondClock;
     private final IntHashSet onDiskWalIDSet = new IntHashSet();
     private final Path path = new Path();
-    private final SimpleWaitingLock runLock = new SimpleWaitingLock();
     private final long spinLockTimeout;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final TxReader txReader;
@@ -118,10 +121,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      */
     public void delayByHalfInterval() {
         this.last = clock.getTicks() - (checkInterval / 2);
-    }
-
-    public SimpleWaitingLock getRunLock() {
-        return runLock;
     }
 
     /**
@@ -180,6 +179,13 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private void broadSweep(int tableId, final TableToken tableToken, long lastTxn) {
+        if (engine.isClosing()) {
+            // The engine is tearing down its sequencer/metadata mappings. Stop sweeping rather than
+            // racing the teardown into an evicted file descriptor. The next purge pass (if any) is a
+            // no-op once the engine is closed; the close path bounds its own wait, so it never blocks
+            // on this worker.
+            return;
+        }
         try {
             this.tableToken = tableToken;
             this.logic.reset(tableToken);
@@ -201,6 +207,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 } catch (Throwable th) {
                     logic.releaseLocks();
                     throw th;
+                }
+                if (engine.isClosing()) {
+                    // fetchSequencerPairs() bails before it can populate the next-to-apply set once the
+                    // engine starts closing, because it must not touch the sequencer/metadata mappings the
+                    // teardown is freeing underneath this worker. Running the deletion pass with that set
+                    // empty would treat every discovered segment as already applied and delete the whole
+                    // WAL directory, including segments a replica downloaded but has not applied yet -- data
+                    // loss on the hot demote path. Release the locks and stop; a later purge pass reclaims
+                    // any genuine garbage after the engine has fully closed and reopened.
+                    logic.releaseLocks();
+                    return;
                 }
                 // Any of the calls above may leave outstanding `discoveredWalIds` that are still on the filesystem
                 // and don't have any active segments. Any unlocked walNNN directories may be deleted if they don't have
@@ -230,6 +247,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         return;
                     }
                     try {
+                        if (!beforeDroppedTableRemoved(tableToken)) {
+                            // Removal deferred (e.g. remote objects not reclaimed yet); retry on a later sweep.
+                            return;
+                        }
                         // Fully deregister the table
                         Path pathToDelete = Path.getThreadLocal(configuration.getDbRoot()).concat(tableToken);
                         Path symLinkTarget = null;
@@ -272,6 +293,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     .$(", msg=").$((Throwable) ce)
                     .$(", errno=").$(ff.errno())
                     .I$();
+        } catch (TableReferenceOutOfDateException ignore) {
+            // forAllWalTables() works from a table token snapshot. A table may be
+            // renamed and a new table created with the old name before this sweep
+            // gets to verify the token; skip it and let the next purge pass see the
+            // current registry state.
+            LOG.debug().$("skipping stale table token during broad sweep [table=").$(tableToken).I$();
         }
     }
 
@@ -293,7 +320,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
                         if (type == Files.DT_FILE && matchesNumberPattern(walName.of(pUtf8NameZ))) {
                             try {
-                                final int partNo = Numbers.parseInt(walName);
+                                final long partNo = Numbers.parseLong(walName);
                                 logic.trackSeqPart(partNo);
                                 hasPendingTasks = true;
                             } catch (NumericException ne) {
@@ -331,62 +358,78 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             onDiskWalIDSet.add(walId);
                             int maxSegmentLocked = walLocker.lockPurge(tableToken, walId);
 
-                            int trackerIdx = logic.trackDiscoveredWal(walId);
+                            final int trackerIdx;
+                            try {
+                                trackerIdx = logic.trackDiscoveredWal(walId);
+                            } catch (Throwable th) {
+                                try {
+                                    walLocker.unlockPurge(tableToken, walId);
+                                } catch (Throwable unlockFailure) {
+                                    if (unlockFailure != th) {
+                                        th.addSuppressed(unlockFailure);
+                                    }
+                                }
+                                throw th;
+                            }
+                            boolean isTrackingComplete = false;
                             boolean walLocked = maxSegmentLocked == WalUtils.SEG_NONE_ID;
 
-                            // Search for segments.
-                            path.trimTo(rootPathLen).concat(pUtf8NameZ);
-                            final int walPathLen = path.size();
-                            final long sp = ff.findFirst(path.$());
-                            if (sp > 0) {
-                                try {
-                                    do {
-                                        type = ff.findType(sp);
-                                        pUtf8NameZ = ff.findName(sp);
+                            try {
+                                // Search for segments.
+                                path.trimTo(rootPathLen).concat(pUtf8NameZ);
+                                final int walPathLen = path.size();
+                                final long sp = ff.findFirst(path.$());
+                                if (sp > 0) {
+                                    try {
+                                        do {
+                                            type = ff.findType(sp);
+                                            pUtf8NameZ = ff.findName(sp);
 
-                                        if (type == Files.DT_DIR && matchesNumberPattern(walName.of(pUtf8NameZ))) {
-                                            try {
-                                                final int segmentId = Numbers.parseInt(walName);
-                                                if ((segmentId < WalUtils.SEG_MIN_ID) || (segmentId > WalUtils.SEG_MAX_ID)) {
-                                                    throw NumericException.instance()
-                                                            .position(0)
-                                                            .put("segment id out of range [min=").put(WalUtils.SEG_MIN_ID)
-                                                            .put(", max=").put(WalUtils.SEG_MAX_ID)
-                                                            .put(", segmentId=").put(segmentId)
-                                                            .put(']')
-                                                            ;
-                                                }
-                                                path.trimTo(walPathLen);
-                                                boolean segmentLocked = segmentId <= maxSegmentLocked;
-                                                if (segmentLocked) {
-                                                    LOG.debug().$("locked segment [table=").$(tableToken)
-                                                            .$(", walId=").$(walId)
-                                                            .$(", segmentId=").$(segmentId)
-                                                            .I$();
-
-                                                    final boolean pendingTasks = segmentHasPendingTasks(walId, segmentId);
-                                                    if (pendingTasks) {
-                                                        // Treat is as being locked.
-                                                        LOG.debug().$("unlocked segment [table=").$(tableToken)
+                                            if (type == Files.DT_DIR && matchesNumberPattern(walName.of(pUtf8NameZ))) {
+                                                try {
+                                                    final int segmentId = Numbers.parseInt(walName);
+                                                    if ((segmentId < WalUtils.SEG_MIN_ID) || (segmentId > WalUtils.SEG_MAX_ID)) {
+                                                        throw NumericException.instance()
+                                                                .position(0)
+                                                                .put("segment id out of range [min=").put(WalUtils.SEG_MIN_ID)
+                                                                .put(", max=").put(WalUtils.SEG_MAX_ID)
+                                                                .put(", segmentId=").put(segmentId)
+                                                                .put(']')
+                                                                ;
+                                                    }
+                                                    path.trimTo(walPathLen);
+                                                    boolean segmentLocked = segmentId <= maxSegmentLocked;
+                                                    if (segmentLocked) {
+                                                        LOG.debug().$("locked segment [table=").$(tableToken)
                                                                 .$(", walId=").$(walId)
                                                                 .$(", segmentId=").$(segmentId)
                                                                 .I$();
-                                                        segmentLocked = false;
-                                                    }
-                                                }
-                                                walLocked &= segmentLocked;
-                                                logic.trackDiscoveredSegment(segmentId, segmentLocked);
-                                            } catch (NumericException ne) {
-                                                // Non-Segment directory, ignore.
-                                            }
-                                        }
-                                    } while (ff.findNext(sp) > 0);
-                                } finally {
-                                    ff.findClose(sp);
-                                }
-                            }
 
-                            logic.endWalTracking(trackerIdx, maxSegmentLocked, walLocked);
+                                                        final boolean pendingTasks = segmentHasPendingTasks(walId, segmentId);
+                                                        if (pendingTasks) {
+                                                            // Treat is as being locked.
+                                                            LOG.debug().$("unlocked segment [table=").$(tableToken)
+                                                                    .$(", walId=").$(walId)
+                                                                    .$(", segmentId=").$(segmentId)
+                                                                    .I$();
+                                                            segmentLocked = false;
+                                                        }
+                                                    }
+                                                    walLocked &= segmentLocked;
+                                                    logic.trackDiscoveredSegment(segmentId, segmentLocked);
+                                                } catch (NumericException ne) {
+                                                    // Non-Segment directory, ignore.
+                                                }
+                                            }
+                                        } while (ff.findNext(sp) > 0);
+                                    } finally {
+                                        ff.findClose(sp);
+                                    }
+                                }
+                                isTrackingComplete = true;
+                            } finally {
+                                logic.endWalTracking(trackerIdx, maxSegmentLocked, walLocked && isTrackingComplete);
+                            }
                             hasPendingTasks |= !walLocked;
                         } catch (NumericException ne) {
                             // Non-WAL directory, ignore.
@@ -402,14 +445,25 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private boolean fetchSequencerPairs() {
         setTxnPath(tableToken);
+        if (engine.isClosing()) {
+            // The engine is being torn down (for example during a primary->replica demote). It frees the
+            // sequencer and metadata mappings underneath this worker, so opening a TxReader / sequencer cursor
+            // here would touch already-evicted file descriptors and double-unmap a sequencer tx-log region.
+            // Bail cleanly and let the sweep stop, mirroring how this job already skips a table dropped
+            // underneath it. The close path bounds its own wait, so it never blocks on this worker.
+            return false;
+        }
         if (!engine.isTableDropped(tableToken)) {
             try {
                 try (TableMetadata tableMetadata = engine.getTableMetadata(tableToken)) {
                     txReader.ofRO(path.$(), tableMetadata.getTimestampType(), tableMetadata.getPartitionBy());
                     TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
-                } catch (CairoException ex) {
-                    if (engine.isTableDropped(tableToken)) {
-                        // This is ok, table dropped while we tried to read the txn
+                } catch (CairoException | NullPointerException ex) {
+                    if (engine.isTableDropped(tableToken) || engine.isClosing()) {
+                        // This is ok, the table was dropped, or the engine started closing, while we tried to
+                        // read the txn. A concurrent drop can cause CairoException or NPE (when the metadata
+                        // pool tenant's txFile is closed during refresh); a concurrent engine close can do the
+                        // same as it frees the sequencer/metadata mappings underneath this worker.
                         return false;
                     }
                     throw ex;
@@ -424,6 +478,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     int txnPartSize = transactionLogCursor.getPartitionSize();
                     long currentSeqPart = getCurrentSeqPart(safeToPurgeTxn, txnPartSize);
                     logic.trackCurrentSeqPart(currentSeqPart);
+                    long backupLockedSeqTxn = engine.getBackupSeqPartLock().getLockedSeqTxn(tableToken);
+                    long backupLockedPart = (backupLockedSeqTxn > 0 && txnPartSize > 0)
+                            ? (backupLockedSeqTxn - 1) / txnPartSize
+                            : -1;
+                    logic.trackBackupLockedPart(backupLockedPart);
                     while (onDiskWalIDSet.size() > 0 && transactionLogCursor.hasNext()) {
                         int walId = transactionLogCursor.getWalId();
                         if (onDiskWalIDSet.remove(walId) != -1) {
@@ -435,6 +494,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     if (e.isTableDropped()) {
                         // there was a race, we lost
                         return true;
+                    } else if (engine.isClosing()) {
+                        // The engine started closing while we read the sequencer cursor; it frees the
+                        // sequencer mappings underneath this worker. Bail cleanly instead of surfacing
+                        // the teardown as a purge error.
+                        return false;
                     } else {
                         throw e;
                     }
@@ -453,9 +517,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private long getSafeToPurgeUpToTxn(long readerSeqTxn) {
         long safeToPurgeTxn = readerSeqTxn;
         childViewSink.clear();
-        engine.getMatViewGraph().getDependentViews(tableToken, childViewSink);
+        engine.getDependentViewGraph().getDependentViews(tableToken, childViewSink);
+        // The dependent-view graph carries both mat-view and live-view tokens.
+        // Live views are enumerated separately below via liveViewRegistry, so
+        // skip them here to avoid the matViewStateStore lookup that would
+        // never produce a state for an LV token.
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
             final TableToken viewToken = childViewSink.get(v);
+            if (viewToken.isLiveView()) {
+                continue;
+            }
             final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
 
             if (state != null && !state.isDropped()) {
@@ -480,6 +551,96 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         safeToPurgeTxn = Math.min(safeToPurgeTxn, appliedToViewTxn);
                     }
                 }
+            }
+        }
+
+        // Live views publish lv_consumed_seqTxn through this purge floor
+        // alongside mat-view consumers. Both dropped and invalid views release
+        // their floor, mirroring the mat-view arm above. Invalidation is
+        // terminal for a live view - there is no in-place revalidation path,
+        // the refresh worker permanently skips an invalid view, and its
+        // lvConsumed / head checkpoint would otherwise freeze forever. Keeping
+        // the floor pinned would clamp safeToPurgeTxn to that frozen value and
+        // block base WAL purging indefinitely while the base keeps ingesting.
+        // Re-CREATE requires a DROP first and seeds through an MVCC snapshot
+        // reader, not the raw base WAL, so the retained WAL is never load-bearing.
+        // Skip the LV arm when no LiveViewRefreshJob will run - the feature is off, or the
+        // dedicated live view refresh pool has no workers. In either case nothing advances
+        // lvConsumedSeqTxn / headCheckpointBaseSeqTxn, and clamping to those frozen values would
+        // pin the base WAL forever while the base keeps ingesting. The mat-view arm gets the
+        // feature-off half free (NoOp state store -> null state -> floor released); the LV arm
+        // reads the registry directly, so it needs the gate.
+        //
+        // isLiveViewRefreshEnabled() is the whole condition, not a necessary-but-insufficient
+        // proxy. ServerMain additionally requires !isReadOnlyInstance(), which is covered because
+        // it creates no WalPurgeJob at all in that case, so this method never runs on a replica.
+        //
+        // Keep this call identical to CairoEngine.buildViewGraphs' registration guard: this clamps
+        // exactly what that method registers. Both read config only and both evaluate on the boot
+        // thread before the pools start, so they cannot disagree and no sweep can race
+        // registration.
+        if (!engine.getConfiguration().isLiveViewRefreshEnabled()) {
+            return safeToPurgeTxn;
+        }
+        liveViewSink.clear();
+        final LiveViewRegistry liveViewRegistry = engine.getLiveViewRegistry();
+        liveViewRegistry.getViewsForBaseTable(tableToken.getTableName(), liveViewSink);
+        if (liveViewSink.size() == 0) {
+            // No dependent views: nothing below can lower the floor, so skip the role read too.
+            return safeToPurgeTxn;
+        }
+        // Sample the dynamic read-only flag ONCE for the whole fan-out. Re-reading it per view lets a
+        // PRIMARY-to-REPLICA flip land between two iterations: the views already iterated contribute no
+        // frontier floor while the rest do, and the combined min can then sit ABOVE an earlier view's
+        // frontier - purging base WAL-E its next drain still reads. One sample makes the floor
+        // internally consistent. A sample that reads false is safe even if a demote lands immediately
+        // after: on a primary the frontier arm is a provable no-op (see below), so nothing was skipped.
+        final boolean readOnly = engine.isReadOnlyMode();
+        for (int v = 0, n = liveViewSink.size(); v < n; v++) {
+            final LiveViewInstance instance = liveViewSink.getQuick(v);
+            if (instance.isDropped() || instance.isInvalid()) {
+                continue;
+            }
+            final long lvConsumed = instance.getStateReader().getLvConsumedSeqTxn();
+            if (lvConsumed > -1) {
+                safeToPurgeTxn = Math.min(safeToPurgeTxn, lvConsumed);
+            }
+            // Read-only replica only: lvConsumed tracks this node's own flush watermark, but the
+            // replica drains base WAL-E forward from refreshedUpToSeqTxn, which lags lvConsumed
+            // while the lead trails the flushed point (Case B). Purging (refreshedUpToSeqTxn,
+            // lvConsumed] would delete WAL-E a seeded drain still reads, so floor at the frontier.
+            // No-op on a primary (lead leads lvConsumed); the cross-thread long read only min-combines.
+            if (readOnly) {
+                final long refreshedUpTo = instance.getRefreshedUpToSeqTxn();
+                if (refreshedUpTo > -1) {
+                    safeToPurgeTxn = Math.min(safeToPurgeTxn, refreshedUpTo);
+                }
+            }
+            // Hold the base WAL back to the durable head checkpoint's base commit,
+            // not the applied point. On restart the restore replays the
+            // (headBaseSeqTxn, applied] base WAL to advance the accumulators restored
+            // from the selected root up to the applied watermark; lvConsumed advances
+            // to that applied point every flush, but the head only advances on the
+            // checkpoint cadence, so lvConsumed can outrun it and let this range be
+            // purged out from under the next restart's replay. Capping at
+            // headBaseSeqTxn keeps the replay WAL until a later seal moves the head
+            // past it. LONG_NULL (no head, or one an O3 repair cleared) leaves the
+            // floor at lvConsumed: those views recover by rebuilding from the applied
+            // base table, which needs no raw base WAL.
+            final long headBaseSeqTxn = instance.getHeadCheckpointBaseSeqTxn();
+            if (headBaseSeqTxn > -1) {
+                safeToPurgeTxn = Math.min(safeToPurgeTxn, headBaseSeqTxn);
+            }
+            // The versioned timeline keeps both A/B generations recoverable.
+            // Its floor is therefore the minimum normalized base coordinate of
+            // both durable slots, published to the instance only after the
+            // superblock commit point. Recovery/repair owners may lower the same
+            // floor while pinned. Kept as a separate arm from the head above: the
+            // head follows the newest boundary this process sealed, while the
+            // timeline floor follows what either durable slot still needs.
+            final long timelineFloor = instance.getCheckpointTimelineWalPurgeFloor();
+            if (timelineFloor > -1) {
+                safeToPurgeTxn = Math.min(safeToPurgeTxn, timelineFloor);
             }
         }
         return safeToPurgeTxn;
@@ -531,12 +692,25 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId);
     }
 
+    /**
+     * Hook invoked just before a dropped table's local directory is removed. Returning false defers
+     * the local removal to a later sweep, e.g. to first reclaim the table's remote objects. The OSS
+     * default removes now.
+     *
+     * @return true if the local table directory may be removed now
+     */
+    protected boolean beforeDroppedTableRemoved(TableToken tableToken) {
+        return true;
+    }
+
     protected long getCurrentSeqPart(long lastAppliedTxn, int txnPartSize) {
         // There can be more advanced override which uses more parameters than this implementation.
         if (txnPartSize > 0) {
             // we don't want to purge the part where the last txn is in. Txn is 1-based.
             return (lastAppliedTxn - 1) / txnPartSize;
         }
+        // V1 sequencer (txnPartSize == 0) has no seq part files, so return MAX_VALUE
+        // to make `seqPart < currentSeqPart` always true, purging any stray V2 parts.
         return Long.MAX_VALUE;
     }
 
@@ -545,11 +719,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         final long t = clock.getTicks();
         if (last + checkInterval < t) {
             last = t;
-            if (runLock.tryLock()) {
+            if (engine.tryLockWalPurgeJob(0, TimeUnit.SECONDS)) {
                 try {
                     broadSweep();
                 } finally {
-                    runLock.unlock();
+                    engine.unlockWalPurgeJob();
                 }
             } else {
                 LOG.info().$("skipping, locked out").$();
@@ -561,9 +735,13 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     public interface Deleter {
         void deleteSegmentDirectory(int walId, int segmentId);
 
-        void deleteSequencerPart(int seqPart);
+        void deleteSequencerPart(long seqPart);
 
         void deleteWalDirectory(int walId);
+
+        default boolean isSeqPartInUse(long seqPart) {
+            return false;
+        }
 
         void unlock(int walId);
     }
@@ -572,9 +750,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         private final Deleter deleter;
         // discovered stores the WAL and their segments and the sequencer parts
         // [ { walId, maxSegmentLocked, n segments, segmentId... | WalUtils.METADATA_WALID, seqPartNo } [, ...] ]
-        private final IntList discovered = new IntList();
+        private final LongList discovered = new LongList();
         private final IntIntHashMap nextToApply = new IntIntHashMap();
         private final int waitBeforeDelete;
+        private long backupLockedPart;
         private long currentSeqPart;
         private boolean logged;
         private TableToken tableToken;
@@ -595,50 +774,41 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         public void releaseLocks() {
-            for (int i = 0, n = discovered.size(); i < n; ) {
-                final int walId = discovered.get(i);
-                if (walId != WalUtils.METADATA_WALID) {
-                    // We've a valid WAL entry, unlock it
-                    deleter.unlock(walId);
-                    i += 3 + discovered.get(i + 2);
-                } else {
-                    // If walId is METADATA_WALID, it's a sequencer part, skip it
-                    i += 2;
-                }
-            }
+            unlockDiscovered(0);
         }
 
         public void reset(TableToken tableToken) {
             this.tableToken = tableToken;
             nextToApply.clear();
             discovered.clear();
+            backupLockedPart = -1;
             currentSeqPart = -1;
             logged = false;
         }
 
         public void run() {
             int i = 0, n = discovered.size();
-            if (n > 0 && waitBeforeDelete > 0) {
-                Os.sleep(waitBeforeDelete);
-            }
-
             try {
+                // Keep the delay in the cleanup scope so a downcall failure still releases every discovered lock.
+                if (n > 0 && waitBeforeDelete > 0) {
+                    sleepBeforeDelete();
+                }
                 while (i < n) {
-                    final int walId = discovered.get(i);
-                    final int maxSegmentLocked = discovered.get(i + 1);
+                    final int walId = (int) discovered.get(i);
+                    final long maxSegmentLocked = discovered.get(i + 1);
 
-                    final int seqPart = getSeqPart(walId, maxSegmentLocked); // -1 if not a seq part
+                    final long seqPart = getSeqPart(walId, maxSegmentLocked); // -1 if not a seq part
                     if (seqPart > -1) {
-                        if (seqPart < currentSeqPart) {
+                        if (seqPart < currentSeqPart && seqPart != backupLockedPart && !deleter.isSeqPartInUse(seqPart)) {
                             logDebugInfo();
                             deleter.deleteSequencerPart(seqPart);
                         }
-                        // Move to next discovered entry, sequencer parts are composed of 2 ints (walId, seqPart)
+                        // Move to next discovered entry, sequencer parts are composed of 2 longs (walId, seqPart)
                         i += 2;
                         continue;
                     }
 
-                    final int nSegments = discovered.get(i + 2);
+                    final int nSegments = (int) discovered.get(i + 2);
                     final int nextToApplySegmentId = nextToApply.get(walId);  // -1 if not found
 
                     if (maxSegmentLocked == WalUtils.SEG_NONE_ID && nextToApplySegmentId == -1) {
@@ -648,7 +818,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     } else {
                         // Check segments individually
                         for (int s = 0; s < nSegments; s++) {
-                            final int segmentId = discovered.get(i + 3 + s);
+                            final int segmentId = (int) discovered.get(i + 3 + s);
                             if (segmentId > -1) {
                                 final boolean segmentAlreadyApplied = (nextToApplySegmentId == -1) || (nextToApplySegmentId > segmentId);
                                 if (segmentAlreadyApplied) {
@@ -659,23 +829,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         }
                     }
                     deleter.unlock(walId);
-                    // Move to next discovered entry, wal entries are composed of 3 + nSegments ints:
+                    // Move to next discovered entry, wal entries are composed of 3 + nSegments longs:
                     // (walId, maxSegmentLocked, nSegments, segmentId...)
                     i += 3 + nSegments;
                 }
             } finally {
-                while (i < n) {
-                    final int walId = discovered.get(i);
-                    if (walId != WalUtils.METADATA_WALID) {
-                        // We've a valid WAL entry, unlock it
-                        deleter.unlock(walId);
-                        i += 3 + discovered.get(i + 2);
-                    } else {
-                        // If walId is METADATA_WALID, it's a sequencer part, skip it
-                        i += 2;
-                    }
-                }
+                unlockDiscovered(i);
             }
+        }
+
+        public void trackBackupLockedPart(long partNo) {
+            backupLockedPart = partNo;
         }
 
         public void trackCurrentSeqPart(long partNo) {
@@ -687,10 +851,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         public int trackDiscoveredWal(int walId) {
-            discovered.add(walId);
-            discovered.add(0); // placeholder for max segment locked
-            discovered.add(0); // placeholder for number of segments discovered
-            return discovered.size() - 2;
+            final int walIdIndex = discovered.size();
+            discovered.setPos(walIdIndex + 3);
+            discovered.setQuick(walIdIndex, walId);
+            discovered.setQuick(walIdIndex + 1, 0); // placeholder for max segment locked
+            discovered.setQuick(walIdIndex + 2, 0); // placeholder for number of segments discovered
+            return walIdIndex + 1;
         }
 
         public void trackNextToApplySegment(int walId, int segmentId) {
@@ -700,13 +866,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             }
         }
 
-        public void trackSeqPart(int part) {
+        public void trackSeqPart(long part) {
             discovered.add(WalUtils.METADATA_WALID);
             discovered.add(part);
         }
 
-        private int getSeqPart(int walId, int segmentId) {
-            return walId == WalUtils.METADATA_WALID ? segmentId : -1;
+        protected void sleepBeforeDelete() {
+            Os.sleep(waitBeforeDelete);
+        }
+
+        private long getSeqPart(int walId, long value) {
+            return walId == WalUtils.METADATA_WALID ? value : -1;
         }
 
         private void logDebugInfo() {
@@ -723,10 +893,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 log.$("table=").$(tableToken).$(", discovered=[");
 
                 for (int i = 0, n = discovered.size(); i < n; ) {
-                    final int walId = discovered.get(i);
-                    final int maxSegmentLocked = discovered.get(i + 1);
+                    final int walId = (int) discovered.get(i);
+                    final long maxSegmentLocked = discovered.get(i + 1);
 
-                    final int partNo = getSeqPart(walId, maxSegmentLocked);
+                    final long partNo = getSeqPart(walId, maxSegmentLocked);
                     if (partNo > -1) {
                         log.$("seqPart=").$(partNo);
                         if (partNo == currentSeqPart) {
@@ -736,7 +906,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         continue;
                     }
 
-                    final int nSegments = discovered.get(i + 2);
+                    final int nSegments = (int) discovered.get(i + 2);
 
                     log.$("(wal").$(walId);
                     if (maxSegmentLocked != WalUtils.SEG_NONE_ID) {
@@ -747,7 +917,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     final int nextToApplyId = nextToApply.get(walId);
                     for (int s = 0; s < nSegments; s++) {
                         log.$(',');
-                        final int segment = discovered.get(i + 3 + s);
+                        final int segment = (int) discovered.get(i + 3 + s);
                         final int segmentId = segment >= 0 ? segment : -segment - 1;
                         final boolean locked = segment >= 0;
                         log.$('(').$(walId).$(',').$(segmentId);
@@ -766,6 +936,39 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 log.I$();
             }
         }
+
+        private void unlockDiscovered(int fromIndex) {
+            for (int i = fromIndex, n = discovered.size(); i < n; ) {
+                final int walId = (int) discovered.getQuick(i);
+                if (walId != WalUtils.METADATA_WALID) {
+                    int nextIndex = n;
+                    if (i + 2 < n) {
+                        final long nSegments = discovered.getQuick(i + 2);
+                        final long candidate = (long) i + 3 + nSegments;
+                        if (nSegments >= 0 && candidate <= n) {
+                            nextIndex = (int) candidate;
+                        }
+                    }
+                    // We've a valid WAL entry, unlock it
+                    try {
+                        deleter.unlock(walId);
+                    } catch (Throwable th) {
+                        try {
+                            LOG.error().$("could not unlock WAL [table=").$(tableToken)
+                                    .$(", walId=").$(walId)
+                                    .$(", error=").$(th)
+                                    .I$();
+                        } catch (Throwable ignored) {
+                        }
+                    } finally {
+                        i = nextIndex;
+                    }
+                } else {
+                    // If walId is METADATA_WALID, it's a sequencer part, skip it
+                    i = i + 2 <= n ? i + 2 : n;
+                }
+            }
+        }
     }
 
     private class FsDeleter implements Deleter {
@@ -780,7 +983,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         @Override
-        public void deleteSequencerPart(int seqPart) {
+        public void deleteSequencerPart(long seqPart) {
             LOG.debug().$("deleting sequencer part [table=").$(tableToken)
                     .$(", part=").$(seqPart)
                     .I$();
@@ -798,11 +1001,30 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         @Override
+        public boolean isSeqPartInUse(long seqPart) {
+            return walDirectoryPolicy.isSeqPartInUse(
+                    path.of(configuration.getDbRoot()).concat(tableToken).concat(WalUtils.SEQ_DIR),
+                    seqPart
+            );
+        }
+
+        @Override
         public void unlock(int walId) {
             walLocker.unlockPurge(tableToken, walId);
-            LOG.debug().$("unlocked WAL [table=").$(tableToken)
-                    .$(", walId=").$(walId)
-                    .I$();
+            // The native unlock has already changed ownership. Keep diagnostic logging
+            // from making the caller retry that state transition.
+            try {
+                final LogRecord log = LOG.debug();
+                try {
+                    log.$("unlocked WAL [table=");
+                    tableToken.toSink(log);
+                    log.$(", walId=").$(walId)
+                            .$(']');
+                } finally {
+                    log.$();
+                }
+            } catch (Throwable ignored) {
+            }
         }
     }
 }

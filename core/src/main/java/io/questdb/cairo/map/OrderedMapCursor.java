@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,5 +26,5 @@ package io.questdb.cairo.map;
 
 interface OrderedMapCursor extends MapRecordCursor {
 
-    OrderedMapCursor init(long address, long limit, int count);
+    OrderedMapCursor init(long address, int count);
 }
