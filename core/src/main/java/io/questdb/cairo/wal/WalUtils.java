@@ -206,6 +206,10 @@ public class WalUtils {
             TableUtils.openSmallFile(ff, dstDir.trimTo(dstLen), dstLen, metaMem, TableUtils.META_FILE_NAME, MemoryTag.MMAP_TABLE_WRITER);
             metaMem.putInt(TableUtils.META_OFFSET_TABLE_ID, newTableId);
             metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
+            metaMem.putInt(
+                    TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION,
+                    TableUtils.calculateMetaFormatMinorVersionField(0, metaMem.getInt(TableUtils.META_OFFSET_COUNT))
+            );
             txWriter.resetStructureVersionUnsafe();
 
             TableUtils.openSmallFile(ff, dstDir.trimTo(dstLen), dstLen, metaMem, TableUtils.META_FILE_NAME, MemoryTag.MMAP_TABLE_WRITER);
