@@ -485,11 +485,13 @@ public interface CairoConfiguration {
      * away. It also costs the view's ordinary forward path, which stops coalescing its
      * commits into blocks and stops holding rows in the WAL lag - every commit on a
      * dedup-keyed table carries a non-default dedup mode, and
-     * {@code WalTxnDetails} forces a full commit for each of those. That is why it
-     * defaults to false, and it is the reason the ordinary commit is stamped
-     * {@code WAL_DEDUP_MODE_NO_DEDUP} rather than left at the default: the view's output
-     * may legitimately hold two rows sharing a {@code (timestamp, key)} pair, and a
-     * default-mode commit on a dedup-keyed table would collapse them.
+     * {@code WalTxnDetails} forces a full commit for each of those. It defaults to true,
+     * so a view that would rather keep those forward commits coalesced than let its
+     * repairs publish sparsely is CREATEd with this off. It is also the reason the
+     * ordinary commit is stamped {@code WAL_DEDUP_MODE_NO_DEDUP} rather than left at the
+     * default: the view's output may legitimately hold two rows sharing a
+     * {@code (timestamp, key)} pair, and a default-mode commit on a dedup-keyed table
+     * would collapse them.
      * <p>
      * A view whose output carries no key the pair can be named through - a compound or
      * expression PARTITION BY, a key of another type, a key the SELECT drops - gets no
@@ -510,7 +512,9 @@ public interface CairoConfiguration {
      * correction did not touch; what it costs is one sequential read of the view's own
      * output for that segment, and one property: a row copied forward is no longer
      * recomputed from the base, so a divergence below it is preserved rather than
-     * corrected. That is why this defaults to false.
+     * corrected. That property is why the switch exists at all; it defaults to true, so
+     * an operator who wants every repair to recompute its whole segment from the base
+     * sets it to false.
      * <p>
      * A segment takes the keyed route only where every gate
      * {@code LiveViewSegmentRepairEnvelope.keyedScanGate} reports holds, the correction's key
@@ -531,7 +535,14 @@ public interface CairoConfiguration {
      * property change the closed-segment keyed replay does: a key the correction did not
      * touch keeps its stored row rather than being recomputed from the base. Inside the
      * open segment that is the current day's data, which is what an operator takes back by
-     * setting this to false.
+     * setting this to false. It defaults to true.
+     * <p>
+     * The route also needs its own arithmetic proof, which is what keeps the repair
+     * independent of the interval it repairs: an insert-only correction to an unfiltered
+     * view over a base that does not deduplicate emits exactly one output row per new base
+     * row, so every checkpoint position follows from the durable ones plus that exact
+     * count. A view outside that shape replays every row above its anchor whatever this
+     * says.
      */
     boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled();
 
@@ -548,7 +559,10 @@ public interface CairoConfiguration {
      * <p>
      * The default is deliberately conservative: overstating an index open only ever moves a
      * marginal segment onto the whole-range scan, which is correct for every shape and
-     * merely reads more. See {@code LiveViewCheckpointKeyedScanCost}.
+     * merely reads more. The open-segment resume caps it lower - reported-density
+     * measurements price its posting-index setup at four rows - because that route pays
+     * neither the stored-row merge nor the whole-state publication the conservative price
+     * was set against. See {@code LiveViewCheckpointKeyedScanCost}.
      */
     long getLiveViewCheckpointRepairKeyedScanIndexOpenRows();
 

@@ -113,6 +113,12 @@ import org.jetbrains.annotations.Nullable;
  * the stored cursor and writes the same row set it counted, which it then proves it
  * re-read to the row. The rows come out after the replay's own rather than interleaved
  * with them, which the WAL carries as any other out-of-order block.
+ * <p>
+ * An open-segment resume walks nothing to begin with: its boundary positions come from
+ * the durable ones plus the exact count of inserted rows, so it accounts for no stored
+ * row and does not advance this cursor at all. Its fallback is
+ * {@link #materializeUnaccountedMerge}, which writes the whole stored merge in the one
+ * pass that would otherwise only have counted it.
  *
  * <h2>Why the two key spaces</h2>
  * The base table and the view keep separate symbol maps over the same strings, so
@@ -495,6 +501,40 @@ public final class LiveViewCheckpointKeyedReplay implements QuietCloseable {
                     .put(", accountedSupersededRows=").put(accountedSupersededRows)
                     .put(", supersededRows=").put(supersededRows).put(']');
         }
+        return true;
+    }
+
+    /**
+     * Abandons a sparse publication that has accounted for nothing, writing the whole
+     * stored merge in one pass.
+     * <p>
+     * The counterpart of {@link #materializeMerge} for a repair whose row positions never
+     * came from this merge at all: an open-segment resume derives them from the durable
+     * positions plus the exact count of inserted rows, so it leaves the stored cursor
+     * where {@link #bindStoredRows} put it. There is nothing to rewind and nothing to
+     * re-prove - the first walk is the one that writes.
+     *
+     * @return false when there was no sparse attempt to abandon
+     * @throws CairoException when the merge has already walked part of the stored
+     *                        interval, which would make this write a row set the
+     *                        accounted one no longer describes
+     */
+    public boolean materializeUnaccountedMerge() {
+        if (!sparse) {
+            return false;
+        }
+        if (storedRowCursor == null || walWriter == null) {
+            throw CairoException.critical(0)
+                    .put("live view sparse publication abandoned without the merge it has to fall back on");
+        }
+        if (mergedRows != 0 || supersededRows != 0 || hasPendingRow) {
+            throw CairoException.critical(0)
+                    .put("live view sparse publication fallback cannot write a merge it has already walked")
+                    .put(" [mergedRows=").put(mergedRows)
+                    .put(", supersededRows=").put(supersededRows).put(']');
+        }
+        sparse = false;
+        drainRemaining();
         return true;
     }
 

@@ -34,9 +34,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.nio.ByteBuffer;
 import java.util.Arrays;
-import java.util.HashSet;
 
 /**
  * Builds one immutable {@link LiveViewCheckpointWindowRoot} and its changed
@@ -66,7 +64,10 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
     private final LiveViewCheckpointWindowRoot oldWindowRoot;
     private final LiveViewCheckpointPartitionMapReader partitionMapReader;
     private final LiveViewCheckpointPartitionMapWriter partitionMapWriter;
-    private final HashSet<ByteBuffer> putKeys = new HashSet<>();
+    // The keys this build put, for a complete snapshot to remove the rest by omission.
+    // The same open-addressed byte-key set the repair domain is, rather than a HashSet of
+    // wrappers: every put and every probe would otherwise allocate one.
+    private final LiveViewCheckpointOutputKeyDomain putKeys = new LiveViewCheckpointOutputKeyDomain();
     private final LiveViewCheckpointWindowRoot resultWindowRoot;
     private final LongList segmentUseCounts = new LongList();
     private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
@@ -113,13 +114,13 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
                 // removing an entry the predecessor does not hold is a no-op one layer
                 // down, and every key outside Q remains untouched by construction.
                 outputKeys.forEach(key -> {
-                    if (!putKeys.contains(ByteBuffer.wrap(key))) {
+                    if (!putKeys.contains(key)) {
                         mutationAt(mutationCount++).remove(key);
                     }
                 });
             } else {
                 partitionMapReader.iterateAll(oldPartitionMapRoot, entry -> {
-                    if (!putKeys.contains(ByteBuffer.wrap(entry.getKey()))) {
+                    if (!putKeys.contains(entry.getKey())) {
                         mutationAt(mutationCount++).remove(entry.getKey());
                     }
                 });
@@ -299,7 +300,9 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
             // it must remove. A forward freeze pays neither the key copy nor the set
             // insert: duplicates still raise one layer down, where the partition-map
             // writer sorts the mutations and rejects two that name the same key.
-            putKeys.add(ByteBuffer.wrap(Arrays.copyOf(key, key.length)));
+            // Copied: the set holds the array rather than an image of it, and the caller
+            // owns the one it handed over only until the mutation below takes it.
+            putKeys.add(Arrays.copyOf(key, key.length));
         }
         if (!isUnchanged) {
             mutationAt(mutationCount++).put(key, scalarState, NO_STATE_PAGES);

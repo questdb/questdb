@@ -25,7 +25,11 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -174,6 +178,83 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testARepeatedPairAbandonsTheKeyedResumesSparsePublication() throws Exception {
+        // The dynamic condition, and the only one this route cannot decide before it
+        // replays: the pair the publication upserts on has to name each recomputed row
+        // once. Two base rows of one account at one instant produce two output rows
+        // carrying different cumulative sums, and an upsert keyed on (created_at,
+        // cod_acct_no) would keep one of them.
+        //
+        // What makes the fallback cheap here is that the arithmetic resume walked nothing
+        // to reach this point: its boundary positions came from the durable ones plus the
+        // exact insert count, so the stored interval is still unread when the verdict
+        // arrives and the merge writes it in the one pass that would otherwise only have
+        // counted it. The rows the resume left alone go out with the replacement, which
+        // collapses nothing.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+                final long rowsBefore = count("select count() from lv");
+                final String untouchedBefore = dumpRowsOf("acct-3");
+
+                // A second acct-1 row at the exact instant its own 02:10 row already
+                // holds - late, inside the open day, and above a root of it.
+                commit(row(4, 2, 10, "acct-1"), job);
+
+                Assert.assertEquals(
+                        "the resume must still follow the correction's own keys",
+                        1,
+                        job.openSegmentKeyedResumeCountForTest()
+                );
+                Assert.assertEquals(
+                        "and still derive its checkpoint positions from the insert delta",
+                        1,
+                        job.openSegmentArithmeticRowPositionCountForTest()
+                );
+                Assert.assertEquals(
+                        "the repeated pair denies the upsert",
+                        0,
+                        job.openSegmentSparseResumeCountForTest()
+                );
+                Assert.assertEquals(1, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(1, job.outputUniquenessDuplicateRowsForTest());
+                Assert.assertEquals(
+                        "the replacement carries the rows the resume had left alone",
+                        rowsBefore + 1,
+                        count("select count() from lv")
+                );
+                Assert.assertEquals(
+                        "both rows of the pair survive; an upsert would have kept one",
+                        2,
+                        rowsAt("2026-01-04T02:10:00.000000Z", "acct-1")
+                );
+                TestUtils.assertEquals(untouchedBefore, dumpRowsOf("acct-3"));
+                assertViewMatchesRecompute();
+            }
+
+            // The ladder the fallback published carries the arithmetic positions, so a
+            // restart is what proves they describe the rows the replacement wrote.
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                Assert.assertEquals(2, rowsAt("2026-01-04T02:10:00.000000Z", "acct-1"));
+                assertViewMatchesRecompute();
+
+                commit(row(4, 3, 15, "acct-4"), job);
+
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
     public void testAViewWithoutTheDedupKeysNeverResumesByKey() throws Exception {
         // The publication is an upsert on the view's own identity, so a view CREATEd
         // without it has nothing to upsert onto - and the block would otherwise have to
@@ -254,6 +335,40 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         engine.buildViewGraphs();
     }
 
+    private long count(String sql) throws Exception {
+        try (
+                RecordCursorFactory factory = select(sql);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(cursor.hasNext());
+            return cursor.getRecord().getLong(0);
+        }
+    }
+
+    /**
+     * One account's stored rows, in an order a repeated pair cannot make ambiguous. It is
+     * what says a publication left a key it never touched exactly where it stood.
+     */
+    private String dumpRowsOf(String account) throws Exception {
+        return TestUtils.printSqlToString(
+                engine,
+                sqlExecutionContext,
+                "select * from lv where cod_acct_no = '" + account + "' order by 1, 3",
+                new StringSink()
+        );
+    }
+
+    private long rowsAt(String timestamp, String account) throws Exception {
+        return count("select count() from lv where cod_acct_no = '" + account + "'"
+                + " and created_at = '" + timestamp + "'::timestamp");
+    }
+
+    private LiveViewInstance viewInstance() {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull("live view 'lv' must be registered", instance);
+        return instance;
+    }
+
     private void assertViewMatchesRecompute() throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
         final String recompute = "select created_at, cod_acct_no, "
@@ -263,8 +378,10 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(" + recompute + ") order by 2, 1",
-                "(lv) order by 2, 1",
+                // The cumulative sum breaks the tie a repeated (timestamp, key) pair
+                // otherwise leaves in this ordering.
+                "(" + recompute + ") order by 2, 1, 3",
+                "(lv) order by 2, 1, 3",
                 LOG,
                 true
         );
