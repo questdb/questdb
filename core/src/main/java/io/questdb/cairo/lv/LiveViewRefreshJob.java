@@ -373,6 +373,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // range rather than a list, so the verdict is a flag: true when the resume's own
     // interval reads fewer rows by key than whole.
     private boolean openSegmentKeyedScanCheaper;
+    // The elapsed-time model's stricter override when row-only pricing omits a
+    // non-reusable root restore that dominates the whole-range executor.
+    private boolean openSegmentRestoreAwareCheaper;
+    // Benchmark-only override used to compare both executors on the same retained-state
+    // shape. Static eligibility, arithmetic safety and sparse-publication guards still
+    // apply; only the scan-row price verdict is overridden.
+    private boolean forceOpenSegmentKeyedReplayForTest;
     // Whether segmentChangeSet currently holds the open anchor segment's complete key
     // domain for the repair the caller is planning. Set by repairChangeSetSegments and
     // cleared by everything that reaches a resume without it, because the change set is
@@ -387,6 +394,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private long openSegmentKeyedPricedCount;
     private long openSegmentKeyedUnpricedCount;
     private long openSegmentKeyedWholeRangeRows;
+    private long openSegmentRestoreAwareCheaperCount;
+    private final OpenSegmentRepairPhases openSegmentRepairPhases = new OpenSegmentRepairPhases();
     // The transplant's scratch: one keyed repair's finished per-key state, read off the
     // isolated runtime through the same freeze contract a seal uses and written into the
     // primary through the matching restore. Sized by the correction's key domain, and
@@ -811,6 +820,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public long openSegmentKeyedResumeCountForTest() {
         return openSegmentKeyedResumeCount;
+    }
+
+    @TestOnly
+    public long openSegmentRestoreAwareCheaperCountForTest() {
+        return openSegmentRestoreAwareCheaperCount;
+    }
+
+    @TestOnly
+    public void setForceOpenSegmentKeyedReplayForTest(boolean force) {
+        forceOpenSegmentKeyedReplayForTest = force;
     }
 
     /**
@@ -4530,6 +4549,35 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    private RecordCursor openOpenSegmentBaseCursor(
+            PageFrameRecordCursorFactory pageFrameFactory,
+            LiveViewCheckpointRepairPlan plan,
+            long replayLowTs,
+            boolean keyed
+    ) throws SqlException {
+        final long start = System.nanoTime();
+        try {
+            if (keyed) {
+                // The keys the correction touched, followed through the base's posting
+                // index rather than every row above the anchor.
+                return pageFrameFactory.getCursorInTimestampRangeForwardIndexed(
+                        executionContext,
+                        replayLowTs,
+                        plan.getScanHighTsInclusive(),
+                        keyedReplay.getBaseKeyColumnIndex(),
+                        keyedReplay.getBaseSymbolKeys()
+                );
+            }
+            return pageFrameFactory.getCursorInTimestampRange(
+                    executionContext,
+                    replayLowTs,
+                    plan.getScanHighTsInclusive()
+            );
+        } finally {
+            openSegmentRepairPhases.baseCursorOpenNanos += System.nanoTime() - start;
+        }
+    }
+
     /**
      * Prices the OPEN anchor segment's keyed scan against the whole-range one the resume
      * would otherwise take, over the interval that resume actually reads.
@@ -4551,9 +4599,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             LiveViewCompiledPlan compiledPlan,
             TableReader reader,
             long lowTsInclusive,
-            long highTsInclusive
+            long highTsInclusive,
+            long selectedRootLogicalBytes,
+            boolean runtimeAnchorReusable
     ) {
         openSegmentKeyedScanCheaper = false;
+        openSegmentRestoreAwareCheaper = false;
         if (!openSegmentKeyDomainReady) {
             // No proof, no route: a resume that cannot derive its checkpoint positions
             // arithmetically reads every row above the anchor, and pricing a read it may
@@ -4604,32 +4655,55 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 openSegmentKeyedUnpricedCount++;
                 return false;
             }
-            final boolean cheaper = LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(
+            final long keyedCostRows = LiveViewCheckpointKeyedScanCost.keyedScanCostRows(
+                    postingRows, keyedScanCost.getIndexOpens(), keyedScanKeys.size(), indexOpenRows);
+            final boolean rowCheaper = LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(
                     postingRows,
                     keyedScanCost.getIndexOpens(),
                     keyedScanKeys.size(),
                     wholeRangeRows,
                     indexOpenRows
             );
+            final LiveViewCheckpointOpenSegmentCost elapsedCost = instance.getOpenSegmentRepairCost();
+            final boolean elapsedCheaper = elapsedCost.shouldOverrideWholeRange(
+                    runtimeAnchorReusable,
+                    selectedRootLogicalBytes,
+                    wholeRangeRows,
+                    keyedCostRows,
+                    keyedScanKeys.size()
+            );
+            final boolean restoreAwareCheaper = !rowCheaper && elapsedCheaper;
             openSegmentKeyedPricedCount++;
             openSegmentKeyedPostingRows += postingRows;
             openSegmentKeyedWholeRangeRows += wholeRangeRows;
-            if (cheaper) {
+            if (rowCheaper) {
                 openSegmentKeyedCheaperCount++;
             }
-            openSegmentKeyedScanCheaper = cheaper;
+            if (restoreAwareCheaper) {
+                openSegmentRestoreAwareCheaperCount++;
+            }
+            openSegmentKeyedScanCheaper = rowCheaper || restoreAwareCheaper;
+            openSegmentRestoreAwareCheaper = restoreAwareCheaper;
+            openSegmentRepairPhases.keyCount = keyedScanKeys.size();
+            openSegmentRepairPhases.keyedCostRows = keyedCostRows;
+            openSegmentRepairPhases.wholeRangeRows = wholeRangeRows;
             LOG.info().$("live view open segment keyed scan priced [view=").$(viewName)
                     .$(", replayLowTs=").$ts(lowTsInclusive)
                     .$(", keys=").$(keyedScanKeys.size())
                     .$(", postingRows=").$(postingRows)
                     .$(", indexOpens=").$(keyedScanCost.getIndexOpens())
-                    .$(", keyedCostRows=").$(LiveViewCheckpointKeyedScanCost.keyedScanCostRows(
-                            postingRows, keyedScanCost.getIndexOpens(), keyedScanKeys.size(), indexOpenRows))
+                    .$(", keyedCostRows=").$(keyedCostRows)
                     .$(", indexOpenRows=").$(indexOpenRows)
                     .$(", configuredIndexOpenRows=").$(configuredIndexOpenRows)
                     .$(", wholeRangeRows=").$(wholeRangeRows)
-                    .$(", keyedCheaper=").$(cheaper).I$();
-            return cheaper;
+                    .$(", selectedRootLogicalBytes=").$(selectedRootLogicalBytes)
+                    .$(", runtimeAnchorReusable=").$(runtimeAnchorReusable)
+                    .$(", keyedEstimateNanos=").$(elapsedCost.getLastKeyedEstimateNanos())
+                    .$(", wholeEstimateNanos=").$(elapsedCost.getLastWholeEstimateNanos())
+                    .$(", rowCheaper=").$(rowCheaper)
+                    .$(", restoreAwareCheaper=").$(restoreAwareCheaper)
+                    .$(", keyedCheaper=").$(openSegmentKeyedScanCheaper).I$();
+            return openSegmentKeyedScanCheaper;
         } catch (Throwable t) {
             // A pricing failure is not a repair failure: the resume reads every row above
             // its anchor either way, which is what it did before this existed.
@@ -5332,7 +5406,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private boolean isOpenSegmentKeyedResumeAvailable(LiveViewInstance instance, long replayLowTs) {
         if (!engine.getConfiguration().isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled()
                 || !openSegmentKeyDomainReady
-                || !openSegmentKeyedScanCheaper) {
+                || (!openSegmentKeyedScanCheaper && !forceOpenSegmentKeyedReplayForTest)) {
             return false;
         }
         if (!instance.isDedupKeyed()
@@ -6672,6 +6746,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         LiveViewCheckpointTimelineStoreWriter.RepairResult timelineSplice = null;
         int capturedBoundaries = 0;
         boolean replayCompleted = false;
+        boolean sparseFallback = false;
+        boolean adaptiveSampleValid = true;
         // The anchor's own live-view row position, which is also the count of durable
         // rows the replacement leaves below its floor. Read back after the apply to
         // prove the table moved the way the arithmetic says before any root is
@@ -6685,17 +6761,29 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         long durableMaxTsBeforeRepair = Numbers.LONG_NULL;
         long insertedRowDelta = 0;
         final LiveViewCompiledPlan primaryPlan = instance.getCompiledPlan();
+        final boolean runtimeAnchorReusable = canReuseRuntimeAnchor(instance, windowFactory, plan);
+        openSegmentRepairPhases.reset(
+                System.nanoTime(),
+                plan.getAnchorLogicalStateBytes(),
+                plan.getAnchorCheckpointId(),
+                instance.getHeadCheckpointRootId(),
+                runtimeAnchorReusable
+        );
         // What a resume following the correction's own keys would read, against what
         // reading every row above the anchor costs. Priced here because the interval is
         // only known here: the floor is the anchor the plan selected and the ceiling is
         // the end of the base table.
+        final long pricingStart = System.nanoTime();
         priceOpenSegmentKeyedScan(
                 instance,
                 primaryPlan,
                 reader,
                 replayLowTs,
-                plan.getScanHighTsInclusive()
+                plan.getScanHighTsInclusive(),
+                plan.getAnchorLogicalStateBytes(),
+                runtimeAnchorReusable
         );
+        openSegmentRepairPhases.pricingNanos = System.nanoTime() - pricingStart;
         // Whether this resume follows the correction's own keys. Everything the route needs
         // is known by now - the domain, the pricing, the view's own identity - except the
         // anchor root's shape, which the restore below answers by declining.
@@ -6881,21 +6969,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             .$(", replayLowTs=").$ts(replayLowTs)
                             .$(", anchorMaxTs=").$ts(anchorMaxTs).I$();
                 }
-                try (RecordCursor pageCursor = keyed
-                        // The keys the correction touched, followed through the base's
-                        // posting index, rather than every row above the anchor. The merge
-                        // above accounts for the rest of the range.
-                        ? pageFrameFactory.getCursorInTimestampRangeForwardIndexed(
-                        executionContext,
+                try (RecordCursor pageCursor = openOpenSegmentBaseCursor(
+                        pageFrameFactory,
+                        plan,
                         replayLowTs,
-                        plan.getScanHighTsInclusive(),
-                        keyedReplay.getBaseKeyColumnIndex(),
-                        keyedReplay.getBaseSymbolKeys()
-                )
-                        : pageFrameFactory.getCursorInTimestampRange(
-                        executionContext,
-                        replayLowTs,
-                        plan.getScanHighTsInclusive()
+                        keyed
                 )) {
                     RecordCursor source = pageCursor;
                     if (filter != null) {
@@ -6950,7 +7028,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // stands at the anchor, and a keyed replay does not fold into the
                         // primary at all.
                         final boolean isRuntimeAnchorReused =
-                                !keyed && canReuseRuntimeAnchor(instance, windowFactory, plan);
+                                !keyed && runtimeAnchorReusable;
                         if (keyed) {
                             // The replay folds into the isolated runtime, so what needs
                             // rewinding is its accumulators. The primary's stay exactly
@@ -6972,6 +7050,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // isOpen() rather than a null test: a function whose state the
                             // window owns keeps a closed map, and its accumulator is
                             // cleared with the anchor map's own entry instead.
+                            final long mapClearStart = System.nanoTime();
                             final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
                             for (int i = 0, n = functions.size(); i < n; i++) {
                                 Map m = functions.getQuick(i).getPartitionMap();
@@ -6979,6 +7058,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     m.clear();
                                 }
                             }
+                            openSegmentRepairPhases.mapClearNanos += System.nanoTime() - mapClearStart;
                             // Wiped, and the restore below can fail or come back empty, so
                             // the runtime is inconsistent until the replay commits.
                             markWindowStateDirty(instance);
@@ -7005,8 +7085,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // read the root retires the whole timeline either way, and the
                             // truncate only ever drops roots this replay is about to
                             // rewrite.
+                            final long timelineStart = System.nanoTime();
                             prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, plan.getOutputLowTs());
+                            openSegmentRepairPhases.timelinePublicationNanos += System.nanoTime() - timelineStart;
                         }
+                        final long rootRestoreStart = System.nanoTime();
                         final long anchorLvRowPosition;
                         if (keyed) {
                             // Only this correction's keys, into a runtime holding nothing.
@@ -7049,6 +7132,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     timelineCapture != null
                             );
                         }
+                        openSegmentRepairPhases.rootRestoreNanos += System.nanoTime() - rootRestoreStart;
                         if (anchorLvRowPosition == Numbers.LONG_NULL) {
                             // The root could not be read, or its format is one this
                             // build cannot restore (which stashed a pending
@@ -7087,6 +7171,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // computed columns. wrapWindowOutput does not rewind and
                         // returns windowCursor itself when the view has no
                         // projection, so the unprojected replay is unchanged.
+                        final long scanStart = System.nanoTime();
                         final RecordCursor outCursor = compiledPlan.wrapWindowOutput(windowCursor, executionContext);
                         Record outRecord = outCursor.getRecord();
                         while (outCursor.hasNext()) {
@@ -7153,6 +7238,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // resets its counter. No filter -> scan equals emit; a filter
                         // makes scan exceed emit by the rows it dropped.
                         o3ScanRows = filter != null ? filteringCursor.getBaseRowsConsumed() : appendedRows;
+                        openSegmentRepairPhases.scanWindowWalAppendNanos += System.nanoTime() - scanStart;
                     }
                     // The REPLACE_RANGE is unconditional, including when the replay
                     // produced no row at all. Zero rows means the base no longer has
@@ -7192,6 +7278,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // counting rows. So the fallback walks it once, writing as it goes,
                     // rather than counting it and then re-reading it to write it.
                     if (!sparse && keyedReplay.materializeUnaccountedMerge()) {
+                        sparseFallback = true;
                         sparsePublicationFallbackCount++;
                         LOG.info().$("live view open segment resume abandoned its sparse publication [view=")
                                 .$(viewName)
@@ -7201,6 +7288,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 .$(", firstDuplicateTs=").$ts(outputUniqueness.getFirstDuplicateTs())
                                 .I$();
                     }
+                    final long commitStart = System.nanoTime();
                     if (sparse) {
                         openSegmentSparseResumeCount++;
                         sparsePublicationCount++;
@@ -7222,6 +7310,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     } else {
                         fencedLiveViewCommit(instance, () -> walWriter.commitLiveViewWithReplaceRange(committedSeqTxn, replaceLowTs, Long.MAX_VALUE));
                     }
+                    openSegmentRepairPhases.commitNanos += System.nanoTime() - commitStart;
                     replayCompleted = true;
                 }
             }
@@ -7260,7 +7349,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
 
         try {
+            final long applyStart = System.nanoTime();
             applyLiveViewWal(instance.getLiveViewToken());
+            openSegmentRepairPhases.applyNanos += System.nanoTime() - applyStart;
             if (timelineCapture != null) {
                 // The replacement is durable in the live view's table, so the re-versioned
                 // roots describe real output and the splice may commit. Nothing published
@@ -7305,6 +7396,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // correct and no suffix root whose cumulative position moves: every
                     // root at or above the anchor is one this capture re-versioned, and
                     // each carries the position the replay derived for it.
+                    final long timelineSpliceStart = System.nanoTime();
                     timelineSplice = publishCheckpointTimelineRepair(
                             instance,
                             timelineCapture,
@@ -7312,6 +7404,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             Long.MAX_VALUE,
                             0
                     );
+                    openSegmentRepairPhases.timelinePublicationNanos += System.nanoTime() - timelineSpliceStart;
                 }
                 if (timelineSplice != null) {
                     if (keyed) {
@@ -7354,14 +7447,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // primary would be holding some corrected accumulators and some stale ones,
                 // which no later cycle detects. Mark the state dirty and let the next cycle
                 // recompute rather than sealing a runtime nothing can describe.
+                final long transplantStart = System.nanoTime();
                 try {
                     final int transplantedKeys = transplantKeyedRepairState(instance, replayAnchorWindow);
                     LOG.info().$("live view open segment resume handed its keys back [view=")
                             .$(viewName).$(", keys=").$(transplantedKeys).I$();
                 } catch (Throwable t) {
+                    adaptiveSampleValid = false;
                     markWindowStateDirty(instance);
                     LOG.critical().$("live view open segment resume could not hand its keys back [view=")
                             .$(viewName).$(", error=").$(t).I$();
+                } finally {
+                    openSegmentRepairPhases.transplantNanos += System.nanoTime() - transplantStart;
                 }
             }
             instance.setLastProcessedSeqTxn(committedSeqTxn);
@@ -7408,6 +7505,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // walk. Seal the frontier as a root of its own whenever it has run past the
                 // splice's newest key, and leave the seal to re-stamp the head metadata alone
                 // when the two agree.
+                final long headSealStart = System.nanoTime();
                 headSealed = maybeWriteHeadCheckpoint(
                         instance,
                         windowFactory,
@@ -7420,6 +7518,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         true,
                         timelineSplice == null || replayMaxTs > timelineSplice.getHeadRootMaxTimestamp()
                 );
+                openSegmentRepairPhases.headSealNanos += System.nanoTime() - headSealStart;
             }
             if (prefixMarkerLive) {
                 // Resolve the repair's live marker. A published splice needs no seal
@@ -7440,6 +7539,34 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.bumpO3ResumeReplayRows(appendedRows);
             // Baseline scan-cost signal: base rows this resume replay pulled (>= emit).
             instance.bumpO3ReplayScanRows(o3ScanRows);
+            final long scanCommitApplyNanos = openSegmentRepairPhases.scanWindowWalAppendNanos
+                    + openSegmentRepairPhases.commitNanos
+                    + openSegmentRepairPhases.applyNanos;
+            if (adaptiveSampleValid
+                    && !forceOpenSegmentKeyedReplayForTest
+                    && !sparseFallback
+                    && (timelineCapture == null || timelineSplice != null)) {
+                final LiveViewCheckpointOpenSegmentCost elapsedCost = instance.getOpenSegmentRepairCost();
+                if (keyed) {
+                    elapsedCost.recordKeyed(
+                            scanCommitApplyNanos,
+                            openSegmentRepairPhases.keyedCostRows,
+                            openSegmentRepairPhases.rootRestoreNanos + openSegmentRepairPhases.transplantNanos,
+                            openSegmentRepairPhases.keyCount
+                    );
+                } else {
+                    elapsedCost.recordWhole(
+                            runtimeAnchorReusable,
+                            scanCommitApplyNanos,
+                            openSegmentRepairPhases.wholeRangeRows,
+                            openSegmentRepairPhases.mapClearNanos + openSegmentRepairPhases.rootRestoreNanos,
+                            openSegmentRepairPhases.selectedRootLogicalBytes
+                    );
+                }
+            }
+            final long totalNanos = System.nanoTime() - openSegmentRepairPhases.totalStartNanos;
+            final long accountedNanos = openSegmentRepairPhases.accountedNanos();
+            final long otherNanos = Math.max(0, totalNanos - accountedNanos);
             // applyAheadGap = the seqTxns ApplyWal2TableJob raced past the O3 trigger
             // (0 on the common path); the anchor fields record which logical boundary the
             // resume rolled back to, so a wide gap or a distant anchor is diagnosable.
@@ -7451,7 +7578,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", applyAheadGap=").$(plan.getPinnedSeqTxn() - plan.getTriggerSeqTxn())
                     .$(", rootsVersioned=").$(capturedBoundaries)
                     .$(", timelineKept=").$(timelineSplice != null)
-                    .$(", rowsEmitted=").$(appendedRows).I$();
+                    .$(", rowsEmitted=").$(appendedRows)
+                    .$(", keyed=").$(keyed)
+                    .$(", restoreAware=").$(openSegmentRestoreAwareCheaper)
+                    .$(", selectedRootLogicalBytes=").$(openSegmentRepairPhases.selectedRootLogicalBytes)
+                    .$(", selectedRootId=").$(openSegmentRepairPhases.selectedRootId)
+                    .$(", headRootId=").$(openSegmentRepairPhases.headRootId)
+                    .$(", runtimeAnchorReusable=").$(openSegmentRepairPhases.runtimeAnchorReusable)
+                    .$(", keys=").$(openSegmentRepairPhases.keyCount)
+                    .$(", keyedCostRows=").$(openSegmentRepairPhases.keyedCostRows)
+                    .$(", wholeRangeRows=").$(openSegmentRepairPhases.wholeRangeRows)
+                    .$(", totalNanos=").$(totalNanos)
+                    .$(", pricingNanos=").$(openSegmentRepairPhases.pricingNanos)
+                    .$(", mapClearNanos=").$(openSegmentRepairPhases.mapClearNanos)
+                    .$(", rootRestoreNanos=").$(openSegmentRepairPhases.rootRestoreNanos)
+                    .$(", baseCursorOpenNanos=").$(openSegmentRepairPhases.baseCursorOpenNanos)
+                    .$(", scanWindowWalAppendNanos=").$(openSegmentRepairPhases.scanWindowWalAppendNanos)
+                    .$(", commitNanos=").$(openSegmentRepairPhases.commitNanos)
+                    .$(", applyNanos=").$(openSegmentRepairPhases.applyNanos)
+                    .$(", timelinePublicationNanos=").$(openSegmentRepairPhases.timelinePublicationNanos)
+                    .$(", transplantNanos=").$(openSegmentRepairPhases.transplantNanos)
+                    .$(", headSealNanos=").$(openSegmentRepairPhases.headSealNanos)
+                    .$(", accountedNanos=").$(accountedNanos)
+                    .$(", otherNanos=").$(otherNanos)
+                    .$(", accountedPercent=").$(totalNanos > 0 ? 100.0 * accountedNanos / totalNanos : 100.0)
+                    .I$();
         } finally {
             // The candidate is either published - its segments reachable from the new
             // generation - or gone - so nothing is left for a startup sweep to discard,
@@ -13381,6 +13532,71 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         private void of(LiveViewInstance instance) {
             this.instance = instance;
+        }
+    }
+
+    /**
+     * Reusable phase timings for one open-segment resume. The refresh worker is
+     * single-threaded per repair, so one holder can be reset and filled without allocation.
+     */
+    private static final class OpenSegmentRepairPhases {
+        long applyNanos;
+        long baseCursorOpenNanos;
+        long commitNanos;
+        long headRootId;
+        long headSealNanos;
+        long keyCount;
+        long keyedCostRows;
+        long mapClearNanos;
+        long pricingNanos;
+        long rootRestoreNanos;
+        long scanWindowWalAppendNanos;
+        long selectedRootId;
+        long selectedRootLogicalBytes;
+        long timelinePublicationNanos;
+        long totalStartNanos;
+        long transplantNanos;
+        long wholeRangeRows;
+        boolean runtimeAnchorReusable;
+
+        long accountedNanos() {
+            return pricingNanos
+                    + mapClearNanos
+                    + rootRestoreNanos
+                    + baseCursorOpenNanos
+                    + scanWindowWalAppendNanos
+                    + commitNanos
+                    + applyNanos
+                    + timelinePublicationNanos
+                    + transplantNanos
+                    + headSealNanos;
+        }
+
+        void reset(
+                long totalStartNanos,
+                long selectedRootLogicalBytes,
+                long selectedRootId,
+                long headRootId,
+                boolean runtimeAnchorReusable
+        ) {
+            applyNanos = 0;
+            baseCursorOpenNanos = 0;
+            commitNanos = 0;
+            headSealNanos = 0;
+            keyCount = 0;
+            keyedCostRows = 0;
+            mapClearNanos = 0;
+            pricingNanos = 0;
+            rootRestoreNanos = 0;
+            scanWindowWalAppendNanos = 0;
+            timelinePublicationNanos = 0;
+            transplantNanos = 0;
+            wholeRangeRows = 0;
+            this.totalStartNanos = totalStartNanos;
+            this.selectedRootLogicalBytes = selectedRootLogicalBytes;
+            this.selectedRootId = selectedRootId;
+            this.headRootId = headRootId;
+            this.runtimeAnchorReusable = runtimeAnchorReusable;
         }
     }
 

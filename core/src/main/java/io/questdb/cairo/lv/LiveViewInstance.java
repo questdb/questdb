@@ -350,6 +350,10 @@ public class LiveViewInstance implements QuietCloseable {
     // state to still be the one that sealed it.
     private long headCheckpointRootId = Numbers.LONG_NULL;
     private RecordCursorFactory headCheckpointRootWindowFactory;
+    // Per-view timing model for open-segment executor selection. It follows the
+    // instance lifetime so unrelated views and replaced compiled runtimes never share
+    // learned state width or scan rates.
+    private final LiveViewCheckpointOpenSegmentCost openSegmentRepairCost = new LiveViewCheckpointOpenSegmentCost();
     // Elapsed wall-clock (micros) of the most recent head-checkpoint write
     // (maybeWriteHeadCheckpoint: freeze the function state, append a logical
     // root, publish the timeline generation). Numbers.LONG_NULL until the first
@@ -1199,6 +1203,10 @@ public class LiveViewInstance implements QuietCloseable {
     public long[] getHeadCheckpointSeqAndMaxTs() {
         final long[] local = headCheckpoint;
         return new long[]{local[HEAD_CHECKPOINT_LV_SEQ_TXN], local[HEAD_CHECKPOINT_MAX_TS]};
+    }
+
+    public LiveViewCheckpointOpenSegmentCost getOpenSegmentRepairCost() {
+        return openSegmentRepairCost;
     }
 
     public long getHeadCheckpointStateBytes() {
@@ -2607,6 +2615,9 @@ public class LiveViewInstance implements QuietCloseable {
         // stage roots the rebuilt view cannot read. The parked-repair guard in the refresh
         // job turns that into a discarded candidate rather than a continued replay.
         repairRuntime = Misc.free(repairRuntime);
+        // Compiled expressions determine both state width and replay work. Rates learned
+        // from the old shape must not steer the replacement plan.
+        openSegmentRepairCost.reset();
         // The scan of the view's own table names its columns by the schema the compiled
         // SELECT produced, so it dies with that SELECT for the same reason.
         storedRowScanFactory = Misc.free(storedRowScanFactory);

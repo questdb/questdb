@@ -301,6 +301,7 @@ public final class LiveViewCheckpointRepairPlan {
     // Scratch the anchor searches read into. Worker-owned, overwritten by every
     // lookup; only the two identity fields around it survive a plan.
     private final LiveViewCheckpointTimelineEntry anchorEntry = new LiveViewCheckpointTimelineEntry();
+    private long anchorLogicalStateBytes;
     private long anchorMaxTs;
     private long applyAheadMinTs;
     private long changeMaxTs;
@@ -411,6 +412,7 @@ public final class LiveViewCheckpointRepairPlan {
      */
     public void copyFrom(@NotNull LiveViewCheckpointRepairPlan other) {
         this.anchorCheckpointId = other.anchorCheckpointId;
+        this.anchorLogicalStateBytes = other.anchorLogicalStateBytes;
         this.anchorMaxTs = other.anchorMaxTs;
         this.applyAheadMinTs = other.applyAheadMinTs;
         this.changeMaxTs = other.changeMaxTs;
@@ -441,6 +443,14 @@ public final class LiveViewCheckpointRepairPlan {
      */
     public long getAnchorCheckpointId() {
         return anchorCheckpointId;
+    }
+
+    /**
+     * @return decoded state bytes attributed to the selected anchor root, or zero when
+     * this plan does not resume from an anchor
+     */
+    public long getAnchorLogicalStateBytes() {
+        return anchorLogicalStateBytes;
     }
 
     /**
@@ -856,6 +866,7 @@ public final class LiveViewCheckpointRepairPlan {
         // nor re-read. A non-DATA / recovery trigger carries no timestamp to search
         // with and anchors nothing.
         anchorCheckpointId = Numbers.LONG_NULL;
+        anchorLogicalStateBytes = 0;
         anchorMaxTs = Numbers.LONG_NULL;
         boolean hasAnchor = lateRowTs != Numbers.LONG_NULL && anchors.findAnchorBelow(lateRowTs, anchorEntry);
         if (hasAnchor && applyAhead) {
@@ -865,6 +876,7 @@ public final class LiveViewCheckpointRepairPlan {
         }
         if (hasAnchor) {
             anchorCheckpointId = anchorEntry.checkpointId;
+            anchorLogicalStateBytes = Math.max(0, anchorEntry.logicalStateBytes);
             anchorMaxTs = anchorEntry.maxTimestamp;
         }
         // The anchor's state already covers rows up to and including its maxTs, so a
@@ -931,6 +943,7 @@ public final class LiveViewCheckpointRepairPlan {
         } else {
             disposition = DISPOSITION_BOUNDARY_REBUILD;
             anchorCheckpointId = Numbers.LONG_NULL;
+            anchorLogicalStateBytes = 0;
             anchorMaxTs = Numbers.LONG_NULL;
         }
     }

@@ -255,6 +255,63 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAnOlderSelectedRootCanMakeKeyedFasterThanTheRowVerdict() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+                seedRestoreDominantRates();
+
+                commit(row(4, 2, 35, "acct-1"), job);
+
+                Assert.assertEquals(
+                        "posting-row pricing must still prefer the short whole interval",
+                        0,
+                        job.openSegmentKeyedCheaperCountForTest()
+                );
+                Assert.assertEquals(
+                        "the selected root is older than the runtime head, so restore-aware pricing must override",
+                        1,
+                        job.openSegmentRestoreAwareCheaperCountForTest()
+                );
+                Assert.assertEquals(1, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals(0, job.runtimeAnchorReuseCountForTest());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAReusableHeadKeepsTheWholeRangeWhenItsScanIsFaster() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(row(4, 0, 10, "acct-1"), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                seedRestoreDominantRates();
+
+                // Intra-commit O3 wholly above the sealed head: no row enters the window
+                // pipeline before detection, so the selected anchor is the reusable head.
+                commit(
+                        row(4, 0, 30, "acct-1") + ", " + row(4, 0, 20, "acct-1"),
+                        job
+                );
+
+                Assert.assertEquals(1, job.openSegmentKeyedPricedCountForTest());
+                Assert.assertEquals(0, job.openSegmentKeyedCheaperCountForTest());
+                Assert.assertEquals(0, job.openSegmentRestoreAwareCheaperCountForTest());
+                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals(1, job.runtimeAnchorReuseCountForTest());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
     public void testAViewWithoutTheDedupKeysNeverResumesByKey() throws Exception {
         // The publication is an upsert on the view's own identity, so a view CREATEd
         // without it has nothing to upsert onto - and the block would otherwise have to
@@ -323,6 +380,21 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 assertViewMatchesRecompute();
             }
         });
+    }
+
+    private void seedRestoreDominantRates() {
+        viewInstance().getOpenSegmentRepairCost().setRatesForTest(
+                1_000_000_000L,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1
+        );
     }
 
     /**

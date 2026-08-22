@@ -230,6 +230,7 @@ public class LiveViewSteadyStateBenchmark {
         // segment the runtime still stands in. Left at the configuration default, so a run
         // that names nothing measures what ships.
         boolean isOpenSegmentKeyedReplay = true;
+        boolean forceOpenSegmentKeyedReplay = false;
         boolean isRepairPerSegment = true;
         for (String arg : args) {
             if (arg.startsWith("--restart=")) {
@@ -304,6 +305,9 @@ public class LiveViewSteadyStateBenchmark {
                 isRepairKeyedReplay = Boolean.parseBoolean(arg.substring(22));
             } else if (arg.startsWith("--open-segment-keyed-replay=")) {
                 isOpenSegmentKeyedReplay = Boolean.parseBoolean(arg.substring(28));
+            } else if (arg.startsWith("--force-open-segment-keyed-replay=")) {
+                forceOpenSegmentKeyedReplay = Boolean.parseBoolean(
+                        arg.substring("--force-open-segment-keyed-replay=".length()));
             } else if (arg.startsWith("--keyed-scan-index-open-rows=")) {
                 keyedScanIndexOpenRows = Long.parseLong(arg.substring("--keyed-scan-index-open-rows=".length()));
             } else {
@@ -562,6 +566,7 @@ public class LiveViewSteadyStateBenchmark {
                     // per-txn diff overlays and the checkpoint's encode scratch.
                     NativeTagPeakSampler sampler = new NativeTagPeakSampler(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)
             ) {
+                job.setForceOpenSegmentKeyedReplayForTest(forceOpenSegmentKeyedReplay);
                 final long seedStart = System.nanoTime();
                 drainLiveView(engine, instance, job);
                 System.out.printf(Locale.ROOT, "# seed_ms=%.3f seed_checkpoint_ms=%.3f%n",
