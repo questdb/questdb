@@ -84,10 +84,10 @@ public class QwpTudCache implements QuietCloseable {
     // commitAll/commitIfMaxUncommittedRowsReached. Set by
     // QwpIngressProcessorState so its durable-ack bookkeeping sees the
     // salvaged txn; UDP receivers leave it null (no ack channel to update).
-    // NOTE: salvage is not the only commit path without a consumer hook --
     // QwpWalAppender's internal threshold commit (appendToWalColumnar ->
-    // tud.commitIfMaxUncommittedRowsCountReached()) also advances lastSeqTxn
-    // without notifying anyone; see issue #7482.
+    // tud.commitIfMaxUncommittedRowsCountReached()) also has no direct consumer
+    // hook; the commit entry points reconcile that advance through
+    // reportCommittedTxn() before acknowledging the frame.
     private CommittedTxnConsumer committedTxnConsumer;
     private MemoryMARW ddlMem;
     private boolean isDistressed = false;
@@ -212,10 +212,16 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     /**
-     * Same as {@link #commitAll()} but invokes {@code consumer} for every table
-     * that actually committed new data (had uncommitted rows), passing the
-     * sequencer txn assigned to that commit. Used by QWP durable-ack tracking
-     * to record which client messages still need an object-store upload.
+     * Same as {@link #commitAll()} but also reports committed sequencer txns to
+     * {@code consumer}. For every table it commits, it compares the writer's last
+     * seqTxn against the last seqTxn already reported for that table and invokes
+     * {@code consumer} when it has advanced -- whether or not this call is the one
+     * that committed it, and whether or not the table had uncommitted rows. A table
+     * with nothing to flush must not be skipped: the advance can come from a commit
+     * made outside this class, and losing it lets a durable ack cover a WAL segment
+     * the upload tracker never saw (#7482); see {@code reportCommittedTxn}. Used by
+     * QWP durable-ack tracking to record which client messages still need an
+     * object-store upload.
      */
     public void commitAll(CommittedTxnConsumer consumer) throws Throwable {
         ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
@@ -231,15 +237,8 @@ public class QwpTudCache implements QuietCloseable {
             final boolean hadBufferedRows = !tud.isFirstRow();
             try {
                 if (!tud.isDropped()) {
-                    final boolean willAdvance = consumer != null && hadBufferedRows;
                     tud.commit(false);
-                    if (willAdvance && !tud.isDropped()) {
-                        consumer.accept(
-                                tud.getTableToken().getTableName(),
-                                tud.getTableToken().getDirName(),
-                                tud.getLastSeqTxn()
-                        );
-                    }
+                    reportCommittedTxn(tud, consumer);
                 }
             } catch (CommitFailedException e) {
                 if (!e.isTableDropped()) {
@@ -276,26 +275,32 @@ public class QwpTudCache implements QuietCloseable {
     /**
      * Whether ANY live table in this cache still holds rows appended but not committed.
      * <p>
-     * This is the FACT behind {@code QwpIngressProcessorState.uncommittedDeferredRows}: the per-table
+     * This is the fact behind {@code QwpIngressProcessorState.uncommittedDeferredRows}: the per-table
      * force-commit at the max-uncommitted-rows cap covers whichever tables crossed the cap and no others,
-     * so "did a deferred frame run" is not the same question as "is anything still uncommitted". Asking
-     * lets the cumulative-ack watermark advance once coverage IS complete instead of staying pinned to the
-     * group-closing frame.
+     * so "did a deferred frame run" is not the same question as "is anything still uncommitted". A dropped
+     * table is skipped -- its buffered rows are discarded on eviction, and the commit loops raise on that
+     * separately so the clamp cannot release over discarded rows.
      */
     public boolean hasUncommittedRows() {
-        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        final ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
-            WalTableUpdateDetails tud = tableUpdateDetails.get(keys.get(i));
-            if (tud != null && !tud.isDropped() && !tud.isFirstRow()) {
+            WalTableUpdateDetails tud = tableUpdateDetails.valueQuick(i);
+            if (!tud.isDropped() && !tud.isFirstRow()) {
                 return true;
             }
         }
         return false;
     }
 
-    public void commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
+    /**
+     * Force-commits tables at the configured row cap and reports committed txns.
+     *
+     * @return whether any surviving table holds uncommitted rows after this pass
+     */
+    public boolean commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
         ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
         Utf8Sequence discardedTableName = null;
+        boolean hasUncommittedRows = false;
         for (int i = 0; i < keys.size(); ) {
             Utf8Sequence tableName = keys.getQuick(i);
             int keyIndex = tableUpdateDetails.keyIndex(tableName);
@@ -306,16 +311,14 @@ public class QwpTudCache implements QuietCloseable {
             // discarded.
             final boolean hadBufferedRows = !tud.isFirstRow();
             try {
-                if (!tud.isDropped() && hadBufferedRows) {
-                    final long seqTxnBefore = tud.getLastSeqTxn();
-                    tud.commitIfMaxUncommittedRowsCountReached();
-                    if (consumer != null && tud.getLastSeqTxn() != seqTxnBefore && !tud.isDropped()) {
-                        consumer.accept(
-                                tud.getTableToken().getTableName(),
-                                tud.getTableToken().getDirName(),
-                                tud.getLastSeqTxn()
-                        );
+                if (!tud.isDropped()) {
+                    // The guard belongs to the commit (an empty writer has nothing to
+                    // flush), not to reporting: a prior force-commit inside the appender
+                    // may have left work that is committed but unreported.
+                    if (hadBufferedRows) {
+                        tud.commitIfMaxUncommittedRowsCountReached();
                     }
+                    reportCommittedTxn(tud, consumer);
                 }
             } catch (CommitFailedException e) {
                 if (!e.isTableDropped()) {
@@ -336,6 +339,10 @@ public class QwpTudCache implements QuietCloseable {
                 }
                 Misc.free(tud);
             } else {
+                // Inspect the surviving TUD after its possible commit. Do not
+                // short-circuit: the remaining entries still need commits,
+                // committed-txn reporting, and dropped-entry cleanup.
+                hasUncommittedRows |= !tud.isFirstRow();
                 i++;
             }
         }
@@ -344,6 +351,7 @@ public class QwpTudCache implements QuietCloseable {
                     .put("dropped table discarded buffered rows, cannot acknowledge: ")
                     .put(discardedTableName);
         }
+        return hasUncommittedRows;
     }
 
     /**
@@ -634,12 +642,101 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     /**
-     * Callback invoked by {@link #commitAll(CommittedTxnConsumer)} for every
-     * table that actually advanced its sequencer txn during the commit.
+     * Callback invoked by {@link #commitAll(CommittedTxnConsumer)} and by
+     * {@link #commitIfMaxUncommittedRowsReached(CommittedTxnConsumer)} for every
+     * table whose sequencer txn is ahead of the last seqTxn reported for it, even
+     * when the commit that advanced it happened in an earlier call or outside this
+     * class. Successful stale-writer salvage commits also invoke the callback.
+     * <p>
+     * An implementation must not re-enter the cache's commit entry points. The
+     * watermark advances only after {@code accept} returns, so a re-entrant consumer
+     * finds the same seqTxn still unreported and recurses.
      */
     @FunctionalInterface
     public interface CommittedTxnConsumer {
         void accept(String tableName, String tableDirName, long seqTxn);
+    }
+
+    /**
+     * Hands the consumer every seqTxn advance this connection has produced for
+     * {@code tud} that it has not already seen.
+     * <p>
+     * This reconciles against the last REPORTED seqTxn rather than trying to detect
+     * commit events, because not every commit happens here: {@code QwpWalAppender}
+     * force-commits inside the append when a table crosses
+     * {@code qwp.max.uncommitted.rows}, outside any wrapper in this class. The two
+     * event-detecting proxies this method replaces both went blind to that commit --
+     * {@code isFirstRow()} because the force-commit drains the writer, and the
+     * local seqTxn bracket because the advance happened before it was taken -- so the
+     * txn never reached the ack / durable-upload watermarks and a durable ack could
+     * be issued over a WAL segment the upload tracker never saw (#7482).
+     * <p>
+     * Reconciliation is also why a future commit site cannot reintroduce the bug:
+     * correctness depends on the writer's seqTxn, not on the caller remembering to
+     * bracket anything.
+     * <p>
+     * A reported advance is not necessarily a data commit. Structural txns share the
+     * seqTxn space with data txns, so the implicit ALTER {@code QwpWalAppender} runs for
+     * a column the frame introduces advances the writer's seqTxn as well; a
+     * FLAG_DEFER_COMMIT frame below the max-uncommitted-rows cap therefore reports that
+     * metadata-only txn with no rows behind it. This method accepts such a txn rather
+     * than gating on it, on three counts.
+     * The ALTER is permanent work this connection produced, and a rollback of the
+     * deferred group does not undo it. No DURABLE ack can outrun an upload:
+     * {@code QwpIngressProcessorState.collectDurableProgress} forwards only the
+     * registry's own uploadedSeqTxn, never the pending value, and on the normal path
+     * the group-closing {@link #commitAll(CommittedTxnConsumer)} supersedes the pending
+     * entry with the data txn -- on a rollback or error exit, and on a normal exit that
+     * commits no data txn for that table, the metadata-only entry instead stands until
+     * {@code QwpIngressProcessorState.onDurableAckSent()} prunes it once the upload
+     * covers that seqTxn, or {@code onDisconnected()} clears it. (The cumulative OK ack
+     * is a different watermark and is not upload-gated at all; this count is about the
+     * durable ack only.) And the upload watermark already had to clear structure txns
+     * before this change: a data txn reported after an implicit ALTER is numbered above
+     * it, so a registry that could not advance past a metadata-only txn would already
+     * stall on the far commoner non-deferred ALTER-then-insert frame. That last count
+     * is an assumption about the enterprise uploader -- this repository ships only
+     * {@code DefaultDurableAckRegistry}, which is disabled and returns -1 -- so the
+     * first two counts have to carry the argument on their own. Gating instead on "a
+     * commit drained the writer in this call" would reinstate #7482 for a frame whose
+     * force-commit is followed by further rows.
+     * <p>
+     * The one visible effect is a delay: a demote landing between such a frame and its
+     * group-closing commit now waits for the ALTER's upload coverage, bounded for a live
+     * client by {@code QwpIngressProcessorState.ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS},
+     * where the previous shape waited for nothing on that table. That constant is not a
+     * wall-clock teardown bound, as its own declaration comment states: the deferred
+     * close re-evaluates coverage-or-expiry only on inbound, recv-driven re-entry, so a
+     * silent peer lingers deferred until the transport idle reaper tears the connection
+     * down.
+     * <p>
+     * The consumer runs BEFORE the watermark advances, so at THIS layer a consumer that
+     * throws leaves the txn unreported and the next call to this method offers it again,
+     * at the cost of a duplicate set of overwriting map puts in
+     * {@code QwpIngressProcessorState.recordCommittedTable}. On the current production
+     * wiring that next call never comes: {@code QwpIngressProcessorState.commit()} and
+     * {@code commitIfMaxUncommittedRowsReached()} call {@code setDistressed()} when the
+     * consumer throws, and the frame handler's {@code state.clear()} then frees every
+     * TUD, so the txn is lost under either ordering -- harmlessly, because the frame is
+     * NACKed and the client replays from its acked watermark. This ordering is defence
+     * in depth for a future caller that does not distress the cache, not a recovery that
+     * runs today.
+     */
+    private static void reportCommittedTxn(WalTableUpdateDetails tud, CommittedTxnConsumer consumer) {
+        if (consumer == null || tud.isDropped()) {
+            return;
+        }
+        final long seqTxn = tud.getLastSeqTxn();
+        // getLastSeqTxn() is negative when the writer is gone or has no txn yet.
+        if (seqTxn < 0 || seqTxn <= tud.getLastReportedSeqTxn()) {
+            return;
+        }
+        consumer.accept(
+                tud.getTableToken().getTableName(),
+                tud.getTableToken().getDirName(),
+                seqTxn
+        );
+        tud.setLastReportedSeqTxn(seqTxn);
     }
 
     private static boolean isValidQwpSchemaColumnName(QwpColumnDef columnDef, int maxFileNameLength) {
@@ -734,7 +831,9 @@ public class QwpTudCache implements QuietCloseable {
             // whatever the old name resolves to after the rename -- duplicate
             // delivery across tables, consistent with commitAll's
             // partial-commit replay posture.
-            salvageBufferedRows(tud, walWriter);
+            if (salvageBufferedRows(tud, walWriter)) {
+                reportCommittedTxn(tud, committedTxnConsumer);
+            }
             throw CairoException.nonCritical()
                     .put("table is being renamed, cannot ingest [table=")
                     .put(tokenBeforeReplay.getTableName())
@@ -758,6 +857,7 @@ public class QwpTudCache implements QuietCloseable {
         final boolean hadBufferedRows = !tud.isFirstRow();
         final boolean isRenamed = engine.getTableTokenByDirName(tud.getTableToken().getDirName()) != null;
         boolean isSalvaged = false;
+        Throwable reportFailure = null;
         if (hadBufferedRows && isRenamed && tud.getWriter() instanceof WalWriter walWriter) {
             // The writer's table is alive under a new name, so its buffered rows
             // are salvageable. goActive() replays the rename into the writer --
@@ -771,6 +871,17 @@ public class QwpTudCache implements QuietCloseable {
             } catch (Throwable th) {
                 LOG.error().$("could not salvage buffered rows of a renamed table [table=")
                         .$(tableNameUtf8).$(", e=").$safe(th.getMessage()).I$();
+            }
+            if (isSalvaged) {
+                try {
+                    reportCommittedTxn(tud, committedTxnConsumer);
+                } catch (Throwable th) {
+                    // The rows are committed, but the caller must still reject the
+                    // frame because durable-ack bookkeeping did not accept the txn.
+                    // Preserve that failure across the eviction cleanup below rather
+                    // than misreporting the committed rows as discarded.
+                    reportFailure = th;
+                }
             }
         }
         tableUpdateDetails.removeAt(key);
@@ -793,6 +904,9 @@ public class QwpTudCache implements QuietCloseable {
             // propagate. This log keeps the IO detail.
             LOG.error().$("could not close evicted stale writer [table=").$(tableNameUtf8)
                     .$(", e=").$safe(th.getMessage()).I$();
+        }
+        if (reportFailure != null) {
+            CairoException.rethrowCleanupFailure(reportFailure);
         }
         // Rows the eviction could not re-home are gone: refuse so the QWP layer
         // rejects instead of acknowledging them; the UDP receiver has no ack and
@@ -892,10 +1006,10 @@ public class QwpTudCache implements QuietCloseable {
      * renamed table: the same physical table that accepted them. Rebinds the
      * TUD's token to the writer's first, so the commit's insert authorization
      * names the table the rows actually land in, not the old name (which on
-     * the evictStaleTud path already belongs to a different table). Notifies
-     * {@link #committedTxnConsumer} because this commit bypasses
-     * commitAll/commitIfMaxUncommittedRowsReached, so durable-ack bookkeeping
-     * would otherwise never learn about the txn.
+     * the evictStaleTud path already belongs to a different table). The callers
+     * notify {@link #committedTxnConsumer} through {@link #reportCommittedTxn}
+     * after this method confirms the commit, because this path bypasses
+     * commitAll/commitIfMaxUncommittedRowsReached.
      * <p>
      * No-ops (returns false, no rebind, no commit, no notify) when the entry
      * has no buffered rows: the normal inter-batch state on the WS path, which
@@ -922,13 +1036,6 @@ public class QwpTudCache implements QuietCloseable {
                     .$safe(walWriter.getTableToken().getTableName())
                     .$(", e=").$safe(th.getMessage()).I$();
             return false;
-        }
-        if (committedTxnConsumer != null) {
-            committedTxnConsumer.accept(
-                    walWriter.getTableToken().getTableName(),
-                    walWriter.getTableToken().getDirName(),
-                    tud.getLastSeqTxn()
-            );
         }
         return true;
     }

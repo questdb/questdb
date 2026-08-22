@@ -6569,7 +6569,8 @@ public class SqlParser {
     }
 
     private int parseShowCreateDatabaseInclude(GenericLexer lexer) throws SqlException {
-        CharSequence tok = optTok(lexer);
+        // fetchNext() returns a subquery-closing ')' so unparseLast() can restore it for the outer parser.
+        CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null) {
             return ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
         }
@@ -6594,7 +6595,8 @@ public class SqlParser {
         do {
             tok = tok(lexer, "category");
             mask |= showCreateDatabaseCategory(lexer, tok);
-            tok = tok(lexer, "',' or ')'");
+            // Read the list's local ')' without treating it as the enclosing subquery terminator.
+            tok = tokIncludingLocalBrace(lexer, "',' or ')'");
         } while (Chars.equals(tok, ','));
         if (!Chars.equals(tok, ')')) {
             throw SqlException.position(lexer.lastTokenPosition()).put("',' or ')' expected");

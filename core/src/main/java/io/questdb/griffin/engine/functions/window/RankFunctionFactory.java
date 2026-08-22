@@ -125,7 +125,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
     protected static class RankFunction extends LongFunction implements Function, WindowFunction, Reopenable {
 
         private final CairoConfiguration configuration;
-        private final boolean dense;
+        private final boolean isDense;
         private final String name;
         private int columnIndex;
         private long count = 1;
@@ -137,9 +137,9 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         private SingleRecordSink singleRecordSinkA;
         private SingleRecordSink singleRecordSinkB;
 
-        public RankFunction(CairoConfiguration configuration, boolean dense, String name) {
+        public RankFunction(CairoConfiguration configuration, boolean isDense, String name) {
             this.configuration = configuration;
-            this.dense = dense;
+            this.isDense = isDense;
             this.name = name;
         }
 
@@ -160,7 +160,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 rank = 1;
             } else {
                 if (!singleRecordSinkA.memeq(singleRecordSinkB)) {
-                    rank = dense ? rank + 1 : count;
+                    rank = isDense ? rank + 1 : count;
                 }
             }
             count++;
@@ -218,8 +218,17 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                     chainTypes.add(metadata.getColumnType(i));
                 }
                 recordSink = RecordSinkFactory.getInstance(configuration, sqlGenerator.getAsm(), chainTypes, listColumnFilter);
-                singleRecordSinkA = new SingleRecordSink((long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2, MemoryTag.NATIVE_RECORD_CHAIN);
-                singleRecordSinkB = new SingleRecordSink((long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2, MemoryTag.NATIVE_RECORD_CHAIN);
+                final long sinkBudget = (long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2;
+                // DENSE_RANK() reuses this class, so the budget message has to name whichever of
+                // the two the user actually ran. Reporting RANK() for a dense_rank() query defeats
+                // the point of carrying an owner name at all.
+                final String owner = isDense
+                        ? SingleRecordSink.OWNER_DENSE_RANK_WINDOW_FUNCTION
+                        : SingleRecordSink.OWNER_RANK_WINDOW_FUNCTION;
+                singleRecordSinkA = new SingleRecordSink(sinkBudget, MemoryTag.NATIVE_RECORD_CHAIN, owner,
+                        SingleRecordSink.CONFIG_KEYS_WINDOW_STORE);
+                singleRecordSinkB = new SingleRecordSink(sinkBudget, MemoryTag.NATIVE_RECORD_CHAIN, owner,
+                        SingleRecordSink.CONFIG_KEYS_WINDOW_STORE);
             } else {
                 if (orderIndices == null) {
                     orderIndices = sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
@@ -236,7 +245,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             } else {
                 recordComparator.setLeft(record);
                 if (recordComparator.compare(spi.getRecordAt(lastRecordOffset)) != 0) {
-                    rank = dense ? rank + 1 : count;
+                    rank = isDense ? rank + 1 : count;
                 }
             }
             lastRecordOffset = recordOffset;
@@ -357,7 +366,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
     protected static class RankOverPartitionFunction extends LongFunction implements Function, WindowFunction, Reopenable {
 
         private final CairoConfiguration configuration;
-        private final boolean dense;
+        private final boolean isDense;
         private final ColumnTypes keyColumnTypes;
         // True when this function is being compiled as part of a live view's
         // SELECT. Drives opt-in allocation of the tombstone value-layout slot
@@ -404,7 +413,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                                          VirtualRecord partitionByRecord,
                                          RecordSink partitionBySink,
                                          CairoConfiguration configuration,
-                                         boolean dense,
+                                         boolean isDense,
                                          boolean liveView,
                                          String name) {
             this.partitionByRecord = partitionByRecord;
@@ -416,7 +425,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             // compilation moves on.
             this.keyColumnTypes = copyKeyTypes(keyColumnTypes);
             this.configuration = configuration;
-            this.dense = dense;
+            this.isDense = isDense;
             this.liveView = liveView;
             this.name = name;
         }
@@ -499,7 +508,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             }
             recordValueSink.copy(record, mapValue);
             if (!fresh && recordComparator.compare(mapValue) != 0) {
-                rank = dense ? rank + 1 : count;
+                rank = isDense ? rank + 1 : count;
             }
             mapValue.putLong(chainTypeIndex, rank);
             mapValue.putLong(chainTypeIndex + 1, count + 1);
@@ -739,7 +748,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 count = mapValue.getLong(2);
                 recordComparator.setLeft(record);
                 if (recordComparator.compare(spi.getRecordAt(lastOffset)) != 0) {
-                    rank = dense ? rank + 1 : count;
+                    rank = isDense ? rank + 1 : count;
                 }
             }
 

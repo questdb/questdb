@@ -63,6 +63,7 @@ import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
@@ -1724,6 +1725,94 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("c\nasdfadf\n");
+        });
+    }
+
+    @Test
+    public void testConvertFixedToFixedReservesDiskSpaceBeforeMapping() throws Exception {
+        // Regression test for a JVM-crashing SIGBUS: convertFixedToFixed() must reserve real
+        // disk blocks for the destination column file (ff.allocate(), i.e. posix_fallocate)
+        // before mapping it MAP_RW, exactly like every other writable-mmap call site in the
+        // codebase (TableUtils.mapRW, ContiguousFileFixFrameColumn, O3PartitionJob, etc). The
+        // buggy version only called ff.truncate(), which sets the logical file size without
+        // reserving blocks, so a native write through the mmap could fault with an uncatchable
+        // SIGBUS instead of a normal CairoException on disk exhaustion.
+        final AtomicLong dstFd = new AtomicLong(-1);
+        final AtomicLong allocatedSizeForDst = new AtomicLong(-1);
+        final AtomicBoolean dstMappedForWrite = new AtomicBoolean();
+        final AtomicBoolean dstMappedBeforeAllocated = new AtomicBoolean();
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (fd == dstFd.get() && allocatedSizeForDst.get() < 0) {
+                    allocatedSizeForDst.set(size);
+                }
+                return super.allocate(fd, size);
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (fd == dstFd.get() && flags == Files.MAP_RW) {
+                    dstMappedForWrite.set(true);
+                    if (allocatedSizeForDst.get() < 0) {
+                        dstMappedBeforeAllocated.set(true);
+                    }
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                // The pre-existing "i" column (columnNameTxn == -1, bare file name "i.d")
+                // is opened read-write by the ordinary writer append path during INSERT, and
+                // read-only by ConvertOperatorImpl during the ALTER. The ALTER's destination
+                // file always carries a fresh columnNameTxn suffix, e.g. "i.d.0"/"i.d.1". The
+                // *first* such open is ConvertOperatorImpl/convertFixedToFixed sizing and
+                // mapping the destination for the conversion itself - a later reopen of the
+                // same path (the writer attaching the converted column for further live
+                // appends, extended to the default append page size) is unrelated to the fix
+                // under test, so only the first match is latched.
+                String path = Misc.getThreadLocalUtf8Sink().put(name).toString();
+                int sep = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+                String fileName = sep >= 0 ? path.substring(sep + 1) : path;
+                if (fileName.startsWith("i.d.") && dstFd.get() == -1) {
+                    dstFd.set(fd);
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE y (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+            execute("""
+                    INSERT INTO y VALUES
+                    (1, '2024-05-14T16:00:00.000000Z'),
+                    (2, '2024-05-14T16:00:01.000000Z')""");
+
+            execute("ALTER TABLE y ALTER COLUMN i TYPE LONG", sqlExecutionContext);
+
+            Assert.assertNotEquals("destination column file was never opened for write", -1, dstFd.get());
+            Assert.assertTrue("destination column data file was never mapped read-write", dstMappedForWrite.get());
+            Assert.assertEquals(
+                    "ff.allocate() must reserve the exact destination byte size before mapping",
+                    2L * Long.BYTES,
+                    allocatedSizeForDst.get()
+            );
+            Assert.assertFalse(
+                    "destination file was mapped read-write before its disk space was allocated",
+                    dstMappedBeforeAllocated.get()
+            );
+
+            assertQuery("select i from y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i
+                            1
+                            2
+                            """);
         });
     }
 

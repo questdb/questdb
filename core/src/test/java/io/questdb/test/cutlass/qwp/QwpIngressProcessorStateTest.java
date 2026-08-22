@@ -57,6 +57,7 @@ import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
 import io.questdb.cutlass.qwp.server.QwpTudCache;
 import io.questdb.std.CharSequenceLongHashMap;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
@@ -365,46 +366,269 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The deferred-rows clamp is a FACT about what is uncommitted, not a sticky flag.
-     * <p>
-     * A deferred frame used to mark the clamp unconditionally, so the cumulative-ack watermark stayed
-     * pinned to the group-closing frame even after the per-table force-commit had covered the whole
-     * group. That never over-claims -- but it makes a mid-group reconnect replay rows that ARE durable,
-     * duplicating them. Deriving the flag lets the watermark advance the moment coverage is complete.
-     * <p>
-     * With no tables holding rows (nothing was appended), refresh must report full coverage and release
-     * the clamp; an explicit mark must still hold it.
-     */
+    // Two arms differing only in the connection's max-uncommitted-rows cap, each
+    // running the real decoder, WAL appender and TUD cache in handleBinaryMessage's
+    // call order for a FLAG_DEFER_COMMIT frame. The rowless case is separate, in
+    // testZeroRowDeferredFrameIsNeverAckCovered.
     @Test
-    public void testDeferredClampIsDerivedFromWhatIsActuallyUncommitted() throws Exception {
+    public void testDeferredFrameIsAckableOnlyOnceItsOwnRowsAreCommitted() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE defer_capped (val INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) " +
+                    "PARTITION BY DAY WAL");
+            execute("CREATE TABLE defer_buffered (val INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) " +
+                    "PARTITION BY DAY WAL");
+
+            // Cap 1: the appender force-commits the row it just wrote, so the frame's
+            // own rows are durable and the ack may cover it.
+            QwpIngressProcessorState capped =
+                    new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(1));
+            try {
+                capped.of(1, AllowAllSecurityContext.INSTANCE);
+                capped.setHighestProcessedSequence(2);
+
+                Assert.assertTrue("a fired force-commit makes this frame's own rows durable",
+                        driveDeferredFrame(capped, "defer_capped", 1));
+                // Positive evidence a commit actually fired: an empty cache reports
+                // "nothing uncommitted" too, and that is the data-loss direction, so
+                // the flag alone does not discriminate. This does not isolate WHICH
+                // commit fired -- the cap is on the connection, so both the
+                // appender's in-append commit and the outer loop's honour it.
+                Assert.assertTrue("the frame must have appended a row",
+                        capped.hasAppendedRowsInMessage());
+                Assert.assertEquals("the force-commit must have reported a seqTxn",
+                        1, capped.getPendingAckSeqTxns().size());
+                Assert.assertTrue("the reported seqTxn must be a real commit",
+                        capped.getPendingAckSeqTxns().get("defer_capped") >= 0);
+
+                capped.setHighestProcessedSequence(5);
+                Assert.assertEquals("a fully committed deferred frame is ack-covered",
+                        5, capped.getHighestProcessedSequence());
+            } finally {
+                capped.onDisconnected();
+                capped.close();
+            }
+
+            // Cap Long.MAX_VALUE: nothing force-commits, the rows stay buffered, and
+            // the watermark must refuse to move -- #7144's "ack implies committed".
+            QwpIngressProcessorState buffered =
+                    new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(Long.MAX_VALUE));
+            try {
+                buffered.of(2, AllowAllSecurityContext.INSTANCE);
+                buffered.setHighestProcessedSequence(2);
+
+                Assert.assertFalse("buffered rows must hold the clamp",
+                        driveDeferredFrame(buffered, "defer_buffered", 2));
+                Assert.assertTrue("the clamp must be armed while rows are uncommitted",
+                        buffered.hasUncommittedDeferredRows());
+                buffered.setHighestProcessedSequence(9);
+                Assert.assertEquals("clamped while rows are uncommitted",
+                        2, buffered.getHighestProcessedSequence());
+
+                // The group-closing commit covers the buffered frame after all.
+                buffered.commit();
+                Assert.assertTrue(buffered.isOk());
+                Assert.assertFalse(buffered.hasUncommittedDeferredRows());
+                buffered.setHighestProcessedSequence(9);
+                Assert.assertEquals(9, buffered.getHighestProcessedSequence());
+            } finally {
+                buffered.onDisconnected();
+                buffered.close();
+            }
+        });
+    }
+
+    // Withholding a rowless deferred frame's own ack is not enough: the watermark
+    // is assigned, not incremented, so the next deferred frame whose own rows have
+    // become durable would carry coverage straight over it. The client's dictionary
+    // chunks are exactly such frames, and the data frames after them reference the
+    // ids they register.
+    @Test
+    public void testAckCannotJumpAWithheldRowlessDeferredFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE defer_jump (val INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) " +
+                    "PARTITION BY DAY WAL");
+
+            // Cap 1 so the row-bearing frame below is genuinely ack-coverable on
+            // its own -- otherwise the clamp would hold for the ordinary reason
+            // and the test would prove nothing about the jump.
+            QwpIngressProcessorState state =
+                    new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(1));
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Frame 1: rowless deferred -- withheld.
+                addNativeData(state, wrapQwpPayload(new byte[0], QwpConstants.FLAG_DEFER_COMMIT, (short) 0));
+                state.processMessage();
+                Assert.assertTrue(state.getErrorText(), state.isOk());
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertFalse("premise: a rowless frame is not ack-coverable",
+                        state.refreshDeferredAckCoverage());
+                state.withholdDeferredFrame(1);
+                state.clearMessageState();
+
+                // Frame 2: row-bearing deferred, force-committed by the cap, so
+                // it IS ack-coverable on its own merits.
+                Assert.assertTrue("premise: frame 2 is ack-coverable",
+                        driveDeferredFrame(state, "defer_jump", 1));
+
+                // ...but covering it would also cover frame 1, so the ack stops
+                // just short of the rowless frame instead.
+                state.setHighestProcessedSequence(2);
+                Assert.assertEquals("an ack must not jump the withheld rowless frame",
+                        0, state.getHighestProcessedSequence());
+
+                // Everything before the rowless frame is still covered: those
+                // frames precede it, so nothing there can depend on it, and
+                // refusing them would leave durable rows to be replayed.
+                Assert.assertEquals("frames before the rowless one must still be covered",
+                        0, state.getHighestProcessedSequence());
+
+                // A second rowless frame further along must not relax the first.
+                // The client emits a LOOP of dictionary chunks, so several
+                // rowless sequences are live at once, and keeping the latest
+                // instead of the earliest would let an ack cover the earlier
+                // ones.
+                // markRowlessDeferredSequence directly: withholdDeferredFrame
+                // would no-op here, because the frame just driven appended rows.
+                state.markRowlessDeferredSequence(3);
+                state.setHighestProcessedSequence(2);
+                Assert.assertEquals("the EARLIEST rowless frame is the one that binds",
+                        0, state.getHighestProcessedSequence());
+
+                // The group-closing commit covers both, so the block lifts.
+                state.commit();
+                Assert.assertTrue(state.getErrorText(), state.isOk());
+                state.setHighestProcessedSequence(3);
+                Assert.assertEquals("commitAll covers the rowless frames too",
+                        3, state.getHighestProcessedSequence());
+
+                // The state outlives a connection, so a marker left behind would
+                // pin the NEXT connection's watermark below it for good.
+                state.markRowlessDeferredSequence(0);
+                state.onDisconnected();
+                state.of(2, AllowAllSecurityContext.INSTANCE);
+                state.setHighestProcessedSequence(4);
+                Assert.assertEquals("a fresh connection must not inherit the marker",
+                        4, state.getHighestProcessedSequence());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    // A deferred frame that appends NO rows must never be ack-covered, however
+    // clean the connection is: the client's dictionary chunks are exactly this
+    // frame, and the data frames behind them reference the ids they register.
+    @Test
+    public void testZeroRowDeferredFrameIsNeverAckCovered() throws Exception {
+        assertMemoryLeak(() -> {
+            // Cap 1 so nothing can be blamed on rows sitting uncommitted: this
+            // connection is as clean as it gets.
+            QwpIngressProcessorState state =
+                    new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(1));
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // A bare QWP header: tableCount = 0, FLAG_DEFER_COMMIT.
+                addNativeData(state, wrapQwpPayload(new byte[0], QwpConstants.FLAG_DEFER_COMMIT, (short) 0));
+                Assert.assertTrue(state.isDeferCommit());
+                state.processMessage();
+                Assert.assertTrue(state.getErrorText(), state.isOk());
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue(state.getErrorText(), state.isOk());
+
+                Assert.assertFalse("premise: the frame appended nothing",
+                        state.hasAppendedRowsInMessage());
+                Assert.assertFalse("premise: the connection holds nothing uncommitted -- so the"
+                                + " clamp alone would release here, which is precisely the hazard",
+                        state.refreshUncommittedDeferredRows());
+
+                Assert.assertFalse("a zero-row deferred frame must never be ack-covered",
+                        state.refreshDeferredAckCoverage());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredAckCoverageReusesForceCommitTraversalResult() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
             QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
-                state.setHighestProcessedSequence(2);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
 
-                // Sticky mark: the clamp holds and the watermark refuses to advance.
-                state.markUncommittedDeferredRows();
-                Assert.assertTrue(state.hasUncommittedDeferredRows());
-                state.setHighestProcessedSequence(5);
-                Assert.assertEquals("clamped while rows are uncommitted",
-                        2, state.getHighestProcessedSequence());
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue(state.isOk());
+                state.refreshDeferredAckCoverage();
 
-                // Derived: nothing is actually uncommitted, so the clamp releases and the
-                // watermark may advance -- the rows are durable, so replaying them would
-                // duplicate rather than protect.
-                Assert.assertFalse("refresh must report full coverage when nothing is uncommitted",
-                        state.refreshUncommittedDeferredRows());
-                Assert.assertFalse(state.hasUncommittedDeferredRows());
-                state.setHighestProcessedSequence(5);
-                Assert.assertEquals("watermark advances once coverage is complete",
-                        5, state.getHighestProcessedSequence());
+                Assert.assertEquals(
+                        "the deferred ACK decision must reuse the force-commit traversal result",
+                        0,
+                        fake.hasUncommittedRowsCallCount
+                );
             } finally {
                 state.onDisconnected();
                 state.close();
+            }
+        });
+    }
+
+    // Both directions matter: a single dirty table must hold the clamp, and only
+    // genuinely full coverage may release it. A stub returning false is the
+    // data-loss direction.
+    @Test
+    public void testHasUncommittedRowsTracksEveryLiveTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE unc_a (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE unc_b (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tudA = tudOf(cache, "unc_a");
+                WalTableUpdateDetails tudB = tudOf(cache, "unc_b");
+                Assert.assertFalse("two clean tables hold nothing", cache.hasUncommittedRows());
+
+                tudA.getWriter().newRow(1_000_000L).append();
+                Assert.assertTrue("one dirty table is enough", cache.hasUncommittedRows());
+
+                // Both dirty, then commit B only -- the shape the per-table
+                // force-commit produces on a multi-table connection. B must
+                // really hold rows first, or committing it is a no-op
+                // (TableUpdateDetails.commit short-circuits on an empty writer)
+                // and the assertion below would just restate the line above.
+                tudB.getWriter().newRow(1_500_000L).append();
+                final long seqTxnBefore = tudB.getLastSeqTxn();
+                tudB.commit(false);
+                Assert.assertTrue("premise: committing B must advance its txn",
+                        tudB.getLastSeqTxn() > seqTxnBefore);
+                Assert.assertTrue("B is clean now, but A still holds rows",
+                        tudB.isFirstRow());
+                Assert.assertTrue("a partial commit must not release the clamp", cache.hasUncommittedRows());
+
+                try {
+                    cache.commitAll();
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertFalse("full coverage releases the clamp", cache.hasUncommittedRows());
+
+                // A dropped table's buffered rows are discarded on eviction, so
+                // they are not "uncommitted rows" this connection can still
+                // commit; the commit loops raise on the discard separately.
+                tudB.getWriter().newRow(2_000_000L).append();
+                Assert.assertTrue("premise: B is dirty again", cache.hasUncommittedRows());
+                tudB.setIsDropped();
+                Assert.assertFalse("a dropped table must not hold the clamp", cache.hasUncommittedRows());
             }
         });
     }
@@ -1477,7 +1701,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertTrue(state.isOk());
                 state.commitIfMaxUncommittedRowsReached();
                 Assert.assertTrue(state.isOk());
-                state.markUncommittedDeferredRows();
+                Assert.assertTrue("T's rows are uncommitted, so the clamp must hold",
+                        state.refreshUncommittedDeferredRows());
                 state.clearMessageState();
 
                 addEncodedRow(state, "protocol_t", 2, QwpConstants.FLAG_DEFER_COMMIT);
@@ -1486,7 +1711,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertTrue(state.isOk());
                 state.commitIfMaxUncommittedRowsReached();
                 Assert.assertTrue(state.isOk());
-                state.markUncommittedDeferredRows();
+                Assert.assertTrue("T's rows are uncommitted, so the clamp must hold",
+                        state.refreshUncommittedDeferredRows());
                 state.clearMessageState();
 
                 execute("DROP TABLE protocol_t");
@@ -2148,6 +2374,78 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitAllReportsTxnCommittedInsideAppend() throws Exception {
+        // QwpWalAppender.appendToWalColumnar force-commits through
+        // commitIfMaxUncommittedRowsCountReached() once a table crosses
+        // qwp.max.uncommitted.rows. That commit advances the sequencer txn AND
+        // drains the writer, so the group-closing commitAll() finds an empty
+        // writer. It must still report the txn: the ack and durable-upload
+        // watermarks only ever learn about committed work through this consumer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE append_commit (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            // maxUncommittedRows=2 mirrors QwpIngressProcessorState, which passes
+            // qwp.max.uncommitted.rows. WAL writers report no metadata service, so
+            // this cache-level value - not the table's WITH clause - drives the
+            // force commit.
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY, -1, 2)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("append_commit"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                // Stand in for the appender: write past the cap, then run the same
+                // force commit the appender runs after endColumnarWrite().
+                for (int i = 0; i < 4; i++) {
+                    tud.getWriter().newRow(i).append();
+                }
+                tud.commitIfMaxUncommittedRowsCountReached();
+
+                long committedSeqTxn = tud.getLastSeqTxn();
+                Assert.assertTrue("the force commit must advance the txn", committedSeqTxn > 0);
+                Assert.assertTrue("the force commit must drain the writer", tud.isFirstRow());
+
+                long[] reported = new long[]{Long.MIN_VALUE};
+                int[] calls = new int[]{0};
+                try {
+                    cache.commitAll((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+
+                Assert.assertEquals("commitAll must report the txn exactly once", 1, calls[0]);
+                Assert.assertEquals(committedSeqTxn, reported[0]);
+
+                // Reporting is exactly-once: a second pass over unchanged state
+                // must not re-issue the txn.
+                calls[0] = 0;
+                try {
+                    cache.commitAll((_, _, _) -> calls[0]++);
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertEquals("an already-reported txn must not repeat", 0, calls[0]);
+            }
+        });
+    }
+
+    @Test
     public void testCommitAllPreservesPartialProgressBeforeNonDropFailure() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE partial_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2342,6 +2640,95 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitAllRetriesReportAfterConsumerThrows() throws Exception {
+        // reportCommittedTxn() must not advance the TUD's reported-seqTxn watermark
+        // until the consumer has actually accepted the txn. If it advances first and
+        // the consumer then throws, that seqTxn is unreportable for the rest of the
+        // TUD's life -- a committed WAL txn the ack / durable-upload watermarks never
+        // learn about.
+        //
+        // This pins the CACHE-LEVEL contract only. The production wiring never reaches
+        // the re-offer: QwpIngressProcessorState.commit() and
+        // commitIfMaxUncommittedRowsReached() call tudCache.setDistressed() when the
+        // consumer throws, and the frame handler's state.clear() then frees every TUD,
+        // so the txn is lost under either ordering -- harmlessly, because the frame is
+        // NACKed and the client replays from its acked watermark (see
+        // testCommitConsumerThrowRejectsState). The ordering this test pins is defence
+        // in depth for a future caller that does not distress the cache.
+        //
+        // This test drives the real QwpTudCache on purpose: FakeConsumerTudCache
+        // overrides commitAll() and commitIfMaxUncommittedRowsReached() wholesale, so a
+        // state-level test never reaches reportCommittedTxn().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE consumer_throw_retry (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("consumer_throw_retry"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                tud.getWriter().newRow(0L).append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                // First pass: the consumer sees the txn and then fails, the way a
+                // CharSequenceLongHashMap rehash would fail on OutOfMemoryError
+                // partway through recordCommittedTable()'s puts.
+                long[] offered = new long[]{Long.MIN_VALUE};
+                IllegalStateException consumerFailure = Assert.assertThrows(
+                        "commitAll() must propagate the consumer failure",
+                        IllegalStateException.class,
+                        () -> cache.commitAll((_, _, seqTxn) -> {
+                            offered[0] = seqTxn;
+                            throw new IllegalStateException("consumer failed");
+                        })
+                );
+                Assert.assertEquals("consumer failed", consumerFailure.getMessage());
+                long committedSeqTxn = tud.getLastSeqTxn();
+                Assert.assertTrue("the commit must advance the txn", committedSeqTxn > 0);
+                Assert.assertEquals(committedSeqTxn, offered[0]);
+
+                // Second pass: the txn is committed in the WAL but no consumer has
+                // accepted it, so it must be offered again.
+                long[] reported = new long[]{Long.MIN_VALUE};
+                int[] calls = new int[]{0};
+                try {
+                    cache.commitAll((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertEquals("the txn the failed consumer never accepted must be re-offered", 1, calls[0]);
+                Assert.assertEquals(committedSeqTxn, reported[0]);
+
+                // Exactly-once still holds once a consumer has accepted it.
+                calls[0] = 0;
+                try {
+                    cache.commitAll((_, _, _) -> calls[0]++);
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertEquals("an accepted txn must not repeat", 0, calls[0]);
+            }
+        });
+    }
+
+    @Test
     public void testCommitAllSkipsAlreadyDroppedTud() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE skip_1 (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2391,12 +2778,20 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCommitAllSkipsConsumerWhenFirstRow() throws Exception {
-        // When no uncommitted rows are pending, tud.isFirstRow() returns true and
-        // the consumer must NOT be invoked — the commit is a no-op and wouldn't
-        // advance the sequencer txn.
+    public void testCommitAllSkipsConsumerWhenSeqTxnNegative() throws Exception {
+        // commitAll() has no isFirstRow() guard of its own: it calls tud.commit(false)
+        // and then reportCommittedTxn() unconditionally. What keeps the consumer away
+        // here is reportCommittedTxn()'s FIRST guard clause, seqTxn < 0. This test
+        // creates the table, so its WalWriter is brand new and its lastSeqTxn is still
+        // TableSequencer.NO_TXN (Long.MIN_VALUE); with no rows pending, commit(false)
+        // is a no-op and leaves it there. Long.MIN_VALUE < 0 short-circuits the guard
+        // before the seqTxn <= getLastReportedSeqTxn() clause is even evaluated. That
+        // second clause would hold here too, because the TUD constructor seeds
+        // lastReportedSeqTxn from this same virgin writer, so this test pins the
+        // outcome for a writer with no txn rather than one clause in isolation; the
+        // <= clause has its own test, testCommitAllSkipsSeqTxnInheritedFromPooledWriter.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE first_row_skip (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE no_seq_txn_skip (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -2406,13 +2801,14 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             ) {
                 WalTableUpdateDetails tud = cache.getTableUpdateDetails(
                         AllowAllSecurityContext.INSTANCE,
-                        new Utf8String("first_row_skip"),
+                        new Utf8String("no_seq_txn_skip"),
                         null,
                         null,
                         1
                 );
                 Assert.assertNotNull(tud);
-                // Real writer, no rows ingested → getUncommittedRowCount() == 0 → isFirstRow() is true.
+                // Real writer, no rows ingested, so commit(false) below is a no-op and
+                // the writer never gets a sequencer txn.
                 Assert.assertTrue(tud.isFirstRow());
 
                 boolean[] invoked = new boolean[]{false};
@@ -2423,7 +2819,106 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 } catch (Throwable t) {
                     throw new AssertionError("unexpected throwable", t);
                 }
-                Assert.assertFalse("consumer must be skipped when no rows to commit", invoked[0]);
+                Assert.assertFalse("consumer must be skipped while the writer's seqTxn is negative", invoked[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testCommitAllSkipsSeqTxnInheritedFromPooledWriter() throws Exception {
+        // A WalWriter returned to the engine pool keeps its lastSeqTxn: the pool's
+        // refresh() only calls goActive(), and neither goActive() nor rollback0()
+        // touches the field. So the next connection that borrows the same writer
+        // starts life seeing a seqTxn IT never committed. reportCommittedTxn must
+        // not hand that inherited txn to the ack / durable-upload watermarks --
+        // doing so parks a (table, seqTxn) entry the connection has no work behind,
+        // which a PRIMARY->REPLICA demote then waits out in
+        // roleChangeCloseWithUploadGrace.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pooled_inherit (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+
+            // Connection A: commit one row, then release the writer back to the pool.
+            long committedByA;
+            try (QwpTudCache cacheA = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tudA = cacheA.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("pooled_inherit"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tudA);
+                tudA.getWriter().newRow(0L).append();
+                try {
+                    cacheA.commitAll();
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                committedByA = tudA.getLastSeqTxn();
+                Assert.assertTrue("connection A must have advanced the txn", committedByA > 0);
+            }
+
+            // Connection B: re-borrows the warm writer and commits NOTHING.
+            try (QwpTudCache cacheB = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tudB = cacheB.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("pooled_inherit"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tudB);
+                // Premise of the test: the re-borrowed writer really did carry A's txn over.
+                Assert.assertEquals(
+                        "premise: the pooled writer must retain the previous owner's seqTxn",
+                        committedByA,
+                        tudB.getLastSeqTxn()
+                );
+                Assert.assertTrue(tudB.isFirstRow());
+
+                long[] reported = new long[]{Long.MIN_VALUE};
+                int[] calls = new int[]{0};
+                try {
+                    cacheB.commitAll((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertEquals(
+                        "an inherited seqTxn must not be reported (got " + reported[0] + ")",
+                        0,
+                        calls[0]
+                );
+
+                // A genuine commit on this connection must still be reported.
+                tudB.getWriter().newRow(1L).append();
+                try {
+                    cacheB.commitAll((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertEquals("connection B's own commit must be reported", 1, calls[0]);
+                Assert.assertEquals(tudB.getLastSeqTxn(), reported[0]);
+                Assert.assertTrue("the reported txn must be B's, not A's", reported[0] > committedByA);
             }
         });
     }
@@ -2550,6 +3045,405 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 state.commit();
 
                 Assert.assertFalse(state.isOk());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCommitIfMaxUncommittedRowsReachedPopulatesDurableMaps() throws Exception {
+        // Joins the two halves of the durable-ack path that every other test covers
+        // separately: the real QwpTudCache.reportCommittedTxn() feeding the real
+        // QwpIngressProcessorState.recordCommittedTable(). The state-level tests install
+        // FakeConsumerTudCache, which overrides both commit entry points wholesale so
+        // reportCommittedTxn never runs, and the cache-level tests pass a counting lambda
+        // rather than the production committedTxnConsumer. Neither shape proves that a txn
+        // the cache reports reaches pendingDurableSeqTxns AND pendingDurableDirNames --
+        // and the dir name is what collectDurableProgress() looks the registry up by, so
+        // losing it silently strands the connection's durable work.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE durable_seam (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+
+                // A REAL cache in place of the state's own, not FakeConsumerTudCache.
+                // maxUncommittedRows=2 mirrors qwp.max.uncommitted.rows so the
+                // appender-style force commit below actually fires. The state takes
+                // ownership on the successful field set and frees it in close().
+                Field tudCacheField = QwpIngressProcessorState.class.getDeclaredField("tudCache");
+                tudCacheField.setAccessible(true);
+                Misc.free((QwpTudCache) tudCacheField.get(state));
+                QwpTudCache cache = new QwpTudCache(
+                        engine, true, true, new DefaultColumnTypes(lineConfig), PartitionBy.DAY, -1, 2
+                );
+                try {
+                    tudCacheField.set(state, cache);
+                } catch (Throwable th) {
+                    Misc.free(cache);
+                    throw new AssertionError("could not install the real cache", th);
+                }
+
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("durable_seam"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+                final String dirName = tud.getTableToken().getDirName();
+
+                // Stand in for QwpWalAppender: write past the cap, then run the same
+                // force commit it runs after endColumnarWrite(). It drains the writer,
+                // so nothing downstream can infer the commit from pending rows.
+                for (int i = 0; i < 4; i++) {
+                    tud.getWriter().newRow(i).append();
+                }
+                tud.commitIfMaxUncommittedRowsCountReached();
+                final long committedSeqTxn = tud.getLastSeqTxn();
+                Assert.assertTrue("the force commit must advance the txn", committedSeqTxn > 0);
+                Assert.assertTrue("the force commit must drain the writer", tud.isFirstRow());
+
+                // Production wiring, end to end: the state hands the cache its own
+                // committedTxnConsumer, which is this::recordCommittedTable.
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue("the mid-group commit must not reject the state", state.isOk());
+
+                Assert.assertEquals(
+                        "the reported txn must reach the cumulative-ack watermark",
+                        committedSeqTxn,
+                        state.getPendingAckSeqTxns().get("durable_seam")
+                );
+
+                Field seqTxnsField = QwpIngressProcessorState.class.getDeclaredField("pendingDurableSeqTxns");
+                seqTxnsField.setAccessible(true);
+                CharSequenceLongHashMap pendingDurableSeqTxns = (CharSequenceLongHashMap) seqTxnsField.get(state);
+                Field dirNamesField = QwpIngressProcessorState.class.getDeclaredField("pendingDurableDirNames");
+                dirNamesField.setAccessible(true);
+                @SuppressWarnings("unchecked")
+                CharSequenceObjHashMap<String> pendingDurableDirNames =
+                        (CharSequenceObjHashMap<String>) dirNamesField.get(state);
+
+                Assert.assertEquals("exactly one table has outstanding durable work", 1, pendingDurableSeqTxns.size());
+                Assert.assertEquals(
+                        "the reported txn must reach the durable-upload watermark",
+                        committedSeqTxn,
+                        pendingDurableSeqTxns.get("durable_seam")
+                );
+                Assert.assertEquals("exactly one table has a pending dir name", 1, pendingDurableDirNames.size());
+                Assert.assertEquals(
+                        "the durable entry must carry the table's dir name, the key the registry is "
+                                + "queried by; without it collectDurableProgress can never cover this table",
+                        dirName,
+                        pendingDurableDirNames.get("durable_seam")
+                );
+                Assert.assertTrue("the connection must count as having pending durable work", state.hasPendingDurableWork());
+
+                // The pair is usable as a durable watermark: a registry that has
+                // uploaded exactly this seqTxn under this dir name closes the table out.
+                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
+                registry.set(dirName, committedSeqTxn);
+                CharSequenceLongHashMap progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(1, progress.size());
+                Assert.assertEquals(committedSeqTxn, progress.get("durable_seam"));
+                Assert.assertTrue(state.isDurableProgressSnapshotFullyUploaded());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCommitIfMaxUncommittedRowsReachedReportsStructuralTxnOnDeferredFrame() throws Exception {
+        // CHARACTERIZATION, not regression: this pins deliberately accepted behaviour
+        // rather than guarding against a bug. A FLAG_DEFER_COMMIT frame that introduces a
+        // column runs an implicit ALTER, and structural txns share the sequencer txn space
+        // with data txns, so the mid-group commitIfMaxUncommittedRowsReached() pass finds
+        // an advanced seqTxn with no rows behind it and reports it. Accepted because the
+        // ALTER is permanent work this connection produced, because the value never
+        // reaches the client as a durable watermark (collectDurableProgress forwards only
+        // the registry's uploadedSeqTxn), and because the group-closing commit supersedes
+        // it with the data txn -- which is the second half of what this test asserts.
+        // This test drives the real cache on purpose: FakeConsumerTudCache overrides
+        // both commit entry points wholesale, so a state-level test would never reach
+        // reportCommittedTxn.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE deferred_structural (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            // maxUncommittedRows far above the row count, so the mid-group pass has
+            // nothing to flush -- the below-the-cap deferred shape.
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY, -1, 10_000)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("deferred_structural"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                // Stand in for the appender: phase 1 adds the column the frame
+                // introduced, phase 2 appends rows that stay below the cap.
+                final long preAlterSeqTxn = tud.getLastSeqTxn();
+                tud.getWriter().addColumn("extra", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                final long structuralSeqTxn = tud.getLastSeqTxn();
+                // A writer with no txn yet reports NO_TXN (Long.MIN_VALUE), so the ALTER has to
+                // move getLastSeqTxn() strictly forward AND off the sentinel onto a real txn.
+                Assert.assertTrue(
+                        "the implicit ALTER must advance the sequencer txn, was: "
+                                + preAlterSeqTxn + " -> " + structuralSeqTxn,
+                        structuralSeqTxn > preAlterSeqTxn && structuralSeqTxn >= 0
+                );
+                tud.getWriter().newRow(0).append();
+                Assert.assertFalse("the deferred frame's rows must stay uncommitted", tud.isFirstRow());
+
+                long[] reported = new long[]{Long.MIN_VALUE};
+                int[] calls = new int[]{0};
+                try {
+                    cache.commitIfMaxUncommittedRowsReached((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+
+                Assert.assertEquals("the metadata-only txn is reported exactly once", 1, calls[0]);
+                Assert.assertEquals(structuralSeqTxn, reported[0]);
+                Assert.assertFalse("reporting must not commit the deferred rows", tud.isFirstRow());
+
+                // The group-closing commit supersedes the metadata-only entry with the
+                // data txn, which is strictly ahead of it.
+                calls[0] = 0;
+                try {
+                    cache.commitAll((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+
+                Assert.assertEquals("the group-closing commit reports exactly once", 1, calls[0]);
+                Assert.assertTrue(
+                        "the data txn must supersede the metadata-only txn",
+                        reported[0] > structuralSeqTxn
+                );
+                Assert.assertEquals(reported[0], tud.getLastReportedSeqTxn());
+            }
+        });
+    }
+
+    @Test
+    public void testCommitIfMaxUncommittedRowsReachedReportsTxnCommittedInsideAppend() throws Exception {
+        // Mid-group twin of testCommitAllReportsTxnCommittedInsideAppend, driving the
+        // real cache: every other caller of commitIfMaxUncommittedRowsReached() reaches
+        // it through a test double that overrides it wholesale.
+        // QwpWalAppender.appendToWalColumnar force-commits through
+        // commitIfMaxUncommittedRowsCountReached() once a table crosses
+        // qwp.max.uncommitted.rows. That commit advances the sequencer txn AND drains
+        // the writer, so the deferred group's mid-batch
+        // commitIfMaxUncommittedRowsReached() finds an empty writer. It must still
+        // report the txn: the ack and durable-upload watermarks only ever learn about
+        // committed work through this consumer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE max_rows_append_commit (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            // maxUncommittedRows=2 mirrors QwpIngressProcessorState, which passes
+            // qwp.max.uncommitted.rows. WAL writers report no metadata service, so
+            // this cache-level value - not the table's WITH clause - drives the
+            // force commit.
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY, -1, 2)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("max_rows_append_commit"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                // Stand in for the appender: write past the cap, then run the same
+                // force commit the appender runs after endColumnarWrite().
+                for (int i = 0; i < 4; i++) {
+                    tud.getWriter().newRow(i).append();
+                }
+                tud.commitIfMaxUncommittedRowsCountReached();
+
+                long committedSeqTxn = tud.getLastSeqTxn();
+                Assert.assertTrue("the force commit must advance the txn", committedSeqTxn > 0);
+                Assert.assertTrue("the force commit must drain the writer", tud.isFirstRow());
+
+                long[] reported = new long[]{Long.MIN_VALUE};
+                int[] calls = new int[]{0};
+                try {
+                    cache.commitIfMaxUncommittedRowsReached((_, _, seqTxn) -> {
+                        calls[0]++;
+                        reported[0] = seqTxn;
+                    });
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+
+                Assert.assertEquals(
+                        "commitIfMaxUncommittedRowsReached must report the txn exactly once",
+                        1,
+                        calls[0]
+                );
+                Assert.assertEquals(committedSeqTxn, reported[0]);
+
+                // Reporting is exactly-once: a second mid-batch pass over unchanged
+                // state must not re-issue the txn.
+                calls[0] = 0;
+                try {
+                    cache.commitIfMaxUncommittedRowsReached((_, _, _) -> calls[0]++);
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertEquals("an already-reported txn must not repeat", 0, calls[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testCommitIfMaxUncommittedRowsReachedStructuralTxnHoldsDurableWorkPending() throws Exception {
+        // The junction testCommitIfMaxUncommittedRowsReachedReportsStructuralTxnOnDeferredFrame
+        // stops short of: that test drives a bare consumer lambda, so it pins the cache's
+        // reporting but never where the reported txn lands. The metadata-only txn a
+        // below-the-cap FLAG_DEFER_COMMIT frame reports reaches
+        // QwpIngressProcessorState.recordCommittedTable, which fills pendingDurableSeqTxns
+        // and makes hasPendingDurableWork() true; the base shape reported nothing on this
+        // frame shape, so those maps stayed empty. QwpIngressUpgradeProcessor reads that
+        // predicate in opposite directions: roleChangeCloseWithUploadGrace consults the
+        // registry only while work is pending, and defers the close until the registry
+        // covers it, while beginCloseEchoWaitIfEligible demands !hasPendingDurableWork()
+        // among its three conjuncts, so pending work disqualifies the close-echo wait and
+        // finishServerFatalClose drains instead. This test pins the inputs those paths
+        // read -- the predicate and the snapshot coverage flags -- not the close outcome,
+        // which QwpIngressDeferredCloseDurableAckTest drives at the processor level.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE deferred_structural_pending (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+
+                // A REAL cache in place of the state's own, so the production
+                // committedTxnConsumer runs behind the real reportCommittedTxn.
+                // maxUncommittedRows far above the row count keeps the mid-group pass
+                // with nothing to flush -- the below-the-cap deferred shape. The state
+                // takes ownership on the successful field set and frees it in close().
+                Field tudCacheField = QwpIngressProcessorState.class.getDeclaredField("tudCache");
+                tudCacheField.setAccessible(true);
+                Misc.free((QwpTudCache) tudCacheField.get(state));
+                QwpTudCache cache = new QwpTudCache(
+                        engine, true, true, new DefaultColumnTypes(lineConfig), PartitionBy.DAY, -1, 10_000
+                );
+                try {
+                    tudCacheField.set(state, cache);
+                } catch (Throwable th) {
+                    Misc.free(cache);
+                    throw new AssertionError("could not install the real cache", th);
+                }
+
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("deferred_structural_pending"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+                final String dirName = tud.getTableToken().getDirName();
+
+                Assert.assertFalse(
+                        "a fresh connection owes no durable work",
+                        state.hasPendingDurableWork()
+                );
+
+                // Stand in for the appender on a deferred frame: phase 1 runs the
+                // implicit ALTER for the column the frame introduced, phase 2 appends
+                // rows that stay below the cap.
+                final long preAlterSeqTxn = tud.getLastSeqTxn();
+                tud.getWriter().addColumn("extra", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                final long structuralSeqTxn = tud.getLastSeqTxn();
+                // A writer with no txn yet reports NO_TXN (Long.MIN_VALUE), so the ALTER has to
+                // move getLastSeqTxn() strictly forward AND off the sentinel onto a real txn.
+                Assert.assertTrue(
+                        "the implicit ALTER must advance the sequencer txn, was: "
+                                + preAlterSeqTxn + " -> " + structuralSeqTxn,
+                        structuralSeqTxn > preAlterSeqTxn && structuralSeqTxn >= 0
+                );
+                tud.getWriter().newRow(0).append();
+                Assert.assertFalse("the deferred frame's rows must stay uncommitted", tud.isFirstRow());
+
+                // Production wiring: the state hands the cache this::recordCommittedTable.
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue("the mid-group pass must not reject the state", state.isOk());
+                Assert.assertFalse("reporting must not commit the deferred rows", tud.isFirstRow());
+
+                Field seqTxnsField = QwpIngressProcessorState.class.getDeclaredField("pendingDurableSeqTxns");
+                seqTxnsField.setAccessible(true);
+                CharSequenceLongHashMap pendingDurableSeqTxns = (CharSequenceLongHashMap) seqTxnsField.get(state);
+                Assert.assertEquals(
+                        "the metadata-only txn must reach the durable-upload watermark",
+                        structuralSeqTxn,
+                        pendingDurableSeqTxns.get("deferred_structural_pending")
+                );
+                Assert.assertTrue(
+                        "a metadata-only txn from a deferred frame must hold the connection's "
+                                + "durable work pending, which is what defers a demote close",
+                        state.hasPendingDurableWork()
+                );
+
+                // What roleChangeCloseWithUploadGrace reads on a demote here: with no upload
+                // coverage yet the snapshot falls short of full coverage, which is what sends
+                // that path into the deferral. The snapshot itself stays empty because
+                // collectDurableProgress forwards only the registry's own uploadedSeqTxn,
+                // never the pending value.
+                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
+                Assert.assertEquals(0, state.collectDurableProgress(registry).size());
+                Assert.assertFalse(
+                        "an unuploaded metadata-only txn must leave the snapshot short of full coverage",
+                        state.isDurableProgressSnapshotFullyUploaded()
+                );
+
+                // ...and the bound on that deferral: coverage of the ALTER's own seqTxn
+                // restores full coverage, without the deferred group ever committing its rows.
+                registry.set(dirName, structuralSeqTxn);
+                CharSequenceLongHashMap progress = state.collectDurableProgress(registry);
+                Assert.assertEquals(1, progress.size());
+                Assert.assertEquals(structuralSeqTxn, progress.get("deferred_structural_pending"));
+                Assert.assertTrue(state.isDurableProgressSnapshotFullyUploaded());
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -3268,6 +4162,59 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertEquals("failed salvage must still evict the entry", 0, cache.size());
                 Assert.assertEquals("failed salvage must not plant a durable-ack watermark",
                         0, consumerNotifications[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsSalvageConsumerFailurePreservesCommittedRows() throws Exception {
+        // A committed-txn consumer can fail after salvage has already committed
+        // the buffered rows. The cache must preserve and propagate that failure
+        // after eviction instead of claiming that it discarded the rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sal_report_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                IllegalStateException reportFailure = new IllegalStateException("simulated report failure");
+                cache.setCommittedTxnConsumer((_, _, _) -> {
+                    throw reportFailure;
+                });
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("sal_report_src"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                tud.getWriter().newRow(1_000_000L).append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                execute("RENAME TABLE sal_report_src TO sal_report_dst");
+                execute("CREATE TABLE sal_report_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE, new Utf8String("sal_report_src"), null, null, 1
+                    );
+                    Assert.fail("the committed-txn consumer failure must propagate");
+                } catch (IllegalStateException e) {
+                    Assert.assertSame(reportFailure, e);
+                }
+                Assert.assertEquals("the stale entry must still be evicted", 0, cache.size());
+
+                drainWalQueue();
+                assertQuery("SELECT count() FROM sal_report_dst")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+                assertQuery("SELECT count() FROM sal_report_src")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n0\n");
             }
         });
     }
@@ -4968,6 +5915,54 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     /**
+     * A line config whose max-uncommitted-rows cap is overridden, so
+     * {@link QwpIngressProcessorState} builds its own TUD cache with that cap --
+     * no reflection, and the cache still gets its committed-txn consumer wired.
+     * <p>
+     * The QWP WAL path takes the cap from the connection, not the table:
+     * {@code TableUpdateDetails.getMetaMaxUncommittedRows} falls through to the
+     * connection default because {@code metadataService} is null for a
+     * multi-writer WAL writer, so {@code WITH maxUncommittedRows} has no effect
+     * here. This is what decides whether the appender's force-commit fires.
+     */
+    private static LineHttpProcessorConfiguration lineConfigWithCap(long maxUncommittedRows) {
+        return new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration) {
+            @Override
+            public long getQwpMaxUncommittedRows() {
+                return maxUncommittedRows;
+            }
+        };
+    }
+
+    /**
+     * Drives one FLAG_DEFER_COMMIT frame through the state in the order
+     * {@code QwpIngressUpgradeProcessor.handleBinaryMessage} uses, and returns
+     * the ack decision it would reach. That the processor actually wires this up
+     * is covered end-to-end by {@code QwpAckSeqTxnCoverageBlackBoxTest}.
+     *
+     * @return true if a cumulative OK ack may cover this frame
+     */
+    private static boolean driveDeferredFrame(QwpIngressProcessorState state, String tableName, int value) {
+        addEncodedRow(state, tableName, value, QwpConstants.FLAG_DEFER_COMMIT);
+        Assert.assertTrue(state.isDeferCommit());
+        state.processMessage();
+        Assert.assertTrue(state.getErrorText(), state.isOk());
+        state.commitIfMaxUncommittedRowsReached();
+        Assert.assertTrue(state.getErrorText(), state.isOk());
+        boolean ackable = state.refreshDeferredAckCoverage();
+        state.clearMessageState();
+        return ackable;
+    }
+
+    private static WalTableUpdateDetails tudOf(QwpTudCache cache, String tableName) {
+        WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                AllowAllSecurityContext.INSTANCE, new Utf8String(tableName), null, null, 2
+        );
+        Assert.assertNotNull(tud);
+        return tud;
+    }
+
+    /**
      * Builds a state with one table ({@code tableName}, on-disk dir
      * {@code dirName}) already committed and sitting in the pending
      * durable-ack set, via the same FakeConsumerTudCache + commit() path the
@@ -5211,6 +6206,10 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     private static byte[] wrapQwpPayload(byte[] payload, byte flags) {
+        return wrapQwpPayload(payload, flags, (short) 1);
+    }
+
+    private static byte[] wrapQwpPayload(byte[] payload, byte flags, short tableCount) {
         byte[] message = new byte[12 + payload.length];
         message[0] = 'Q';
         message[1] = 'W';
@@ -5218,8 +6217,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         message[3] = '1';
         message[4] = 1; // version
         message[5] = flags;
-        message[6] = 1; // tableCount low byte
-        message[7] = 0; // tableCount high byte
+        message[6] = (byte) tableCount;
+        message[7] = (byte) (tableCount >>> 8);
         message[8] = (byte) payload.length;
         message[9] = (byte) (payload.length >>> 8);
         message[10] = (byte) (payload.length >>> 16);
@@ -5237,6 +6236,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         private long[] maxRowsCommitSeqTxns;
         private String[] maxRowsCommitTableNames;
         private Throwable maxRowsCommitThrow;
+        private int hasUncommittedRowsCallCount;
         private int maxRowsCommitCallCount;
 
         FakeConsumerTudCache(io.questdb.cairo.CairoEngine engine, LineHttpProcessorConfiguration lineConfig) {
@@ -5261,7 +6261,13 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         }
 
         @Override
-        public void commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
+        public boolean hasUncommittedRows() {
+            hasUncommittedRowsCallCount++;
+            return false;
+        }
+
+        @Override
+        public boolean commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
             maxRowsCommitCallCount++;
             if (consumer != null && maxRowsCommitTableNames != null) {
                 for (int i = 0; i < maxRowsCommitTableNames.length; i++) {
@@ -5276,6 +6282,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 maxRowsCommitThrow = null;
                 throw t;
             }
+            return false;
         }
 
         void queueCommit(String[] tableNames, String[] dirNames, long[] seqTxns) {

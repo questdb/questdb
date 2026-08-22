@@ -38,10 +38,14 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.Overrides;
@@ -52,6 +56,7 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class O3SquashPartitionTest extends AbstractCairoTest {
@@ -941,6 +946,398 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             2020-02-04T00:00:00.000000Z\t1640\t2020-02-04
                             2020-02-05T00:00:00.000000Z\t720\t2020-02-05
                             """, timestampType.getTypeName()));
+        });
+    }
+
+    @Test
+    public void testSquashIntoOpenPartitionBehindParquetLastPartition() throws Exception {
+        // A FORMAT PARQUET table makes every brand-new partition parquet from inception, so once
+        // 2020-02-05 exists the writer's openLastPartition() no-ops (openLastPartitionAndSetAppendPosition
+        // returns early on a parquet last partition) and the writer keeps the earlier NATIVE
+        // 2020-02-04 open: lastOpenPartitionTs lags the real last partition.
+        //
+        // A later O3 insert into 2020-02-04 splits it and the same commit squashes the split back
+        // in. squashSplitPartitions then appends into the very partition the writer holds open,
+        // through the frame's own file descriptors, so the writer's column append memories describe
+        // a SHORTER file than what is on disk. The next truncating close (doClose -> freeColumns ->
+        // closeAppendMemoryTruncate) trims every .d back to ceilPageSize(stale append offset),
+        // physically discarding the bytes the squash wrote. The 200-char strings make the discarded
+        // region clear a 64K page, so the loss is observable on every platform.
+        //
+        // A split of 2020-02-04 lives on disk only until the same commit squashes it away, and
+        // table_partitions below can only show the aftermath -- a plain whole-partition rewrite
+        // leaves an identical view. So the split itself has to be witnessed while it exists,
+        // through the directory the O3 job names after the split point: one tick past the last
+        // pre-existing row before the 2020-02-04T20:01 insert further down, which the partition
+        // name formats as 2020-02-04T200000-...
+        final AtomicInteger splitDirOpens = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (Utf8s.containsAscii(name, "2020-02-04T2000")) {
+                    splitDirOpens.incrementAndGet();
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE x AS (" +
+                            "SELECT" +
+                            " cast(x AS int) i," +
+                            " rpad(x::string, 200, 'q') s," +
+                            " timestamp_sequence('2020-02-04T00', 60 * 1000000L)::#TIMESTAMP ts" +
+                            " FROM long_sequence(1440)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL",
+                    timestampType.getTypeName()
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x SET FORMAT PARQUET");
+            drainWalQueue();
+
+            // 2020-02-05 is born parquet, so the writer stays on native 2020-02-04.
+            executeWithRewriteTimestamp(
+                    "INSERT INTO x SELECT" +
+                            " cast(x AS int) + 1440 i," +
+                            " rpad((x + 1440)::string, 200, 'q') s," +
+                            " timestamp_sequence('2020-02-05T00', 60 * 1000000L)::#TIMESTAMP ts" +
+                            " FROM long_sequence(720)",
+                    timestampType.getTypeName()
+            );
+            drainWalQueue();
+
+            // O3 into the still-open 2020-02-04: split, then squash into the open partition.
+            executeWithRewriteTimestamp(
+                    "INSERT INTO x SELECT" +
+                            " cast(x AS int) + 10000 i," +
+                            " rpad((x + 10000)::string, 200, 'q') s," +
+                            " timestamp_sequence('2020-02-04T20:01', 1000000L)::#TIMESTAMP ts" +
+                            " FROM long_sequence(200)",
+                    timestampType.getTypeName()
+            );
+            drainWalQueue();
+
+            Assert.assertTrue(
+                    "test setup gap: the O3 insert must SPLIT 2020-02-04 -- no partition directory"
+                            + " named after the 2020-02-04T20:01 insert's split point was ever opened,"
+                            + " so this test"
+                            + " exercises a plain whole-partition rewrite, not a squash into the open"
+                            + " partition",
+                    splitDirOpens.get() > 0
+            );
+
+            // The precondition chain in one check: 2020-02-05 is born parquet -- which is why
+            // openLastPartition() no-ops and the writer keeps NATIVE 2020-02-04 open -- and the
+            // O3 insert's split of 2020-02-04 was squashed back in by the same commit, leaving a
+            // single native 2020-02-04 with all 1440 + 200 rows and no split partition. Without
+            // it the test degrades to "insert data, read it back" if the split or the squash
+            // stops happening.
+            assertQuery("SELECT minTimestamp, numRows, name, isParquet FROM table_partitions('x') ORDER BY minTimestamp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("minTimestamp")
+                    .returns(replaceTimestampSuffix1("""
+                            minTimestamp\tnumRows\tname\tisParquet
+                            2020-02-04T00:00:00.000000Z\t1640\t2020-02-04\tfalse
+                            2020-02-05T00:00:00.000000Z\t720\t2020-02-05\ttrue
+                            """, timestampType.getTypeName()));
+
+            // The truncating close: doClose(true) -> freeColumns(true) -> closeAppendMemoryTruncate.
+            engine.releaseInactive();
+
+            assertQuery("SELECT count(), sum(length(s)) FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\n2360\t472000\n");
+
+            // The tail of the squashed partition's s.d, verbatim: a trim to the stale append
+            // offset drops these bytes and a later append memory re-extends the file zero-filled.
+            assertQuery("SELECT i, s FROM x WHERE ts < '2020-02-05' ORDER BY ts DESC LIMIT 1")
+                    .noLeakCheck()
+                    .returns("i\ts\n1440\t1440" + "q".repeat(196) + "\n");
+        });
+    }
+
+    @Test
+    public void testSquashIntoOpenPartitionBehindParquetLastPartitionPostingIndexed() throws Exception {
+        // Same shape as testSquashIntoOpenPartitionBehindParquetLastPartition, with a POSTING
+        // index on the squashed partition. The squash's reseal restores the table's indexers to
+        // lastOpenPartitionTs, and a second O3 insert then re-enters the same branch, so the
+        // writer's indexer list and column memories must still be consistent afterwards.
+        //
+        // Both O3 inserts land in the 2020-02-04T2x:xx range (20:01, then 21:01), so each split
+        // shows up as a partition directory named after its split point -- one tick past the last
+        // row that precedes the inserted range, so 2020-02-04T200000-... then 2020-02-04T210000-...
+        // -- before the same commit squashes it away. table_partitions below cannot see that: a
+        // whole-partition rewrite leaves an identical view. Count the directories instead.
+        final AtomicInteger splitDirOpens = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (Utf8s.containsAscii(name, "2020-02-04T2")) {
+                    splitDirOpens.incrementAndGet();
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE y (i INT, sym SYMBOL INDEX TYPE POSTING, s STRING, ts #TIMESTAMP)" +
+                            " TIMESTAMP(ts) PARTITION BY DAY WAL",
+                    timestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "INSERT INTO y SELECT" +
+                            " cast(x AS int)," +
+                            " 'k' || (x % 4)," +
+                            " rpad(x::string, 200, 'q')," +
+                            " timestamp_sequence('2020-02-04T00', 60 * 1000000L)::#TIMESTAMP" +
+                            " FROM long_sequence(1440)",
+                    timestampType.getTypeName()
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE y SET FORMAT PARQUET");
+            drainWalQueue();
+
+            executeWithRewriteTimestamp(
+                    "INSERT INTO y SELECT" +
+                            " cast(x AS int) + 1440," +
+                            " 'k' || (x % 4)," +
+                            " rpad((x + 1440)::string, 200, 'q')," +
+                            " timestamp_sequence('2020-02-05T00', 60 * 1000000L)::#TIMESTAMP" +
+                            " FROM long_sequence(720)",
+                    timestampType.getTypeName()
+            );
+            drainWalQueue();
+
+            executeWithRewriteTimestamp(
+                    "INSERT INTO y SELECT" +
+                            " cast(x AS int) + 10000," +
+                            " 'z1'," +
+                            " rpad((x + 10000)::string, 200, 'q')," +
+                            " timestamp_sequence('2020-02-04T20:01', 1000000L)::#TIMESTAMP" +
+                            " FROM long_sequence(200)",
+                    timestampType.getTypeName()
+            );
+            drainWalQueue();
+
+            final int splitDirOpensAfterFirstO3 = splitDirOpens.get();
+            Assert.assertTrue(
+                    "test setup gap: the first O3 insert must SPLIT 2020-02-04 -- no partition"
+                            + " directory named after the 2020-02-04T20:01 insert's split point was"
+                            + " ever opened",
+                    splitDirOpensAfterFirstO3 > 0
+            );
+
+            // A second O3 insert re-enters the same branch on a writer that already went
+            // through it once.
+            executeWithRewriteTimestamp(
+                    "INSERT INTO y SELECT" +
+                            " cast(x AS int) + 20000," +
+                            " 'z2'," +
+                            " rpad((x + 20000)::string, 200, 'q')," +
+                            " timestamp_sequence('2020-02-04T21:01', 1000000L)::#TIMESTAMP" +
+                            " FROM long_sequence(200)",
+                    timestampType.getTypeName()
+            );
+            drainWalQueue();
+
+            Assert.assertTrue(
+                    "test setup gap: the second O3 insert must SPLIT 2020-02-04 again -- no partition"
+                            + " directory named after the 2020-02-04T21:01 insert's split point was"
+                            + " ever opened",
+                    splitDirOpens.get() > splitDirOpensAfterFirstO3
+            );
+
+            // The precondition chain in one check: 2020-02-05 is born parquet -- which is why
+            // openLastPartition() no-ops and the writer keeps NATIVE 2020-02-04 open -- and both
+            // O3 inserts split 2020-02-04 and were squashed back in by their own commits, leaving
+            // a single native 2020-02-04 with all 1440 + 200 + 200 rows and no split partition.
+            assertQuery("SELECT minTimestamp, numRows, name, isParquet FROM table_partitions('y') ORDER BY minTimestamp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("minTimestamp")
+                    .returns(replaceTimestampSuffix1("""
+                            minTimestamp\tnumRows\tname\tisParquet
+                            2020-02-04T00:00:00.000000Z\t1840\t2020-02-04\tfalse
+                            2020-02-05T00:00:00.000000Z\t720\t2020-02-05\ttrue
+                            """, timestampType.getTypeName()));
+
+            engine.releaseInactive();
+
+            assertQuery("SELECT count(), sum(length(s)) FROM y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\n2560\t512000\n");
+
+            assertQuery("SELECT sym, count() FROM y WHERE sym IN ('z1', 'z2') ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sym\tcount
+                            z1\t200
+                            z2\t200
+                            """);
+        });
+    }
+
+    @Test
+    public void testSquashIntoOpenPartitionReopensSquashTarget() throws Exception {
+        // squashSplitPartitions appends into the partition the writer holds open through the
+        // frame's own file descriptors, then drops the writer's now-stale append memories. It
+        // must re-open that partition afterwards: the posting-index reseal that runs immediately
+        // below it, and every later commit, expect live column memories and a dense indexer list
+        // that matches indexCount.
+        //
+        // openLastPartition() cannot do that on this branch. The squash target is never the last
+        // partition (the selection loop stops one short of it, and a partition survives after the
+        // target whenever lastPartitionSquashed is false), and the last partition here is parquet
+        // -- which is exactly why the writer holds an earlier partition open -- so
+        // openLastPartitionAndSetAppendPosition returns without opening anything.
+        //
+        // The contract shows up in the file descriptors: after the squashing commit the writer
+        // must still hold 2020-02-04's column files open, and it must hold them through a NEW
+        // openRW. Merely still holding the fds the previous commit opened is what the writer does
+        // when the reopen is missing entirely, so openedSinceMark -- the fds opened by the
+        // squashing commit and still open when it returns -- is what discriminates. It counts
+        // opens rather than comparing fd numbers: the OS is free to hand the same number back
+        // after a close.
+        final String targetDataFile = "2020-02-04" + Files.SEPARATOR + "i.d";
+        final LongHashSet openTargetFds = new LongHashSet();
+        final LongHashSet openedSinceMark = new LongHashSet();
+        final AtomicInteger splitDirOpens = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                synchronized (openTargetFds) {
+                    openTargetFds.remove(fd);
+                    openedSinceMark.remove(fd);
+                }
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (fd > -1 && Utf8s.endsWithAscii(name, targetDataFile)) {
+                    synchronized (openTargetFds) {
+                        openTargetFds.add(fd);
+                        openedSinceMark.add(fd);
+                    }
+                }
+                // The split of 2020-02-04 exists on disk only until the same commit squashes it
+                // away, and table_partitions can only show the aftermath, so witness the directory
+                // the O3 job names after the split point -- one tick past the last pre-existing row
+                // before the 2020-02-04T20:01 insert, formatted as 2020-02-04T200000-...
+                if (fd > -1 && Utf8s.containsAscii(name, "2020-02-04T2000")) {
+                    splitDirOpens.incrementAndGet();
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE x AS (" +
+                            "SELECT" +
+                            " cast(x AS int) i," +
+                            " rpad(x::string, 200, 'q') s," +
+                            " timestamp_sequence('2020-02-04T00', 60 * 1000000L)::#TIMESTAMP ts" +
+                            " FROM long_sequence(1440)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL",
+                    timestampType.getTypeName()
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x SET FORMAT PARQUET");
+            drainWalQueue();
+
+            // 2020-02-05 is born parquet, so the writer stays on native 2020-02-04.
+            executeWithRewriteTimestamp(
+                    "INSERT INTO x SELECT" +
+                            " cast(x AS int) + 1440 i," +
+                            " rpad((x + 1440)::string, 200, 'q') s," +
+                            " timestamp_sequence('2020-02-05T00', 60 * 1000000L)::#TIMESTAMP ts" +
+                            " FROM long_sequence(720)",
+                    timestampType.getTypeName()
+            );
+            drainWalQueue();
+
+            synchronized (openTargetFds) {
+                openedSinceMark.clear();
+            }
+
+            // O3 into the still-open 2020-02-04: split, then squash into the open partition.
+            executeWithRewriteTimestamp(
+                    "INSERT INTO x SELECT" +
+                            " cast(x AS int) + 10000 i," +
+                            " rpad((x + 10000)::string, 200, 'q') s," +
+                            " timestamp_sequence('2020-02-04T20:01', 1000000L)::#TIMESTAMP ts" +
+                            " FROM long_sequence(200)",
+                    timestampType.getTypeName()
+            );
+            drainWalQueue();
+
+            synchronized (openTargetFds) {
+                Assert.assertTrue(
+                        "the writer must hold the squash target's column files open after squashing into it",
+                        openTargetFds.size() > 0
+                );
+                Assert.assertTrue(
+                        "the squashing commit must RE-open the squash target: every column file the"
+                                + " writer holds open for 2020-02-04 was already open before the commit,"
+                                + " so nothing closed and re-opened the partition",
+                        openedSinceMark.size() > 0
+                );
+            }
+
+            Assert.assertTrue(
+                    "test setup gap: the O3 insert must SPLIT 2020-02-04 -- no partition directory"
+                            + " named after the 2020-02-04T20:01 insert's split point was ever opened,"
+                            + " so this test"
+                            + " exercises a plain whole-partition rewrite, not a squash into the open"
+                            + " partition",
+                    splitDirOpens.get() > 0
+            );
+
+            // The precondition chain in one check: 2020-02-05 is born parquet -- which is why
+            // openLastPartition() no-ops and the writer keeps NATIVE 2020-02-04 open -- and the
+            // O3 insert's split of 2020-02-04 was squashed back in by the same commit, leaving a
+            // single native 2020-02-04 with all 1440 + 200 rows and no split partition.
+            assertQuery("SELECT minTimestamp, numRows, name, isParquet FROM table_partitions('x') ORDER BY minTimestamp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("minTimestamp")
+                    .returns(replaceTimestampSuffix1("""
+                            minTimestamp\tnumRows\tname\tisParquet
+                            2020-02-04T00:00:00.000000Z\t1640\t2020-02-04\tfalse
+                            2020-02-05T00:00:00.000000Z\t720\t2020-02-05\ttrue
+                            """, timestampType.getTypeName()));
+
+            engine.releaseInactive();
+
+            synchronized (openTargetFds) {
+                Assert.assertEquals(
+                        "releasing the writer must close every column file it held open",
+                        0,
+                        openTargetFds.size()
+                );
+            }
         });
     }
 
