@@ -103,6 +103,11 @@ public final class TableUtils {
     public static final String CHECKPOINT_SEQ_TXN_FILE_NAME = "_txn";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
+    // Dot-suffixed staging dir marker for an idle composite-partition compaction build (see
+    // CompositePartitionMerger): "<partition-dir-name>.compacting.<snapshotWriterTxn>". Invisible to
+    // partition discovery the same way ATTACHABLE_DIR_MARKER/DETACHED_DIR_MARKER are, since attached
+    // partitions are enumerated from _txn, never by listing the table directory.
+    public static final String COMPACTING_DIR_MARKER = ".compacting";
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
@@ -2357,6 +2362,25 @@ public final class TableUtils {
             default:
                 break;
         }
+    }
+
+    /**
+     * Sets the path to the staging directory an idle composite-partition compaction builds its merged
+     * output into: the partition's ordinary directory name, followed by {@link #COMPACTING_DIR_MARKER} and
+     * the snapshot writer txn that started this attempt, so a retry after staleness never collides with a
+     * prior attempt's leftovers and the directory never collides with the partition's own eventual,
+     * txn-numbered final name (not known until swap time).
+     *
+     * @param path              Set to the root directory for a table, this will be updated to the staging directory
+     * @param timestampType     type (resolution) of the timestamp column
+     * @param partitionBy       Partitioning scheme
+     * @param timestamp         A timestamp in the partition
+     * @param nameTxn           The partition's CURRENT name txn (the directory being compacted)
+     * @param snapshotWriterTxn The writer txn snapshotted at merge-start, unique per attempt
+     */
+    public static void setPathForCompactingPartition(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn, long snapshotWriterTxn) {
+        setPathForNativePartition(path, timestampType, partitionBy, timestamp, nameTxn);
+        path.put(COMPACTING_DIR_MARKER).put('.').put(snapshotWriterTxn);
     }
 
     /**

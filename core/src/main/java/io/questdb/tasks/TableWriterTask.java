@@ -34,6 +34,8 @@ import java.io.Closeable;
 
 public class TableWriterTask implements Closeable {
     public static final int CMD_ALTER_TABLE = 2;
+    public static final int CMD_PARQUET_COMPACTION = 5;
+    public static final int CMD_PARTITION_COMPACTION = 6;
     public static final int CMD_STORAGE_POLICY = 4;
     public static final int CMD_UNUSED = 1;
     public static final int CMD_UPDATE_TABLE = 3;
@@ -61,6 +63,8 @@ public class TableWriterTask implements Closeable {
     public static String getCommandName(int cmd) {
         return switch (cmd) {
             case CMD_ALTER_TABLE -> "ALTER TABLE";
+            case CMD_PARQUET_COMPACTION -> "PARQUET COMPACTION";
+            case CMD_PARTITION_COMPACTION -> "PARTITION COMPACTION";
             case CMD_STORAGE_POLICY -> "STORAGE POLICY";
             case CMD_UPDATE_TABLE -> "UPDATE TABLE";
             default -> "UNKNOWN COMMAND";

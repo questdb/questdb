@@ -490,6 +490,10 @@ public interface CairoConfiguration {
 
     int getParquetExportVersion();
 
+    long getPartitionCompactionCheckInterval();
+
+    long getPartitionCompactionIdleTimeout();
+
     double getPartitionEncoderParquetBloomFilterFpp();
 
     int getPartitionEncoderParquetCompressionCodec();

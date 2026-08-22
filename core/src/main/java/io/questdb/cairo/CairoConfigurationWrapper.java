@@ -759,6 +759,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionCompactionCheckInterval() {
+        return getDelegate().getPartitionCompactionCheckInterval();
+    }
+
+    @Override
+    public long getPartitionCompactionIdleTimeout() {
+        return getDelegate().getPartitionCompactionIdleTimeout();
+    }
+
+    @Override
     public double getPartitionEncoderParquetBloomFilterFpp() {
         return getDelegate().getPartitionEncoderParquetBloomFilterFpp();
     }

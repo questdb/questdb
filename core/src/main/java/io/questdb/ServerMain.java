@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataID;
 import io.questdb.cairo.FlushQueryCacheJob;
+import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
@@ -549,6 +550,10 @@ public class ServerMain implements Closeable {
 
                     if (!isReadOnly) {
                         WorkerPoolUtils.setupWriterJobs(sharedPoolWrite, engine);
+
+                        final PartitionCompactionScanJob partitionCompactionScanJob = new PartitionCompactionScanJob(engine);
+                        sharedPoolWrite.assign(partitionCompactionScanJob);
+                        sharedPoolWrite.freeOnExit(partitionCompactionScanJob);
 
                         if (walSupported) {
                             sharedPoolWrite.assign(config.getFactoryProvider().getWalJobFactory().createCheckWalTransactionsJob(engine));

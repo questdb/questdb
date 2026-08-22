@@ -776,6 +776,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionCompactionCheckInterval() {
+        return 120_000;
+    }
+
+    @Override
+    public long getPartitionCompactionIdleTimeout() {
+        return 900_000;
+    }
+
+    @Override
     public double getPartitionEncoderParquetBloomFilterFpp() {
         return PartitionEncoder.DEFAULT_BLOOM_FILTER_FPP;
     }

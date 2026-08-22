@@ -1377,6 +1377,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     private void testSquashPartitionsOnNonEmptyTable(String wal) throws Exception {
         assertMemoryLeak(() -> {
+            // This test drives the pre-merge-append split-then-squash mechanism directly (prefix
+            // split on size, then an explicit ALTER TABLE SQUASH PARTITIONS): with merge-append on,
+            // the very same O3 write lands as a composite piece inside the existing partition
+            // directory instead of a separate split directory, so the split/squash shape this test
+            // asserts never forms. Same reasoning as testPartitionSquashCounterOverflow above.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
             // 4kb prefix split threshold
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);

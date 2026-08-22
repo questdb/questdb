@@ -214,6 +214,49 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyO3RangeCopiesEveryRowGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            LongList rowGroupBounds = new LongList();
+            // Four row groups; rg1/rg2 share a boundary timestamp (200) that a non-empty,
+            // deduplicating O3 batch landing on it would normally coalesce into one MERGE
+            // (see testCoalesceTieAcrossTwoRowGroups).
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 0, 99, 10);
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 200, 4);
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 200, 300, 4);
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 301, 400, 7);
+
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
+            // This is exactly what TableWriter#compactParquetPartition passes: an idle-triggered
+            // standalone Parquet rewrite (never mid-O3-commit) has no incoming O3 data, only
+            // existing row groups to copy into a fresh file, dropping dead space.
+            long addr = allocateSortedTimestamps(200);
+            try {
+                for (boolean coalesceBoundaryTies : new boolean[]{false, true}) {
+                    int n = O3ParquetMergeStrategy.computeMergeActions(
+                            rowGroupBounds, addr, 0, -1,
+                            1, Integer.MAX_VALUE, actionsBuf, new LongList(), new LongList(),
+                            coalesceBoundaryTies
+                    );
+                    // Every row group is copied as-is: no MERGE, no COPY_O3, and -- crucially --
+                    // no coalesced multi-group run despite the rg1/rg2 boundary tie. An empty O3
+                    // range has no row to land on that boundary, coalesceBoundaryTies notwithstanding.
+                    Assert.assertEquals("coalesceBoundaryTies=" + coalesceBoundaryTies, 4, n);
+                    for (int i = 0; i < n; i++) {
+                        MergeAction action = actionsBuf.get(i);
+                        Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, action.type);
+                        Assert.assertEquals(i, action.rowGroupIndex);
+                        Assert.assertEquals(i, action.rowGroupIndexHi);
+                        Assert.assertEquals(-1, action.o3Lo);
+                        Assert.assertEquals(-1, action.o3Hi);
+                    }
+                }
+            } finally {
+                freeSortedTimestamps(addr, 1);
+            }
+        });
+    }
+
+    @Test
     public void testMaxRowGroupSizeSplitting() throws Exception {
         assertMemoryLeak(() -> {
             ObjList<MergeAction> actionsBuf = new ObjList<>();

@@ -185,6 +185,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * sentinel built out of the top bit.
      */
     public static final long NO_GEOMETRY_REF = 0L;
+    /**
+     * {@link #swapCompositePartition} return value: the swap committed, and the partition is no longer
+     * composite (or, for a directory with several live pieces left uncompacted by a stale-but-still-valid
+     * snapshot, at least has one fewer to carry).
+     */
+    public static final int SWAP_OK = 0;
+    /**
+     * {@link #swapCompositePartition} return value: the merge snapshot no longer matches the partition's
+     * live state (dropped, converted to parquet, or a new piece/writer txn landed since). The staging
+     * directory is discarded and nothing about the table is mutated - the caller may retry with a fresh
+     * {@link CompositePartitionMerger#merge}.
+     */
+    public static final int SWAP_STALE = -1;
     public static final int SWITCH_NO_PARQUET = -1;
     public static final int SWITCH_OK = 0;
     public static final int SWITCH_SKIPPED = -2;
@@ -1646,6 +1659,104 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getLagTxnCount() == (seqTxn - txWriter.getSeqTxn());
         long rowsCommitted = txWriter.getRowCount() - initialCommittedRowCount;
         metrics.tableWriterMetrics().addCommittedRows(rowsCommitted);
+    }
+
+    /**
+     * Idle-triggered rewrite of a Parquet-format partition: reclaims dead row groups left behind
+     * by in-place O3 updates (see {@link O3PartitionJob#processParquetPartition}) without waiting
+     * for the next O3 commit to trip the update-vs-rewrite ratio.
+     * <p>
+     * Reuses {@link O3PartitionJob#processParquetPartition0} with an empty O3 range and {@code
+     * forceRewrite=true}, which degenerates {@link O3ParquetMergeStrategy#computeMergeActions} to a
+     * plain {@code COPY_ROW_GROUP_SLICE} per existing row group: every live row group is copied into
+     * a fresh {@code .parquet} file in a new txn-named directory, dropping the dead space. Row count
+     * is unchanged (no O3 rows are merged in), so this only ever shrinks the file.
+     * <p>
+     * Runs synchronously on the writer's own thread with exclusive access (called directly when
+     * the writer is idle, or applied from the async command queue via {@link #tick()} when it was
+     * busy) — unlike a background-merge design, there is no snapshot-then-swap window, so no
+     * staleness/generation check is needed.
+     */
+    public void compactParquetPartition(long partitionTimestamp) {
+        assert metadata.getTimestampIndex() > -1;
+        assert PartitionBy.isPartitioned(partitionBy);
+
+        if (inTransaction()) {
+            assert !tableToken.isWal();
+            LOG.info()
+                    .$("committing open transaction before compacting parquet partition [table=")
+                    .$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .I$();
+            commit();
+        }
+
+        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (partitionIndex < 0) {
+            formatPartitionForTimestamp(partitionTimestamp, -1);
+            throw CairoException.nonCritical().put("cannot compact partition, partition does not exist [table=").put(tableToken.getTableName())
+                    .put(", partition=").put(utf8Sink).put(']');
+        }
+
+        if (!txWriter.isPartitionParquet(partitionIndex)) {
+            // Nothing to compact: dead row groups only accumulate in Parquet-format partitions.
+            return;
+        }
+
+        final long srcNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        final long partitionRowCount = txWriter.getPartitionSize(partitionIndex);
+        final long txn = getTxn();
+
+        final O3Basket o3Basket = o3BasketPool.next();
+        o3Basket.checkCapacity(configuration, columnCount, indexCount);
+
+        final long sinkAddr = Unsafe.malloc((long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, MemoryTag.NATIVE_TABLE_WRITER);
+        final long newParquetFileSize;
+        try {
+            O3PartitionJob.processParquetPartition0(
+                    path.trimTo(pathSize),
+                    timestampType,
+                    partitionBy,
+                    null, // no O3 columns: empty range below, nothing is ever read from this
+                    0L, // srcOooLo
+                    -1L, // srcOooHi: an empty range forces every action to COPY_ROW_GROUP_SLICE
+                    partitionTimestamp,
+                    0L, // sortedTimestampsAddr: unused for an empty O3 range
+                    this,
+                    srcNameTxn,
+                    txn,
+                    sinkAddr,
+                    0L, // dedupColSinkAddr: no dedup, nothing to merge
+                    0L, // o3TimestampMin: unused by this call, only relayed into the discarded sink
+                    o3Basket,
+                    partitionRowCount, // newPartitionSize: unchanged, no O3 rows are merged in
+                    partitionRowCount, // oldPartitionSize
+                    true // forceRewrite
+            );
+            newParquetFileSize = Unsafe.getLong(sinkAddr + 7 * Long.BYTES);
+        } finally {
+            Unsafe.free(sinkAddr, (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, MemoryTag.NATIVE_TABLE_WRITER);
+            path.trimTo(pathSize);
+        }
+
+        columnVersionWriter.commit();
+        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, partitionRowCount);
+        txWriter.setPartitionParquetFormat(partitionTimestamp, newParquetFileSize);
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        // The rewrite copies every column from row 0 into the new file (see
+        // O3PartitionJob#processParquetPartition0's rewrite branch), so no column has a top.
+        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, partitionRowCount, true);
+        txWriter.bumpPartitionTableVersion();
+        commitTxWriter();
+
+        // Post-commit: the rewrite is logically complete. Deleting the old directory is
+        // best-effort cleanup and must not roll back the committed transaction.
+        try {
+            safeDeletePartitionDir(partitionTimestamp, srcNameTxn);
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        }
     }
 
     @Override
@@ -3319,6 +3430,59 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public boolean supportsMultipleWriters() {
         return false;
+    }
+
+    /**
+     * Swaps in the merged directory a prior {@link CompositePartitionMerger#merge} attempt built, adopting
+     * the per-column tops it derived. This is the full-fidelity entry point: the merge and the swap
+     * typically run back to back in the same call (an idle writer applies the command directly, per
+     * {@link CairoEngine#getWriterOrPublishCommand}), so the {@link CompositePartitionMerger.MergeResult}
+     * is still the same object the build step produced.
+     *
+     * @return {@link #SWAP_OK} or {@link #SWAP_STALE}
+     */
+    public int swapCompositePartition(CompositePartitionMerger.MergeResult mergeResult) {
+        return swapCompositePartition(
+                mergeResult.getPartitionTimestamp(),
+                mergeResult.getOldNameTxn(),
+                mergeResult.getSnapshotWriterTxn(),
+                mergeResult.getSnapshotPieceCount(),
+                mergeResult.getMergedRowCount(),
+                mergeResult.getColumnTops()
+        );
+    }
+
+    /**
+     * Swaps in the merged directory a prior {@link CompositePartitionMerger#merge} attempt built, from the
+     * plain snapshot values alone - the shape a queued {@link PartitionCompactionCommand} carries across the
+     * writer's async command queue, which cannot serialize a live {@link ColumnVersionWriter}. Every one of
+     * the five arguments is the exact value {@link CompositePartitionMerger.MergeResult} exposes.
+     * <p>
+     * Validates, in order: the partition is still attached, still native (not converted to parquet
+     * meanwhile), still composite, still the same on-disk directory ({@code oldNameTxn} unchanged), and no
+     * new piece or writer txn landed on it since the snapshot was taken. Any failure is staleness: the
+     * staging directory is deleted best-effort and nothing about the table is mutated - the caller may
+     * re-run {@link CompositePartitionMerger#merge} and retry.
+     * <p>
+     * On success: the staging directory is renamed to its final, txn-numbered name (the txn read BEFORE
+     * {@link #commitTxWriter()}, which pre-increments it internally - the same convention
+     * {@link #switchNativePartitionWithParquet} uses), the partition's row count and name txn are updated,
+     * its composite flag is cleared, and the commit lands. Every indexed column is then rebuilt over the
+     * whole new directory - composite writes never maintain BITMAP/POSTING indexes (see
+     * {@code COMPOSITE_PARTITION_STATE.md}), so this swap is the first opportunity to fix that for the rows
+     * it just repacked - and the old directory is deleted, both best-effort and after the commit, so neither
+     * failing rolls back the swap.
+     *
+     * @return {@link #SWAP_OK} or {@link #SWAP_STALE}
+     */
+    public int swapCompositePartition(
+            long partitionTimestamp,
+            long oldNameTxn,
+            long snapshotWriterTxn,
+            int snapshotPieceCount,
+            long mergedRowCount
+    ) {
+        return swapCompositePartition(partitionTimestamp, oldNameTxn, snapshotWriterTxn, snapshotPieceCount, mergedRowCount, null);
     }
 
     // Returns SWITCH_OK (0) on successful switch, SWITCH_SKIPPED (-2) if the partition was
@@ -12056,6 +12220,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Rebuilds every indexed column's BITMAP/POSTING index over the WHOLE of {@code partitionTimestamp}'s
+     * current directory, called right after {@link #swapCompositePartition} commits its rename. A composite
+     * write never maintains an index incrementally - {@code processCompositePartition}'s MERGE/NEW_PIECE
+     * actions carry no {@code IndexWriter} at all (see {@code COMPOSITE_PARTITION_STATE.md}) - and a MERGE
+     * can relocate a piece's rows to new row ids, which an incremental add alone cannot correct for since
+     * BITMAP has no removal. A directory-wide rebuild is the only correct fix, and it is cheap to reach for
+     * here: the swap already rewrote every column's file in full.
+     * <p>
+     * Safe to call from wherever {@link #swapCompositePartition} itself runs - the writer's own single
+     * thread, the only thread {@link RebuildColumnBase#reindexAfterUpdate} is ever called from today (via
+     * {@code UpdateOperatorImpl}), reached the same way an ordinary {@code UPDATE} reaches it.
+     */
+    private void rebuildCompositePartitionIndexes(long partitionTimestamp) {
+        if (attachIndexBuilder == null) {
+            attachIndexBuilder = new IndexBuilder(configuration);
+        }
+        attachIndexBuilder.of(Path.getThreadLocal(configuration.getDbRoot()).concat(tableToken.getDirName()));
+        try {
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (metadata.isColumnIndexed(i)) {
+                    attachIndexBuilder.reindexAfterUpdate(ff, partitionTimestamp, metadata.getColumnName(i), this);
+                }
+            }
+        } finally {
+            attachIndexBuilder.clear();
+        }
+    }
+
+    /**
      * Rebuild index files for indexed symbol columns from the data
      * files in {@code other}.  Both the data files (.d) and the newly
      * created index files reside in the same directory whose
@@ -13730,6 +13923,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         assert partitionIndexHi >= 0 && partitionIndexHi <= txWriter.getPartitionCount() && partitionIndexLo >= 0;
 
+        for (int i = partitionIndexLo; i < partitionIndexHi; i++) {
+            if (txWriter.isPartitionComposite(i)) {
+                LOG.info().$("skipping partition squash, partition is composite [table=").$(tableToken)
+                        .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(i))
+                        .I$();
+                return;
+            }
+        }
+
         long targetPartition = Long.MIN_VALUE;
         boolean copyTargetFrame = false;
 
@@ -13931,6 +14133,125 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             other.trimTo(pathSize);
         }
+    }
+
+    /**
+     * The core of both public {@code swapCompositePartition} overloads - see their javadoc for the
+     * staleness contract and the commit/cleanup shape. {@code columnTops}, when non-null, is one entry per
+     * column in metadata order and is transplanted into the live {@link #columnVersionWriter} before commit;
+     * {@code null} (the plain-snapshot overload's shape) leaves whatever tops are already recorded for this
+     * partition alone.
+     */
+    private int swapCompositePartition(
+            long partitionTimestamp,
+            long oldNameTxn,
+            long snapshotWriterTxn,
+            int snapshotPieceCount,
+            long mergedRowCount,
+            @Nullable LongList columnTops
+    ) {
+        assert metadata.getTimestampIndex() > -1;
+        assert PartitionBy.isPartitioned(partitionBy);
+
+        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+
+        // The active partition is still open for direct append (composite or not - see
+        // COMPOSITE_PARTITION_STATE.md item 14), so its directory cannot be safely renamed and replaced out
+        // from under the writer's own open column handles. Treated as staleness: the caller can try again
+        // once this partition is no longer the last one.
+        boolean stale = partitionIndex < 0
+                || partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())
+                || txWriter.isPartitionParquet(partitionIndex)
+                || !txWriter.isPartitionComposite(partitionIndex)
+                || txWriter.getPartitionNameTxn(partitionIndex) != oldNameTxn;
+        if (!stale) {
+            final PartitionGeometry geometry = getGeometry();
+            stale = geometry.getWriterTxn(partitionIndex) != snapshotWriterTxn
+                    || geometry.getPieceCount(partitionIndex) != snapshotPieceCount;
+        }
+
+        if (stale) {
+            try {
+                TableUtils.setPathForCompactingPartition(
+                        other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldNameTxn, snapshotWriterTxn
+                );
+                if (ff.exists(other.$()) && !ff.rmdir(other.slash())) {
+                    LOG.error().$("could not remove stale compaction staging dir [path=").$(other).I$();
+                }
+            } finally {
+                other.trimTo(pathSize);
+            }
+            LOG.info().$("composite partition compaction is stale, discarding [table=").$(tableToken)
+                    .$(", partitionTimestamp=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", oldNameTxn=").$(oldNameTxn)
+                    .$(", snapshotWriterTxn=").$(snapshotWriterTxn)
+                    .I$();
+            return SWAP_STALE;
+        }
+
+        // The new directory's name txn is read BEFORE commitTxWriter(), which pre-increments the txn
+        // counter internally - the same convention switchNativePartitionWithParquet uses.
+        final long newNameTxn = getTxn();
+        int newPartitionDirLen = 0;
+        try {
+            TableUtils.setPathForCompactingPartition(
+                    path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldNameTxn, snapshotWriterTxn
+            );
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newNameTxn);
+            newPartitionDirLen = other.size();
+
+            if (ff.rename(path.$(), other.$()) != FILES_RENAME_OK) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not rename compacted composite partition [table=").put(tableToken.getTableName())
+                        .put(", from=").put(path)
+                        .put(", to=").put(other)
+                        .put(']');
+            }
+
+            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, mergedRowCount);
+            // A real geometry ref always carries PARTITION_COMPOSITE_FLAG, so -1 (the same "nothing here"
+            // sentinel initPartitionAt and resetPartitionParquetGeneratedByRawIndex use elsewhere in this
+            // file) is what makes this partition read back as plain and non-composite, one piece implied by
+            // its row count - not 0, which is reserved by TableWriter.NO_GEOMETRY_REF for a different
+            // meaning: "this write's own sink left the geometry alone", never a value stored INTO _txn.
+            txWriter.setPartitionGeometryRef(partitionTimestamp, -1L);
+            if (columnTops != null) {
+                for (int i = 0, n = columnTops.size(); i < n; i++) {
+                    columnVersionWriter.upsertColumnTop(partitionTimestamp, i, columnTops.getQuick(i));
+                }
+            }
+            columnVersionWriter.commit();
+            txWriter.bumpPartitionTableVersion();
+            commitTxWriter();
+        } catch (Throwable e) {
+            if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                LOG.error().$("could not remove partition dir [path=").$(other).I$();
+            }
+            throw e;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+
+        // Post-commit: the swap is logically complete. Everything below is best-effort and must not roll
+        // back the already-committed transaction. Indexes are rebuilt BEFORE the old directory is deleted -
+        // composite MERGE/NEW_PIECE writes never maintain a BITMAP/POSTING index (see
+        // COMPOSITE_PARTITION_STATE.md), so this swap is the first chance to fix that for the rows it just
+        // repacked, and it is mandatory, not optional.
+        try {
+            rebuildCompositePartitionIndexes(partitionTimestamp);
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        }
+
+        try {
+            safeDeletePartitionDir(partitionTimestamp, oldNameTxn);
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        }
+
+        return SWAP_OK;
     }
 
     private void swapO3ColumnsExcept(int timestampIndex) {
