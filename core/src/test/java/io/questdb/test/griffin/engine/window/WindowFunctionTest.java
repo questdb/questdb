@@ -2548,6 +2548,60 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterOverPartitionByAndOrderBy() throws Exception {
+        // an aggregate FILTER (WHERE ...) clause also applies to the window form: rows failing the
+        // condition contribute nothing to the frame, so a frame holding only such rows sums to null
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, grp symbol, v long) timestamp(ts)");
+            execute("insert into tab values " +
+                    "('2021-01-01T00:00:00.000000Z', 'A', 1), " +
+                    "('2021-01-02T00:00:00.000000Z', 'A', 2), " +
+                    "('2021-01-03T00:00:00.000000Z', 'A', 3), " +
+                    "('2021-01-04T00:00:00.000000Z', 'B', 1), " +
+                    "('2021-01-05T00:00:00.000000Z', 'B', 2)");
+            assertQuery("SELECT ts, grp, v, sum(v) FILTER (WHERE v > 1) OVER (PARTITION BY grp ORDER BY ts) s FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tgrp\tv\ts
+                            2021-01-01T00:00:00.000000Z\tA\t1\tnull
+                            2021-01-02T00:00:00.000000Z\tA\t2\t2.0
+                            2021-01-03T00:00:00.000000Z\tA\t3\t5.0
+                            2021-01-04T00:00:00.000000Z\tB\t1\tnull
+                            2021-01-05T00:00:00.000000Z\tB\t2\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testFilterOverRejectsZeroNullArgumentType() throws Exception {
+        // The window form shares function construction with the grouped form, so the check that
+        // rejects a lowered FILTER over a type whose NULL is its zero value applies here too. Without
+        // it, rows failing the condition would contribute a genuine 0 to the frame instead of nothing.
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, grp symbol, sh short, d double) timestamp(ts)");
+            execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 'A', 1, 1.0)");
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, avg(sh) FILTER (WHERE sh > 1) OVER (PARTITION BY grp ORDER BY ts) s FROM tab",
+                    15,
+                    "whose NULL is indistinguishable from its zero value"
+            );
+            // the same shape over a DOUBLE argument stays supported
+            assertQuery("SELECT ts, avg(d) FILTER (WHERE d > 1) OVER (PARTITION BY grp ORDER BY ts) s FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\ts
+                            2021-01-01T00:00:00.000000Z\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testFirstValueDateOverPartitionByAndOrderBy() throws Exception {
         // first_value() over a DATE argument; default frame's first row of each partition
         assertMemoryLeak(() -> {

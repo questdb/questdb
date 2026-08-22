@@ -483,7 +483,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     }
                 }
             }
-            functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
+            // read the condition before createFunction(), which may consume mutableArgs
+            final Function filterCondition = node.isFilterLowered && mutableArgs.size() > 0
+                    ? mutableArgs.getQuick(0)
+                    : null;
+            final Function function = createFunction(node, mutableArgs, mutableArgPositions);
+            if (node.isFilterLowered) {
+                validateFilterLoweredType(node, function, filterCondition);
+            }
+            functionStack.push(function);
         }
         positionStack.push(node.position);
     }
@@ -1830,6 +1838,50 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             return ColumnType.getTimestampDriver(timestampType).parseFloorLiteral(str);
         } catch (NumericException e) {
             throw SqlException.invalidDate(str, position);
+        }
+    }
+
+    /**
+     * Rejects an aggregate FILTER (WHERE ...) clause whose lowering cannot express it.
+     * <p>
+     * SqlOptimiser rewrites a filtered aggregate's argument into CASE WHEN condition THEN arg END,
+     * which nulls the value of a non-matching row instead of dropping the row. That is only equivalent
+     * to filtering when the CASE result type has a NULL the aggregate can tell apart from a real
+     * value. BYTE, SHORT and CHAR map to zero and BOOLEAN maps to false
+     * (Constants.nullConstants), so a non-matching row would arrive as a genuine 0 or false: count()
+     * would count it, avg() would average it in, min() and bit_and() would let it win. The type is
+     * only known here, once the argument has been resolved to a Function.
+     *
+     * @param node      the synthesized CASE node
+     * @param function  the resolved CASE function, freed before the exception propagates
+     * @param condition the resolved filter condition, the CASE's first argument
+     */
+    private void validateFilterLoweredType(ExpressionNode node, Function function, Function condition) throws SqlException {
+        // A multi-argument aggregate gets one CASE per argument, each holding its own copy of the
+        // condition, so a non-deterministic condition draws a fresh verdict per argument: one row can
+        // pass for the value and fail for the weight. FILTER promises a single decision per row, and
+        // the lowering cannot deliver that here, so reject rather than return a plausible wrong answer.
+        //
+        // Only the condition matters. Asking the whole CASE would fold in the aggregate's own value
+        // argument, and rejected weighted_avg(rnd_double(), w) FILTER (WHERE id > 5), whose condition
+        // is perfectly stable - a volatile value argument is the caller's business, with or without
+        // this clause.
+        if (node.isFilterConditionShared && condition != null && condition.isNonDeterministic()) {
+            final SqlException ex = SqlException.position(node.position)
+                    .put("FILTER with a non-deterministic condition is not supported for an aggregate ")
+                    .put("that takes more than one value argument, because each argument would evaluate ")
+                    .put("the condition separately; filter rows in a subquery instead");
+            Misc.free(function);
+            throw ex;
+        }
+        final int type = function != null ? ColumnType.tagOf(function.getType()) : ColumnType.UNDEFINED;
+        if (type == ColumnType.BYTE || type == ColumnType.SHORT
+                || type == ColumnType.CHAR || type == ColumnType.BOOLEAN) {
+            final SqlException ex = SqlException.position(node.position)
+                    .put("FILTER is not supported for a ").put(ColumnType.nameOf(function.getType()))
+                    .put(" argument, whose NULL is indistinguishable from its zero value; cast the argument, for example sum(x::int) FILTER (WHERE ...)");
+            Misc.free(function);
+            throw ex;
         }
     }
 

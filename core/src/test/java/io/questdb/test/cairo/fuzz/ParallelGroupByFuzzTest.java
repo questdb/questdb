@@ -896,6 +896,28 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelFilteredAggregate() throws Exception {
+        // An aggregate FILTER (WHERE ...) lowers to CASE, so it runs on the parallel path with
+        // per-worker partials that get merged. Both forms below must agree with each other and
+        // with the hand-computed counts: values congruent to each key modulo 5 number 200 in
+        // (1000, 2000] from the first insert and 210 in (1000, 2050] from the second.
+        final String expected = """
+                key\tc
+                k0\t410
+                k1\t410
+                k2\t410
+                k3\t410
+                k4\t410
+                """;
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, count(*) FILTER (WHERE value > 1000) c FROM tab GROUP BY key ORDER BY key",
+                expected,
+                "SELECT key, count(*) c FROM (SELECT key, value FROM tab WHERE value > 1000) GROUP BY key ORDER BY key",
+                expected
+        );
+    }
+
+    @Test
     public void testParallelFunctionKeyExplicitGroupBy() throws Exception {
         testParallelSymbolKeyGroupBy(
                 "SELECT day_of_week(ts) day, key, vwap(price, quantity), sum(colTop) FROM tab GROUP BY day, key ORDER BY day, key",

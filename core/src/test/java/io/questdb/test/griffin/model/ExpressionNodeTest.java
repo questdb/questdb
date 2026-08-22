@@ -30,10 +30,24 @@ import io.questdb.griffin.model.ScalarTimestampBoundHolder;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.AsciiCharSequence;
 import io.questdb.std.str.Utf8String;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class ExpressionNodeTest {
+
+    @Test
+    public void testClearResetsScalarBoundHolder() {
+        // ExpressionNode instances are pooled and recycled across compiles. A holder surviving
+        // clear() would let a later, unrelated query resolve its sub-query node to a stale
+        // ScalarSubQueryBoundRefFunction and read a bound frozen by a previous execution.
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
+        final ExpressionNode node = pool.next().of(ExpressionNode.QUERY, "query", 0, 0);
+        node.scalarBoundHolder = new ScalarTimestampBoundHolder(ColumnType.TIMESTAMP);
+
+        node.clear();
+        Assert.assertNull(node.scalarBoundHolder);
+    }
 
     @Test
     public void testDeepCloneAndCopyFromCarryLateralDepth() {
@@ -73,16 +87,26 @@ public class ExpressionNodeTest {
     }
 
     @Test
-    public void testClearResetsScalarBoundHolder() {
-        // ExpressionNode instances are pooled and recycled across compiles. A holder surviving
-        // clear() would let a later, unrelated query resolve its sub-query node to a stale
-        // ScalarSubQueryBoundRefFunction and read a bound frozen by a previous execution.
+    public void testDeepCloneCopyFromAndClearCarryFilterExpression() {
+        // filterExpression holds an aggregate's FILTER (WHERE ...) condition between parsing and
+        // SqlOptimiser.lowerAggregateFilters(). It obeys the same rules as every other node field:
+        // deepClone copies the subtree rather than aliasing it, copyFrom carries it, and clear()
+        // drops it so a recycled node cannot leak a condition into an unrelated query.
         final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
-        final ExpressionNode node = pool.next().of(ExpressionNode.QUERY, "query", 0, 0);
-        node.scalarBoundHolder = new ScalarTimestampBoundHolder(ColumnType.TIMESTAMP);
+
+        final ExpressionNode node = pool.next().of(ExpressionNode.FUNCTION, "sum", 0, 0);
+        node.filterExpression = pool.next().of(ExpressionNode.LITERAL, "cond", 0, 0);
+
+        final ExpressionNode clone = ExpressionNode.deepClone(pool, node);
+        Assert.assertNotNull(clone.filterExpression);
+        Assert.assertNotSame(node.filterExpression, clone.filterExpression);
+        TestUtils.assertEquals("cond", clone.filterExpression.token);
+
+        final ExpressionNode copy = pool.next().copyFrom(node);
+        Assert.assertSame(node.filterExpression, copy.filterExpression);
 
         node.clear();
-        Assert.assertNull(node.scalarBoundHolder);
+        Assert.assertNull(node.filterExpression);
     }
 
     @Test
@@ -117,4 +141,53 @@ public class ExpressionNodeTest {
         Assert.assertEquals(ExpressionNode.LITERAL, node.type);
     }
 
+    @Test
+    public void testFilterExpressionDistinguishesNodes() {
+        // Two aggregates that differ only in their FILTER condition must not compare equal, or a
+        // deduplicating pass could collapse them into one column. The hash has to agree.
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
+
+        final ExpressionNode a = pool.next().of(ExpressionNode.FUNCTION, "sum", 0, 0);
+        a.filterExpression = pool.next().of(ExpressionNode.LITERAL, "a", 0, 0);
+        final ExpressionNode b = pool.next().of(ExpressionNode.FUNCTION, "sum", 0, 0);
+        b.filterExpression = pool.next().of(ExpressionNode.LITERAL, "b", 0, 0);
+        final ExpressionNode c = pool.next().of(ExpressionNode.FUNCTION, "sum", 0, 0);
+
+        Assert.assertFalse(ExpressionNode.compareNodesExact(a, b));
+        Assert.assertFalse(ExpressionNode.compareNodesExact(a, c));
+        Assert.assertNotEquals(ExpressionNode.deepHashCode(a), ExpressionNode.deepHashCode(b));
+
+        final ExpressionNode a2 = pool.next().of(ExpressionNode.FUNCTION, "sum", 0, 0);
+        a2.filterExpression = pool.next().of(ExpressionNode.LITERAL, "a", 0, 0);
+        Assert.assertTrue(ExpressionNode.compareNodesExact(a, a2));
+        Assert.assertEquals(ExpressionNode.deepHashCode(a), ExpressionNode.deepHashCode(a2));
+    }
+
+    @Test
+    public void testFilterLoweredMarkerDistinguishesNodes() {
+        // A CASE the lowering synthesized still owes a type rejection that FunctionParser applies
+        // later, so it must not compare equal to an identical CASE the user wrote by hand - a
+        // deduplicating pass would otherwise keep the unflagged one and drop the rejection with it.
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
+
+        final ExpressionNode lowered = pool.next().of(ExpressionNode.FUNCTION, "case", 0, 0);
+        lowered.isFilterLowered = true;
+        final ExpressionNode handWritten = pool.next().of(ExpressionNode.FUNCTION, "case", 0, 0);
+
+        Assert.assertFalse(ExpressionNode.compareNodesExact(lowered, handWritten));
+        Assert.assertNotEquals(
+                ExpressionNode.deepHashCode(lowered),
+                ExpressionNode.deepHashCode(handWritten)
+        );
+
+        // two lowered nodes still match, so identical filtered aggregates keep deduplicating
+        final ExpressionNode lowered2 = pool.next().of(ExpressionNode.FUNCTION, "case", 0, 0);
+        lowered2.isFilterLowered = true;
+        Assert.assertTrue(ExpressionNode.compareNodesExact(lowered, lowered2));
+        Assert.assertEquals(ExpressionNode.deepHashCode(lowered), ExpressionNode.deepHashCode(lowered2));
+
+        // and the marker does not survive recycling
+        lowered.clear();
+        Assert.assertFalse(lowered.isFilterLowered);
+    }
 }
