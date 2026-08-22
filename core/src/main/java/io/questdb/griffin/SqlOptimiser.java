@@ -12058,6 +12058,11 @@ public class SqlOptimiser implements Mutable {
             }
 
             try {
+                // A frame width has no projected spelling, so a wrapped INT product reaches the
+                // frame as a width nobody wrote and nobody can see: a positive wrap narrows the
+                // frame silently, a negative one reaches the sign check below, which names the
+                // symptom rather than the wrap. Refuse the wrap here, where the remedy fits.
+                NarrowIntArithmetic.rejectWrapped(functionParser, expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext, NarrowIntArithmetic.SUBJECT_WINDOW_FRAME_BOUND);
                 long value;
                 if (!(func instanceof CharConstant)) {
                     value = func.getLong(null);
@@ -12887,6 +12892,11 @@ public class SqlOptimiser implements Mutable {
             }
 
             try {
+                // A frame width has no projected spelling, so a wrapped INT product reaches the
+                // frame as a width nobody wrote and nobody can see: a positive wrap narrows the
+                // frame silently, a negative one reaches the sign check below, which names the
+                // symptom rather than the wrap. Refuse the wrap here, where the remedy fits.
+                NarrowIntArithmetic.rejectWrapped(functionParser, expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext, NarrowIntArithmetic.SUBJECT_WINDOW_FRAME_BOUND);
                 long value;
                 if (!(func instanceof CharConstant)) {
                     value = func.getLong(null);

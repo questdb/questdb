@@ -257,6 +257,8 @@ public class IntWidthWrapTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tz (secs INT)");
             execute("INSERT INTO tz VALUES (1_720_468_802)");
+            execute("CREATE TABLE tzt (ts TIMESTAMP, stride INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tzt VALUES ('2024-01-01T00:00:00.000000Z', 3_600)");
 
             assertQuery("SELECT to_utc(1_720_468_802 * 1_000_000, 'Europe/Berlin') AS v FROM tz")
                     .noLeakCheck().expectSize().returns("v\n1969-12-31T22:49:52.502912Z\n");
@@ -266,6 +268,54 @@ public class IntWidthWrapTest extends AbstractCairoTest {
             // widen an operand and the conversion is correct again
             assertQuery("SELECT to_utc(secs * 1_000_000L, 'Europe/Berlin') AS v FROM tz")
                     .noLeakCheck().expectSize().returns("v\n2024-07-08T18:00:02.000000Z\n");
+
+            // A dateadd() stride is INT-only, so the constant spelling now resolves the same
+            // overload the column spelling always did, and both read the same wrapped stride.
+            // Under the two-value regime the constant folded to a LONG and dateadd had no
+            // (CHAR, LONG, TIMESTAMP) overload at all, so the two spellings of one expression
+            // disagreed on whether the statement even compiled.
+            assertQuery("SELECT dateadd('u', 3_600 * 1_000_000, ts) AS v FROM tzt")
+                    .noLeakCheck().expectSize().returns("v\n2023-12-31T23:48:25.032704Z\n");
+            assertQuery("SELECT dateadd('u', stride * 1_000_000, ts) AS v FROM tzt")
+                    .noLeakCheck().expectSize().returns("v\n2023-12-31T23:48:25.032704Z\n");
+            // widening moves the stride out of dateadd's reach, which is the loud failure mode
+            assertExceptionNoLeakCheck(
+                    "SELECT dateadd('u', 3_600 * 1_000_000L, ts) AS v FROM tzt",
+                    7,
+                    "no matching function"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampBoundRefusesIntArithmeticOutright() throws Exception {
+        // Two readers turn a constant expression into a timestamp bound - the interval extractor
+        // behind a designated-timestamp comparison, and the SAMPLE BY FROM / TO parser - and both
+        // decide on the expression's TYPE: WhereClauseParser.canCastToTimestamp lists LONG and
+        // does not list INT. So an INT-typed expression is refused there, and always was: 1 + 1
+        // overflows nothing and is refused just the same. What the one-value rule changed is
+        // which expressions are INT-typed - the seconds-to-micros product used to fold to a LONG
+        // constant and slip through carrying a value the same expression over a column could not
+        // produce. The refusal is loud and names a position, and it is the better of the two
+        // outcomes available: accepting the INT would compare a 2024 timestamp against a bound of
+        // -607497088 microseconds and quietly match every row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tb (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tb VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+
+            assertExceptionNoLeakCheck("SELECT count() AS c FROM tb WHERE ts > 1_720_468_802 * 1_000_000", 53, "Invalid date");
+            // the same refusal for arithmetic that cannot overflow anything, which is what shows
+            // the rule is about the type and not about the wrap
+            assertExceptionNoLeakCheck("SELECT count() AS c FROM tb WHERE ts > 1 + 1", 41, "Invalid date");
+            assertExceptionNoLeakCheck("SELECT ts, sum(v) FROM tb SAMPLE BY 1d FROM 3_600 * 1_000_000", 50, "Invalid date");
+
+            // a bare INT literal reaches the token path instead and is read as microseconds, so
+            // the two spellings disagree; that disagreement is older than the one-value rule
+            assertQuery("SELECT count() AS c FROM tb WHERE ts > 12_345")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+            // widening the operand types the expression LONG and both readers accept it again
+            assertQuery("SELECT count() AS c FROM tb WHERE ts > 1_720_468_802 * 1_000_000L")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
         });
     }
 

@@ -6135,11 +6135,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 char hiTimeUnit = 0;
                                 if (context.isDynamicLo()) {
                                     windowLoFunc = functionParser.parseFunction(context.getLoExpr(), masterMetadata, executionContext);
+                                    // A dynamic bound skips the constant reader's guard - SqlOptimiser answers
+                                    // "dynamic" for any bound holding a column reference before it ever folds one -
+                                    // so the same wrap arrives here instead, read per master row at 64 bits by
+                                    // AsyncWindowJoinRecordCursorFactory.computeEffectiveBound(). Guard it against
+                                    // the master's own metadata, which is what lets the walk resolve those columns.
+                                    NarrowIntArithmetic.rejectWrapped(functionParser, context.getLoExpr(), masterMetadata, executionContext, NarrowIntArithmetic.SUBJECT_WINDOW_FRAME_BOUND);
                                     loSign = context.getLoKind() == WindowJoinContext.PRECEDING ? 1 : -1;
                                     loTimeUnit = context.getLoExprTimeUnit();
                                 }
                                 if (context.isDynamicHi()) {
                                     windowHiFunc = functionParser.parseFunction(context.getHiExpr(), masterMetadata, executionContext);
+                                    NarrowIntArithmetic.rejectWrapped(functionParser, context.getHiExpr(), masterMetadata, executionContext, NarrowIntArithmetic.SUBJECT_WINDOW_FRAME_BOUND);
                                     hiSign = context.getHiKind() == WindowJoinContext.FOLLOWING ? 1 : -1;
                                     hiTimeUnit = context.getHiExprTimeUnit();
                                 }
@@ -8720,6 +8727,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 long period = sampleByPeriod.getLong(null);
                 sampleByPeriod.close();
+                // The stride is a width the caller never sees: it is not projected, and the plan
+                // this spelling runs on prints the fill mode and the aggregates but not the stride.
+                // So a wrapped INT product would bucket by 500654080us where the caller wrote a
+                // day, and nothing in the result or in EXPLAIN would say so. The guard runs after
+                // the constant check above, which keeps a bind-variable or column stride reported
+                // as unfoldable rather than as an overflow.
+                NarrowIntArithmetic.rejectWrapped(functionParser, sampleByNode, EmptyRecordMetadata.INSTANCE, executionContext, NarrowIntArithmetic.SUBJECT_SAMPLE_BY_INTERVAL);
                 timestampSampler = TimestampSamplerFactory.getInstance(timestampDriver, period, sampleByUnits.token, sampleByUnits.position);
             }
 

@@ -1203,6 +1203,240 @@ mod tests {
         }
     }
 
+    /// Writes a nullable INT32 column. A `def_levels` entry of 0 is the definition level a QuestDB
+    /// column top is stored at, so the row group carries both real values and rows a BYTE, SHORT or
+    /// CHAR reader decodes back as 0.
+    fn gen_nullable_i32_parquet(
+        values: &[i32],
+        def_levels: &[i16],
+        with_bloom: bool,
+    ) -> ParquetResult<Vec<u8>> {
+        let col = Arc::new(
+            Type::primitive_type_builder("val", PhysicalType::INT32)
+                .with_id(Some(0))
+                .with_repetition(parquet::basic::Repetition::OPTIONAL)
+                .build()?,
+        );
+        let schema = Arc::new(
+            Type::group_type_builder("schema")
+                .with_fields(vec![col])
+                .build()?,
+        );
+        let mut props = WriterProperties::builder()
+            .set_dictionary_enabled(false)
+            .set_bloom_filter_enabled(with_bloom)
+            .set_statistics_enabled(parquet::file::properties::EnabledStatistics::Chunk);
+        if with_bloom {
+            props = props
+                .set_bloom_filter_ndv(values.len() as u64)
+                .set_bloom_filter_fpp(0.001)
+                .set_bloom_filter_position(BloomFilterPosition::AfterRowGroup);
+        }
+        let mut cursor = Cursor::new(Vec::new());
+        let mut fw = SerializedFileWriter::new(&mut cursor, schema, Arc::new(props.build()))?;
+        let mut rg = fw.next_row_group()?;
+        if let Some(mut cw) = rg.next_column()? {
+            let tw = cw.typed::<parquet::data_type::Int32Type>();
+            tw.write_batch(values, Some(def_levels), None)?;
+            cw.close()?;
+        }
+        rg.close()?;
+        fw.close()?;
+        Ok(cursor.into_inner())
+    }
+
+    /// The tags [`crate::parquet_read::ParquetDecoder::has_matchable_zero_nulls`] reports: their
+    /// column tops sit at definition level 0 yet decode back as 0, so 0 is a value the row group
+    /// can match even though no statistic and no bloom entry mentions it.
+    fn zero_decoding_tags() -> [(ColumnTypeTag, &'static str); 3] {
+        [
+            (ColumnTypeTag::Byte, "BYTE"),
+            (ColumnTypeTag::Short, "SHORT"),
+            (ColumnTypeTag::Char, "CHAR"),
+        ]
+    }
+
+    /// Covers the min/max half of the column-top zero guard on the `read_parquet()` arm, the one
+    /// `widen_int32_stats_to_include_zero` implements.
+    ///
+    /// A BYTE, SHORT or CHAR column top is written at definition level 0 and decodes back as 0, but
+    /// it never reaches the statistics: a row group holding `[5, 6]` plus a column top reports
+    /// min=5. `WHERE c = 0` and `WHERE c < 1` both match those rows natively, so pruning on the raw
+    /// statistics dropped rows native storage returns.
+    ///
+    /// Its twin in `parquet_metadata::skip` calls the same widening helper for the
+    /// CONVERT PARTITION TO PARQUET path, and the two must agree.
+    #[test]
+    fn no_skip_row_group_zero_matching_filter_over_column_top() -> ParquetResult<()> {
+        // 5 rows: two values, three column-top rows. Statistics report min=5, max=6, null_count=3.
+        let buf = gen_nullable_i32_parquet(&[5, 6], &[0, 1, 1, 0, 0], false)?;
+        let decoder = read_decoder(&buf)?;
+
+        for (tag, name) in zero_decoding_tags() {
+            // c = 0 matches every column-top row, so the group must survive.
+            let v: Vec<i32> = vec![0];
+            let filters = [make_filter_with_op_and_type(
+                0,
+                1,
+                v.as_ptr() as u64,
+                FILTER_OP_EQ,
+                tag as i32,
+            )];
+            assert!(
+                !decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+                "{name}: EQ 0 must not skip a group whose column top decodes as 0"
+            );
+
+            // c < 1 matches them too, and a raw min of 5 says otherwise.
+            let v: Vec<i32> = vec![1];
+            let filters = [make_filter_with_op_and_type(
+                0,
+                1,
+                v.as_ptr() as u64,
+                FILTER_OP_LT,
+                tag as i32,
+            )];
+            assert!(
+                !decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+                "{name}: LT 1 must not skip a group whose column top decodes as 0"
+            );
+
+            // Widening reaches 0 and stops there: a bound outside [0, 6] still prunes, so the
+            // guard costs only the pruning that was wrong.
+            let v: Vec<i32> = vec![7];
+            let filters = [make_filter_with_op_and_type(
+                0,
+                1,
+                v.as_ptr() as u64,
+                FILTER_OP_EQ,
+                tag as i32,
+            )];
+            assert!(
+                decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+                "{name}: EQ 7 lies outside the widened [0, 6] and should still skip"
+            );
+
+            let v: Vec<i32> = vec![6];
+            let filters = [make_filter_with_op_and_type(
+                0,
+                1,
+                v.as_ptr() as u64,
+                FILTER_OP_GT,
+                tag as i32,
+            )];
+            assert!(
+                decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+                "{name}: GT 6 lies above the widened max of 6 and should still skip"
+            );
+        }
+
+        // An INT column top decodes as i32::MIN, a genuine NULL, so nothing is widened and EQ 0
+        // still prunes. The guard is per type, not a blanket surrender of the skip.
+        let v: Vec<i32> = vec![0];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            1,
+            v.as_ptr() as u64,
+            FILTER_OP_EQ,
+            ColumnTypeTag::Int as i32,
+        )];
+        assert!(
+            decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+            "EQ 0 should still skip an INT group: its column top is not a zero"
+        );
+        Ok(())
+    }
+
+    /// Covers the bloom half of the same guard on the `read_parquet()` arm: the
+    /// `has_implicit_zeros` arm of `all_values_absent_from_bloom`.
+    ///
+    /// A bloom filter stores exact hashes, so widening the statistics cannot express the implicit
+    /// zero. The column-top rows were never hashed into the set, a 0 probe therefore reports
+    /// absent, and the EQ arm skips on that answer before it ever consults min/max.
+    #[test]
+    fn no_skip_row_group_bloom_zero_probe_over_column_top() -> ParquetResult<()> {
+        let values: Vec<i32> = vec![5, 6, 7, 9, 11, 13, 15, 17, 19, 21];
+        let mut def_levels: Vec<i16> = vec![1; values.len()];
+        def_levels.extend_from_slice(&[0, 0, 0]);
+        let buf = gen_nullable_i32_parquet(&values, &def_levels, true)?;
+        let decoder = read_decoder(&buf)?;
+
+        // The bloom filter is live and doing the pruning: 8 lies inside [5, 21], so min/max cannot
+        // prune it, yet the set reports it absent and the group is skipped on that alone. Without
+        // this the assertions below would pass on an empty bitset and prove nothing.
+        let v: Vec<i32> = vec![8];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            1,
+            v.as_ptr() as u64,
+            FILTER_OP_EQ,
+            ColumnTypeTag::Int as i32,
+        )];
+        assert!(
+            decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+            "the bloom filter must prune 8, which lies inside [5, 21]"
+        );
+
+        for (tag, name) in zero_decoding_tags() {
+            // 0 is absent from the set, yet three column-top rows decode as 0.
+            let v: Vec<i32> = vec![0];
+            let filters = [make_filter_with_op_and_type(
+                0,
+                1,
+                v.as_ptr() as u64,
+                FILTER_OP_EQ,
+                tag as i32,
+            )];
+            assert!(
+                !decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+                "{name}: a 0 probe must not prune on a bloom set the column top never entered"
+            );
+
+            // Only the 0 probe is spared: any other absent value still prunes on the bloom answer.
+            let v: Vec<i32> = vec![8];
+            let filters = [make_filter_with_op_and_type(
+                0,
+                1,
+                v.as_ptr() as u64,
+                FILTER_OP_EQ,
+                tag as i32,
+            )];
+            assert!(
+                decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+                "{name}: EQ 8 is absent from the set and should still skip"
+            );
+
+            // A value the set does hold keeps the group, as it always did.
+            let v: Vec<i32> = vec![13];
+            let filters = [make_filter_with_op_and_type(
+                0,
+                1,
+                v.as_ptr() as u64,
+                FILTER_OP_EQ,
+                tag as i32,
+            )];
+            assert!(
+                !decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+                "{name}: EQ 13 is in the row group and must not skip"
+            );
+        }
+
+        // INT once more: its column top is a genuine NULL, so a 0 probe prunes on the bloom answer.
+        let v: Vec<i32> = vec![0];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            1,
+            v.as_ptr() as u64,
+            FILTER_OP_EQ,
+            ColumnTypeTag::Int as i32,
+        )];
+        assert!(
+            decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
+            "EQ 0 should still skip an INT group: no column-top zero was left out of the set"
+        );
+        Ok(())
+    }
+
     #[test]
     fn skip_row_group_range_i32() -> ParquetResult<()> {
         let data: Vec<i32> = (10..20).collect(); // min=10, max=19
