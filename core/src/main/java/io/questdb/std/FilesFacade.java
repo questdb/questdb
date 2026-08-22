@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
@@ -68,9 +69,84 @@ public interface FilesFacade {
 
     int findType(long findPtr);
 
+    void fdatasync(long fd);
+
+    /**
+     * ORDERING barrier only — see {@link Files#barrierFsync(long)}. Never acknowledge a commit as durable
+     * on the strength of this alone; pair it with {@link #fdatasync(long)} at the commit point. Defaults to
+     * {@link #fdatasync(long)} so existing implementations keep their (stronger) behaviour.
+     */
+    default void barrierFsync(long fd) {
+        fdatasync(fd);
+    }
+
     void fsync(long fd);
 
+    /**
+     * {@link #fsync(long)} semantics (data AND metadata) with the device write cache actually flushed.
+     * Not interchangeable with {@link #fdatasync(long)}, which may skip metadata not needed to read the
+     * data back. Default delegates to {@link #fsync(long)} so existing implementations keep working.
+     */
+    default void fsyncDurable(long fd) {
+        fsync(fd);
+    }
+
     void fsyncAndClose(long fd);
+
+    /**
+     * Linux sync_file_range(2): initiate writeback of the file's page-cache pages over
+     * {@code [offset, offset+nbytes)} to the device cache without a device flush (see the
+     * {@code Files.SYNC_FILE_RANGE_*} flags). A no-op returning 0 on non-Linux platforms.
+     * Durability still requires a following {@link #fdatasync(long)}/{@link #fsync(long)}.
+     * <p>
+     * Provided as a {@code default} so existing implementors keep compiling; fault-injection
+     * facades may override it to model writeback/device-cache semantics.
+     */
+    default int syncFileRange(long fd, long offset, long nbytes, int flags) {
+        return Files.syncFileRange(fd, offset, nbytes, flags);
+    }
+
+    /**
+     * Linux syncfs(2): make the WHOLE filesystem containing {@code fd} durable in one device flush —
+     * writes back all dirty data and journals every pending metadata change (including ext4
+     * unwritten-&gt;written extent conversions for every inode), then flushes the device cache. Used by the
+     * batched SYNC commit to make all just-drained column extents truly durable with a single flush
+     * instead of one {@link #fdatasync(long)} per column. Falls back to an fsync of {@code fd} on
+     * non-Linux platforms. See {@link Files#syncfs(long)}.
+     * <p>
+     * Provided as a {@code default} so existing implementors keep compiling; fault-injection facades
+     * (e.g. the crash model) override it to model the whole-filesystem journal-commit + flush.
+     */
+    default void syncfs(long fd) {
+        int res = Files.syncfs(fd);
+        if (res == 0) {
+            return;
+        }
+        throw CairoException.critical(Os.errno()).put("could not syncfs [fd=").put(fd).put(']');
+    }
+
+    /**
+     * Returns whether {@link #syncfs(long)} flushes the entire filesystem containing {@code fd}.
+     * Linux provides that guarantee; the macOS and Windows implementations flush only the supplied file.
+     */
+    default boolean isSyncfsFileSystemWide() {
+        return Os.isLinux();
+    }
+
+    /**
+     * Whether {@link #syncFileRange(long, long, long, int)} is worth issuing against {@code root}.
+     * <p>
+     * {@code sync_file_range} is a Linux page-cache optimisation: it starts (and optionally waits for)
+     * writeback WITHOUT journalling any metadata, so it is only ever ADVISORY -- callers must still take a
+     * real barrier afterwards. On ZFS the page-cache model does not match (durability is a txg commit), so
+     * the call buys nothing and is skipped rather than risking the known mmap interactions.
+     *
+     * @param root a path on the filesystem in question
+     * @return {@code true} if a drain pass is likely to help
+     */
+    default boolean isSyncFileRangeEffective(CharSequence root) {
+        return Os.isLinux();
+    }
 
     long getDirSize(Path path);
 

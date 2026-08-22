@@ -34,6 +34,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.client.cutlass.qwp.client.QwpBufferWriter;
@@ -912,6 +913,144 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             } finally {
                 state.onDisconnected();
                 state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCollectDurableProgressSelectsByTier() throws Exception {
+        // Anti-downgrade regression: collectDurableProgress must SELECT the
+        // frontier for the connection's negotiated tier, never max() the two
+        // tiers together. Since localDurableSeqTxn >= uploadedSeqTxn always
+        // holds in practice, a blind max() resolves to the local frontier --
+        // which would silently downgrade a REPLICATED (failover-safe) client
+        // to mere LOCAL (power-loss-safe) durability.
+        assertMemoryLeak(() -> {
+            // registry where local (10) >= uploaded (4), as always holds in practice
+            DurableAckRegistry registry = new DurableAckRegistry() {
+                @Override
+                public long getLocalDurableSeqTxn(CharSequence tableDirName) {
+                    return 10;
+                }
+
+                @Override
+                public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
+                    return 4;
+                }
+
+                @Override
+                public boolean isEnabled() {
+                    return true;
+                }
+            };
+
+            // REPLICATED connection must NOT advance past the uploaded frontier.
+            QwpIngressProcessorState replicated = newStateWithPendingTable("t", "t~1");
+            try {
+                replicated.setDurableAckEnabled(true);
+                replicated.setDurableAckTier(DurabilityTier.REPLICATED);
+                Assert.assertEquals(4, replicated.collectDurableProgress(registry).get("t"));
+            } finally {
+                replicated.onDisconnected();
+                replicated.close();
+            }
+
+            // LOCAL connection may advance to the local (fdatasync) frontier.
+            QwpIngressProcessorState local = newStateWithPendingTable("t", "t~1");
+            try {
+                local.setDurableAckEnabled(true);
+                local.setDurableAckTier(DurabilityTier.LOCAL);
+                Assert.assertEquals(10, local.collectDurableProgress(registry).get("t"));
+            } finally {
+                local.onDisconnected();
+                local.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDurableWorkCoverageSelectsByTier() throws Exception {
+        // isDurableWorkFullyCovered gates the role-change close's exactly-once guard: it asks "will the
+        // final durable ack we are about to flush cover ALL of this connection's committed work?". That ack
+        // is built by collectDurableProgress from the connection's NEGOTIATED tier, so this predicate must
+        // read the SAME frontier. Reading the REPLICATED frontier unconditionally (as it once did) is always
+        // -1 for a LOCAL-tier connection in OSS, which made the predicate permanently false: every LOCAL
+        // role-change close burned the full grace budget and then logged the "closing with un-acked durable
+        // work" alarm even when the local frontier had in fact covered everything.
+        assertMemoryLeak(() -> {
+            // Asymmetric registry: the local (fdatasync) frontier covers the pending seqTxn 1; the
+            // replicated (upload) frontier does not. Exactly the OSS shape, where there is no upload
+            // pipeline at all.
+            DurableAckRegistry registry = new DurableAckRegistry() {
+                @Override
+                public long getLocalDurableSeqTxn(CharSequence tableDirName) {
+                    return 1;
+                }
+
+                @Override
+                public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
+                    return -1;
+                }
+
+                @Override
+                public boolean isEnabled() {
+                    return true;
+                }
+            };
+
+            // A LOCAL-tier connection is fully covered: its ack will advance the client's replay watermark
+            // past everything it committed, so the close may complete immediately.
+            QwpIngressProcessorState local = newStateWithPendingTable("t", "t~1");
+            try {
+                local.setDurableAckTier(DurabilityTier.LOCAL);
+                Assert.assertTrue(
+                        "a LOCAL-tier connection must be judged covered by the LOCAL frontier",
+                        local.isDurableWorkFullyCovered(registry));
+            } finally {
+                local.onDisconnected();
+                local.close();
+            }
+
+            // A REPLICATED-tier connection asked for a stronger guarantee this registry cannot yet meet, so
+            // it must NOT be judged covered -- the tier selection must not simply always pick the (weaker,
+            // numerically higher) local frontier either.
+            QwpIngressProcessorState replicated = newStateWithPendingTable("t", "t~1");
+            try {
+                replicated.setDurableAckTier(DurabilityTier.REPLICATED);
+                Assert.assertFalse(
+                        "a REPLICATED-tier connection must NOT be satisfied by the weaker LOCAL frontier",
+                        replicated.isDurableWorkFullyCovered(registry));
+            } finally {
+                replicated.onDisconnected();
+                replicated.close();
+            }
+
+            // Once the replicated frontier catches up, the REPLICATED connection is covered too.
+            DurableAckRegistry caughtUp = new DurableAckRegistry() {
+                @Override
+                public long getLocalDurableSeqTxn(CharSequence tableDirName) {
+                    return 5;
+                }
+
+                @Override
+                public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
+                    return 1;
+                }
+
+                @Override
+                public boolean isEnabled() {
+                    return true;
+                }
+            };
+            QwpIngressProcessorState caught = newStateWithPendingTable("t", "t~1");
+            try {
+                caught.setDurableAckTier(DurabilityTier.REPLICATED);
+                Assert.assertTrue(
+                        "a REPLICATED connection must be covered once the replicated frontier reaches its work",
+                        caught.isDurableWorkFullyCovered(caughtUp));
+            } finally {
+                caught.onDisconnected();
+                caught.close();
             }
         });
     }
@@ -5192,7 +5331,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
 
                 // Nothing pending -> trivially covered.
-                Assert.assertTrue(state.isDurableWorkFullyUploaded(registry));
+                Assert.assertTrue(state.isDurableWorkFullyCovered(registry));
 
                 fake.queueCommit(
                         new String[]{"t1", "t2"},
@@ -5203,29 +5342,29 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 state.commit();
 
                 // No uploads at all.
-                Assert.assertFalse(state.isDurableWorkFullyUploaded(registry));
+                Assert.assertFalse(state.isDurableWorkFullyCovered(registry));
 
                 // One table lagging behind its committed seqTxn.
                 registry.set("t1~1", 10L);
                 registry.set("t2~1", 19L);
-                Assert.assertFalse(state.isDurableWorkFullyUploaded(registry));
+                Assert.assertFalse(state.isDurableWorkFullyCovered(registry));
 
                 // Watermarks caught up on both tables.
                 registry.set("t2~1", 20L);
-                Assert.assertTrue(state.isDurableWorkFullyUploaded(registry));
+                Assert.assertTrue(state.isDurableWorkFullyCovered(registry));
 
                 // Coverage survives the durable-ack prune...
                 state.collectDurableProgress(registry);
                 state.onDurableAckSent();
-                Assert.assertTrue(state.isDurableWorkFullyUploaded(registry));
+                Assert.assertTrue(state.isDurableWorkFullyCovered(registry));
 
                 // ...and a fresh commit re-opens the window until its upload lands.
                 fake.queueCommit(new String[]{"t1"}, new String[]{"t1~1"}, new long[]{11L});
                 state.setHighestProcessedSequence(1);
                 state.commit();
-                Assert.assertFalse(state.isDurableWorkFullyUploaded(registry));
+                Assert.assertFalse(state.isDurableWorkFullyCovered(registry));
                 registry.set("t1~1", 11L);
-                Assert.assertTrue(state.isDurableWorkFullyUploaded(registry));
+                Assert.assertTrue(state.isDurableWorkFullyCovered(registry));
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -5823,6 +5962,27 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         return tud;
     }
 
+    /**
+     * Builds a state with one table ({@code tableName}, on-disk dir
+     * {@code dirName}) already committed and sitting in the pending
+     * durable-ack set, via the same FakeConsumerTudCache + commit() path the
+     * other collectDurableProgress tests use. durableAckEnabled is left true
+     * (needed for recordCommittedTable to populate pendingDurableDirNames);
+     * callers are still expected to (re-)set it and the tier explicitly.
+     */
+    private static QwpIngressProcessorState newStateWithPendingTable(String tableName, String dirName) throws Exception {
+        LineHttpProcessorConfiguration lineConfig =
+                new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+        QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+        state.of(1, AllowAllSecurityContext.INSTANCE);
+        state.setDurableAckEnabled(true);
+        FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+        fake.queueCommit(new String[]{tableName}, new String[]{dirName}, new long[]{1L});
+        state.setHighestProcessedSequence(0);
+        state.commit();
+        return state;
+    }
+
     private static void addEncodedRow(QwpIngressProcessorState state, String tableName, int value, byte flags) {
         try (QwpTableBuffer buffer = new QwpTableBuffer(tableName);
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
@@ -6154,9 +6314,26 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         private final HashMap<String, Long> watermarks = new HashMap<>();
 
         @Override
-        public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+        public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
             Long v = watermarks.get(tableDirName.toString());
             return v == null ? -1L : v;
+        }
+
+        // This shared fake predates per-connection tier selection and does not
+        // model two independent frontiers: it mirrors the same watermark for
+        // the local tier as for the uploaded tier, so tests using it via set()
+        // get consistent progress regardless of which tier the connection
+        // under test negotiated (most don't set one and default to
+        // DurabilityTier.NONE, which reads this method). Before tier selection
+        // replaced collectDurableProgress's Math.max(), that max() collapsed to
+        // the uploaded value anyway because this fake's local tier was always
+        // -1 -- so mirroring here preserves those tests' original behavior
+        // exactly. Tests that must tell LOCAL and REPLICATED apart (e.g.
+        // testCollectDurableProgressSelectsByTier) construct their own
+        // asymmetric DurableAckRegistry instead of using this fake.
+        @Override
+        public long getLocalDurableSeqTxn(CharSequence tableDirName) {
+            return getReplicatedDurableSeqTxn(tableDirName);
         }
 
         @Override

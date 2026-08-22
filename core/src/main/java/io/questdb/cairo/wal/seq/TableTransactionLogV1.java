@@ -67,9 +67,13 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
     private final CairoConfiguration configuration;
+    private final TxnLogCrcSidecar crcSidecar = new TxnLogCrcSidecar();
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
+    // Per-table EFFECTIVE commit mode for the sequencer-record flush; UNSET => defer to the global mode.
+    // Pushed by TableSequencerImpl from its SeqTxnTracker. See setCommitMode / sync0 (Deferred 1).
+    private volatile int tableCommitMode = CommitMode.UNSET;
 
     public TableTransactionLogV1(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -104,6 +108,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         Unsafe.storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
+        recordCrcBeforePublish(maxTxn);
         txnMem.putLong(MAX_TXN_OFFSET_64, maxTxn);
         sync0();
         // Transactions are 1 based here
@@ -128,6 +133,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             }
         }
         txnMem.close(false);
+        crcSidecar.close();
     }
 
     @Override
@@ -142,14 +148,35 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         txnMem.putInt(0);
         sync0();
         txnMem.jumpTo(HEADER_SIZE);
+
+        // A table created by this binary is covered from its very first txn: nothing predates the
+        // sidecar here, so the watermark is 1 rather than lastTxn + 1 as on the open() path.
+        try {
+            crcSidecar.ofNewLineage(ff, path.concat(WalUtils.TXNLOG_CRC_FILE_NAME), 1L);
+        } finally {
+            path.trimTo(pathLength);
+        }
     }
 
     @Override
     public long endMetadataChangeEntry() {
         // Transactions are 1 based here
         long nextTxn = maxTxn.incrementAndGet();
+        recordCrcBeforePublish(nextTxn);
         txnMem.putLong(MAX_TXN_OFFSET_64, nextTxn);
         return nextTxn;
+    }
+
+    @Override
+    public void fdatasyncTxnLog() {
+        // The deferred (batched) device flush for adaptive group commit. The CRC sidecar goes FIRST:
+        // the header must not become device-durable ahead of the CRC for a txn it advertises, or a
+        // crash in between leaves an intact record whose CRC never landed -- which the reader
+        // classifies as torn, a loud false alarm on healthy data.
+        crcSidecar.fdatasync();
+        if (txnMem.isOpen()) {
+            ff.fdatasync(txnMem.getFd());
+        }
     }
 
     @Override
@@ -196,21 +223,80 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
         maxTxn.set(lastTxn);
+        // Watermark = the next txn to be written. Records already on disk predate this sidecar and
+        // carry no CRC, so they must stay classified as legacy rather than torn. A sidecar that
+        // already exists keeps its own recorded watermark; this value only matters on first creation.
+        final int seqDirLen = path.size();
+        try {
+            crcSidecar.of(ff, path.concat(WalUtils.TXNLOG_CRC_FILE_NAME), lastTxn + 1);
+        } finally {
+            path.trimTo(seqDirLen);
+        }
         txnMem.jumpTo(HEADER_SIZE);
         long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
         txnMem.jumpTo(HEADER_SIZE + lastTxn * RECORD_SIZE);
         return maxStructureVersion;
     }
 
-    private void sync0() {
-        int commitMode = configuration.getCommitMode();
+    @Override
+    public void setCommitMode(int commitMode) {
+        this.tableCommitMode = commitMode;
+    }
+
+    /**
+     * Records the CRC for {@code txn} and makes it durable BEFORE the caller publishes the txn in the
+     * header. The order is the invariant: a header that advertises a txn whose CRC never reached the
+     * device leaves a record the reader classifies as absent-beyond-the-watermark -- torn -- which is a
+     * loud false alarm on an otherwise healthy table. The reverse order costs nothing: a CRC with no
+     * txn behind it is simply never read.
+     * <p>
+     * The 8-byte append rides the same grade as the header flush, so on NOSYNC it costs no barrier at
+     * all, and elsewhere it is one small extra file in a flush that was happening anyway.
+     */
+    private void recordCrcBeforePublish(long txn) {
+        final long recordOffset = HEADER_SIZE + (txn - 1) * RECORD_SIZE;
+        crcSidecar.append(txn, txnMem.addressOf(recordOffset), RECORD_SIZE);
+        final int commitMode = CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
         if (commitMode != CommitMode.NOSYNC) {
-            txnMem.sync(commitMode == CommitMode.ASYNC);
+            // Mirror the grade sync0() gives the header, rather than always taking MS_SYNC. Under
+            // adaptive group commit (W>0) the header deliberately takes MS_ASYNC and defers the device
+            // flush to fdatasyncTxnLog(); an unconditional MS_SYNC here would be a device flush per
+            // commit and would defeat exactly the batching this branch exists to add.
+            final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE
+                    && configuration.getAdaptiveCommitGroupWindowUs() > 0;
+            crcSidecar.sync(commitMode == CommitMode.ASYNC || deferDeviceFlush);
+            if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
+                crcSidecar.fdatasync();
+            }
+        }
+    }
+
+    private void sync0() {
+        int commitMode = CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
+        if (commitMode != CommitMode.NOSYNC) {
+            // Deferred 2 (group commit, W>0): push the V1 sequencer header to the page cache with
+            // msync(MS_ASYNC) — writeback-only, NO device flush — and DEFER the fdatasync to the batched
+            // flushPendingDurable (via fdatasyncTxnLog) as the final seq step. MS_SYNC here would device-flush
+            // every commit and defeat the window. Other modes (and ADAPTIVE W=0) keep their existing grade.
+            final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE
+                    && configuration.getAdaptiveCommitGroupWindowUs() > 0;
+            txnMem.sync(commitMode == CommitMode.ASYNC || deferDeviceFlush);
+            // ADAPTIVE: make the V1 sequencer header durable (deferred to the batch under W>0).
+            if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
+                ff.fdatasync(txnMem.getFd());
+            }
         }
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
         private long address;
+        // Read-only view of the _txnlog.c CRC sidecar. Absent (fd <= -1) on a table written before the
+        // sidecar existed, in which case crcFirstCoveredTxn stays Long.MAX_VALUE and every record is
+        // classified legacy -- exactly the pre-sidecar behaviour.
+        private long crcBuf;
+        private long crcFd = -1;
+        private long crcFirstCoveredTxn = Long.MAX_VALUE;
+        private long lastReadCrc;
         private long fd;
         private FilesFacade ff;
         private long txn;
@@ -229,6 +315,15 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         @Override
         public void close() {
+            if (crcFd > -1) {
+                ff.close(crcFd);
+                crcFd = -1;
+            }
+            crcFirstCoveredTxn = Long.MAX_VALUE;
+            if (crcBuf != 0) {
+                Unsafe.free(crcBuf, TxnLogCrcSidecar.ENTRY_SIZE, MemoryTag.NATIVE_DEFAULT);
+                crcBuf = 0;
+            }
             if (fd > 0) {
                 ff.close(fd);
                 fd = 0;
@@ -360,9 +455,107 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             if (txnOffset + 2 * RECORD_SIZE <= mappedLen) {
                 txnOffset += RECORD_SIZE;
                 txn++;
+                verifyRecordChecksum();
                 return true;
             }
             return false;
+        }
+
+        /**
+         * V1's CRC lives in the _txnlog.c sidecar rather than a reserved slot, but the verdict comes
+         * from the same place V2's does, so a torn record cannot be fatal on one format and invisible
+         * on the other.
+         */
+        private void verifyRecordChecksum() {
+            if (!readApplicableCrc(txn)) {
+                // No applicable entry: none written, the stamp does not name this txn, or the read
+                // failed. The sidecar's pages flush independently of _txnlog's, so after a crash an
+                // entry can be missing or half-landed at ANY txn -- none of which says anything about
+                // the RECORD. Read it unverified.
+                return;
+            }
+            // Stamped for this txn, so the CRC is authoritative and a disagreement is real corruption
+            // -- INCLUDING a zeroed CRC, which is why applicability is a separate answer from the value.
+            TxnLogRecordVerifier.verify(
+                    txn,
+                    address + txnOffset,
+                    RECORD_SIZE,
+                    lastReadCrc,
+                    Long.MIN_VALUE, // applicability already decided by the stamp
+                    txnOffset
+            );
+        }
+
+        private int readSidecarInt(FilesFacade ff, long offset) {
+            return ff.read(crcFd, crcBuf, Integer.BYTES, offset) == Integer.BYTES
+                    ? Unsafe.getUnsafe().getInt(crcBuf)
+                    : -1;
+        }
+
+        private long readSidecarLong(FilesFacade ff, long offset) {
+            return ff.read(crcFd, crcBuf, Long.BYTES, offset) == Long.BYTES
+                    ? Unsafe.getUnsafe().getLong(crcBuf)
+                    : 0L;
+        }
+
+        /**
+         * Reads the whole {@code [crc][stamp]} pair in ONE pread. Returns whether the entry APPLIES to
+         * this txn, leaving the CRC in {@link #lastReadCrc}.
+         * <p>
+         * Applicability and value are deliberately separate answers. Returning the CRC alone cannot
+         * distinguish "no applicable entry" from "an entry stamped for this txn whose CRC is zero" --
+         * and the second is corruption, since calculateCvAreaChecksum never returns 0 for a record it
+         * hashed. Collapsing them silently skips detection.
+         * <p>
+         * One read, not two: the pair is 16 adjacent, 16-byte-aligned bytes, so a second syscall buys
+         * nothing on what is the default sequencer read path. It also makes the failure direction
+         * right -- a short or failed read now means "not applicable" (unverified) instead of being
+         * indistinguishable from "the CRC was never written", which would report corruption.
+         */
+        private boolean readApplicableCrc(long txn) {
+            lastReadCrc = 0;
+            if (crcFd <= -1 || txn < crcFirstCoveredTxn) {
+                return false;
+            }
+            final long offset = TxnLogCrcSidecar.BODY_OFFSET
+                    + (txn - crcFirstCoveredTxn) * TxnLogCrcSidecar.ENTRY_SIZE;
+            if (ff.read(crcFd, crcBuf, TxnLogCrcSidecar.ENTRY_SIZE, offset) != TxnLogCrcSidecar.ENTRY_SIZE) {
+                return false;
+            }
+            // The stamp gates the CRC: only a stamp naming THIS txn proves the pair landed whole.
+            if (Unsafe.getUnsafe().getLong(crcBuf + TxnLogCrcSidecar.ENTRY_STAMP_OFFSET) != txn) {
+                return false;
+            }
+            // Raw read, NOT readNonNegativeLong: a checksum uses the full 64-bit range.
+            lastReadCrc = Unsafe.getUnsafe().getLong(crcBuf);
+            return true;
+        }
+
+        private void openCrcSidecar(FilesFacade ff, boolean bypassFdCache, Path path) {
+            final int len = path.size();
+            try {
+                // Same fd-cache policy as the txnlog itself: the sidecar is a sequencer file and must
+                // not be the one thing that quietly stays cached when the rest does not.
+                path.concat(WalUtils.TXNLOG_CRC_FILE_NAME);
+                crcFd = bypassFdCache ? ff.openRONoCache(path.$()) : ff.openRO(path.$());
+                if (crcFd > -1) {
+                    // Validate the FULL header, not just the magic. Accepting a sidecar whose entry
+                    // size differs from the compiled-in one would compute misaligned offsets, read
+                    // non-zero garbage as a CRC, and report "torn" on a perfectly healthy table.
+                    if (readSidecarLong(ff, 0) == TxnLogCrcSidecar.MAGIC
+                            && readSidecarInt(ff, 8) == TxnLogCrcSidecar.FILE_VERSION
+                            && readSidecarInt(ff, 12) == TxnLogCrcSidecar.ENTRY_SIZE) {
+                        crcFirstCoveredTxn = readSidecarLong(ff, 16);
+                    } else {
+                        // Unrecognisable sidecar: treat as absent rather than fatal. It carries no
+                        // durability claim, so the cost is lost detection, never a failed read.
+                        ff.close(crcFd);
+                        crcFd = -1;
+                    }
+                }
+            } finally {
+                path.trimTo(len);
+            }
         }
 
         @NotNull
@@ -384,6 +577,10 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             }
             this.txnLo = txnLo;
             txn = txnLo;
+            if (crcBuf == 0) {
+                crcBuf = Unsafe.malloc(TxnLogCrcSidecar.ENTRY_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+            openCrcSidecar(ff, bypassFdCache, path);
             return this;
         }
 

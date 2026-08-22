@@ -370,6 +370,50 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsync(JNIEnv *e, jclass cl, jin
     return -1;
 }
 
+/* Windows has no ordering-only barrier; FlushFileBuffers is the durable one, so the split is a no-op. */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_barrierFsync0(JNIEnv *e, jclass cl, jint fd) {
+    if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
+/* FlushFileBuffers already flushes the device write cache, so fsync's contract is met as-is here. */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsyncDurable0(JNIEnv *e, jclass cl, jint fd) {
+    if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fdatasync0(JNIEnv *e, jclass cl, jint fd) {
+    /* Windows has no fdatasync; FlushFileBuffers is the equivalent primitive */
+    if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncfs0(JNIEnv *e, jclass cl, jint fd) {
+    /* Windows has no syncfs (whole-filesystem flush bound to an fd); FlushFileBuffers on this fd is the
+     * closest single-file equivalent, same as fsync. The batched SYNC path is Linux-only anyway. */
+    if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncFileRange0(JNIEnv *e, jclass cl, jint fd, jlong offset, jlong nbytes, jint flags) {
+    /* Windows has no sync_file_range; return 0 (no-op). Java callers MUST fall back to a full
+     * fsync/fdatasync for durability rather than relying on this. */
+    (void) e; (void) cl; (void) fd; (void) offset; (void) nbytes; (void) flags;
+    return 0;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_sync(JNIEnv *e, jclass cl) {
     // Windows does not seem to have sync.
     return -1;

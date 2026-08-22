@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
@@ -66,12 +67,18 @@ public class WalTableListFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
     private static final String SIGNATURE = "wal_tables()";
     private static final int bufferedTxnSizeColumn;
+    private static final int commitModeColumn;
+    private static final int durableEpochSeqTxnColumn;
     private static final int errorMessageColumn;
     private static final int errorTagColumn;
+    private static final int lastEpochTsColumn;
+    private static final int localDurableSeqTxnColumn;
     private static final int memoryPressureLevelColumn;
     private static final int nameColumn;
+    private static final int recoveryIncarnationColumn;
     private static final int sequencerTxnColumn;
     private static final int suspendedColumn;
+    private static final int walRetentionTxnColumn;
     private static final int writerTxnColumn;
 
     @Override
@@ -104,6 +111,9 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         private final TableListRecordCursor cursor;
         private final FilesFacade ff;
         private final SqlExecutionContext sqlExecutionContext;
+        // The global cairo.commit.mode, used as the fallback when a table has no per-table override
+        // published on its SeqTxnTracker (CommitMode.UNSET).
+        private final int globalCommitMode;
         private CairoEngine engine;
         private Path rootPath;
 
@@ -113,6 +123,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             this.rootPath = new Path();
             rootPath.of(configuration.getDbRoot());
             this.sqlExecutionContext = sqlExecutionContext;
+            this.globalCommitMode = configuration.getCommitMode();
             this.cursor = new TableListRecordCursor();
         }
 
@@ -194,12 +205,18 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
             public class TableListRecord implements Record {
                 private long bufferedTxnSize;
+                private String commitMode;
+                private long durableEpochSeqTxn;
                 private String errorMessage;
                 private String errorTag;
+                private long lastEpochTs;
+                private long localDurableSeqTxn;
                 private int memoryPressureLevel;
+                private long recoveryIncarnation;
                 private long sequencerTxn;
                 private boolean suspendedFlag;
                 private String tableName;
+                private long walRetentionTxn;
                 private long writerTxn;
 
                 @Override
@@ -229,6 +246,21 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                     if (col == sequencerTxnColumn) {
                         return sequencerTxn;
                     }
+                    if (col == durableEpochSeqTxnColumn) {
+                        return durableEpochSeqTxn;
+                    }
+                    if (col == walRetentionTxnColumn) {
+                        return walRetentionTxn;
+                    }
+                    if (col == recoveryIncarnationColumn) {
+                        return recoveryIncarnation;
+                    }
+                    if (col == localDurableSeqTxnColumn) {
+                        return localDurableSeqTxn;
+                    }
+                    if (col == lastEpochTsColumn) {
+                        return lastEpochTs;
+                    }
                     return Numbers.LONG_NULL;
                 }
 
@@ -242,6 +274,9 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                     }
                     if (col == errorMessageColumn) {
                         return errorMessage;
+                    }
+                    if (col == commitModeColumn) {
+                        return commitMode;
                     }
                     return null;
                 }
@@ -263,12 +298,27 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         SeqTxnTracker seqTxnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                         memoryPressureLevel = seqTxnTracker.getMemPressureControl().getMemoryPressureLevel();
                         tableName = tableToken.getTableName();
+                        // Per-table EFFECTIVE commit mode: the override published on the tracker, else the
+                        // global mode. Deferred 1 — a WITH commit_mode='adaptive' table reports 'adaptive'
+                        // even when the instance default is 'nosync'.
+                        commitMode = CommitMode.toString(
+                                CommitMode.effectiveCommitMode(seqTxnTracker.getCommitMode(), globalCommitMode)
+                        );
 
                         if (seqTxnTracker.isInitialised()) {
                             suspendedFlag = seqTxnTracker.isSuspended();
                             sequencerTxn = seqTxnTracker.getSeqTxn();
                             writerTxn = seqTxnTracker.getWriterTxn();
                             bufferedTxnSize = seqTxnTracker.getLagTxnCount();
+                            durableEpochSeqTxn = seqTxnTracker.getDurableEpochSeqTxn();
+                            walRetentionTxn = seqTxnTracker.getDurableEpochSeqTxn();
+                            recoveryIncarnation = seqTxnTracker.getRecoveryIncarnation();
+                            localDurableSeqTxn = seqTxnTracker.getLocalDurableSeqTxn();
+                            // getLastEpochTs() is wall-clock MILLIS (0 == no epoch yet); the column is
+                            // TIMESTAMP (MICROS). Render NULL for "no epoch" rather than a misleading
+                            // 1970-01-01 (epoch 0) timestamp; scale ms -> micros when a real epoch exists.
+                            long lastEpochMs = seqTxnTracker.getLastEpochTs();
+                            lastEpochTs = lastEpochMs > 0 ? lastEpochMs * 1000 : Numbers.LONG_NULL;
                             if (suspendedFlag) {
                                 // only read error details from seqTxnTracker if the table is suspended
                                 // when the table is not suspended, it is not guaranteed that error details are immediately cleared
@@ -280,6 +330,13 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             }
                             return true;
                         }
+
+                        // Tracker not yet initialised: epoch/retention fields default to 0
+                        durableEpochSeqTxn = 0;
+                        walRetentionTxn = 0;
+                        recoveryIncarnation = 0;
+                        localDurableSeqTxn = 0;
+                        lastEpochTs = Numbers.LONG_NULL;
 
                         try {
                             // We used to have suspended flag saved in the sequencer metadata file
@@ -348,6 +405,19 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         errorMessageColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("memoryPressure", ColumnType.INT));
         memoryPressureLevelColumn = metadata.getColumnCount() - 1;
+        // Plan 4 adaptive observability columns (appended — existing positional consumers unaffected)
+        metadata.add(new TableColumnMetadata("commitMode", ColumnType.STRING));
+        commitModeColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("durableEpochSeqTxn", ColumnType.LONG));
+        durableEpochSeqTxnColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("walRetentionTxn", ColumnType.LONG));
+        walRetentionTxnColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("recoveryIncarnation", ColumnType.LONG));
+        recoveryIncarnationColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("localDurableSeqTxn", ColumnType.LONG));
+        localDurableSeqTxnColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("lastEpochTs", ColumnType.TIMESTAMP));
+        lastEpochTsColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }
 }

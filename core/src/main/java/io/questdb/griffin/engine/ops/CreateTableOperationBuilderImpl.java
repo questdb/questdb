@@ -56,6 +56,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private long batchO3MaxLag = -1;
     private long batchSize = -1;
+    private int commitMode = io.questdb.cairo.CommitMode.UNSET;
+    private boolean commitModeSpecified;
     private int defaultSymbolCapacity;
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableNameExpr;
@@ -95,7 +97,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     ) throws SqlException {
         boolean autoIncludeTs = compiler.getEngine().getConfiguration().isPostingIndexAutoIncludeTimestamp();
         if (selectText != null) {
-            return new CreateTableOperationImpl(
+            CreateTableOperationImpl op = new CreateTableOperationImpl(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
                     tableNameExpr.position,
@@ -121,6 +123,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     tableKind,
                     autoIncludeTs
             );
+            op.setCommitMode(commitMode);
+            return op;
         }
 
         if (likeTableNameExpr != null) {
@@ -128,7 +132,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             if (likeTableNameToken == null) {
                 throw SqlException.tableDoesNotExist(likeTableNameExpr.position, likeTableNameExpr.token);
             }
-            return new CreateTableOperationImpl(
+            final CreateTableOperationImpl op = new CreateTableOperationImpl(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
                     tableNameExpr.position,
@@ -140,9 +144,13 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     likeTableNameExpr.position,
                     ignoreIfExists
             );
+            if (commitModeSpecified) {
+                op.setCommitMode(commitMode);
+            }
+            return op;
         }
 
-        return new CreateTableOperationImpl(
+        CreateTableOperationImpl op = new CreateTableOperationImpl(
                 Chars.toString(sqlText),
                 Chars.toString(tableNameExpr.token),
                 tableNameExpr.position,
@@ -162,6 +170,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 walEnabled,
                 autoIncludeTs
         );
+        op.setCommitMode(commitMode);
+        return op;
     }
 
     @Override
@@ -171,6 +181,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         columnModels.clear();
         batchO3MaxLag = -1;
         batchSize = -1;
+        commitMode = io.questdb.cairo.CommitMode.UNSET;
+        commitModeSpecified = false;
         tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
         tableFormatPosition = 0;
         defaultSymbolCapacity = 0;
@@ -290,6 +302,11 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public void setLikeTableNameExpr(ExpressionNode expr) {
         this.likeTableNameExpr = expr;
+    }
+
+    public void setCommitMode(int commitMode) {
+        this.commitMode = commitMode;
+        this.commitModeSpecified = true;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {

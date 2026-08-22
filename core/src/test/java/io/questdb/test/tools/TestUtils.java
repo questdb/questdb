@@ -28,6 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -1607,6 +1609,27 @@ public final class TestUtils {
         path.of(engine.getConfiguration().getDbRoot()).concat(token);
         TableUtils.createTable(engine.getConfiguration(), memory, engine.getTelemetry(), path, structure, ColumnType.VERSION, tableId, token.getDirName());
         engine.registerTableToken(token);
+        // Publish the generation-zero epoch anchor, exactly as CairoEngine's create path does before it
+        // registers the sequencer. The anchor is otherwise written by TableWriter, so a table built here
+        // and never written to has none -- and RecoveryCoordinator refuses to fall back to live state for
+        // a markerless adaptive table, failing the whole engine on the next startup rather than just that
+        // table. Tests that create a table this way and then restart a server would blame the restart.
+        if (structure.isWalEnabled() && !structure.isView()) {
+            final int declaredMode = structure.getCommitMode();
+            final CairoConfiguration configuration = engine.getConfiguration();
+            final int effectiveMode = declaredMode == CommitMode.UNSET ? configuration.getCommitMode() : declaredMode;
+            if (effectiveMode == CommitMode.ADAPTIVE) {
+                final int timestampIndex = structure.getTimestampIndex();
+                final int timestampType = timestampIndex < 0 ? ColumnType.TIMESTAMP : structure.getColumnType(timestampIndex);
+                DurableEpochManifest.publishInitial(
+                        configuration,
+                        token,
+                        timestampType,
+                        structure.getPartitionBy(),
+                        configuration.getMicrosecondClock().getTicks() / 1000L
+                );
+            }
+        }
         if (structure.isWalEnabled()) {
             engine.getTableSequencerAPI().registerTable(tableId, structure, token);
         }

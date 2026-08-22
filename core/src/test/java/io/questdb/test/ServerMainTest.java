@@ -628,6 +628,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                     final String[] expectedProps = (
                             "property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable\n" +
                                     "binarydata.encoding.maxlength\tQDB_BINARYDATA_ENCODING_MAXLENGTH\t32768\tdefault\tfalse\tfalse\n" +
+                                    "cairo.adaptive.commit.group.window\tQDB_CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW\t50000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.adaptive.epoch.column.sync.batched\tQDB_CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.adaptive.epoch.flush.on.close\tQDB_CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.adaptive.epoch.interval\tQDB_CAIRO_ADAPTIVE_EPOCH_INTERVAL\t60000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.adaptive.epoch.max.rows\tQDB_CAIRO_ADAPTIVE_EPOCH_MAX_ROWS\t5000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.adaptive.recovery.roll.forward.enabled\tQDB_CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.attach.partition.copy\tQDB_CAIRO_ATTACH_PARTITION_COPY\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.attach.partition.suffix\tQDB_CAIRO_ATTACH_PARTITION_SUFFIX\t.attachable\tdefault\tfalse\tfalse\n" +
                                     "cairo.character.store.capacity\tQDB_CAIRO_CHARACTER_STORE_CAPACITY\t1024\tdefault\tfalse\tfalse\n" +
@@ -635,7 +641,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.column.indexer.queue.capacity\tQDB_CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.column.pool.capacity\tQDB_CAIRO_COLUMN_POOL_CAPACITY\t4096\tdefault\tfalse\tfalse\n" +
                                     "cairo.commit.lag\tQDB_CAIRO_COMMIT_LAG\t600000\tdefault\tfalse\tfalse\n" +
-                                    "cairo.commit.mode\tQDB_CAIRO_COMMIT_MODE\tnosync\tdefault\tfalse\tfalse\n" +
+                                    "cairo.commit.mode\tQDB_CAIRO_COMMIT_MODE\tadaptive\tdefault\tfalse\tfalse\n" +
                                     "cairo.create.as.select.retry.count\tQDB_CAIRO_CREATE_AS_SELECT_RETRY_COUNT\t5\tdefault\tfalse\tfalse\n" +
                                     "cairo.date.locale\tQDB_CAIRO_DATE_LOCALE\ten\tdefault\tfalse\tfalse\n" +
                                     "cairo.default.sequencer.part.txn.count\tQDB_CAIRO_DEFAULT_SEQUENCER_PART_TXN_COUNT\t0\tdefault\tfalse\tfalse\n" +
@@ -859,6 +865,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.unordered.page.frame.reduce.queue.capacity\tQDB_CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY\t4096\tdefault\tfalse\tfalse\n" +
                                     "cairo.vector.aggregate.queue.capacity\tQDB_CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.volumes\tQDB_CAIRO_VOLUMES\t\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.commit.writeback.drain\tQDB_CAIRO_WAL_COMMIT_WRITEBACK_DRAIN\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.enabled\tQDB_CAIRO_WAL_APPLY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.look.ahead.txn.count\tQDB_CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT\t200\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.table.time.quota\tQDB_CAIRO_WAL_APPLY_TABLE_TIME_QUOTA\t1000\tdefault\tfalse\tfalse\n" +
@@ -1257,6 +1264,10 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.partition.encoder.parquet.o3.rewrite.unused.ratio\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO\t0.5\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.suspended.write.denied\tQDB_CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED\tfalse\tdefault\tfalse\ttrue\n" +
                                     "cairo.wal.apply.suspended.tables\tQDB_CAIRO_WAL_APPLY_SUSPENDED_TABLES\t\tdefault\tfalse\ttrue\n" +
+                                    "cairo.partition.checksum.enabled\tQDB_CAIRO_PARTITION_CHECKSUM_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.checksum.block.size\tQDB_CAIRO_PARTITION_CHECKSUM_BLOCK_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.checksum.strict\tQDB_CAIRO_PARTITION_CHECKSUM_STRICT\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.checksum.scrub.bytes.per.second\tQDB_CAIRO_PARTITION_CHECKSUM_SCRUB_BYTES_PER_SECOND\t0\tdefault\tfalse\tfalse\n" +
                                     "griffin.query.continuation.wake.interval\tQDB_GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL\t1000\tdefault\tfalse\tfalse"
                     )
                             .split("\n");

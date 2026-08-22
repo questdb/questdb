@@ -279,10 +279,21 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // WAL resolves its clean symbol band through those files, so this is the artifact a symbol
     // capacity rebuild strands.
     private static String walDirHoldingSymbolDictionary(TableToken token, String columnName) {
-        for (int i = 1; i < 16; i++) {
-            final String walName = WalUtils.WAL_NAME_BASE + i;
-            if (walSymbolOffsetFileExists(token, walName, columnName)) {
-                return walName;
+        // Enumerate the table's actual wal* directories rather than probing walN for a small N. WAL ids are
+        // opaque and the sequencer's id generator hands them out in batches of 512, taking a fresh batch
+        // whenever it reloads -- so the second writer here is wal2 on one configuration and wal513 on
+        // another, and a fixed 1..15 probe silently reports "no dictionary anywhere" for the latter.
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(token);
+            final String[] entries = new java.io.File(p.toString()).list();
+            if (entries == null) {
+                return null;
+            }
+            java.util.Arrays.sort(entries);
+            for (String entry : entries) {
+                if (entry.startsWith(WalUtils.WAL_NAME_BASE) && walSymbolOffsetFileExists(token, entry, columnName)) {
+                    return entry;
+                }
             }
         }
         return null;

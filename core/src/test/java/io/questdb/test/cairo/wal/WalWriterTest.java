@@ -34,6 +34,9 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.RecoveryCoordinator;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
@@ -140,11 +143,27 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void apply1RowCommits1Writer() throws Exception {
+        // 1,000,000 single-row commits. Each commit's durability point is a real device barrier, and on
+        // macOS that is fcntl(F_FULLFSYNC) -- measured at ~5.2ms/op on APFS versus ~0.24ms for the fsync
+        // this used to be, so a million of them cannot fit the 1200s timeout (both 1M variants hit it
+        // exactly). The barrier/full split only removes the per-commit FAN-OUT; the commit point itself must
+        // stay a full flush, so no amount of tuning brings this workload back on this platform. The
+        // behaviour under test -- 1-row commit application -- is platform-independent and stays covered on
+        // Linux CI.
+        Assume.assumeFalse("1M single-row commits cannot complete under F_FULLFSYNC (see comment)", Os.isOSX());
         testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 1_000_000, 1);
     }
 
     @Test
     public void apply1RowCommitsManyWriters() throws Exception {
+        // 1,000,000 single-row commits. Each commit's durability point is a real device barrier, and on
+        // macOS that is fcntl(F_FULLFSYNC) -- measured at ~5.2ms/op on APFS versus ~0.24ms for the fsync
+        // this used to be, so a million of them cannot fit the 1200s timeout (both 1M variants hit it
+        // exactly). The barrier/full split only removes the per-commit FAN-OUT; the commit point itself must
+        // stay a full flush, so no amount of tuning brings this workload back on this platform. The
+        // behaviour under test -- 1-row commit application -- is platform-independent and stays covered on
+        // Linux CI.
+        Assume.assumeFalse("1M single-row commits cannot complete under F_FULLFSYNC (see comment)", Os.isOSX());
         testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 1_000_000, 16);
     }
 
@@ -5553,6 +5572,123 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
             assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
         });
+    }
+
+    /**
+     * A REBASE clone copies the source's {@code _meta}, enrolment record and all, but publishes an adaptive
+     * anchor only when the clone itself resolves to adaptive. A source can legitimately still be recorded as
+     * enrolled while resolving to something else — that is precisely a table whose adaptive tenure ended
+     * with a crash and whose next writer has not reconciled it yet — so a clone that inherited the record
+     * without an anchor would be a table claiming lazy state with nothing to rewind to. Recovery refuses
+     * that, and the refusal fails the engine component: one rebased table would stop the instance booting.
+     *
+     * <p>Modelled here by creating the table under adaptive (which records the enrolment) and flipping the
+     * instance to nosync without letting a writer reconcile it — the precondition below asserts the source
+     * really is in that state, so this cannot pass vacuously.
+     */
+    @Test
+    public void testRebaseWalCloneDoesNotInheritTheSourceEnrolmentWithoutAnAnchor() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+                execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                final TableToken oldToken = engine.verifyTableName("t");
+                engine.releaseInactive();
+
+                // The operator turns adaptive off. Nothing opens the table in between, so its record still
+                // says enrolled -- the state a crash under adaptive leaves behind.
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                try (TableReaderMetadata md = new TableReaderMetadata(configuration, oldToken)) {
+                    md.loadMetadata();
+                    Assert.assertEquals("precondition: the source must still be recorded as enrolled, or this"
+                                    + " test proves nothing about inheriting that record",
+                            CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
+                }
+
+                execute("alter table t suspend wal");
+                execute("alter table t rebase wal");
+                drainWalQueue();
+
+                final TableToken newToken = engine.verifyTableName("t");
+                Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+
+                final FilesFacade ff = configuration.getFilesFacade();
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(newToken).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    Assert.assertFalse("a nosync clone publishes no anchor", ff.exists(path.$()));
+                }
+                try (TableReaderMetadata md = new TableReaderMetadata(configuration, newToken)) {
+                    md.loadMetadata();
+                    Assert.assertNotEquals("a clone with no anchor must not claim to be enrolled",
+                            CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
+                }
+
+                // The consequence: a startup validates the clone instead of refusing to serve the instance.
+                new RecoveryCoordinator(engine).recover();
+                assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
+     * REBASE clones {@code _meta} and then resets its metadataVersion in place. That field is checksummed
+     * into the meta-format minor-version word, so rewriting it without re-stamping the checksum switches
+     * off the version gate, and every gated tail field then reads as absent on the clone: TTL becomes 0,
+     * the table format reverts to NATIVE, the per-table commit mode and the adaptive enrolment record
+     * revert to UNSET. Nothing fails -- the rebased table quietly comes back with different properties
+     * from the one that went in.
+     *
+     * <p>The ADD COLUMN is load-bearing, not decoration: it lifts metadataVersion off 0 so that resetting
+     * it to 0 actually changes the value the checksum covers. Without it the reset is a no-op and the gate
+     * survives by luck, which is exactly why this went unnoticed.
+     */
+    @Test
+    public void testRebaseWalPreservesVersionGatedMetadata() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table t (ts timestamp, x int) timestamp(ts) partition by day ttl 3 days wal"
+                        + " with commit_mode='sync'");
+                execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                // Lift metadataVersion off zero, so the clone's reset genuinely changes it.
+                execute("alter table t add column y int");
+                drainWalQueue();
+
+                final TableToken oldToken = engine.verifyTableName("t");
+                engine.releaseInactive();
+                try (TableReaderMetadata md = new TableReaderMetadata(configuration, oldToken)) {
+                    md.loadMetadata();
+                    Assert.assertEquals("precondition: TTL is set before the rebase", 72, md.getTtlHoursOrMonths());
+                    Assert.assertEquals("precondition: the per-table commit mode is set before the rebase",
+                            CommitMode.SYNC, md.getCommitMode());
+                    Assert.assertTrue("precondition: metadataVersion must be off 0, or the reset changes nothing",
+                            md.getMetadataVersion() > 0);
+                }
+
+                execute("alter table t suspend wal");
+                execute("alter table t rebase wal");
+                drainWalQueue();
+
+                final TableToken newToken = engine.verifyTableName("t");
+                Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+                try (TableReaderMetadata md = new TableReaderMetadata(configuration, newToken)) {
+                    md.loadMetadata();
+                    Assert.assertEquals("REBASE must not silently drop TTL", 72, md.getTtlHoursOrMonths());
+                    Assert.assertEquals("REBASE must not silently drop the per-table commit mode",
+                            CommitMode.SYNC, md.getCommitMode());
+                }
+                assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
     }
 
     @Test

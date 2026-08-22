@@ -39,12 +39,19 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
 public class TxReader implements Closeable, Mutable {
+    // Test-observable counter: incremented every time a load detects a stable-version body-checksum
+    // mismatch (or a torn txn guard) on the version-selected area and therefore attempts the A/B
+    // fallback. On a healthy table this must stay at 0 - in particular it must NOT advance under the
+    // in-place writeTransientSymbolCount / resetLag mutations, which is the whole point of restricting
+    // the checksum to commit-immutable bytes. Not used by production logic.
+    static volatile long bodyChecksumFallbackCount = 0;
     public static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
     public static final long PARTITION_FLAGS_MASK = 0x7FFFF00000000000L;
     // Flag in the high byte of the offset-3 partition-version word: a remote copy of the
@@ -156,6 +163,13 @@ public class TxReader implements Closeable, Mutable {
 
     public void dumpTo(MemoryW mem) {
         mem.putLong(TX_BASE_OFFSET_VERSION_64, version);
+        // Clear the capability marker for the same reason the body-checksum slot below is zeroed: a dumped
+        // record carries no body checksum, so the destination must not claim one was guaranteed. Explicit so
+        // the result is correct even if `mem` is a reused buffer with a stale marker in the base header -
+        // that would make the checksum-free record this writes read as TORN. The first commit after a restore
+        // from this dump re-stamps both.
+        mem.putLong(TX_BASE_OFFSET_CAPABILITY_MAGIC_64, 0L);
+        mem.putLong(TX_BASE_OFFSET_CAPABILITY_WATERMARK_64, 0L);
         boolean isA = (version & 1L) == 0L;
         final int baseOffset = TX_BASE_HEADER_SIZE;
         mem.putInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32, baseOffset);
@@ -177,6 +191,11 @@ public class TxReader implements Closeable, Mutable {
         mem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
         mem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
         mem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, lagOrdered ? lagTxnCount : -lagTxnCount);
+        // Write the absent (0) body-checksum sentinel: a dumped record carries no body checksum, so a reader
+        // skips the verify (back-compatible). Explicit so the result is correct even if `mem` is a reused
+        // buffer with stale bytes in the checksum slot [116,124). The first commit after a restore from this
+        // dump writes a real checksum.
+        mem.putLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64, 0L);
         mem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
         int symbolMapCount = symbolCountSnapshot.size();
@@ -522,6 +541,16 @@ public class TxReader implements Closeable, Mutable {
         return version;
     }
 
+    @TestOnly
+    public static long getBodyChecksumFallbackCount() {
+        return bodyChecksumFallbackCount;
+    }
+
+    @TestOnly
+    public static void resetBodyChecksumFallbackCount() {
+        bodyChecksumFallbackCount = 0;
+    }
+
     public boolean hasParquetPartitions() {
         for (int i = 0, n = attachedPartitions.size(); i < n; i += LONGS_PER_TX_ATTACHED_PARTITION) {
             if (isPartitionParquetByRawIndex(i)) {
@@ -724,40 +753,226 @@ public class TxReader implements Closeable, Mutable {
 
     public boolean unsafeLoadAll() {
         if (unsafeLoadBaseOffset()) {
-            txn = version;
-            if (txn != getLong(TX_OFFSET_TXN_64)) {
-                return false;
-            }
-
-            transientRowCount = getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
-            fixedRowCount = getLong(TX_OFFSET_FIXED_ROW_COUNT_64);
-            minTimestamp = getLong(TX_OFFSET_MIN_TIMESTAMP_64);
-            maxTimestamp = getLong(TX_OFFSET_MAX_TIMESTAMP_64);
-            dataVersion = getLong(TX_OFFSET_DATA_VERSION_64);
-            structureVersion = getLong(TX_OFFSET_STRUCT_VERSION_64);
-            final long prevPartitionTableVersion = partitionTableVersion;
-            partitionTableVersion = getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION_64);
-            final long prevColumnVersion = this.columnVersion;
-            columnVersion = unsafeReadColumnVersion();
-            truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
-            seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
-            symbolColumnCount = symbolsSize / Long.BYTES;
-            lagRowCount = getInt(TX_OFFSET_LAG_ROW_COUNT_32);
-            lagMinTimestamp = getLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64);
-            lagMaxTimestamp = getLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64);
-            int lagTxnCountRaw = getInt(TX_OFFSET_LAG_TXN_COUNT_32);
-            lagTxnCount = Math.abs(lagTxnCountRaw);
-            lagOrdered = lagTxnCountRaw > -1;
-            unsafeLoadSymbolCounts(symbolColumnCount);
-            unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
-            Unsafe.loadFence();
-            if (version == unsafeReadVersion()) {
-                return true;
+            // The version we selected this area with. The fallback path mutates `version`, so we keep our
+            // own copy to re-validate against (a stable selected version is what makes a mismatch "real").
+            final long selectedVersion = version;
+            // Load + verify the version-selected (current) A/B area.
+            if (unsafeLoadAreaFields() && unsafeVerifyBodyChecksum()) {
+                Unsafe.loadFence();
+                if (selectedVersion == unsafeReadVersion()) {
+                    return true;
+                }
+                // Version moved under us: concurrent commit. Fall through to retry (return false).
+            } else {
+                // The area either failed its internal txn guard or its body checksum did not match.
+                // Re-read the version: if it is STILL the one we selected, the area is genuinely torn
+                // (a partial / reordered msync left a bumped version word over an incomplete body).
+                // Only then do we fall back to the other A/B area; otherwise it was a concurrent write
+                // and we simply retry.
+                Unsafe.loadFence();
+                if (selectedVersion == unsafeReadVersion()) {
+                    // Stable version, yet the selected area is torn: attempt the A/B fallback.
+                    //noinspection NonAtomicOperationOnVolatileField
+                    bodyChecksumFallbackCount++;
+                    boolean otherOk = unsafeLoadAndVerifyOtherArea(selectedVersion);
+                    Unsafe.loadFence();
+                    if (selectedVersion == unsafeReadVersion()) {
+                        // The whole header+areas were stable across the attempt.
+                        if (otherOk) {
+                            return true;
+                        }
+                        // Neither A nor B is internally consistent. Never return a silently-wrong record -
+                        // surface a hard error so the caller can fail the read.
+                        clearData();
+                        throw CairoException.critical(0)
+                                .put("_txn body checksum mismatch in both A and B areas [baseOffset=").put(baseOffset)
+                                .put(", size=").put(size)
+                                .put(", version=").put(selectedVersion)
+                                .put(']');
+                    }
+                    // Version changed during the fallback: concurrent write, retry.
+                }
+                // Version changed: concurrent write, retry.
             }
         }
 
         clearData();
         return false;
+    }
+
+    /**
+     * Loads all fields, symbol counts and partitions for the area currently described by
+     * {@link #baseOffset}/{@link #symbolsSize}/{@link #partitionSegmentSize}/{@link #size}/{@link #version}
+     * into {@code this}. Returns {@code false} if the area fails its internal txn guard
+     * (stored txn != version), which indicates a torn/garbage area.
+     */
+    private boolean unsafeLoadAreaFields() {
+        txn = version;
+        if (txn != getLong(TX_OFFSET_TXN_64)) {
+            return false;
+        }
+
+        transientRowCount = getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
+        fixedRowCount = getLong(TX_OFFSET_FIXED_ROW_COUNT_64);
+        minTimestamp = getLong(TX_OFFSET_MIN_TIMESTAMP_64);
+        maxTimestamp = getLong(TX_OFFSET_MAX_TIMESTAMP_64);
+        dataVersion = getLong(TX_OFFSET_DATA_VERSION_64);
+        structureVersion = getLong(TX_OFFSET_STRUCT_VERSION_64);
+        final long prevPartitionTableVersion = partitionTableVersion;
+        partitionTableVersion = getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION_64);
+        final long prevColumnVersion = this.columnVersion;
+        columnVersion = unsafeReadColumnVersion();
+        truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
+        seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
+        symbolColumnCount = symbolsSize / Long.BYTES;
+        lagRowCount = getInt(TX_OFFSET_LAG_ROW_COUNT_32);
+        lagMinTimestamp = getLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64);
+        lagMaxTimestamp = getLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64);
+        int lagTxnCountRaw = getInt(TX_OFFSET_LAG_TXN_COUNT_32);
+        lagTxnCount = Math.abs(lagTxnCountRaw);
+        lagOrdered = lagTxnCountRaw > -1;
+        unsafeLoadSymbolCounts(symbolColumnCount);
+        unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
+        return true;
+    }
+
+    /**
+     * Re-points geometry to the OTHER A/B area (the previously committed record) and loads + verifies it.
+     * Used as the fallback when the version-selected area is torn under a stable version. Forces a full
+     * partition reload (the prior load may have left the partition list partially populated). Returns true
+     * only if the other area loads cleanly and its stored body checksum matches (or is the 0 = absent
+     * sentinel). MUST be called only after the version has been confirmed stable, so the other area is the
+     * settled prior commit and not an area the writer is mid-write into.
+     */
+    private boolean unsafeLoadAndVerifyOtherArea(long selectedVersion) {
+        // The selected area used slot (selectedVersion & 1); the prior commit lives in the opposite slot
+        // and carries selectedVersion - 1. Re-point geometry at it.
+        boolean otherIsA = (selectedVersion & 1) != 0;
+        long otherBaseOffset = otherIsA ? roTxMemBase.getInt(TX_BASE_OFFSET_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_B_32);
+        int otherSymbolsSize = otherIsA ? roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
+        int otherPartitionSegmentSize = otherIsA ? roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
+        long otherSize = calculateTxRecordSize(otherSymbolsSize, otherPartitionSegmentSize);
+        if (otherBaseOffset < TX_BASE_HEADER_SIZE || otherSize + otherBaseOffset > roTxMemBase.size()) {
+            return false;
+        }
+
+        baseOffset = (int) otherBaseOffset;
+        symbolsSize = otherSymbolsSize;
+        partitionSegmentSize = otherPartitionSegmentSize;
+        size = otherSize;
+        // The prior commit's txn equals its version (selectedVersion - 1); unsafeLoadAreaFields uses `version`
+        // for its stored-txn guard.
+        version = selectedVersion - 1;
+        // Force a full partition reload: the failed primary load may have left attachedPartitions partial.
+        partitionTableVersion = -1;
+        attachedPartitionsSize = -1;
+
+        return unsafeLoadAreaFields() && unsafeVerifyBodyChecksum();
+    }
+
+    /**
+     * Verifies the stored body checksum of the area at {@link #baseOffset}/{@link #size} against a fresh
+     * recompute over the commit-immutable range ({@code [0,80)} plus the partition table starting at
+     * {@code getPartitionTableSizeOffset(symbolColumnCount)}).
+     * <p>
+     * Tri-state, not a boolean over the raw bytes. A stored 0 means "absent", and absent alone is not a
+     * verdict: it is LEGACY (pass, back-compatible) for a record below the file's capability watermark, and
+     * TORN for one at or beyond it, where {@link TxWriter} guaranteed a checksum was written. That promotion
+     * is the whole point -- a bare {@code stored == 0} pass cannot tell a pre-checksum record from one whose
+     * slot a partial page write zeroed, so it served torn state as healthy.
+     * <p>
+     * Note {@code _txn} does NOT use {@link ChecksumTrailer#classify}: that is for magic-gated trailers hashed
+     * with {@code TableUtils.calculateCvAreaChecksum}, whereas {@code _txn} has no per-area magic and its own
+     * deliberately frozen {@code calculateTxnBodyChecksum}. Only the capability half of
+     * {@link ChecksumTrailer} applies here.
+     * <p>
+     * Race-free with concurrent writers: every covered byte, and the capability marker itself, changes only
+     * ahead of a version bump, and the caller re-checks the version after this returns.
+     */
+    private boolean unsafeVerifyBodyChecksum() {
+        final long stored = roTxMemBase.getLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64);
+        final int classification;
+        if (stored == 0) {
+            classification = ChecksumTrailer.ABSENT;
+        } else {
+            classification = stored == calculateTxnBodyChecksum(
+                    roTxMemBase.addressOf(baseOffset),
+                    size,
+                    getPartitionTableSizeOffset(symbolColumnCount)
+            ) ? ChecksumTrailer.PRESENT_OK : ChecksumTrailer.MISMATCH;
+        }
+        final boolean covered = unsafeIsChecksumCovered(roTxMemBase.getLong(baseOffset + TX_OFFSET_TXN_64));
+        return ChecksumTrailer.applyCapability(classification, covered) != ChecksumTrailer.MISMATCH;
+    }
+
+    /**
+     * True when the file's capability marker says a record with this txn was guaranteed a body checksum, so
+     * an absent one is tearing rather than legacy. False for any file written before the capability existed
+     * (the base-header slots are then zero, and no txn ever satisfies a magic that is not there).
+     */
+    private boolean unsafeIsChecksumCovered(long areaTxn) {
+        return ChecksumTrailer.isCovered(
+                roTxMemBase.getLong(TX_BASE_OFFSET_CAPABILITY_MAGIC_64),
+                TableUtils.TX_CHECKSUM_CAPABILITY_MAGIC,
+                roTxMemBase.getLong(TX_BASE_OFFSET_CAPABILITY_WATERMARK_64),
+                areaTxn
+        );
+    }
+
+    /**
+     * Diagnosis for a reader that has already given up: is the version-selected (live) A/B area of {@code _txn}
+     * torn? True when that area fails its internal txn guard or its body checksum <i>under a version that does
+     * not move across the check</i> — the same standard {@link #unsafeLoadAll()} uses to tell genuine tearing
+     * from a concurrent commit. A moving version means contention, and this returns false.
+     * <p>
+     * A torn live area is not a dead end for {@code unsafeLoadAll()}: it falls back to the intact previous area
+     * and returns that. But the previous area carries the previous txn, which a live scoreboard refuses, so the
+     * caller's retry loop cannot make progress and times out looking like contention. Callers use this on their
+     * deadline path to name the corruption instead.
+     * <p>
+     * Reads only; touches none of the load state, so a caller may use it on an in-use reader. Costs nothing on
+     * the healthy path — it is never called from one.
+     */
+    public boolean unsafeIsLiveAreaTorn() {
+        final long selectedVersion = unsafeReadVersion();
+        Unsafe.loadFence();
+
+        final boolean isA = (selectedVersion & 1) == 0;
+        final long areaBaseOffset = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_B_32);
+        final int areaSymbolsSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
+        final int areaPartitionSegmentSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
+        final long areaSize = calculateTxRecordSize(areaSymbolsSize, areaPartitionSegmentSize);
+
+        final boolean intact;
+        if (areaBaseOffset < TX_BASE_HEADER_SIZE || areaBaseOffset + areaSize > roTxMemBase.size()) {
+            // The header's own geometry does not fit the file: torn, and not something to read further.
+            intact = false;
+        } else if (roTxMemBase.getLong(areaBaseOffset + TX_OFFSET_TXN_64) != selectedVersion) {
+            intact = false;
+        } else {
+            final long stored = roTxMemBase.getLong(areaBaseOffset + TX_OFFSET_BODY_CHECKSUM_64);
+            final int classification;
+            if (stored == 0) {
+                classification = ChecksumTrailer.ABSENT;
+            } else {
+                classification = stored == calculateTxnBodyChecksum(
+                        roTxMemBase.addressOf(areaBaseOffset),
+                        areaSize,
+                        getPartitionTableSizeOffset(areaSymbolsSize / Long.BYTES)
+                ) ? ChecksumTrailer.PRESENT_OK : ChecksumTrailer.MISMATCH;
+            }
+            // Same capability promotion as unsafeVerifyBodyChecksum, and it MUST be the same: the load path
+            // and this diagnosis path disagreeing would mean one file reported as corruption by one and as
+            // reader contention by the other. The area's stored txn equals selectedVersion here (guarded
+            // immediately above), so that is the record id the watermark is compared against.
+            intact = ChecksumTrailer.applyCapability(classification, unsafeIsChecksumCovered(selectedVersion))
+                    != ChecksumTrailer.MISMATCH;
+        }
+
+        Unsafe.loadFence();
+        // Only a mismatch under a STABLE version is tearing; if the version moved, a writer was mid-commit
+        // and the caller was simply unlucky. Never report corruption on the strength of a raced sample.
+        return !intact && selectedVersion == unsafeReadVersion();
     }
 
     public boolean unsafeLoadBaseOffset() {

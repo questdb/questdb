@@ -46,6 +46,34 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WRITER_COMMAND_QUEUE_CAPACITY("cairo.writer.command.queue.capacity"),
     CAIRO_SQL_JIT_MODE("cairo.sql.jit.mode"),
     CAIRO_COMMIT_MODE("cairo.commit.mode"),
+    CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED("cairo.adaptive.epoch.column.sync.batched"),
+    // Drain writeback (sync_file_range) across the whole WAL segment BEFORE taking the per-file
+    // fdatasync barriers, so the device works on every file at once. Advisory only; every barrier
+    // stays. Default true. See WalWriter.syncIfRequired0.
+    CAIRO_WAL_COMMIT_WRITEBACK_DRAIN("cairo.wal.commit.writeback.drain"),
+    // Min interval between adaptive durable epochs per table (ms). Under CommitMode.ADAPTIVE the apply
+    // worker fires a durable epoch at most this often, right after an apply batch commits while it
+    // still holds the writer. 0 => every batch; NEGATIVE => epochs disabled. See ApplyWal2TableJob.
+    CAIRO_ADAPTIVE_EPOCH_INTERVAL("cairo.adaptive.epoch.interval"),
+    // Max rows applied to a table since its last durable epoch before an epoch is FORCED, independent of
+    // the interval above. Bounds post-epoch WAL retention (the WalPurgeJob floor IS the epoch) + recovery
+    // replay, so the interval can be long. Default 5_000_000; <= 0 disables the cap. See ApplyWal2TableJob.
+    CAIRO_ADAPTIVE_EPOCH_MAX_ROWS("cairo.adaptive.epoch.max.rows"),
+    // Plan 3 Task C: run the adaptive durable-epoch recovery roll-forward at startup. Default true;
+    // false is a negative-control hook; startup fails closed if an adaptive table is present.
+    CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED("cairo.adaptive.recovery.roll.forward.enabled"),
+    // Whether a clean writer close flushes a final durable epoch over any un-epoched tail so a restart
+    // has nothing to roll forward. Default true; false leaves the tail for the next boot's WAL replay
+    // (bounded by the epoch cadence). See TableWriter.doClose.
+    CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE("cairo.adaptive.epoch.flush.on.close"),
+    // Deferred 2 (the RPO knob): adaptive GROUP-COMMIT window in microseconds. Default 50_000 (50ms):
+    // writer-private WAL is durable before sequencing; the shared sequencer fdatasync is BATCHED across
+    // commits within this window. commit0 returns with that sequencer pointer not yet device-durable, so
+    // RPO <= W. localDurableSeqTxn (the durable-ack frontier) advances
+    // only when the batch fdatasync completes. 0 keeps today's fully synchronous fsync-before-return
+    // (every acked commit is immediately device-durable, zero loss) instead. See WalWriter group-commit +
+    // WalPurgeJob background flusher.
+    CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW("cairo.adaptive.commit.group.window"),
     CAIRO_CREATE_AS_SELECT_RETRY_COUNT("cairo.create.as.select.retry.count"),
     CAIRO_DEFAULT_MAP_TYPE("cairo.default.map.type"),
     CAIRO_DEFAULT_SYMBOL_CACHE_FLAG("cairo.default.symbol.cache.flag"),
@@ -264,6 +292,10 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_O3_UPD_PARTITION_SIZE_QUEUE_CAPACITY("cairo.o3.upd.partition.size.queue.capacity"),
     CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY("cairo.o3.purge.discovery.queue.capacity"),
     CAIRO_O3_COLUMN_MEMORY_SIZE("cairo.o3.column.memory.size"),
+    CAIRO_PARTITION_CHECKSUM_ENABLED("cairo.partition.checksum.enabled"),
+    CAIRO_PARTITION_CHECKSUM_BLOCK_SIZE("cairo.partition.checksum.block.size"),
+    CAIRO_PARTITION_CHECKSUM_STRICT("cairo.partition.checksum.strict"),
+    CAIRO_PARTITION_CHECKSUM_SCRUB_BYTES_PER_SECOND("cairo.partition.checksum.scrub.bytes.per.second"),
     CAIRO_SYSTEM_O3_COLUMN_MEMORY_SIZE("cairo.system.o3.column.memory.size"),
     CAIRO_MAX_UNCOMMITTED_ROWS("cairo.max.uncommitted.rows"),
     CAIRO_COMMIT_LAG("cairo.commit.lag"),

@@ -104,10 +104,15 @@ public class ServerMain implements Closeable {
 
     public ServerMain(final Bootstrap bootstrap) {
         this.bootstrap = bootstrap;
+        // OSS completes recovery inside newCairoEngine(), so install the fatal handler before construction.
+        // Enterprise overrides newCairoEngine() with partial initialization; the post-construction setter
+        // below preserves that path as well.
+        bootstrap.setDurabilityFailureHandler(this::onFatalDurabilityFailure);
         // bootstrap.newCairoEngine() returns a full-init engine in OSS (back-compat for tests).
         // Enterprise subclasses override newCairoEngine() to return a partial-init engine so that
         // completeInit() + load() are deferred to EngineEnvelope.start().
         engine = freeOnExit(bootstrap.newCairoEngine());
+        engine.setDurabilityFailureHandler(this::onFatalDurabilityFailure);
         try {
             final ServerConfiguration config = bootstrap.getConfiguration();
             config.init(engine, freeOnExit);
@@ -176,6 +181,20 @@ public class ServerMain implements Closeable {
 
     public static @NotNull String propertyPathToEnvVarName(@NotNull String propertyPath) {
         return "QDB_" + propertyPath.replace('.', '_').toUpperCase();
+    }
+
+    /**
+     * A failed fsync has indeterminate persistence semantics. Do not run the shutdown hook/close path: writer
+     * cleanup can retry the failed barrier and turn a false-successful retry into acknowledged data loss.
+     */
+    protected void onFatalDurabilityFailure(CairoEngine.DurabilityFailure failure) {
+        System.err.println("QuestDB fatal durability failure; hard-halting without writer cleanup [" + failure + "]");
+        hardHalt(55);
+    }
+
+    @TestOnly
+    protected void hardHalt(int exitCode) {
+        Runtime.getRuntime().halt(exitCode);
     }
 
     /**

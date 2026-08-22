@@ -78,6 +78,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private static long cacheKeyBufferLimit = DirectCharSequenceIntHashMap.MAX_KEY_BUFFER_CAPACITY;
     private final MemoryMARW charMem;
     private final int columnIndex; // column index in the table writer metadata
+    private final FilesFacade ff;
     private final BitmapIndexWriter indexWriter;
     private final SymbolValueCountCollector valueCountCollector;
     private DirectCharSequenceIntHashMap cache;
@@ -88,6 +89,12 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private int symbolCapacity;
     private int symbolIndexInTxWriter;
 
+    /**
+     * Legacy form: no append-only narrowing, so the symbol CHAR memory keeps its full-extent msync.
+     * Byte-identical to the pre-adaptive behaviour, which is what every caller outside
+     * {@link TableWriter} wants -- only a table column that knows it is under
+     * {@link CommitMode#ADAPTIVE} may narrow.
+     */
     public SymbolMapWriter(
             CairoConfiguration configuration,
             Path path,
@@ -98,9 +105,40 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             @NotNull SymbolValueCountCollector valueCountCollector,
             int columnIndex
     ) {
+        this(
+                configuration,
+                path,
+                columnName,
+                columnNameTxn,
+                symbolCount,
+                symbolIndexInTxWriter,
+                valueCountCollector,
+                columnIndex,
+                false
+        );
+    }
+
+    /**
+     * @param charMemAppendOnly true to narrow the symbol CHAR memory's SYNC msync to the appended
+     *                          range (safe only under {@link CommitMode#ADAPTIVE} table columns);
+     *                          false (legacy/default) keeps the full-extent msync, byte-identical
+     *                          to master.
+     */
+    public SymbolMapWriter(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence columnName,
+            long columnNameTxn,
+            int symbolCount,
+            int symbolIndexInTxWriter,
+            @NotNull SymbolValueCountCollector valueCountCollector,
+            int columnIndex,
+            boolean charMemAppendOnly
+    ) {
         final int plen = path.size();
         try {
             final FilesFacade ff = configuration.getFilesFacade();
+            this.ff = ff;
             // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"
             if (!ff.exists(offsetFileName(path.trimTo(plen), columnName, columnNameTxn))) {
@@ -146,6 +184,15 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );
+            // Symbol CHAR memory stores symbol string values strictly by appending (charMem.putStr)
+            // and moving the cursor with jumpTo/truncate; it never does in-place put*(offset,..).
+            // Safe to narrow the SYNC msync to the written range -- but ONLY under ADAPTIVE (see
+            // charMemAppendOnly javadoc on the ctor param); legacy modes pass false so charMem takes
+            // the full-extent msync path (byte-identical to master). NOTE: only charMem is ever
+            // append-only; offsetMem stays full-extent (updateNullFlag does an in-place putBool at
+            // offset 0) and the bitmap index .k/.v stay full-extent (random-access writes below the
+            // high-water mark).
+            charMem.setAppendOnly(charMemAppendOnly);
 
             // move append pointer for symbol values in the correct place
             jumpCharMemToSymbolCount(symbolCount);
@@ -451,6 +498,17 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         }
     }
 
+    /**
+     * Re-applies the CHAR memory's append-only narrowing (see the ctor's {@code charMemAppendOnly}
+     * javadoc). Called by {@code TableWriter.setMetaCommitMode} when an {@code ALTER TABLE ... SET
+     * PARAM commit_mode} flips an already-open writer between {@link CommitMode#ADAPTIVE} and a
+     * legacy mode, so the flag doesn't stay stale until this symbol writer is next reopened.
+     */
+    @Override
+    public void setAppendOnly(boolean appendOnly) {
+        charMem.setAppendOnly(appendOnly);
+    }
+
     @Override
     public void setSymbolIndexInTxWriter(int symbolIndexInTxWriter) {
         this.symbolIndexInTxWriter = symbolIndexInTxWriter;
@@ -461,6 +519,47 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         charMem.sync(async);
         offsetMem.sync(async);
         indexWriter.sync(async);
+    }
+
+    @Override
+    public void fsyncFiles() {
+        // offsetMem/charMem are the data, the index is derived from them; flush data before index to
+        // match sync()'s ordering discipline.
+        fsyncIfOpen(charMem.getFd());
+        fsyncIfOpen(offsetMem.getFd());
+        indexWriter.fsyncFiles();
+    }
+
+    private void fsyncIfOpen(long fd) {
+        if (fd != -1) {
+            ff.fsync(fd);
+        }
+    }
+
+    @Override
+    public void syncFlushKick() {
+        // Order-free (no device flush, no durability ordering yet).
+        charMem.syncFlushKick();
+        offsetMem.syncFlushKick();
+        indexWriter.syncFlushKick();
+    }
+
+    @Override
+    public void syncFlushDrain() {
+        // Order-free (see syncFlushKick).
+        charMem.syncFlushDrain();
+        offsetMem.syncFlushDrain();
+        indexWriter.syncFlushDrain();
+    }
+
+    @Override
+    public void syncFlushFinishIfExtended() {
+        // Same ordering as sync(): char (data) before offset (offset->char pointer) before the index.
+        // Only matters for the rare extend fdatasyncs; non-extending files are made durable by the
+        // batch's _cv device flush.
+        charMem.syncFlushFinishIfExtended();
+        offsetMem.syncFlushFinishIfExtended();
+        indexWriter.syncFlushFinishIfExtended();
     }
 
     @Override

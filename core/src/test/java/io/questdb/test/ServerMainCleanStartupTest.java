@@ -73,25 +73,35 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                                 true
                                 """);
 
-                // ensure transactions
+                // ensure transactions. Project only the deterministic columns: under the
+                // default ADAPTIVE commit mode a real ServerMain fires durable epochs on a
+                // wall-clock schedule, so durableEpochSeqTxn/walRetentionTxn/lastEpochTs are
+                // timing-dependent (lastEpochTs is a wall-clock instant). The epoch columns
+                // are covered deterministically by the adaptive-epoch suites; this clean-start
+                // smoke check asserts the stable frontier instead.
                 new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
-                }, "select * from wal_tables order by 1")
+                }, "select name, suspended, writerTxn, bufferedTxnSize, sequencerTxn, errorTag, errorMessage, memoryPressure, commitMode, recoveryIncarnation, localDurableSeqTxn from wal_tables order by 1")
                         .noLeakCheck()
                         .returns("""
-                                name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                                x\tfalse\t0\t0\t0\t\t\t0
-                                y\tfalse\t2\t0\t2\t\t\t0
+                                name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\trecoveryIncarnation\tlocalDurableSeqTxn
+                                x\tfalse\t0\t0\t0\t\t\t0\tadaptive\t0\t-1
+                                y\tfalse\t2\t0\t2\t\t\t0\tadaptive\t0\t2
                                 """);
 
 
-                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
-                }, "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1")
-                        .noLeakCheck()
-                        .noMemoryUsageCheck()
-                        .returns("""
-                                table_name\townership_reason
-                                y\t
-                                """);
+                // Under the default ADAPTIVE commit mode the background apply job holds y's
+                // writer through the durable-epoch advance a beat longer than NOSYNC did, so
+                // right after apply the pooled ownership_reason is briefly "WAL Data
+                // Application". Poll until the writer settles back into the pool (released).
+                TestUtils.assertEventually(() ->
+                        new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
+                        }, "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1")
+                                .noLeakCheck()
+                                .noMemoryUsageCheck()
+                                .returns("""
+                                        table_name\townership_reason
+                                        y\t
+                                        """), 10);
 
             }
 
@@ -102,11 +112,19 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
             ) {
                 serverMain.start();
 
-                new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
-                }, "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1")
-                        .noLeakCheck()
-                        .noMemoryUsageCheck()
-                        .returns("table_name\townership_reason\n");
+                // ADAPTIVE restart recovery rolls the WAL tail forward (y's last commit is
+                // past its last durable epoch), which opens y's writer and returns it to the
+                // pool released. So y legitimately appears pooled-but-unowned after restart,
+                // unlike NOSYNC where restart touched nothing. The invariant that still holds
+                // -- and that this check verifies -- is that the restart leaves no writer
+                // PERSISTENTLY OWNED; filter to owned rows and poll until the roll-forward
+                // writer settles back to released.
+                TestUtils.assertEventually(() ->
+                        new QueryAssertion(serverMain.getEngine(), sqlExecutionContext, () -> {
+                        }, "select table_name, ownership_reason from writer_pool where table_name in ('x','y') and ownership_reason is not null and ownership_reason != '' order by 1")
+                                .noLeakCheck()
+                                .noMemoryUsageCheck()
+                                .returns("table_name\townership_reason\n"), 10);
             }
         });
     }

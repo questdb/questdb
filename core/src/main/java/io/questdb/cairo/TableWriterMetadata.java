@@ -36,6 +36,10 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
 public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata {
+    private int commitMode = CommitMode.UNSET;
+    private boolean commitModeFieldPresent;
+    private int enrolledCommitMode;
+    private boolean enrolledCommitModeFieldPresent;
     private int maxUncommittedRows;
     private long metadataVersion;
     private long o3MaxLag;
@@ -70,6 +74,37 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public byte getIndexType(int columnIndex) {
         return getColumnMetadata(columnIndex).getIndexType();
+    }
+
+    @Override
+    public int getCommitMode() {
+        return commitMode;
+    }
+
+    public boolean isCommitModeFieldPresent() {
+        return commitModeFieldPresent;
+    }
+
+    /**
+     * The commit mode this table's materialized state is enrolled under — see
+     * {@link TableUtils#META_OFFSET_ENROLLED_COMMIT_MODE}. {@link CommitMode#ADAPTIVE} means the state may
+     * be lazily ahead of the durable epoch and must not be trusted without one.
+     */
+    public int getEnrolledCommitMode() {
+        return enrolledCommitMode;
+    }
+
+    /**
+     * Whether this {@code _meta} already carries the enrolment field. When it does, the record can be
+     * written in place; when it does not (a table written before the field existed), only a full metadata
+     * rewrite can add it.
+     */
+    public boolean isEnrolledCommitModeFieldPresent() {
+        return enrolledCommitModeFieldPresent;
+    }
+
+    public void setEnrolledCommitMode(int commitMode) {
+        this.enrolledCommitMode = commitMode;
     }
 
     @Override
@@ -158,12 +193,21 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
         this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
         TableUtils.validateMeta(metaPath, metaMem, columnNameIndexMap, ColumnType.VERSION);
+        // The WRITER must verify too, not just the reader. Without this a TableWriter can open a rotted
+        // _meta, run an ALTER, and rewriteMetadata stamps a FRESH, VALID checksum over the corrupt
+        // values -- laundering the corruption and destroying the very evidence the checksum exists to
+        // preserve. One xxh3 pass over a small file, on a path that already reads the whole thing.
+        TableUtils.verifyMetaBodyChecksum(metaPath, metaMem, metaMem.size());
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.columnMetadata.clear();
         this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
         this.tableFormat = TableUtils.getTableFormat(metaMem);
+        this.commitModeFieldPresent = TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_COMMIT_MODE);
+        this.commitMode = TableUtils.getCommitMode(metaMem);
+        this.enrolledCommitMode = TableUtils.getEnrolledCommitMode(metaMem);
+        this.enrolledCommitModeFieldPresent = TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
@@ -223,6 +267,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 }
             }
         }
+    }
+
+    public void setCommitMode(int commitMode) {
+        this.commitMode = commitMode;
+        this.commitModeFieldPresent = true;
     }
 
     public void setMaxUncommittedRows(int rows) {

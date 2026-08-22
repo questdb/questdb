@@ -104,6 +104,15 @@ public class TableTransactionLog implements Closeable {
         rootPath.clear();
     }
 
+    /**
+     * The deferred (batched) device flush for adaptive group commit (Deferred 2): fdatasync the txn log
+     * files (part-before-header). The txn-meta mems carry only structural-change records (not data commits)
+     * and are not part of the deferred per-commit path, so they are not flushed here.
+     */
+    public void fdatasyncTxnLog() {
+        txnLogFile.fdatasyncTxnLog();
+    }
+
     public void fullSync() {
         txnMetaMemIndex.sync(false);
         txnMetaMem.sync(false);
@@ -190,6 +199,17 @@ public class TableTransactionLog implements Closeable {
         return lastTxn = txnLogFile.addEntry(structureVersion, walId, segmentId, segmentTxn, timestamp, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
     }
 
+    /**
+     * Pushes the table's EFFECTIVE commit mode (Deferred 1) to the underlying log file so the
+     * per-commit sequencer-record flush follows the per-table mode. Idempotent. {@code txnLogFile} can be
+     * null before {@link #open}; the mode is re-pushed by TableSequencerImpl after open.
+     */
+    void setCommitMode(int commitMode) {
+        if (txnLogFile != null) {
+            txnLogFile.setCommitMode(commitMode);
+        }
+    }
+
     void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
         if (newStructureVersion != txnMetaMemIndex.getAppendOffset() / Long.BYTES) {
             if (instance instanceof AlterOperation) {
@@ -235,6 +255,9 @@ public class TableTransactionLog implements Closeable {
         fullSync();
         Unsafe.storeFence();
         long txn = lastTxn = txnLogFile.endMetadataChangeEntry();
+        // endMetadataChangeEntry publishes MAX_TXN after the pre-sync above. Flush that commit pointer too;
+        // otherwise an acknowledged idle structural ALTER can disappear on crash.
+        txnLogFile.fullSync();
         maxMetadataVersion.incrementAndGet();
         return txn;
     }

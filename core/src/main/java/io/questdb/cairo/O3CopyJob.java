@@ -650,8 +650,15 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 );
             }
 
-            final int commitMode = tableWriter.getConfiguration().getCommitMode();
-            if (commitMode != CommitMode.NOSYNC) {
+            // Per-table EFFECTIVE commit mode (Deferred 1), not the global one: an ADAPTIVE table's O3
+            // merge stays lazy even under a SYNC instance default, and a SYNC table flushes even under an
+            // ADAPTIVE default.
+            final int commitMode = tableWriter.getEffectiveCommitMode();
+            // Apply-path destination-column sync. Gated on appliesColumnSync (SYNC/ASYNC only): under
+            // ADAPTIVE this O3-merged column is a rebuildable cache of the durable WAL, so it is left
+            // non-durable here (lazy apply) and made crash-safe by the durable epoch + recovery
+            // roll-forward (Plan 3). NOSYNC skips as before. See CommitMode.appliesColumnSync.
+            if (CommitMode.appliesColumnSync(commitMode)) {
                 syncColumns(
                         columnCounter,
                         timestampMergeIndexAddr,
@@ -733,17 +740,19 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     ) {
         try {
             boolean async = commitMode == CommitMode.ASYNC;
+            // Sync data (dstVar = .d, primary) before aux (dstFix = .i, secondary): the aux vector
+            // holds offsets into the data vector; a durable aux entry must never point past durable data.
+            if (dstVarAddr != 0 && dstVarSize > 0) {
+                ff.msync(dstVarAddr, dstVarSize, async);
+                if (dstVarFd != -1 && dstVarFd != 0) {
+                    ff.fsync(Math.abs(dstVarFd));
+                }
+            }
             if (dstFixAddr != 0 && dstFixSize > 0) {
                 ff.msync(dstFixAddr, dstFixSize, async);
                 // sync FD in case we wrote data not via mmap
                 if (dstFixFd != -1 && dstFixFd != 0) {
                     ff.fsync(Math.abs(dstFixFd));
-                }
-            }
-            if (dstVarAddr != 0 && dstVarSize > 0) {
-                ff.msync(dstVarAddr, dstVarSize, async);
-                if (dstVarFd != -1 && dstVarFd != 0) {
-                    ff.fsync(Math.abs(dstVarFd));
                 }
             }
         } catch (Throwable e) {
@@ -821,6 +830,12 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     }
                 }
                 indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
+                // Thread the table's EFFECTIVE commit mode into this (possibly transient) index writer, so
+                // its commit() flush decision matches the destination-column sync gate above
+                // (CommitMode.appliesColumnSync on getEffectiveCommitMode). Without it the index kept
+                // reading the instance-global mode and flushed on every O3 merge of an ADAPTIVE table --
+                // whose merged columns are deliberately left lazy and made durable by the epoch instead.
+                indexWriter.setCommitMode(tableWriter.getEffectiveCommitMode());
                 updateIndex(dstFixAddr, Math.abs(dstFixSize), indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
                 indexWriter.commit();
             } finally {

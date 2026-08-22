@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.IndexType;
@@ -2487,6 +2488,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     reader.getColumnVersionReader(),
                     symbolProvider,
                     configuration,
+                    CommitMode.effectiveCommitMode(reader.getMetadata().getCommitMode(), configuration.getCommitMode()),
                     null,
                     Double.NaN,
                     bloomIndexes,

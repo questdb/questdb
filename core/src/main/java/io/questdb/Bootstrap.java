@@ -26,8 +26,12 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DurabilityEnvironmentCheck;
+import io.questdb.cairo.FastCommitCheck;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.WriteBarrierCheck;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -93,6 +97,8 @@ public class Bootstrap {
     private final Log log;
     private final MicrosecondClock microsecondClock;
     private final String rootDirectory;
+    private CairoEngine.DurabilityFailureHandler durabilityFailureHandler = failure -> {
+    };
 
     public Bootstrap(String... args) {
         this(new PropBootstrapConfiguration(), args);
@@ -391,7 +397,16 @@ public class Bootstrap {
     }
 
     public CairoEngine newCairoEngine() {
-        return new CairoEngine(getConfiguration().getCairoConfiguration(), new io.questdb.cairo.wal.QdbrWalLocker(), true);
+        return new CairoEngine(
+                getConfiguration().getCairoConfiguration(),
+                new io.questdb.cairo.wal.QdbrWalLocker(),
+                true,
+                durabilityFailureHandler
+        );
+    }
+
+    public void setDurabilityFailureHandler(@NotNull CairoEngine.DurabilityFailureHandler durabilityFailureHandler) {
+        this.durabilityFailureHandler = durabilityFailureHandler;
     }
 
     private static void copyInputStream(boolean force, byte[] buffer, File out, InputStream is, Log log) throws IOException {
@@ -573,6 +588,9 @@ public class Bootstrap {
                 verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false, false);
                 verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true, false);
                 verifyFileOpts(path, cairoConfig);
+                verifyWriteBarriers(cairoConfig);
+                verifyFastCommit(cairoConfig);
+                verifyDurabilityEnvironment(path, cairoConfig);
                 cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']', true, false));
             }
             if (JitUtil.isJitSupported()) {
@@ -639,6 +657,86 @@ public class Bootstrap {
         if (insufficientLimits) {
             log.advisoryW().$("make sure to increase fs.file-max and vm.max_map_count limits:\n" +
                     "https://questdb.io/docs/deployment/capacity-planning/#os-configuration").$();
+        }
+    }
+
+    private void verifyFastCommit(CairoConfiguration cairoConfig) {
+        if (cairoConfig.getCommitMode() != CommitMode.SYNC) {
+            return;
+        }
+        final CharSequence dbRoot = cairoConfig.getDbRoot();
+        if (dbRoot == null) {
+            return;
+        }
+        try {
+            final int result = FastCommitCheck.classifyDbRoot(cairoConfig.getFilesFacade(), dbRoot);
+            if (result == FastCommitCheck.FAST_COMMIT_ENABLED) {
+                log.advisoryW().$("WARNING: db root filesystem has ext4 fast_commit enabled")
+                        .$(": under per-inode journaling the batched SYNC flush optimization's within-page durability is NOT guaranteed")
+                        .$(" -- the batched column flush has been DISABLED and cairo.commit.mode=sync falls back to per-file fsync")
+                        .$(" (slower, but durable everywhere)")
+                        .$(" [dbRoot=").$(dbRoot).$(']').$();
+            }
+        } catch (Throwable t) {
+            // Detection must never break startup.
+            log.debug().$("fast_commit verify failed [reason=").$(t.getMessage()).$(']').$();
+        }
+    }
+
+    /**
+     * Report environments where SYNC/ADAPTIVE cannot deliver the power-loss durability they promise. Purely
+     * advisory: nothing here changes behaviour, because in two of the three cases there is nothing the
+     * operator can change.
+     */
+    private void verifyDurabilityEnvironment(Path path, CairoConfiguration cairoConfig) {
+        final int commitMode = cairoConfig.getCommitMode();
+        if (commitMode != CommitMode.SYNC && commitMode != CommitMode.ADAPTIVE) {
+            return;
+        }
+        final CharSequence dbRoot = cairoConfig.getDbRoot();
+        if (dbRoot == null) {
+            return;
+        }
+        // On macOS the decision needs the db root's filesystem NAME, which getFileSystemStatus writes into
+        // the path buffer (the same call verifyFileSystem above uses for its SUPPORTED/UNSUPPORTED line).
+        String fsName = null;
+        if (Os.isOSX()) {
+            path.of(dbRoot);
+            if (Files.exists(path.$())) {
+                // A zero return means statfs failed and the buffer was NOT written, so path still holds the
+                // db root. Using it would emit "fs=/var/lib/questdb/db" and raise a false durability alarm
+                // naming a path as a filesystem.
+                if (Files.getFileSystemStatus(path.$()) != 0) {
+                    path.seekZ();
+                    fsName = path.toString();
+                }
+            }
+        }
+        final int flags = DurabilityEnvironmentCheck.probe(cairoConfig.getFilesFacade(), fsName);
+        DurabilityEnvironmentCheck.logAdvisories(log, flags, commitMode, dbRoot, fsName);
+    }
+
+    private void verifyWriteBarriers(CairoConfiguration cairoConfig) {
+        // ADAPTIVE as well as SYNC: a nobarrier mount means fsync does not flush the device cache, which
+        // breaks the adaptive WAL commit point and the durable epoch for exactly the same reason it breaks
+        // SYNC -- and ADAPTIVE is now the default, so gating on SYNC alone left the warning unreachable for
+        // most installs. NOSYNC/ASYNC make no power-loss promise, so they stay silent.
+        final int commitMode = cairoConfig.getCommitMode();
+        if (commitMode != CommitMode.SYNC && commitMode != CommitMode.ADAPTIVE) {
+            return;
+        }
+        final CharSequence dbRoot = cairoConfig.getDbRoot();
+        if (dbRoot == null) {
+            return;
+        }
+        final int result = WriteBarrierCheck.classifyDbRoot(cairoConfig.getFilesFacade(), dbRoot);
+        if (result == WriteBarrierCheck.BARRIERS_DISABLED) {
+            log.advisoryW().$("WARNING: db root filesystem is mounted WITHOUT write barriers (nobarrier/barrier=0)")
+                    .$(": commit mode ").$(CommitMode.toString(commitMode))
+                    .$(" does NOT provide power-loss durability on this mount")
+                    .$((" -- committed data may be LOST on power failure;"))
+                    .$(" remount the filesystem with write barriers enabled (the default)")
+                    .$(" [dbRoot=").$(dbRoot).$(']').$();
         }
     }
 

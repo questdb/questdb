@@ -73,10 +73,16 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
+    // Retry attempts that must pass with NO version change before a torn live area is called terminal
+    // rather than contention. Must be a power of 2. Sub-millisecond in practice, so the diagnosis is
+    // effectively immediate, yet far longer than any single commit's publish window.
+    private static final int TORN_DIAGNOSIS_WINDOW = 1 << 16;
     private final BitSet activeColumns = new BitSet();
     private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
     private final CairoConfiguration configuration;
+    private final PartitionChecksumSidecar checksumSidecar = new PartitionChecksumSidecar();
+    private CorruptPartitionRegistry corruptPartitionRegistry;
     private final int dbRootSize;
     private final FilesFacade ff;
     private final int id;
@@ -122,7 +128,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             CairoConfiguration configuration,
             @NotNull TableToken tableToken,
             TxnScoreboardPool scoreboardFactory) {
-        this(id, configuration, tableToken, scoreboardFactory, null, null);
+        this(id, configuration, tableToken, scoreboardFactory, null, null, null);
     }
 
     // Don't forget to change TableReader srcReader overload when changing this constructor.
@@ -132,9 +138,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             @NotNull TableToken tableToken,
             TxnScoreboardPool scoreboardPool,
             @Nullable MessageBus messageBus,
-            @Nullable PartitionOverwriteControl partitionOverwriteControl
+            @Nullable PartitionOverwriteControl partitionOverwriteControl,
+            @Nullable CorruptPartitionRegistry corruptPartitionRegistry
     ) {
         this.id = id;
+        this.corruptPartitionRegistry = corruptPartitionRegistry;
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
         this.maxOpenPartitions = configuration.getInactiveReaderMaxOpenPartitions();
@@ -183,10 +191,12 @@ public class TableReader implements Closeable, SymbolTableSource {
             TableReader srcReader,
             TxnScoreboardPool scoreboardPool,
             @Nullable MessageBus messageBus,
-            @Nullable PartitionOverwriteControl partitionOverwriteControl
+            @Nullable PartitionOverwriteControl partitionOverwriteControl,
+            @Nullable CorruptPartitionRegistry corruptPartitionRegistry
     ) {
         assert srcReader.isOpen() && srcReader.isActive();
         this.id = id;
+        this.corruptPartitionRegistry = corruptPartitionRegistry;
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
         this.maxOpenPartitions = configuration.getInactiveReaderMaxOpenPartitions();
@@ -264,6 +274,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(txnScoreboard);
             Misc.free(path);
             Misc.free(columnVersionReader);
+            Misc.free(checksumSidecar);
             LOG.debug().$("closed [table=").$(tableToken).I$();
         }
     }
@@ -551,6 +562,14 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long getPartitionRowCountFromMetadata(int partitionIndex) {
         return txFile.getPartitionSize(partitionIndex);
+    }
+
+    /**
+     * Name txn of a partition, i.e. which VERSION of the directory this reader sees. The scrub needs it
+     * to address exactly the version its reader has pinned.
+     */
+    public long getPartitionNameTxnByIndex(int partitionIndex) {
+        return txFile.getPartitionNameTxn(partitionIndex);
     }
 
     public long getPartitionTimestampByIndex(int partitionIndex) {
@@ -1432,6 +1451,75 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    /**
+     * Structural verification when a native partition opens: the sidecar's own trailer, then each
+     * covered file's actual length against the recorded one.
+     * <p>
+     * Deliberately does NOT hash blocks. Column files are mmap'd, so there is no read hook to piggyback
+     * on, and hashing here would make partition open cost O(bytes) on the query path. This is
+     * O(#files) -- a length call each plus one small mapping -- and still catches truncation, which is
+     * the shape a torn write at the tail of a file takes. Block hashes are the scrub's job.
+     * <p>
+     * A file LONGER than recorded is normal: the partition has been appended to since the last
+     * generation, and those blocks are simply uncovered. A file that is ABSENT is also normal -- a
+     * dropped or purged column -- and must not fail the read.
+     */
+    /**
+     * Last path segment: the partition directory name, which is how verdicts are keyed.
+     */
+    private static CharSequence partitionDirNameOf(Path partitionPath) {
+        final String full = partitionPath.toString();
+        final int slash = full.lastIndexOf(io.questdb.std.Files.SEPARATOR);
+        return slash < 0 ? full : full.substring(slash + 1);
+    }
+
+    private void verifyPartitionStructure(Path partitionPath) {
+        if (!configuration.isPartitionChecksumEnabled()) {
+            return;
+        }
+        final int plen = partitionPath.size();
+        // A partition the scrub condemned must fail the queries that TOUCH it, and only those -- the
+        // rest of the table stays readable. Checked before the structural work: there is nothing to
+        // learn from a partition already known bad.
+        if (corruptPartitionRegistry != null && !corruptPartitionRegistry.isEmpty()) {
+            final CharSequence dirName = partitionDirNameOf(partitionPath);
+            final String reason = corruptPartitionRegistry.reasonFor(tableToken, dirName);
+            if (reason != null) {
+                throw CairoException.critical(0)
+                        .put("partition failed checksum verification [table=").put(tableToken.getTableName())
+                        .put(", partition=").put(dirName)
+                        .put(", detail=").put(reason)
+                        .put(']');
+            }
+        }
+        try {
+            partitionPath.concat(PartitionChecksumSidecar.FILE_NAME);
+            checksumSidecar.of(ff, partitionPath, configuration.getPartitionChecksumBlockSize());
+            partitionPath.trimTo(plen);
+            if (checksumSidecar.coverage() != ChecksumTrailer.PRESENT_OK) {
+                return; // uncovered: upgrade-on-write, read it unverified
+            }
+            for (int i = 0, n = checksumSidecar.fileCount(); i < n; i++) {
+                partitionPath.trimTo(plen).concat(checksumSidecar.fileName(i));
+                final long actual = ff.length(partitionPath.$());
+                if (actual < 0) {
+                    continue; // gone: dropped or purged column, not a fault
+                }
+                final long recorded = checksumSidecar.fileLength(i);
+                if (actual < recorded) {
+                    throw CairoException.critical(0)
+                            .put("covered file is shorter than recorded [path=").put(partitionPath)
+                            .put(", recorded=").put(recorded)
+                            .put(", actual=").put(actual)
+                            .put(']');
+                }
+            }
+        } finally {
+            partitionPath.trimTo(plen);
+            checksumSidecar.close();
+        }
+    }
+
     private long openPartition0(int partitionIndex) {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         if (txFile.getPartitionCount() < 2 && txFile.getTransientRowCount() == 0) {
@@ -1463,6 +1551,18 @@ public class TableReader implements Closeable, SymbolTableSource {
                         path.trimTo(rootLen);
                         pathGenParquetPartition(partitionIndex, partitionNameTxn);
                         if (ff.exists(path.$())) {
+                            // Truncated-file guard: the _pm we just read says the data file is
+                            // parquetFileSize bytes, so a SHORTER file on disk is a torn/partial
+                            // write, not a legitimate state. Fail loudly rather than mmap past the
+                            // end. Deliberately INSIDE the exists() branch: a remote partition may
+                            // legitimately have no local data file (length -1), and that case must
+                            // reach the stubbing paths below rather than be reported as "too short".
+                            final long parquetActualLength = ff.length(path.$());
+                            if (parquetFileSize > parquetActualLength) {
+                                throw CairoException.critical(0)
+                                        .put("parquet partition file too short [expected=").put(parquetFileSize)
+                                        .put(", actual=").put(parquetActualLength).put(", path=").put(path).put(']');
+                            }
                             MemoryCMR parquetMem = parquetPartitions.getQuick(partitionIndex);
                             try {
                                 if (parquetMem != null && parquetMem != NullMemoryCMR.INSTANCE) {
@@ -1530,6 +1630,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
+                        verifyPartitionStructure(path);
                         openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
@@ -1614,6 +1715,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void readTxnSlow(long deadline) {
         int count = 0;
+        long tornWindowVersion = txFile.unsafeReadVersion();
 
         while (true) {
             if (txFile.unsafeLoadAll()) {
@@ -1638,11 +1740,45 @@ public class TableReader implements Closeable, SymbolTableSource {
             // This is unlucky, sequences have changed while we were reading transaction data
             // We must discard and try again
             count++;
+            // A torn live area is TERMINAL: the fallback record acquireTxn keeps refusing carries the
+            // previous version, and no amount of waiting repairs that. The deadline below used to be the
+            // only way out, which makes the diagnosis unreachable whenever the clock cannot advance — a
+            // frozen test clock turned a millisecond error into a 20-minute CI timeout.
+            //
+            // Telling it apart from contention needs more than one sample: unsafeIsLiveAreaTorn only
+            // brackets its OWN two version reads, so under a commit storm it can report on a window this
+            // loop would otherwise have ridden out (it failed testAddColumnPartitionConcurrentCreateReader
+            // when consulted eagerly). A live writer always publishes by bumping the version, so require
+            // the version to be UNCHANGED across a whole window of attempts: then there is no writer to
+            // wait for, and a torn area is the answer rather than a guess.
+            if ((count & (TORN_DIAGNOSIS_WINDOW - 1)) == 0) {
+                final long versionNow = txFile.unsafeReadVersion();
+                if (versionNow == tornWindowVersion && txFile.unsafeIsLiveAreaTorn()) {
+                    throw tornLiveAreaException();
+                }
+                tornWindowVersion = versionNow;
+            }
             if (clock.getTicks() > deadline) {
+                // A reader that cannot advance is normally contention. It is not when the live _txn area is
+                // torn: TxReader detects the bad checksum and correctly falls back to the intact previous
+                // A/B area, but that area carries the previous txn, which a live scoreboard refuses — so
+                // this loop spins out. Reporting a timeout then sends an operator hunting for reader
+                // contention when what they have is a corrupt _txn. Name it. Diagnosis runs only here, on
+                // a read that has already failed, so the healthy path pays nothing. (Reached when the load
+                // itself keeps failing, rather than succeeding onto the fallback handled above.)
+                if (txFile.unsafeIsLiveAreaTorn()) {
+                    throw tornLiveAreaException();
+                }
                 throw CairoException.critical(0).put("Transaction read timeout [src=reader, table=").put(tableToken).put(", timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
             }
             Os.pause();
         }
+    }
+
+    private CairoException tornLiveAreaException() {
+        return CairoException.critical(0)
+                .put("_txn live area is torn, reader cannot advance past the previous transaction [src=reader, table=")
+                .put(tableToken).put(", txn=").put(txFile.getTxn()).put(']');
     }
 
     private void reconcileOpenPartitions(long prevPartitionVersion, long prevColumnVersion, long prevTruncateVersion) {
