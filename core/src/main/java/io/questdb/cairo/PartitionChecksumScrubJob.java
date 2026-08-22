@@ -70,12 +70,16 @@ public class PartitionChecksumScrubJob extends SynchronizedJob {
         this.bytesPerSecond = configuration.getPartitionChecksumScrubBytesPerSecond();
     }
 
-    /** Bytes hashed since this job was created. Lets a test assert the job did real work. */
+    /**
+     * Bytes hashed since this job was created. Lets a test assert the job did real work.
+     */
     public long bytesHashed() {
         return bytesHashedTotal;
     }
 
-    /** Runs the scrub to completion over every table, ignoring the throttle. For tests. */
+    /**
+     * Runs the scrub to completion over every table, ignoring the throttle. For tests.
+     */
     public void runFully() {
         engine.getTableTokens(tableTokens, false);
         for (int i = 0, n = tableTokens.size(); i < n; i++) {

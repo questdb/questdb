@@ -273,7 +273,9 @@ public class PartitionChecksumInvalidationTest extends AbstractCairoTest {
         }
     }
 
-    /** Flips one byte inside the first file the sidecar covers, leaving the sidecar untouched. */
+    /**
+     * Flips one byte inside the first file the sidecar covers, leaving the sidecar untouched.
+     */
     private void flipByteInFirstCoveredFile(String tableName, String partitionName) {
         final File dir = partitionDirOrNull(tableName, partitionName);
         Assert.assertNotNull(dir);

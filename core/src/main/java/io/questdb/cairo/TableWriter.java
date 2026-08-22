@@ -15718,7 +15718,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * durability claim and is fully re-derivable from the data it describes, so a failure must cost
      * DETECTION, never ingestion -- unless strict mode says otherwise.
      */
-    /** Removes a partition's checksum sidecar, leaving it uncovered until the next seal. */
+    /**
+     * Removes a partition's checksum sidecar, leaving it uncovered until the next seal.
+     */
     private void dropPartitionChecksums(Path partitionPath) {
         final int plen = partitionPath.size();
         try {

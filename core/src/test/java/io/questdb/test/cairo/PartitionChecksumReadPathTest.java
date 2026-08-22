@@ -142,7 +142,9 @@ public class PartitionChecksumReadPathTest extends AbstractCairoTest {
         });
     }
 
-    /** 12 rows in 2024-01-01 so covered files are big enough to truncate, then a later partition seals it. */
+    /**
+     * 12 rows in 2024-01-01 so covered files are big enough to truncate, then a later partition seals it.
+     */
     private void createSealed(String table) throws Exception {
         execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal");
         for (int i = 0; i < 12; i++) {

@@ -1464,7 +1464,9 @@ public class TableReader implements Closeable, SymbolTableSource {
      * generation, and those blocks are simply uncovered. A file that is ABSENT is also normal -- a
      * dropped or purged column -- and must not fail the read.
      */
-    /** Last path segment: the partition directory name, which is how verdicts are keyed. */
+    /**
+     * Last path segment: the partition directory name, which is how verdicts are keyed.
+     */
     private static CharSequence partitionDirNameOf(Path partitionPath) {
         final String full = partitionPath.toString();
         final int slash = full.lastIndexOf(io.questdb.std.Files.SEPARATOR);

@@ -71,7 +71,9 @@ public class CorruptPartitionRegistry {
                 .I$();
     }
 
-    /** Forgets every verdict. */
+    /**
+     * Forgets every verdict.
+     */
     public void clear() {
         byTableDir.clear();
         empty = true;
@@ -93,7 +95,9 @@ public class CorruptPartitionRegistry {
         return empty;
     }
 
-    /** Why this partition is condemned, or null when it is not. */
+    /**
+     * Why this partition is condemned, or null when it is not.
+     */
     public String reasonFor(TableToken tableToken, CharSequence partitionDirName) {
         if (empty) {
             return null;
