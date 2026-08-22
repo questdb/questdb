@@ -1270,30 +1270,50 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 // before the first correction, and the replayed range grew by one commit
                 // per correction, without bound and regardless of how late the rows were.
                 final LongList replayed = new LongList();
+                final LongList routeKinds = new LongList();
                 long previous = viewInstance().getO3ResumeReplayRows();
+                long previousKeyed = job.openSegmentKeyedResumeCountForTest();
                 for (int i = 0; i < 6; i++) {
                     final int head = 30 + i * 2;
                     commit(row("acct-1", head), job);
                     commit(row("acct-2", head - 10), job);
                     final long now = viewInstance().getO3ResumeReplayRows();
+                    final long nowKeyed = job.openSegmentKeyedResumeCountForTest();
                     Assert.assertTrue("correction " + i + " must repair through a resume", now > previous);
                     replayed.add(now - previous);
+                    routeKinds.add(nowKeyed > previousKeyed ? 1 : 0);
                     previous = now;
+                    previousKeyed = nowKeyed;
                 }
 
                 // Bounded, not growing. Every correction resumes from a boundary the
                 // repair before it re-versioned in place, so what it replays is its own
                 // depth plus a cadence rather than everything the view has emitted since
-                // the ladder was last intact. The run drifts downwards here because the
-                // corrections climb out of the dense ladder into the sparse head commits
-                // above it; what it must never do is climb.
-                final long first = replayed.getQuick(0);
-                for (int i = 1, n = replayed.size(); i < n; i++) {
-                    Assert.assertTrue(
-                            "repair " + i + " must not replay more than the first did"
-                                    + " [replayed=" + replayed + ']',
-                            replayed.getQuick(i) <= first
-                    );
+                // the ladder was last intact. Compare like with like: the scan cost may
+                // deliberately switch from keyed to whole-range as one key accumulates
+                // postings, and a keyed replay emits fewer rows by construction. Within
+                // either route the run may drift downwards as corrections climb out of the
+                // dense ladder; what it must never do is climb.
+                long firstKeyed = Long.MAX_VALUE;
+                long firstWhole = Long.MAX_VALUE;
+                for (int i = 0, n = replayed.size(); i < n; i++) {
+                    final boolean keyed = routeKinds.getQuick(i) == 1;
+                    final long first = keyed ? firstKeyed : firstWhole;
+                    if (first == Long.MAX_VALUE) {
+                        if (keyed) {
+                            firstKeyed = replayed.getQuick(i);
+                        } else {
+                            firstWhole = replayed.getQuick(i);
+                        }
+                    } else {
+                        Assert.assertTrue(
+                                "repair " + i + " must not replay more than the first "
+                                        + (keyed ? "keyed" : "whole-range")
+                                        + " repair did [replayed=" + replayed
+                                        + ", routes=" + routeKinds + ']',
+                                replayed.getQuick(i) <= first
+                        );
+                    }
                 }
                 assertViewMatchesRecompute(NOON_ANCHOR);
             }

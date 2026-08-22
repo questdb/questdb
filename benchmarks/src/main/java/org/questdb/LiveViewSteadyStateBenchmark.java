@@ -224,6 +224,7 @@ public class LiveViewSteadyStateBenchmark {
         boolean isRepairIsolatedRuntime = true;
         boolean isRepairSegmentYield = true;
         boolean isRepairKeyedReplay = false;
+        long keyedScanIndexOpenRows = -1; // -1 = leave the production cost model unchanged
         // The open anchor segment's own keyed resume - the route the reported workload's
         // corrections actually take, since a daily anchor leaves 99% of them inside the
         // segment the runtime still stands in. Left at the configuration default, so a run
@@ -303,6 +304,8 @@ public class LiveViewSteadyStateBenchmark {
                 isRepairKeyedReplay = Boolean.parseBoolean(arg.substring(22));
             } else if (arg.startsWith("--open-segment-keyed-replay=")) {
                 isOpenSegmentKeyedReplay = Boolean.parseBoolean(arg.substring(28));
+            } else if (arg.startsWith("--keyed-scan-index-open-rows=")) {
+                keyedScanIndexOpenRows = Long.parseLong(arg.substring("--keyed-scan-index-open-rows=".length()));
             } else {
                 throw new IllegalArgumentException("unknown argument: " + arg);
             }
@@ -403,6 +406,7 @@ public class LiveViewSteadyStateBenchmark {
         final boolean finalRepairSegmentYield = isRepairSegmentYield;
         final boolean finalRepairKeyedReplay = isRepairKeyedReplay;
         final boolean finalOpenSegmentKeyedReplay = isOpenSegmentKeyedReplay;
+        final long finalKeyedScanIndexOpenRows = keyedScanIndexOpenRows;
         final boolean finalLvDedup = isLvDeduped;
         try {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(dbRoot.toString()) {
@@ -463,6 +467,13 @@ public class LiveViewSteadyStateBenchmark {
                 }
 
                 @Override
+                public long getLiveViewCheckpointRepairKeyedScanIndexOpenRows() {
+                    return finalKeyedScanIndexOpenRows >= 0
+                            ? finalKeyedScanIndexOpenRows
+                            : super.getLiveViewCheckpointRepairKeyedScanIndexOpenRows();
+                }
+
+                @Override
                 public boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled() {
                     return finalOpenSegmentKeyedReplay;
                 }
@@ -482,7 +493,7 @@ public class LiveViewSteadyStateBenchmark {
                             + "hotKeyEveryN=%d equalTsEveryN=%d tsStepUs=%d "
                             + "spanHours=%.2f baseDedup=%s lvDedup=%s repairMaxChainedBoundaries=%d repairPerSegment=%s "
                             + "repairIsolatedRuntime=%s repairSegmentYield=%s repairKeyedReplay=%s "
-                            + "openSegmentKeyedReplay=%s%n",
+                            + "openSegmentKeyedReplay=%s keyedScanIndexOpenRows=%d%n",
                     seedRows, batchRows, batches, checkpointRows, isSymbolPreSized, isIndexed, recycleAccounts,
                     anchorPeriod, accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
                     configuration.getLiveViewPartitionCompactThreshold(),
@@ -498,7 +509,8 @@ public class LiveViewSteadyStateBenchmark {
                     configuration.isLiveViewCheckpointRepairIsolatedRuntimeEnabled(),
                     configuration.isLiveViewCheckpointRepairSegmentYieldEnabled(),
                     configuration.isLiveViewCheckpointRepairKeyedReplayEnabled(),
-                    configuration.isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled()
+                    configuration.isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled(),
+                    configuration.getLiveViewCheckpointRepairKeyedScanIndexOpenRows()
             );
 
             engine = new CairoEngine(configuration);
@@ -828,10 +840,24 @@ public class LiveViewSteadyStateBenchmark {
                     // smaller row set to publish.
                     System.out.printf(
                             Locale.ROOT,
-                            "# sparse published=%d fallback=%d rows_kept=%d%n",
+                            "# open_keyed priced=%d cheaper=%d posting_rows=%d whole_rows=%d unpriced=%d "
+                                    + "resumes=%d arithmetic_positions=%d sparse_resumes=%d%n",
+                            job.openSegmentKeyedPricedCountForTest(),
+                            job.openSegmentKeyedCheaperCountForTest(),
+                            job.openSegmentKeyedPostingRowsForTest(),
+                            job.openSegmentKeyedWholeRangeRowsForTest(),
+                            job.openSegmentKeyedUnpricedCountForTest(),
+                            job.openSegmentKeyedResumeCountForTest(),
+                            job.openSegmentArithmeticRowPositionCountForTest(),
+                            job.openSegmentSparseResumeCountForTest()
+                    );
+                    System.out.printf(
+                            Locale.ROOT,
+                            "# sparse published=%d fallback=%d rows_kept=%d open_arithmetic_positions=%d%n",
                             job.sparsePublicationCountForTest(),
                             job.sparsePublicationFallbackCountForTest(),
-                            job.sparsePublicationRowsKeptForTest()
+                            job.sparsePublicationRowsKeptForTest(),
+                            job.openSegmentArithmeticRowPositionCountForTest()
                     );
                 }
                 // The write side of the run, which is the term fix 3 turns on. A strictly

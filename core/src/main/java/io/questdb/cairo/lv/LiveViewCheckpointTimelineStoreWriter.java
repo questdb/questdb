@@ -371,6 +371,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     skipPublishedSegmentIds(checkpointsDir, superblock.nextSegmentId),
                     superblock.generation,
                     superblock.timelineRootRef,
+                    superblock.rowPositionDeltaRootRef,
                     outputKeys,
                     chained
             );
@@ -1680,14 +1681,22 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         oldFunctionRoot.of(checkpointsDir, oldFunctionRootRef);
         final LiveViewCheckpointPageRef oldPartitionRoot = new LiveViewCheckpointPageRef();
         oldFunctionRoot.getPartitionMapRootRef(oldPartitionRoot);
-        oldPartitionReader.iterateAll(oldPartitionRoot, entry -> {
-            if (outputKeys != null && !outputKeys.contains(entry.getKey())) {
-                return;
-            }
-            if (!frozen.partitionsByKey.containsKey(ByteBuffer.wrap(entry.getKey()))) {
-                builder.removePartition(entry.getKey());
-            }
-        });
+        if (outputKeys != null) {
+            // A partial replay owns exactly Q. Discover removals from Q rather than by
+            // walking every entry in the predecessor root and filtering afterwards.
+            // The partition-map writer treats removal of an absent key as a no-op.
+            outputKeys.forEach(key -> {
+                if (!frozen.partitionsByKey.containsKey(ByteBuffer.wrap(key))) {
+                    builder.removePartition(key);
+                }
+            });
+        } else {
+            oldPartitionReader.iterateAll(oldPartitionRoot, entry -> {
+                if (!frozen.partitionsByKey.containsKey(ByteBuffer.wrap(entry.getKey()))) {
+                    builder.removePartition(entry.getKey());
+                }
+            });
+        }
     }
 
     /**
@@ -3419,6 +3428,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         // collectBoundaries, which is already reading the pinned timeline.
         private final LiveViewCheckpointTimelineEntry predecessorEntry =
                 new LiveViewCheckpointTimelineEntry();
+        private final LiveViewCheckpointPageRef rowPositionDeltaRootRef = new LiveViewCheckpointPageRef();
         private final LiveViewCheckpointPageRef timelineRootRef = new LiveViewCheckpointPageRef();
         // The merged view of everything below the boundary being frozen - published
         // predecessor plus the boundaries this capture has already staged over it -
@@ -3433,6 +3443,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 long dataSegmentId,
                 long generation,
                 LiveViewCheckpointPageRef timelineRootRef,
+                LiveViewCheckpointPageRef rowPositionDeltaRootRef,
                 @Nullable LiveViewCheckpointOutputKeyDomain outputKeys,
                 boolean chained
         ) {
@@ -3441,6 +3452,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             this.generation = generation;
             this.isChained = chained;
             copy(timelineRootRef, this.timelineRootRef);
+            copy(rowPositionDeltaRootRef, this.rowPositionDeltaRootRef);
             if (outputKeys != null) {
                 this.outputKeys = new LiveViewCheckpointOutputKeyDomain();
                 this.outputKeys.copyFrom(outputKeys);
@@ -3615,6 +3627,37 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 }
             }
             openChain();
+        }
+
+        /**
+         * Resolves the effective cumulative row position of each captured timeline
+         * entry against the delta root pinned with this repair generation.
+         */
+        public void collectEffectiveRowPositions(
+                @NotNull ObjList<LiveViewCheckpointTimelineEntry> entries,
+                @NotNull LongList out
+        ) {
+            out.clear();
+            try (LiveViewCheckpointRowPositionDeltaReader deltaReader =
+                         new LiveViewCheckpointRowPositionDeltaReader(configuration)) {
+                deltaReader.of(checkpointsDir);
+                for (int i = 0, n = entries.size(); i < n; i++) {
+                    final LiveViewCheckpointTimelineEntry entry = entries.getQuick(i);
+                    try {
+                        out.add(Math.addExact(
+                                entry.baseLvRowPosition,
+                                deltaReader.prefixSum(
+                                        rowPositionDeltaRootRef,
+                                        entry.maxTimestamp,
+                                        entry.checkpointId
+                                )
+                        ));
+                    } catch (ArithmeticException e) {
+                        throw CairoException.critical(0)
+                                .put("live view checkpoint row position overflow");
+                    }
+                }
+            }
         }
 
         /**

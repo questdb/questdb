@@ -163,6 +163,11 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
  */
 public class LiveViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LiveViewRefreshJob.class);
+    // Once sparse publication and arithmetic row positions remove both O(state) and
+    // O(interval) follow-up walks, reported-density A/Bs validate a four-row effective
+    // posting-index setup gate. Keep the conservative configurable price for every other
+    // keyed repair; this cap only admits the fully guarded open-segment fast path.
+    private static final long OPEN_SEGMENT_ARITHMETIC_INDEX_OPEN_ROWS = 4;
     // Anti-spin floor (micros) between re-drains of a view deferred on base apply lag.
     // Bounds the retry rate without perceptibly delaying convergence (LV cadences are
     // >=100ms); the transient lag clears within a few apply-job ticks.
@@ -359,6 +364,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // filled by priceKeyedSegmentScans and read by armKeyedReplay. Refilled per change-set
     // classification, so it describes the loop currently being driven and no other.
     private final LongList keyedScanCheaperSegments = new LongList();
+    // Effective row positions for an insert-only keyed resume's captured boundaries.
+    // Filled from the pinned generation and adjusted by the exact new-row timestamps the
+    // change-set walk collected, so the replay never scans stored rows to recount them.
+    private final LongList openSegmentArithmeticBoundaryPositions = new LongList();
     // The same pricing for the OPEN anchor segment - the one the runtime is still standing
     // in, whose corrections the resume repairs rather than a segment replay. It is one
     // range rather than a list, so the verdict is a flag: true when the resume's own
@@ -369,6 +378,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // cleared by everything that reaches a resume without it, because the change set is
     // worker-owned scratch: a stale true would hand one repair's keys to another's replay.
     private boolean openSegmentKeyDomainReady;
+    // The open-segment key domain came from an exact insert-only WAL walk and the view
+    // has no filter, so checkpoint row positions can move by the classified row delta
+    // instead of by scanning the live view's stored interval.
+    private boolean openSegmentArithmeticRowDeltaReady;
     private long openSegmentKeyedCheaperCount;
     private long openSegmentKeyedPostingRows;
     private long openSegmentKeyedPricedCount;
@@ -389,6 +402,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private long transplantedKeyCount;
     // How many resumes this worker ran by key rather than by reading every row above the
     // anchor, and how many of those published sparsely.
+    private long openSegmentArithmeticRowPositionCount;
     private long openSegmentKeyedResumeCount;
     private long openSegmentSparseResumeCount;
     // The keyed replay of one closed segment: the key domain its indexed scan follows, and
@@ -782,10 +796,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Test-only: how many open-segment resumes this worker priced a keyed read below the
-     * whole-range one for. The subset of {@link #openSegmentKeyedPricedCountForTest()} that
-     * a keyed resume is available to.
+     * Test-only: how many keyed open-segment resumes derived checkpoint row positions
+     * from their exact insert delta and did not scan the stored live-view interval.
      */
+    @TestOnly
+    public long openSegmentArithmeticRowPositionCountForTest() {
+        return openSegmentArithmeticRowPositionCount;
+    }
+
     /**
      * Test-only: how many resumes this worker ran by following the correction's own keys
      * rather than reading every row above the anchor.
@@ -4520,8 +4538,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * closed segment's bounds are its own, while a resume's floor is the anchor the plan
      * selected and its ceiling is the end of the base table, and neither is known until
      * the plan has run. Both sides are estimated off the same pinned reader through the
-     * same two cost models the closed segments use, so the numbers are comparable by
-     * construction.
+     * same two cost models the closed segments use. When the exact insert delta makes
+     * sparse publication independent of the stored interval, the open route uses its
+     * measured posting-index setup cap; closed segments and open fallbacks retain the
+     * conservative configured setup price.
      *
      * @return true when the keyed read is the cheaper of the two, which is the only case
      * the resume may follow its keys in
@@ -4547,7 +4567,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         final int readerColumnIndex = compiledPlan.getPageFrameFactory().getBaseColumnIndex(scanColumnIndex);
-        final long indexOpenRows = engine.getConfiguration().getLiveViewCheckpointRepairKeyedScanIndexOpenRows();
+        final long configuredIndexOpenRows =
+                engine.getConfiguration().getLiveViewCheckpointRepairKeyedScanIndexOpenRows();
+        // The configured 256-row setup price was intentionally conservative while a keyed
+        // resume still paid an O(interval) stored-row merge and O(state) root publication.
+        // Neither term is in the scan model, so it kept declining the now-cheaper route.
+        // Reported-density A/Bs after removing both terms validate an effective price of
+        // four: 116K-row repairs are 2.8-5.8x faster, while 11K-row repairs remain whole-range.
+        // Scope the measured price to the exact, insert-only arithmetic path; any fallback
+        // keeps the configured price and its original safety margin.
+        final long indexOpenRows = openSegmentArithmeticRowDeltaReady
+                ? Math.min(configuredIndexOpenRows, OPEN_SEGMENT_ARITHMETIC_INDEX_OPEN_ROWS)
+                : configuredIndexOpenRows;
         try {
             scanCost.of(reader);
             keyedScanCost.of(reader);
@@ -4592,6 +4623,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", indexOpens=").$(keyedScanCost.getIndexOpens())
                     .$(", keyedCostRows=").$(LiveViewCheckpointKeyedScanCost.keyedScanCostRows(
                             postingRows, keyedScanCost.getIndexOpens(), keyedScanKeys.size(), indexOpenRows))
+                    .$(", indexOpenRows=").$(indexOpenRows)
+                    .$(", configuredIndexOpenRows=").$(configuredIndexOpenRows)
                     .$(", wholeRangeRows=").$(wholeRangeRows)
                     .$(", keyedCheaper=").$(cheaper).I$();
             return cheaper;
@@ -4993,6 +5026,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long advanceTo
     ) throws SqlException {
         openSegmentKeyDomainReady = false;
+        openSegmentArithmeticRowDeltaReady = false;
         if (!engine.getConfiguration().isLiveViewCheckpointRepairPerSegmentEnabled()) {
             return SEGMENT_REPAIR_NOT_TAKEN;
         }
@@ -5119,6 +5153,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         openSegmentKeyDomainReady = openSegmentKeyed
                 && !isResidualEmpty
                 && segmentChangeSet.isResidualKeyDomainComplete();
+        openSegmentArithmeticRowDeltaReady = openSegmentKeyDomainReady
+                && compiledPlan.getFilter() == null
+                && !hasDedupKeys(reader.getMetadata());
         if (segmentCount == 0) {
             // Nothing below the runtime's own segment after the sub-floor rows were
             // dropped. The residual bounds are still worth handing on: they carry the
@@ -5542,6 +5579,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long lowTsInclusive,
             long highTsExclusive
     ) {
+        return openStoredRowCursor(instance, lowTsInclusive, highTsExclusive, true);
+    }
+
+    private @Nullable RecordCursor openStoredRowCursor(
+            LiveViewInstance instance,
+            long lowTsInclusive,
+            long highTsExclusive,
+            boolean retryOnMetadataChange
+    ) {
         if (highTsExclusive <= lowTsInclusive) {
             return null;
         }
@@ -5569,11 +5615,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             return cursor;
         } catch (Throwable t) {
-            // A scan of the view's own table that cannot be opened costs the localization
-            // and nothing else. Drop the cached factory, which is what owns the cursor
-            // above and closes it: the likeliest cause is the view's own metadata moving
-            // under a factory built against the old one.
+            Misc.free(cursor);
+            // The view can acquire its dedup metadata after this worker cached the durable
+            // scan. Rebuild once against the current metadata instead of throwing away an
+            // otherwise valid keyed repair; a second failure declines conservatively.
             instance.setStoredRowScanFactory(null);
+            if (retryOnMetadataChange && t instanceof TableReferenceOutOfDateException) {
+                return openStoredRowCursor(instance, lowTsInclusive, highTsExclusive, false);
+            }
             LOG.info().$("live view could not open its own stored rows for a keyed repair [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
@@ -5875,6 +5924,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // every repair this worker classified since, so the residual behind the loop reads
         // whole. The loop carries its own segments' keys; nothing carries the open one's.
         openSegmentKeyDomainReady = false;
+        openSegmentArithmeticRowDeltaReady = false;
         if (settleRepairedSegment(instance, loop, loop.getInFlightSegmentStart()) != SEGMENT_STEP_DONE) {
             return false;
         }
@@ -5986,6 +6036,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // Nothing has decomposed this change yet, so no resume below it may follow a key
         // domain. repairChangeSetSegments is what earns the flag back.
         openSegmentKeyDomainReady = false;
+        openSegmentArithmeticRowDeltaReady = false;
         // An intra-commit out-of-order FIRST commit can reach the replay path
         // before any in-order cycle computed snapshot capability (which normally
         // happens in maybeWriteHeadCheckpoint). Compute it here so the
@@ -6615,6 +6666,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // prove the table moved the way the arithmetic says before any root is
         // published against it.
         long anchorRowPosition = Numbers.LONG_NULL;
+        // Insert-only, unfiltered open-segment repairs know their exact output-row delta
+        // from the WAL decomposition. These two pre-repair table coordinates replace the
+        // stored-row interval scan in that guarded shape.
+        long durableRowsBeforeRepair = Numbers.LONG_NULL;
+        long durableMaxTsBeforeRepair = Numbers.LONG_NULL;
+        long insertedRowDelta = 0;
+        boolean arithmeticRowPositions = false;
         final LiveViewCompiledPlan primaryPlan = instance.getCompiledPlan();
         // What a resume following the correction's own keys would read, against what
         // reading every row above the anchor costs. Priced here because the interval is
@@ -6644,18 +6702,39 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             keyedReplay.clear();
             keyed = false;
         }
-        // The view's own stored rows over the replaced range. A keyed replay emits its keys
-        // and no others, so these are what the boundary positions count: a row this merge
-        // leaves alone is still a row below the boundary above it. Opened BEFORE the reader
-        // below is detached into the execution context, which is the ordering
-        // o3HeadMissReplay takes for the same scan and the same reason - it reads the view's
-        // table, not the base this repair pinned.
+        arithmeticRowPositions = keyed && openSegmentArithmeticRowDeltaReady;
+        if (arithmeticRowPositions) {
+            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+                durableRowsBeforeRepair = lvReader.size();
+                durableMaxTsBeforeRepair = durableRowsBeforeRepair > 0
+                        ? lvReader.getMaxTimestamp()
+                        : Numbers.LONG_NULL;
+                insertedRowDelta = segmentChangeSet.getResidualRowCount();
+            } catch (Throwable t) {
+                // Pricing admitted this replay on the arithmetic path's measured setup
+                // cost. Continuing by key without its durable coordinate would silently
+                // restore the O(interval) stored-row scan that price omitted, so decline
+                // the keyed route for this turn and take the ordinary whole-range replay.
+                arithmeticRowPositions = false;
+                keyedReplay.clear();
+                keyed = false;
+                LOG.info().$("live view open segment row delta could not be measured, keyed resume declined [view=")
+                        .$(viewName).$(", error=").$(t).I$();
+            }
+        }
+        // Keep the view's stored-row cursor available for the duplicate-output fallback.
+        // The arithmetic sparse path never advances it; if uniqueness denies the upsert,
+        // materializeMerge rewinds it and emits the full replacement.
+        // Resolve its factory BEFORE the reader below is detached into the execution
+        // context, which is the ordering o3HeadMissReplay takes for the same scan and the
+        // same reason - it reads the view's table, not the base this repair pinned.
         RecordCursor storedRowCursor = null;
         if (keyed) {
             storedRowCursor = openStoredRowCursor(instance, plan.getOutputLowTs(), Long.MAX_VALUE);
             if (storedRowCursor == null) {
                 keyedReplay.clear();
                 keyed = false;
+                arithmeticRowPositions = false;
             }
         }
         final LiveViewCompiledPlan compiledPlan = keyed ? repairRuntime.getPlan() : primaryPlan;
@@ -6664,6 +6743,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (keyed) {
             isolatedReplayTurnCount++;
             openSegmentKeyedResumeCount++;
+            if (arithmeticRowPositions) {
+                openSegmentArithmeticRowPositionCount++;
+            }
         }
         try {
             engine.detachReader(reader);
@@ -6738,6 +6820,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 repairBoundaries.clear();
             }
             prefixMarkerLive = timelineCapture != null;
+            if (timelineCapture != null && arithmeticRowPositions) {
+                timelineCapture.collectEffectiveRowPositions(
+                        repairBoundaries,
+                        openSegmentArithmeticBoundaryPositions
+                );
+                for (int i = 0, n = repairBoundaries.size(); i < n; i++) {
+                    try {
+                        openSegmentArithmeticBoundaryPositions.setQuick(
+                                i,
+                                Math.addExact(
+                                        openSegmentArithmeticBoundaryPositions.getQuick(i),
+                                        segmentChangeSet.getResidualRowCountAtOrBelow(
+                                                repairBoundaries.getQuick(i).maxTimestamp
+                                        )
+                                )
+                        );
+                    } catch (ArithmeticException e) {
+                        throw CairoException.critical(0)
+                                .put("live view checkpoint row position overflow");
+                    }
+                }
+            }
             try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
                 RecordToRowCopier copier = ensureCopier(instance, walWriter);
                 // Open the snapshot AT replayLowTs rather than scanning up to it: the
@@ -6753,12 +6857,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // tags EOF, which is Long.MAX_VALUE inclusive - the same unbounded tail this
                 // scan always read.
                 if (keyed) {
-                    // The merge writes nothing and only accounts for what it walks: this
-                    // resume publishes as an upsert on the view's own dedup keys, so every
-                    // stored row it does not name stays exactly where it stands. The
-                    // accounting is not optional - a cadence boundary records the count of
-                    // live-view rows at or below it, and a row left alone is still one of
-                    // them.
+                    // Bind the lazy full-replacement fallback. On the arithmetic sparse
+                    // path it writes and scans nothing: checkpoint positions come from the
+                    // durable base positions plus exact inserted-row deltas. If that proof
+                    // is unavailable, the existing merge accounts for every stored row.
                     keyedReplay.bindOutput(
                             storedRowCopier(instance, walWriter, storedRowScanFactory(instance).getMetadata()),
                             walWriter,
@@ -6809,7 +6911,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 source,
                                 timelineCapture,
                                 repairBoundaries,
-                                null,
+                                arithmeticRowPositions ? openSegmentArithmeticBoundaryPositions : null,
                                 replayWindowFactory.getWindowFunctions(),
                                 anchorWindow,
                                 session,
@@ -6826,7 +6928,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // incremental seal exists to avoid.
                                 instance
                         );
-                        if (keyed) {
+                        if (keyed && !arithmeticRowPositions) {
                             // A keyed replay's cursor yields only the affected keys' rows,
                             // so the boundary about to be frozen has to count the merged
                             // rows below it as well. Draining here rather than only in the
@@ -6960,11 +7062,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             retireCheckpointStateOnO3(instance, true);
                             return;
                         }
-                        // Snap the lifetime row counter back to the root's
-                        // recorded position: the upcoming REPLACE_RANGE commit
-                        // logically truncates rows above replayLowTs, so the
-                        // counter rewinds in step with the table.
-                        instance.setLvRowsTotal(anchorLvRowPosition);
+                        // A replacement replay rewinds to the anchor position. A sparse
+                        // arithmetic replay leaves the durable rows in place, so its
+                        // lifetime counter stays at their pre-repair total and advances only
+                        // by the exact insert delta at the head seal.
+                        instance.setLvRowsTotal(arithmeticRowPositions ? durableRowsBeforeRepair : anchorLvRowPosition);
                         anchorRowPosition = anchorLvRowPosition;
                         if (timelineCapture != null) {
                             // The anchor's own position anchors every root the capture
@@ -6988,7 +7090,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         Record outRecord = outCursor.getRecord();
                         while (outCursor.hasNext()) {
                             long ts = outRecord.getTimestamp(cursorTimestampIndex);
-                            if (keyed) {
+                            if (keyed && !arithmeticRowPositions) {
                                 // Every stored row this replay does not recompute, at or
                                 // below the row about to be appended. Accounted rather than
                                 // written - the upsert leaves it where it stands - but
@@ -7046,7 +7148,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             boundaryFreezingCursor.freezeRemaining();
                             capturedBoundaries = boundaryFreezingCursor.getCaptured();
                         }
-                        if (keyed) {
+                        if (keyed && !arithmeticRowPositions) {
                             // The stored rows above the last boundary the freeze drained to.
                             // They are rows of the repaired range, so a repair that stopped
                             // accounting at its own last row would leave the ladder short.
@@ -7059,6 +7161,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     && (replayMaxTs == Numbers.LONG_NULL || mergedMaxTs > replayMaxTs)) {
                                 replayMaxTs = mergedMaxTs;
                             }
+                        } else if (arithmeticRowPositions
+                                && durableMaxTsBeforeRepair != Numbers.LONG_NULL
+                                && (replayMaxTs == Numbers.LONG_NULL || durableMaxTsBeforeRepair > replayMaxTs)) {
+                            replayMaxTs = durableMaxTsBeforeRepair;
                         }
                         // Capture base rows scanned before the cursor chain closes:
                         // FilteringRecordCursor.close() (cascaded from windowCursor)
@@ -7099,6 +7205,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     final boolean sparse = keyed
                             && appendedRows > 0
                             && outputUniqueness.isUnique();
+                    if (!sparse && arithmeticRowPositions) {
+                        // The sparse fast path deliberately did not scan the stored interval.
+                        // A duplicate output pair denies upsert publication, so account that
+                        // interval now before the existing full replacement materializes it.
+                        keyedReplay.drainRemaining();
+                    }
                     if (!sparse && keyedReplay.materializeMerge()) {
                         sparsePublicationFallbackCount++;
                         LOG.info().$("live view open segment resume abandoned its sparse publication [view=")
@@ -7112,11 +7224,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     if (sparse) {
                         openSegmentSparseResumeCount++;
                         sparsePublicationCount++;
-                        sparsePublicationRowsKept += keyedReplay.getMergedRows();
+                        final long supersededRows = arithmeticRowPositions
+                                ? Math.max(0, appendedRows - insertedRowDelta)
+                                : keyedReplay.getSupersededRows();
+                        final long rowsKept = arithmeticRowPositions
+                                ? Math.max(0, durableRowsBeforeRepair - anchorRowPosition - supersededRows)
+                                : keyedReplay.getMergedRows();
+                        sparsePublicationRowsKept += rowsKept;
                         LOG.info().$("live view open segment resumed sparsely [view=").$(viewName)
                                 .$(", replayedRows=").$(appendedRows)
-                                .$(", supersededRows=").$(keyedReplay.getSupersededRows())
-                                .$(", rowsKept=").$(keyedReplay.getMergedRows())
+                                .$(", supersededRows=").$(supersededRows)
+                                .$(", rowsKept=").$(rowsKept)
                                 .$(", outputLowTs=").$ts(replaceLowTs).I$();
                         fencedLiveViewCommit(instance, () -> walWriter.commitLiveViewWithUpsert(committedSeqTxn));
                     } else {
@@ -7179,16 +7297,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     LOG.error().$("could not measure live view rows after an O3 resume replay [view=")
                             .$(viewName).$(", error=").$(t).I$();
                 }
-                // Both routes' rows. A keyed resume emitted its own keys' and left every
-                // other key's stored row where it stood, and the two together are the range
-                // the table now holds above the anchor. Zero merged rows on a whole-range
-                // resume, which merges nothing, so the identity is the one it always had.
+                // The scan-accounted routes validate anchor + emitted + kept rows. The
+                // arithmetic route validates the stronger table identity directly:
+                // pre-repair durable rows plus exact inserted base rows.
                 final long emittedRows = appendedRows + keyedReplay.getMergedRows();
-                if (durableRowsAfterRepair != anchorRowPosition + emittedRows) {
+                final long expectedRowsAfterRepair;
+                try {
+                    expectedRowsAfterRepair = arithmeticRowPositions
+                            ? Math.addExact(durableRowsBeforeRepair, insertedRowDelta)
+                            : Math.addExact(anchorRowPosition, emittedRows);
+                } catch (ArithmeticException e) {
+                    throw CairoException.critical(0).put("live view row count overflow after O3 resume replay");
+                }
+                if (durableRowsAfterRepair != expectedRowsAfterRepair) {
                     LOG.critical().$("live view resume replacement row count does not match the repair plan [view=")
                             .$(viewName)
                             .$(", anchorRows=").$(anchorRowPosition)
                             .$(", rowsEmitted=").$(emittedRows)
+                            .$(", insertedRowDelta=").$(insertedRowDelta)
+                            .$(", expectedRows=").$(expectedRowsAfterRepair)
                             .$(", rowsAfter=").$(durableRowsAfterRepair).I$();
                 } else {
                     // H is the end of the base table, so there is no converged suffix to
@@ -7303,10 +7430,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         windowFactory,
                         committedSeqTxn,
                         replayMaxTs,
-                        // The lifetime counter was snapped back to the anchor's position,
-                        // so what it owes is every row the range now holds above it - the
-                        // replay's own and the ones the merge accounted for and left alone.
-                        appendedRows + keyedReplay.getMergedRows(),
+                        // Arithmetic publication kept the durable counter in place and
+                        // owes only exact inserts. A replacement rewound to the anchor and
+                        // owes every emitted or copied-forward row above it.
+                        arithmeticRowPositions ? insertedRowDelta : appendedRows + keyedReplay.getMergedRows(),
                         true,
                         timelineSplice == null || replayMaxTs > timelineSplice.getHeadRootMaxTimestamp()
                 );

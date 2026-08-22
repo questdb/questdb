@@ -28,6 +28,7 @@ import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -95,6 +96,11 @@ public final class LiveViewCheckpointSegmentChangeSet {
     // because the residual is not a segment: it has no start, no end and no entry, and the
     // repair that reads it is the resume rather than a segment replay.
     private final CharSequenceHashSet residualKeys = new CharSequenceHashSet();
+    // Exact timestamps of rows newly inserted into the open segment while collecting its
+    // key domain. On an unfiltered, non-deduplicating base each contributes exactly one
+    // live-view output row, so this is the arithmetic replacement for scanning every
+    // stored output row merely to recount checkpoint positions.
+    private final LongList residualRowTimestamps = new LongList();
     private final LongList segments = new LongList();
     private long activeSegmentStart;
     // Whether the caller asked for the residual's keys. A caller that did not gets the
@@ -103,6 +109,7 @@ public final class LiveViewCheckpointSegmentChangeSet {
     private boolean collectsResidualKeys;
     private boolean hasResidualNullKey;
     private boolean residualKeyDomainOverflowed;
+    private boolean residualRowsSorted;
     // How many distinct keys one segment may collect before the collection stops being
     // worth its memory. Zero collects none, which is what a view with no keyed repair
     // available - or a caller that cannot read the key column - asks for.
@@ -131,6 +138,10 @@ public final class LiveViewCheckpointSegmentChangeSet {
     public boolean addRow(long ts, @Nullable CharSequence key, @NotNull LiveViewCheckpointAnchorPlan anchorPlan) {
         if (ts >= activeSegmentStart) {
             widenResidual(ts, ts);
+            if (collectsResidualKeys) {
+                residualRowTimestamps.add(ts);
+                residualRowsSorted = false;
+            }
             addResidualKey(key);
             return true;
         }
@@ -205,6 +216,27 @@ public final class LiveViewCheckpointSegmentChangeSet {
      */
     public long getResidualMinTs() {
         return residualMinTs;
+    }
+
+    /**
+     * Number of newly inserted open-segment rows at or below {@code timestamp}.
+     * Equal-timestamp rows are included as a group, matching checkpoint boundary
+     * semantics. Meaningful only when the residual key domain is complete.
+     */
+    public int getResidualRowCountAtOrBelow(long timestamp) {
+        if (!residualRowsSorted) {
+            residualRowTimestamps.sort();
+            residualRowsSorted = true;
+        }
+        final int index = residualRowTimestamps.binarySearch(timestamp, Vect.BIN_SEARCH_SCAN_DOWN);
+        return index >= 0 ? index + 1 : -index - 1;
+    }
+
+    /**
+     * Total newly inserted rows in the open segment over the classified range.
+     */
+    public int getResidualRowCount() {
+        return residualRowTimestamps.size();
     }
 
     /**
@@ -353,6 +385,8 @@ public final class LiveViewCheckpointSegmentChangeSet {
             keySets.getQuick(i).clear();
         }
         residualKeys.clear();
+        residualRowTimestamps.clear();
+        residualRowsSorted = true;
         hasResidualNullKey = false;
         residualKeyDomainOverflowed = false;
         segments.clear();

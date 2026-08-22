@@ -79,6 +79,30 @@ public class LiveViewCheckpointSegmentChangeSetTest {
     }
 
     @Test
+    public void testTheOpenSegmentCountsNewRowsAtEachBoundary() {
+        final LiveViewCheckpointAnchorPlan plan = dailyPlan();
+        final LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
+        changeSet.of(DAY_8, 16, true);
+
+        // Deliberately unordered, with two rows at one timestamp: the WAL walk does not
+        // promise timestamp order and a checkpoint boundary includes the whole equal-ts group.
+        Assert.assertTrue(changeSet.addRow(DAY_8 + 3, "acct-1", plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8 + 1, "acct-2", plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8 + 3, "acct-3", plan));
+        Assert.assertTrue(changeSet.addRow(DAY_8 + 7, "acct-4", plan));
+
+        Assert.assertEquals(4, changeSet.getResidualRowCount());
+        Assert.assertEquals(0, changeSet.getResidualRowCountAtOrBelow(DAY_8));
+        Assert.assertEquals(1, changeSet.getResidualRowCountAtOrBelow(DAY_8 + 2));
+        Assert.assertEquals(3, changeSet.getResidualRowCountAtOrBelow(DAY_8 + 3));
+        Assert.assertEquals(4, changeSet.getResidualRowCountAtOrBelow(DAY_8 + 99));
+
+        changeSet.of(DAY_8, 16, true);
+        Assert.assertEquals(0, changeSet.getResidualRowCount());
+        Assert.assertEquals(0, changeSet.getResidualRowCountAtOrBelow(DAY_8 + 99));
+    }
+
+    @Test
     public void testTheOpenSegmentCollectsItsKeysWhenTheCallerAsksForThem() {
         final LiveViewCheckpointAnchorPlan plan = dailyPlan();
         final LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();

@@ -105,14 +105,25 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
     public void build(long metadataSegmentId, @NotNull LiveViewCheckpointPageRef out) {
         ensureInitialized();
         if (isCompleteSnapshot) {
-            partitionMapReader.iterateAll(oldPartitionMapRoot, entry -> {
-                if (outputKeys != null && !outputKeys.contains(entry.getKey())) {
-                    return;
-                }
-                if (!putKeys.contains(ByteBuffer.wrap(entry.getKey()))) {
-                    mutationAt(mutationCount++).remove(entry.getKey());
-                }
-            });
+            if (outputKeys != null) {
+                // A partial-domain repair is complete only inside Q. Walking the old
+                // root to discover Q's missing entries makes publication proportional
+                // to the view's whole retained key domain, even when Q contains one key.
+                // Q already is the exact removal-by-omission domain, so probe it directly:
+                // removing an entry the predecessor does not hold is a no-op one layer
+                // down, and every key outside Q remains untouched by construction.
+                outputKeys.forEach(key -> {
+                    if (!putKeys.contains(ByteBuffer.wrap(key))) {
+                        mutationAt(mutationCount++).remove(key);
+                    }
+                });
+            } else {
+                partitionMapReader.iterateAll(oldPartitionMapRoot, entry -> {
+                    if (!putKeys.contains(ByteBuffer.wrap(entry.getKey()))) {
+                        mutationAt(mutationCount++).remove(entry.getKey());
+                    }
+                });
+            }
         }
 
         segmentWriter.of(checkpointsDir, metadataSegmentId);

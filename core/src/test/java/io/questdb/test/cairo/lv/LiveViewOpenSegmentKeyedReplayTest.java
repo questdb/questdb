@@ -50,10 +50,9 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         // against a resume that reads every account's rows from its anchor to the end of the
         // base table.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        // The default prices one index open at 256 base rows, which is what a real
-        // hourly-partitioned base is worth and which at forty rows a day would (correctly)
-        // prefer the whole range whatever the key domain. The verdict this case is about is
-        // the row comparison, so the setup term is priced at the scale the fixture has.
+        // Even the arithmetic path's measured setup price is larger than this tiny
+        // fixture's whole range. Price the setup at one row so the case can exercise the
+        // route; reported-density coverage validates the production crossover.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
         assertMemoryLeak(() -> {
             createView(seedFourAccountsOverTwoDays(), true);
@@ -121,6 +120,11 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                         "and publish only the rows it recomputed",
                         1,
                         job.openSegmentSparseResumeCountForTest()
+                );
+                Assert.assertEquals(
+                        "checkpoint positions must come from the exact insert delta, not a stored-row scan",
+                        1,
+                        job.openSegmentArithmeticRowPositionCountForTest()
                 );
                 Assert.assertEquals(
                         "nothing may abandon its attempt on output that names each pair once",
