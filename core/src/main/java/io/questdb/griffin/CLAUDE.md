@@ -327,6 +327,10 @@ Three properties follow, and they are the reason to prefer this over any context
 - **Every boundary reads a function at its declared type**, the engine's oldest and best-tested
   contract. Nothing is left for a boundary to ask, so nothing is left for it to get wrong.
 
+Consumers such as timestamp predicates, SAMPLE BY, window bounds and partition DDL validate and
+use the final wrapped value exactly as if it had been written as an INT literal. They must not
+inspect the arithmetic AST and reject a value because it may have wrapped.
+
 ### What this gives up
 
 GitHub issue [#4752](https://github.com/questdb/questdb/issues/4752) is reopened by this rule.

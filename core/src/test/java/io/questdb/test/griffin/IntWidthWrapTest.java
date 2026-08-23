@@ -25,7 +25,13 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.cast.CastIntToDateFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIntToTimestampFunctionFactory;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -107,6 +113,27 @@ public class IntWidthWrapTest extends AbstractCairoTest {
             assertQuery("SELECT (secs::long * 1_000_000)::timestamp AS t FROM ca")
                     .noLeakCheck().expectSize().returns("t\n2024-07-08T20:00:02.000000Z\n");
         });
+    }
+
+    @Test
+    public void testTemporalCastFactoriesReadIntGetterDirectly() {
+        Function arg = new IntFunction() {
+            @Override
+            public int getInt(Record rec) {
+                return 7;
+            }
+
+            @Override
+            public long getLong(Record rec) {
+                return 99;
+            }
+        };
+
+        Assert.assertEquals(7, new CastIntToDateFunctionFactory.CastIntToDateFunction(arg).getDate(null));
+        Assert.assertEquals(
+                7,
+                new CastIntToTimestampFunctionFactory.Func(arg, ColumnType.TIMESTAMP).getTimestamp(null)
+        );
     }
 
     @Test
@@ -288,32 +315,28 @@ public class IntWidthWrapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampBoundRefusesIntArithmeticOutright() throws Exception {
-        // Two readers turn a constant expression into a timestamp bound - the interval extractor
-        // behind a designated-timestamp comparison, and the SAMPLE BY FROM / TO parser - and both
-        // decide on the expression's TYPE: WhereClauseParser.canCastToTimestamp lists LONG and
-        // does not list INT. So an INT-typed expression is refused there, and always was: 1 + 1
-        // overflows nothing and is refused just the same. What the one-value rule changed is
-        // which expressions are INT-typed - the seconds-to-micros product used to fold to a LONG
-        // constant and slip through carrying a value the same expression over a column could not
-        // produce. The refusal is loud and names a position, and it is the better of the two
-        // outcomes available: accepting the INT would compare a 2024 timestamp against a bound of
-        // -607497088 microseconds and quietly match every row.
+    public void testTimestampBoundsUseTheWrappedIntValue() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tb (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO tb VALUES ('2024-01-01T00:00:00.000000Z', 1)");
 
-            assertExceptionNoLeakCheck("SELECT count() AS c FROM tb WHERE ts > 1_720_468_802 * 1_000_000", 53, "Invalid date");
-            // the same refusal for arithmetic that cannot overflow anything, which is what shows
-            // the rule is about the type and not about the wrap
-            assertExceptionNoLeakCheck("SELECT count() AS c FROM tb WHERE ts > 1 + 1", 41, "Invalid date");
-            assertExceptionNoLeakCheck("SELECT ts, sum(v) FROM tb SAMPLE BY 1d FROM 3_600 * 1_000_000", 50, "Invalid date");
+            assertSqlCursors(
+                    "SELECT count() AS c FROM tb WHERE ts > -607_497_088",
+                    "SELECT count() AS c FROM tb WHERE ts > 1_720_468_802 * 1_000_000"
+            );
+            assertSqlCursors(
+                    "SELECT count() AS c FROM tb WHERE ts > 2",
+                    "SELECT count() AS c FROM tb WHERE ts > 1 + 1"
+            );
+            assertSqlCursors(
+                    "SELECT ts, sum(v) FROM tb SAMPLE BY 1d FROM -694_967_296",
+                    "SELECT ts, sum(v) FROM tb SAMPLE BY 1d FROM 3_600 * 1_000_000"
+            );
+            assertSqlCursors(
+                    "SELECT count() AS c FROM tb WHERE ts IN (2)",
+                    "SELECT count() AS c FROM tb WHERE ts IN (1 + 1)"
+            );
 
-            // a bare INT literal reaches the token path instead and is read as microseconds, so
-            // the two spellings disagree; that disagreement is older than the one-value rule
-            assertQuery("SELECT count() AS c FROM tb WHERE ts > 12_345")
-                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
-            // widening the operand types the expression LONG and both readers accept it again
             assertQuery("SELECT count() AS c FROM tb WHERE ts > 1_720_468_802 * 1_000_000L")
                     .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
         });

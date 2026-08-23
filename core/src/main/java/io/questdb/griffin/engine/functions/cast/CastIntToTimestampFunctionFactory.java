@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastIntToTimestampFunctionFactory implements FunctionFactory {
@@ -58,12 +59,7 @@ public class CastIntToTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            // Each INT cast reads the getter its IntFunction counterpart reads, so an explicit
-            // cast never disagrees with an implicit read of the same expression.
-            // IntFunction.getTimestamp() is Numbers.intToLong(getInt()), and so is getLong(),
-            // so an overflowing INT arithmetic wraps here exactly as it does in (i * j) + 0L,
-            // and one landing on INT_NULL reads as LONG_NULL.
-            return arg.getLong(rec);
+            return Numbers.intToLong(arg.getInt(rec));
         }
     }
 }

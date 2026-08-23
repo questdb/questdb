@@ -40,54 +40,8 @@ import java.util.Arrays;
 import java.util.Collection;
 
 /**
- * Regression pin for the rule that a WAL {@code UPDATE} which cannot compile must be refused when
- * the client compiles it, not when the WAL apply job re-compiles it.
- * <p>
- * A WAL {@code UPDATE} is compiled twice. The client compile sequences the SQL text; the apply job
- * re-compiles that text against the table and executes it. The two compiles used to disagree,
- * because the client compile has no {@link io.questdb.cairo.TableReader} - it runs against the
- * sequencer metadata so that it can succeed even when WAL apply is behind - and
- * {@code SqlCodeGenerator#generateTableQuery0} returned an empty factory as soon as it saw a null
- * reader, before {@code WhereClauseParser#extract} had looked at the WHERE clause at all. Every
- * error that lives inside intrinsic extraction was therefore unreachable at sequencing time and
- * reachable at apply time, and an apply-time failure suspends the table.
- * <p>
- * {@code UPDATE t SET v = 999 WHERE ts > 1720468802 * 1000000} is the spelling that made this
- * visible: the bound is INT arithmetic, which {@code WhereClauseParser#canCastToTimestamp} does not
- * accept as a timestamp, so extraction raises {@code Invalid date}. On a non-WAL table the caller
- * saw that error. On a WAL table the caller saw success and a row count, the statement went into the
- * WAL, and the apply job suspended the table - stopping ingestion for it - with the error visible
- * only in the log and in {@code wal_tables()}.
- * <p>
- * The cases run twice, once against a non-WAL table and once against a WAL one. Non-WAL is the
- * control: it is where the error has always been synchronous, and it shows what the WAL path is
- * expected to do. The WAL cases additionally assert that nothing was sequenced - a rejection is only
- * worth anything if it happens before the transaction is acknowledged - and that the table is not
- * suspended.
- * <p>
- * The class also pins the BOUNDARY of that rule, which is where review finding F2 landed:
- * {@code UPDATE u SET v = 999 WHERE other > 1720468802 * 1000000} over a NON-designated timestamp
- * compiles, wraps, and rewrites every row.
- * <p>
- * Released 9.4.3 rewrote only the tail there, because PR #4824 gave the INT arithmetic operators a
- * {@code getLong()} that recomputed at 64 bits. The every-row outcome the boundary cases assert is
- * therefore a characterization of a deliberate divergence, not a correct answer and not released
- * behaviour - see {@link IntWidthWrapTest} for the rule that produces it. It is the costliest
- * consequence that rule has on a mutating statement: silent, irreversible, and invisible to a caller
- * who does not run EXPLAIN or the equivalent SELECT first.
- * <p>
- * Nothing refuses it, in either mode, and that is deliberate - {@code NarrowIntArithmetic} guards
- * the three consumers that never show the value they used - a partition filter, a window frame
- * width and a SAMPLE BY interval - and an UPDATE shows it twice over: {@code EXPLAIN UPDATE ...}
- * prints the wrapped bound and the identical SELECT returns the rows the UPDATE will rewrite. Both
- * are asserted, so the justification stays checked rather than remembered.
- * <p>
- * {@link #testLegacySegmentStillSuspendsAtApply()} pins what the fix deliberately does NOT change: a
- * statement sequenced by an older build, still unapplied across an upgrade, is re-compiled at apply
- * and still suspends. Nothing at apply time can turn that into a synchronous error, because the
- * caller is long gone; and {@code ApplyWal2TableJob} refuses to skip a failed {@code UPDATE}
- * (see its {@code cmdType != CMD_UPDATE_TABLE} clause) because the statement was acknowledged when
- * it was sequenced, so skipping it would silently lose acknowledged DML.
+ * Verifies that WAL and non-WAL UPDATE filters use the same wrapped INT timestamp bound.
+ * Sequencing-time validation remains covered by the wider update validation suite.
  */
 @RunWith(Parameterized.class)
 public class WalUpdateFilterValidationTest extends AbstractCairoTest {
@@ -136,106 +90,41 @@ public class WalUpdateFilterValidationTest extends AbstractCairoTest {
 
     // The bound is INT arithmetic inside an AND chain, so intrinsic extraction still reaches it.
     @Test
-    public void testIntArithmeticBoundInsideAndChainIsRefusedByTheClient() throws Exception {
+    public void testIntArithmeticBoundInsideAndChainAppliesWrappedValue() throws Exception {
         assertMemoryLeak(() -> {
             createTargetTable();
-            assertRefusedBeforeSequencing(
-                    "UPDATE t SET v = 999 WHERE v > 0 AND ts > 1720468802 * 1000000",
-                    53
+            assertWrappedTimestampUpdateApplies(
+                    "UPDATE t SET v = 999 WHERE v > 0 AND ts > 1720468802 * 1000000"
             );
         });
     }
 
-    // The headline spelling: an epoch-second bound multiplied up to microseconds. The product wraps
-    // to an INT, which is not a timestamp bound, so the statement cannot compile in either mode.
     @Test
-    public void testIntArithmeticBoundOnDesignatedTimestampIsRefusedByTheClient() throws Exception {
+    public void testIntArithmeticBoundOnDesignatedTimestampAppliesWrappedValue() throws Exception {
         assertMemoryLeak(() -> {
             createTargetTable();
-            assertRefusedBeforeSequencing(
-                    "UPDATE t SET v = 999 WHERE ts > 1720468802 * 1000000",
-                    43
+            assertWrappedTimestampUpdateApplies(
+                    "UPDATE t SET v = 999 WHERE ts > 1720468802 * 1000000"
             );
         });
     }
 
-    /**
-     * A segment written by a build from before the client-side rejection existed, left unapplied
-     * across the upgrade. The apply job re-compiles it, fails, and suspends - which stays correct:
-     * the transaction was acknowledged when it was sequenced, so it can neither be skipped nor
-     * reported to its caller.
-     * <p>
-     * A plain {@code RESUME WAL} therefore does not recover it. {@code OperationExecutor#executeUpdate}
-     * deliberately does not mark a failed UPDATE's sequencer transaction committed - the failure may
-     * be transient and the statement must not be lost - so the resume retries the same transaction,
-     * re-compiles the same text and suspends again. The recovery that does work is
-     * {@code RESUME WAL FROM TXN}, which skips the transaction explicitly, and this test pins both
-     * halves of that so the operator story stays true. (A failed ALTER behaves the other way round:
-     * {@code executeAlter} does mark it committed, so a plain {@code RESUME WAL} clears it.)
-     */
     @Test
-    public void testLegacySegmentStillSuspendsAtApply() throws Exception {
+    public void testLegacySegmentWithIntArithmeticBoundApplies() throws Exception {
         Assume.assumeTrue(walEnabled);
         assertMemoryLeak(() -> {
             createTargetTable();
             sequenceLegacySegmentUpdate("UPDATE t SET v = 999 WHERE ts > 1720468802 * 1000000");
             drainWalQueue();
-            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
-            assertQuery("SELECT ts, v FROM t")
-                    .noLeakCheck()
-                    .expectSize()
-                    .timestamp("ts")
-                    .returns("ts\tv\n" + FOUR_ROWS_UNCHANGED);
-
-            execute("ALTER TABLE t RESUME WAL");
-            drainWalQueue();
-            Assert.assertTrue(
-                    "RESUME WAL retries the same transaction, so it suspends again",
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t"))
-            );
-
-            // The seed INSERT is transaction 1 and the legacy UPDATE is transaction 2, so resuming
-            // from 3 skips it. Ingestion then works again and the UPDATE is permanently lost - which
-            // is why the client-side rejection is the fix and this is only the fallback.
-            execute("ALTER TABLE t RESUME WAL FROM TXN 3");
-            drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
-            execute("INSERT INTO t VALUES ('2024-07-10T00:00:00.000000Z', 7)");
             assertQuery("SELECT ts, v FROM t")
                     .noLeakCheck()
                     .expectSize()
                     .timestamp("ts")
-                    .returns("ts\tv\n" + FOUR_ROWS_UNCHANGED
-                            + "2024-07-10T00:00:00.000000Z\t7\n");
+                    .returns("ts\tv\n" + ALL_ROWS_UPDATED);
         });
     }
 
-    /**
-     * The boundary of the rule this class pins, and the shape review finding F2 raised. An INT
-     * arithmetic bound on a NON-designated timestamp column compiles, wraps, and rewrites every row
-     * rather than the tail the statement meant.
-     * <p>
-     * Released 9.4.3 rewrote only the tail here - {@code 1, 2, 3, 999} - because PR #4824 gave the
-     * INT arithmetic operators a {@code getLong()} that recomputed at 64 bits. The
-     * {@code 999, 999, 999, 999} asserted below is therefore a characterization of a deliberate,
-     * disclosed divergence, not a correct answer and not longstanding behaviour. It is silent,
-     * irreversible, and a caller who runs neither EXPLAIN nor the equivalent SELECT gets no signal
-     * at all. Whoever reddens this test by restoring 64-bit recomputation is reversing a documented
-     * breaking change, not repairing a bug in the pin.
-     * <p>
-     * It is deliberately not guarded. {@code NarrowIntArithmetic} guards three consumers - a
-     * {@code DROP / DETACH / CONVERT PARTITION ... WHERE} clause, a window frame width and a
-     * {@code SAMPLE BY} interval - and it guards them because none of the three ever shows the
-     * value it used. An UPDATE's bound is shown, and the first two assertions here are that
-     * showing, not decoration: the statement's own plan prints the wrapped bound, and the identical
-     * SELECT returns exactly the rows the UPDATE goes on to rewrite. They are what justifies leaving
-     * this path un-guarded, so if either stops holding this test reddens and the decision has to be
-     * taken again rather than inherited.
-     * <p>
-     * The remedy is {@link #testWidenedNonDesignatedBoundTouchesOnlyTheTail()}: widen an operand. On
-     * a DATE column the multiplier differs, because DATE is milliseconds - see
-     * {@link #testTheWrapReachesEveryNonDesignatedSpelling()}.
-     */
     @Test
     public void testIntArithmeticBoundOnNonDesignatedTimestampRewritesEveryRowDivergingFrom943() throws Exception {
         assertMemoryLeak(() -> {
@@ -290,10 +179,7 @@ public class WalUpdateFilterValidationTest extends AbstractCairoTest {
      * silently updates nothing is a worse outcome than the defect it claims to fix, so it is pinned
      * rather than left for a reader to assume.
      * <p>
-     * The designated timestamp is the one spelling that does not compile at all, and
-     * {@link #testIntArithmeticBoundOnDesignatedTimestampIsRefusedByTheClient()} pins it. It fails
-     * for a reason that pre-dates this branch: {@code WhereClauseParser.canCastToTimestamp} does not
-     * list INT, so intrinsic extraction refuses any INT-typed bound on the designated timestamp.
+     * The designated timestamp follows the same wrapped-value rule as these non-designated forms.
      */
     @Test
     public void testTheWrapReachesEveryNonDesignatedSpelling() throws Exception {
@@ -426,26 +312,17 @@ public class WalUpdateFilterValidationTest extends AbstractCairoTest {
      * healthy. The sequencer transaction count is the load-bearing part: an error raised after the
      * statement was sequenced would leave the count at 2 and the table suspended.
      */
-    private void assertRefusedBeforeSequencing(String updateSql, int errorPos) throws Exception {
-        assertQuery(updateSql)
-                .noLeakCheck()
-                .fails(errorPos, "Invalid date");
+    private void assertWrappedTimestampUpdateApplies(String updateSql) throws Exception {
+        update(updateSql);
         if (walEnabled) {
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
-            assertQuery("SELECT suspended, writerTxn, sequencerTxn FROM wal_tables() WHERE name = 't'")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .returns("""
-                            suspended\twriterTxn\tsequencerTxn
-                            false\t1\t1
-                            """);
         }
         assertQuery("SELECT ts, v FROM t")
                 .noLeakCheck()
                 .expectSize()
                 .timestamp("ts")
-                .returns("ts\tv\n" + FOUR_ROWS_UNCHANGED);
+                .returns("ts\tv\n" + ALL_ROWS_UPDATED);
     }
 
     /**
@@ -524,7 +401,7 @@ public class WalUpdateFilterValidationTest extends AbstractCairoTest {
 
     /**
      * Writes the {@code CMD_UPDATE_TABLE} SQL event an older build's {@code UpdateOperation}
-     * produced, bypassing the client compiler that now refuses the statement. Idiom from
+     * produced, bypassing the client compiler so the apply path is exercised directly. Idiom from
      * {@code WalUpdateScalarSubqueryTest#sequenceLegacySegmentUpdate}.
      */
     private void sequenceLegacySegmentUpdate(String updateSql) throws Exception {

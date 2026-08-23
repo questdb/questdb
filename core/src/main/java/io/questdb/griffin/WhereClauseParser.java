@@ -475,6 +475,7 @@ public final class WhereClauseParser implements Mutable {
                 || typeTag == ColumnType.DATE
                 || typeTag == ColumnType.STRING
                 || typeTag == ColumnType.SYMBOL
+                || typeTag == ColumnType.INT
                 || typeTag == ColumnType.LONG
                 || typeTag == ColumnType.VARCHAR;
     }
@@ -500,6 +501,8 @@ public final class WhereClauseParser implements Mutable {
             return varchar == null
                     ? Numbers.LONG_NULL
                     : parseStringAsTimestamp(timestampDriver, varchar.asAsciiCharSequence(), functionPosition, detectIntervals);
+        } else if (ColumnType.tagOf(type) == ColumnType.INT) {
+            return Numbers.intToLong(function.getInt(null));
         } else {
             return timestampDriver.from(function.getTimestamp(null), ColumnType.getTimestampType(type));
         }

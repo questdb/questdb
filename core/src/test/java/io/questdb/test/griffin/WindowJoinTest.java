@@ -1477,27 +1477,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                     ORDER BY m.ts
                     """, sink);
 
-            // A dynamic bound is read per master row at 64 bits, so INT arithmetic in it wraps
-            // there exactly as it does in a constant bound - and a frame width has no projected
-            // spelling to show the caller what the engine used. The guard cannot prove a column
-            // operand either way, so it fails closed and refuses the arithmetic outright, even
-            // here where lo_bound + 1 could never wrap. Widening one operand is the remedy the
-            // refusal names, and it is what the two queries below spell.
-            assertExceptionNoLeakCheck("""
-                    SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
-                    FROM master m
-                    WINDOW JOIN slave s
-                    RANGE BETWEEN (lo_bound + 1) minutes PRECEDING AND (hi_bound * 2) minutes FOLLOWING
-                    EXCLUDE PREVAILING
-                    ORDER BY m.ts
-                    """, 113, "INT arithmetic overflow in window frame bound cannot be ruled out");
-
-            // Async General path
+            // Async General path: the INT expressions are evaluated at INT width and accepted.
             assertQuery("""
                     SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
                     FROM master m
                     WINDOW JOIN slave s
-                    RANGE BETWEEN (lo_bound::long + 1) minutes PRECEDING AND (hi_bound::long * 2) minutes FOLLOWING
+                    RANGE BETWEEN (lo_bound + 1) minutes PRECEDING AND (hi_bound * 2) minutes FOLLOWING
                     EXCLUDE PREVAILING
                     ORDER BY m.ts
                     """)
@@ -1512,7 +1497,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
                     FROM (SELECT * FROM master LIMIT 4) m
                     WINDOW JOIN slave s
-                    RANGE BETWEEN (lo_bound::long + 1) minutes PRECEDING AND (hi_bound::long * 2) minutes FOLLOWING
+                    RANGE BETWEEN (lo_bound + 1) minutes PRECEDING AND (hi_bound * 2) minutes FOLLOWING
                     EXCLUDE PREVAILING
                     ORDER BY m.ts
                     """)
