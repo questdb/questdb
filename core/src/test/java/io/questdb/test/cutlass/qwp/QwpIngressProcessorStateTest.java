@@ -365,6 +365,273 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
+    // Two arms differing only in the connection's max-uncommitted-rows cap, each
+    // running the real decoder, WAL appender and TUD cache in handleBinaryMessage's
+    // call order for a FLAG_DEFER_COMMIT frame. The rowless case is separate, in
+    // testZeroRowDeferredFrameIsNeverAckCovered.
+    @Test
+    public void testDeferredFrameIsAckableOnlyOnceItsOwnRowsAreCommitted() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE defer_capped (val INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) " +
+                    "PARTITION BY DAY WAL");
+            execute("CREATE TABLE defer_buffered (val INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) " +
+                    "PARTITION BY DAY WAL");
+
+            // Cap 1: the appender force-commits the row it just wrote, so the frame's
+            // own rows are durable and the ack may cover it.
+            QwpIngressProcessorState capped =
+                    new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(1));
+            try {
+                capped.of(1, AllowAllSecurityContext.INSTANCE);
+                capped.setHighestProcessedSequence(2);
+
+                Assert.assertTrue("a fired force-commit makes this frame's own rows durable",
+                        driveDeferredFrame(capped, "defer_capped", 1));
+                // Positive evidence a commit actually fired: an empty cache reports
+                // "nothing uncommitted" too, and that is the data-loss direction, so
+                // the flag alone does not discriminate. This does not isolate WHICH
+                // commit fired -- the cap is on the connection, so both the
+                // appender's in-append commit and the outer loop's honour it.
+                Assert.assertTrue("the frame must have appended a row",
+                        capped.hasAppendedRowsInMessage());
+                Assert.assertEquals("the force-commit must have reported a seqTxn",
+                        1, capped.getPendingAckSeqTxns().size());
+                Assert.assertTrue("the reported seqTxn must be a real commit",
+                        capped.getPendingAckSeqTxns().get("defer_capped") >= 0);
+
+                capped.setHighestProcessedSequence(5);
+                Assert.assertEquals("a fully committed deferred frame is ack-covered",
+                        5, capped.getHighestProcessedSequence());
+            } finally {
+                capped.onDisconnected();
+                capped.close();
+            }
+
+            // Cap Long.MAX_VALUE: nothing force-commits, the rows stay buffered, and
+            // the watermark must refuse to move -- #7144's "ack implies committed".
+            QwpIngressProcessorState buffered =
+                    new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(Long.MAX_VALUE));
+            try {
+                buffered.of(2, AllowAllSecurityContext.INSTANCE);
+                buffered.setHighestProcessedSequence(2);
+
+                Assert.assertFalse("buffered rows must hold the clamp",
+                        driveDeferredFrame(buffered, "defer_buffered", 2));
+                Assert.assertTrue("the clamp must be armed while rows are uncommitted",
+                        buffered.hasUncommittedDeferredRows());
+                buffered.setHighestProcessedSequence(9);
+                Assert.assertEquals("clamped while rows are uncommitted",
+                        2, buffered.getHighestProcessedSequence());
+
+                // The group-closing commit covers the buffered frame after all.
+                buffered.commit();
+                Assert.assertTrue(buffered.isOk());
+                Assert.assertFalse(buffered.hasUncommittedDeferredRows());
+                buffered.setHighestProcessedSequence(9);
+                Assert.assertEquals(9, buffered.getHighestProcessedSequence());
+            } finally {
+                buffered.onDisconnected();
+                buffered.close();
+            }
+        });
+    }
+
+    // Withholding a rowless deferred frame's own ack is not enough: the watermark
+    // is assigned, not incremented, so the next deferred frame whose own rows have
+    // become durable would carry coverage straight over it. The client's dictionary
+    // chunks are exactly such frames, and the data frames after them reference the
+    // ids they register.
+    @Test
+    public void testAckCannotJumpAWithheldRowlessDeferredFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE defer_jump (val INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) " +
+                    "PARTITION BY DAY WAL");
+
+            // Cap 1 so the row-bearing frame below is genuinely ack-coverable on
+            // its own -- otherwise the clamp would hold for the ordinary reason
+            // and the test would prove nothing about the jump.
+            QwpIngressProcessorState state =
+                    new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(1));
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Frame 1: rowless deferred -- withheld.
+                addNativeData(state, wrapQwpPayload(new byte[0], QwpConstants.FLAG_DEFER_COMMIT, (short) 0));
+                state.processMessage();
+                Assert.assertTrue(state.getErrorText(), state.isOk());
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertFalse("premise: a rowless frame is not ack-coverable",
+                        state.refreshDeferredAckCoverage());
+                state.withholdDeferredFrame(1);
+                state.clearMessageState();
+
+                // Frame 2: row-bearing deferred, force-committed by the cap, so
+                // it IS ack-coverable on its own merits.
+                Assert.assertTrue("premise: frame 2 is ack-coverable",
+                        driveDeferredFrame(state, "defer_jump", 1));
+
+                // ...but covering it would also cover frame 1, so the ack stops
+                // just short of the rowless frame instead.
+                state.setHighestProcessedSequence(2);
+                Assert.assertEquals("an ack must not jump the withheld rowless frame",
+                        0, state.getHighestProcessedSequence());
+
+                // Everything before the rowless frame is still covered: those
+                // frames precede it, so nothing there can depend on it, and
+                // refusing them would leave durable rows to be replayed.
+                Assert.assertEquals("frames before the rowless one must still be covered",
+                        0, state.getHighestProcessedSequence());
+
+                // A second rowless frame further along must not relax the first.
+                // The client emits a LOOP of dictionary chunks, so several
+                // rowless sequences are live at once, and keeping the latest
+                // instead of the earliest would let an ack cover the earlier
+                // ones.
+                // markRowlessDeferredSequence directly: withholdDeferredFrame
+                // would no-op here, because the frame just driven appended rows.
+                state.markRowlessDeferredSequence(3);
+                state.setHighestProcessedSequence(2);
+                Assert.assertEquals("the EARLIEST rowless frame is the one that binds",
+                        0, state.getHighestProcessedSequence());
+
+                // The group-closing commit covers both, so the block lifts.
+                state.commit();
+                Assert.assertTrue(state.getErrorText(), state.isOk());
+                state.setHighestProcessedSequence(3);
+                Assert.assertEquals("commitAll covers the rowless frames too",
+                        3, state.getHighestProcessedSequence());
+
+                // The state outlives a connection, so a marker left behind would
+                // pin the NEXT connection's watermark below it for good.
+                state.markRowlessDeferredSequence(0);
+                state.onDisconnected();
+                state.of(2, AllowAllSecurityContext.INSTANCE);
+                state.setHighestProcessedSequence(4);
+                Assert.assertEquals("a fresh connection must not inherit the marker",
+                        4, state.getHighestProcessedSequence());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    // A deferred frame that appends NO rows must never be ack-covered, however
+    // clean the connection is: the client's dictionary chunks are exactly this
+    // frame, and the data frames behind them reference the ids they register.
+    @Test
+    public void testZeroRowDeferredFrameIsNeverAckCovered() throws Exception {
+        assertMemoryLeak(() -> {
+            // Cap 1 so nothing can be blamed on rows sitting uncommitted: this
+            // connection is as clean as it gets.
+            QwpIngressProcessorState state =
+                    new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(1));
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // A bare QWP header: tableCount = 0, FLAG_DEFER_COMMIT.
+                addNativeData(state, wrapQwpPayload(new byte[0], QwpConstants.FLAG_DEFER_COMMIT, (short) 0));
+                Assert.assertTrue(state.isDeferCommit());
+                state.processMessage();
+                Assert.assertTrue(state.getErrorText(), state.isOk());
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue(state.getErrorText(), state.isOk());
+
+                Assert.assertFalse("premise: the frame appended nothing",
+                        state.hasAppendedRowsInMessage());
+                Assert.assertFalse("premise: the connection holds nothing uncommitted -- so the"
+                                + " clamp alone would release here, which is precisely the hazard",
+                        state.refreshUncommittedDeferredRows());
+
+                Assert.assertFalse("a zero-row deferred frame must never be ack-covered",
+                        state.refreshDeferredAckCoverage());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredAckCoverageReusesForceCommitTraversalResult() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue(state.isOk());
+                state.refreshDeferredAckCoverage();
+
+                Assert.assertEquals(
+                        "the deferred ACK decision must reuse the force-commit traversal result",
+                        0,
+                        fake.hasUncommittedRowsCallCount
+                );
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    // Both directions matter: a single dirty table must hold the clamp, and only
+    // genuinely full coverage may release it. A stub returning false is the
+    // data-loss direction.
+    @Test
+    public void testHasUncommittedRowsTracksEveryLiveTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE unc_a (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE unc_b (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tudA = tudOf(cache, "unc_a");
+                WalTableUpdateDetails tudB = tudOf(cache, "unc_b");
+                Assert.assertFalse("two clean tables hold nothing", cache.hasUncommittedRows());
+
+                tudA.getWriter().newRow(1_000_000L).append();
+                Assert.assertTrue("one dirty table is enough", cache.hasUncommittedRows());
+
+                // Both dirty, then commit B only -- the shape the per-table
+                // force-commit produces on a multi-table connection. B must
+                // really hold rows first, or committing it is a no-op
+                // (TableUpdateDetails.commit short-circuits on an empty writer)
+                // and the assertion below would just restate the line above.
+                tudB.getWriter().newRow(1_500_000L).append();
+                final long seqTxnBefore = tudB.getLastSeqTxn();
+                tudB.commit(false);
+                Assert.assertTrue("premise: committing B must advance its txn",
+                        tudB.getLastSeqTxn() > seqTxnBefore);
+                Assert.assertTrue("B is clean now, but A still holds rows",
+                        tudB.isFirstRow());
+                Assert.assertTrue("a partial commit must not release the clamp", cache.hasUncommittedRows());
+
+                try {
+                    cache.commitAll();
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+                Assert.assertFalse("full coverage releases the clamp", cache.hasUncommittedRows());
+
+                // A dropped table's buffered rows are discarded on eviction, so
+                // they are not "uncommitted rows" this connection can still
+                // commit; the commit loops raise on the discard separately.
+                tudB.getWriter().newRow(2_000_000L).append();
+                Assert.assertTrue("premise: B is dirty again", cache.hasUncommittedRows());
+                tudB.setIsDropped();
+                Assert.assertFalse("a dropped table must not hold the clamp", cache.hasUncommittedRows());
+            }
+        });
+    }
+
     @Test
     public void testCollectDurableProgressMultiTable() throws Exception {
         assertMemoryLeak(() -> {
@@ -1295,7 +1562,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertTrue(state.isOk());
                 state.commitIfMaxUncommittedRowsReached();
                 Assert.assertTrue(state.isOk());
-                state.markUncommittedDeferredRows();
+                Assert.assertTrue("T's rows are uncommitted, so the clamp must hold",
+                        state.refreshUncommittedDeferredRows());
                 state.clearMessageState();
 
                 addEncodedRow(state, "protocol_t", 2, QwpConstants.FLAG_DEFER_COMMIT);
@@ -1304,7 +1572,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertTrue(state.isOk());
                 state.commitIfMaxUncommittedRowsReached();
                 Assert.assertTrue(state.isOk());
-                state.markUncommittedDeferredRows();
+                Assert.assertTrue("T's rows are uncommitted, so the clamp must hold",
+                        state.refreshUncommittedDeferredRows());
                 state.clearMessageState();
 
                 execute("DROP TABLE protocol_t");
@@ -5506,6 +5775,54 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         return fake;
     }
 
+    /**
+     * A line config whose max-uncommitted-rows cap is overridden, so
+     * {@link QwpIngressProcessorState} builds its own TUD cache with that cap --
+     * no reflection, and the cache still gets its committed-txn consumer wired.
+     * <p>
+     * The QWP WAL path takes the cap from the connection, not the table:
+     * {@code TableUpdateDetails.getMetaMaxUncommittedRows} falls through to the
+     * connection default because {@code metadataService} is null for a
+     * multi-writer WAL writer, so {@code WITH maxUncommittedRows} has no effect
+     * here. This is what decides whether the appender's force-commit fires.
+     */
+    private static LineHttpProcessorConfiguration lineConfigWithCap(long maxUncommittedRows) {
+        return new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration) {
+            @Override
+            public long getQwpMaxUncommittedRows() {
+                return maxUncommittedRows;
+            }
+        };
+    }
+
+    /**
+     * Drives one FLAG_DEFER_COMMIT frame through the state in the order
+     * {@code QwpIngressUpgradeProcessor.handleBinaryMessage} uses, and returns
+     * the ack decision it would reach. That the processor actually wires this up
+     * is covered end-to-end by {@code QwpAckSeqTxnCoverageBlackBoxTest}.
+     *
+     * @return true if a cumulative OK ack may cover this frame
+     */
+    private static boolean driveDeferredFrame(QwpIngressProcessorState state, String tableName, int value) {
+        addEncodedRow(state, tableName, value, QwpConstants.FLAG_DEFER_COMMIT);
+        Assert.assertTrue(state.isDeferCommit());
+        state.processMessage();
+        Assert.assertTrue(state.getErrorText(), state.isOk());
+        state.commitIfMaxUncommittedRowsReached();
+        Assert.assertTrue(state.getErrorText(), state.isOk());
+        boolean ackable = state.refreshDeferredAckCoverage();
+        state.clearMessageState();
+        return ackable;
+    }
+
+    private static WalTableUpdateDetails tudOf(QwpTudCache cache, String tableName) {
+        WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                AllowAllSecurityContext.INSTANCE, new Utf8String(tableName), null, null, 2
+        );
+        Assert.assertNotNull(tud);
+        return tud;
+    }
+
     private static void addEncodedRow(QwpIngressProcessorState state, String tableName, int value, byte flags) {
         try (QwpTableBuffer buffer = new QwpTableBuffer(tableName);
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
@@ -5729,6 +6046,10 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     private static byte[] wrapQwpPayload(byte[] payload, byte flags) {
+        return wrapQwpPayload(payload, flags, (short) 1);
+    }
+
+    private static byte[] wrapQwpPayload(byte[] payload, byte flags, short tableCount) {
         byte[] message = new byte[12 + payload.length];
         message[0] = 'Q';
         message[1] = 'W';
@@ -5736,8 +6057,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         message[3] = '1';
         message[4] = 1; // version
         message[5] = flags;
-        message[6] = 1; // tableCount low byte
-        message[7] = 0; // tableCount high byte
+        message[6] = (byte) tableCount;
+        message[7] = (byte) (tableCount >>> 8);
         message[8] = (byte) payload.length;
         message[9] = (byte) (payload.length >>> 8);
         message[10] = (byte) (payload.length >>> 16);
@@ -5755,6 +6076,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         private long[] maxRowsCommitSeqTxns;
         private String[] maxRowsCommitTableNames;
         private Throwable maxRowsCommitThrow;
+        private int hasUncommittedRowsCallCount;
         private int maxRowsCommitCallCount;
 
         FakeConsumerTudCache(io.questdb.cairo.CairoEngine engine, LineHttpProcessorConfiguration lineConfig) {
@@ -5779,7 +6101,13 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         }
 
         @Override
-        public void commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
+        public boolean hasUncommittedRows() {
+            hasUncommittedRowsCallCount++;
+            return false;
+        }
+
+        @Override
+        public boolean commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
             maxRowsCommitCallCount++;
             if (consumer != null && maxRowsCommitTableNames != null) {
                 for (int i = 0; i < maxRowsCommitTableNames.length; i++) {
@@ -5794,6 +6122,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 maxRowsCommitThrow = null;
                 throw t;
             }
+            return false;
         }
 
         void queueCommit(String[] tableNames, String[] dirNames, long[] seqTxns) {
