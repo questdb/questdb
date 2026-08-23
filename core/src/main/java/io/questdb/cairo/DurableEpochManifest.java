@@ -356,43 +356,65 @@ public final class DurableEpochManifest {
             final long metaSize = ff.length(payload.$());
             final long metaChecksum = checksum(ff, payload, metaSize);
 
-            tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
-            try (MemoryCMARW mem = Vm.getSmallCMARWInstance(ff, tablePath.$(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
-                mem.jumpTo(FILE_SIZE);
-                mem.putLong(0, TableUtils.SNAPSHOT_CHECKSUM_MAGIC);
-                mem.putInt(8, FORMAT_VERSION);
-                mem.putInt(12, generation);
-                mem.putInt(16, tableToken.getTableId());
-                mem.putInt(20, 0);
-                mem.putLong(24, seqTxn);
-                mem.putLong(32, txn);
-                mem.putLong(40, columnVersion);
-                mem.putLong(48, txnSize);
-                mem.putLong(56, txnChecksum);
-                mem.putLong(64, cvSize);
-                mem.putLong(72, cvChecksum);
-                mem.putLong(80, metaSize);
-                mem.putLong(88, metaChecksum);
-                mem.putLong(96, metadataVersion);
-                mem.putLong(BODY_SIZE, TableUtils.SNAPSHOT_CHECKSUM_MAGIC);
-                mem.putLong(BODY_SIZE + 8, TableUtils.calculateCvAreaChecksum(mem.addressOf(0), BODY_SIZE));
-                mem.sync(false);
-                ff.fsync(mem.getFd());
+            // Restored in the finally: this path belongs to the caller (TableWriter passes its own), and
+            // leaving it at _epoch.manifest.<generation> made the next concat build a nonexistent
+            // directory. It survived review because a trimTo further along happened to clean it up -- on
+            // Linux only. See DurableEpochPathRestoreTest.
+            try {
+                tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
+                try (MemoryCMARW mem = Vm.getSmallCMARWInstance(ff, tablePath.$(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
+                    mem.jumpTo(FILE_SIZE);
+                    mem.putLong(0, TableUtils.SNAPSHOT_CHECKSUM_MAGIC);
+                    mem.putInt(8, FORMAT_VERSION);
+                    mem.putInt(12, generation);
+                    mem.putInt(16, tableToken.getTableId());
+                    mem.putInt(20, 0);
+                    mem.putLong(24, seqTxn);
+                    mem.putLong(32, txn);
+                    mem.putLong(40, columnVersion);
+                    mem.putLong(48, txnSize);
+                    mem.putLong(56, txnChecksum);
+                    mem.putLong(64, cvSize);
+                    mem.putLong(72, cvChecksum);
+                    mem.putLong(80, metaSize);
+                    mem.putLong(88, metaChecksum);
+                    mem.putLong(96, metadataVersion);
+                    mem.putLong(BODY_SIZE, TableUtils.SNAPSHOT_CHECKSUM_MAGIC);
+                    mem.putLong(BODY_SIZE + 8, TableUtils.calculateCvAreaChecksum(mem.addressOf(0), BODY_SIZE));
+                    mem.sync(false);
+                    ff.fsync(mem.getFd());
+                }
+            } finally {
+                tablePath.trimTo(rootLen);
             }
         }
     }
 
+    /**
+     * Makes the table directory's entries durable, and hands the caller's path back at {@code rootLen}.
+     * <p>
+     * The trim is deliberately OUTSIDE the platform guard and in a {@code finally}. Restoring someone
+     * else's path is not a Windows concern, and when it was bracketed with the fsync inside
+     * {@code if (!Os.isWindows())} the Windows build silently lost the cleanup too: the caller kept a path
+     * still ending in {@code _epoch.manifest.<generation>}, concatenated onto it, and every structural DDL
+     * then failed trying to open {@code <table>/_epoch.manifest.1/_meta.swp}. A platform guard must never
+     * wrap a side effect that is not platform-specific. See {@code DurableEpochPathRestoreTest}.
+     */
     public static void fsyncDirectory(CairoConfiguration configuration, Path tablePath, int rootLen) {
-        if (Os.isWindows()) {
-            return;
+        try {
+            if (Os.isWindows()) {
+                return; // no directory fsync on Windows -- but the caller still gets its path back
+            }
+            final FilesFacade ff = configuration.getFilesFacade();
+            tablePath.trimTo(rootLen).slash$();
+            final long fd = TableUtils.openRONoCache(ff, tablePath.$(), LOG);
+            if (fd == -1) {
+                throw CairoException.critical(ff.errno()).put("could not open adaptive epoch directory for fsync [path=").put(tablePath).put(']');
+            }
+            ff.fsyncAndClose(fd);
+        } finally {
+            tablePath.trimTo(rootLen);
         }
-        final FilesFacade ff = configuration.getFilesFacade();
-        tablePath.trimTo(rootLen).slash$();
-        final long fd = TableUtils.openRONoCache(ff, tablePath.$(), LOG);
-        if (fd == -1) {
-            throw CairoException.critical(ff.errno()).put("could not open adaptive epoch directory for fsync [path=").put(tablePath).put(']');
-        }
-        ff.fsyncAndClose(fd);
     }
 
     private static long checksum(FilesFacade ff, Path path, long size) {

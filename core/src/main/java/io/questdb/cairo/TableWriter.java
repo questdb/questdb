@@ -16485,10 +16485,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void fsyncEpochDirectory() {
-        if (!Os.isWindows()) {
-            DurableEpochManifest.fsyncDirectory(configuration, path.trimTo(pathSize), pathSize);
-            path.trimTo(pathSize);
-        }
+        // No platform guard here: fsyncDirectory is a no-op on Windows by itself, and it restores the path
+        // on every platform. Guarding the CALL also skipped the trim, which is how a stale
+        // _epoch.manifest.<generation> suffix survived into the next consumer of `path` on Windows only.
+        DurableEpochManifest.fsyncDirectory(configuration, path.trimTo(pathSize), pathSize);
     }
 
     private void fsyncTableDirAfterMetadataRename() {
