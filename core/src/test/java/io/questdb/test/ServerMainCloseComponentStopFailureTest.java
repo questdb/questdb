@@ -39,11 +39,7 @@ import org.junit.rules.Timeout;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * The unbounded {@code close()} path has no retry, so a component {@code stop()} failure must not
- * make it retain (leak) the object graph: it frees the graph and completes instead of throwing a
- * cause-less "shutdown did not complete". {@code assertMemoryLeak} is the leak oracle.
- */
+/** Verifies ServerMain cleanup when a component fails to stop. */
 public class ServerMainCloseComponentStopFailureTest extends AbstractBootstrapTest {
 
     private static final ObjList<String> EMPTY_DEPS = new ObjList<>();

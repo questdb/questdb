@@ -33,12 +33,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-/**
- * Runs the QWP WebSocket egress with fiber-mode HTTP dispatch enabled: the
- * post-upgrade WebSocket frames flow through the same connection tasks on pooled
- * fibers as regular HTTP requests, so a query streamed over /read/v1 executes on
- * a fiber end-to-end (handshake, QUERY_REQUEST, batch streaming, RESULT_END).
- */
+/** Exercises QWP WebSocket queries with fiber-enabled HTTP dispatch. */
 public class QwpEgressFiberTest extends AbstractReusedServerQwpEgressTest {
 
     @Test

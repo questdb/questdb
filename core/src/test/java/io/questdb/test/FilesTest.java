@@ -31,6 +31,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.FdCache;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -96,20 +97,25 @@ public class FilesTest {
 
     @Test
     public void testOpenFdDebugInfoRendersCachedPaths() throws Exception {
-        Assume.assumeTrue("the fd cache is disabled", Files.FS_CACHE_ENABLED);
         assertMemoryLeak(() -> {
+            final FdCache cache = new FdCache();
             final File temp = temporaryFolder.newFile();
             TestUtils.writeStringToFile(temp, "abcde");
-            try (Path path = new Path().of(temp.getAbsolutePath())) {
-                final long cachedFd = Files.openRO(path.$());
-                Assert.assertTrue(cachedFd > -1);
+            final String tempPath = temp.getAbsolutePath();
+            try (Path path = new Path().of(tempPath)) {
+                long cachedFd = -1;
                 try {
+                    cachedFd = cache.openROCached(path.$());
+                    Assert.assertTrue(cachedFd > -1);
                     // A leak report names the file that was left open; without the path the
                     // report is a bare descriptor id the reader cannot act on.
-                    assertContains(Files.getOpenFdDebugInfo(), cachedFd + "=" + temp.getAbsolutePath());
+                    Assert.assertEquals(cachedFd + "=" + tempPath, cache.getOpenFdDebugInfo());
                 } finally {
-                    Files.close(cachedFd);
+                    if (cachedFd > -1) {
+                        Assert.assertEquals(0, cache.close(cachedFd));
+                    }
                 }
+                Assert.assertEquals("", cache.getOpenFdDebugInfo());
 
                 final long uncachedFd = Files.openRW(path.$());
                 Assert.assertTrue(uncachedFd > -1);

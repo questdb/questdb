@@ -244,7 +244,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             MCSequence subSeq,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        if (!hasPendingTasks(subSeq)) {
+        if (hasNoPendingTasks(subSeq)) {
             return true;
         }
         final Fiber fiber = reserveFiber(stealingFrameSequence);
@@ -307,7 +307,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             MCSequence subSeq,
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
-        if (!hasPendingTasks(subSeq)) {
+        if (hasNoPendingTasks(subSeq)) {
             return true;
         }
         final Fiber fiber = reserveFiber(stealingFrameSequence);
@@ -418,7 +418,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         }
         boolean isDrained = false;
         try {
-            isDrained = drainPublishedTasks() && !taskPool.hasLeasedTasks();
+            isDrained = drainPublishedTasks() && taskPool.hasNoLeasedTasks();
         } finally {
             quiesceState.set(isDrained ? QUIESCE_DRAINED : QUIESCE_REQUESTED);
         }
@@ -465,8 +465,8 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         }
     }
 
-    private static boolean hasPendingTasks(MCSequence subSeq) {
-        return subSeq.current() < subSeq.getBarrier().current();
+    private static boolean hasNoPendingTasks(MCSequence subSeq) {
+        return subSeq.current() >= subSeq.getBarrier().current();
     }
 
     private static IllegalStateException launchFailed(LaunchResult result) {

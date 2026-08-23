@@ -47,19 +47,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
-/**
- * Covers {@code AbstractIODispatcher.processIOQueue}'s catch-all guard.
- * <p>
- * {@code processIOQueue} takes a context off the event queue and calls
- * {@code connectionContext.init()} and then the request processor. Only
- * {@code TlsSessionInitFailedException} used to be caught: any other throw
- * returned with the context checked out of the event queue and re-registered
- * nowhere, so neither the dispatcher's sweeps nor {@code close()} could see it
- * and its fd and buffers leaked for the lifetime of the process.
- * <p>
- * Both throw sites route through the same guard, and each is driven separately
- * here so a future change that narrows the catch to one of them is caught.
- */
+/** Verifies I/O dispatcher cleanup when request processing fails. */
 public class IODispatcherProcessErrorTest {
     private static final String INJECTED_FAILURE = "injected processing failure";
     private static final Log LOG = LogFactory.getLog(IODispatcherProcessErrorTest.class);

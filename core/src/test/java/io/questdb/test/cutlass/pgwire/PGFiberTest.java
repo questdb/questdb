@@ -39,7 +39,6 @@ import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.std.LongList;
-import io.questdb.std.Os;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -52,14 +51,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * Runs PGWire with fiber execution enabled: every connection operation
- * executes as a FiberTask on a pooled fiber mounted by the network pool's workers.
- * Exercises the full production shape end-to-end over a real socket: dispatch job
- * launches the task, the fiber runs the pipeline, a sleep() query freezes the fiber
- * on a timer wait, the timer fires and the fiber resumes through the pool's
- * continuation queue to complete the response.
- */
+/** Exercises PGWire query execution on pooled fibers. */
 public class PGFiberTest extends BasePGTest {
 
     @Test
@@ -81,10 +73,7 @@ public class PGFiberTest extends BasePGTest {
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                for (int i = 0; i < 60_000 && !server.isListening(); i++) {
-                    Os.sleep(1);
-                }
-                Assert.assertTrue(server.isListening());
+                TestUtils.assertEventually(() -> Assert.assertTrue(server.isListening()));
                 try (Connection connection = getConnection(Mode.EXTENDED, server.getPort(), true)) {
                     try (ResultSet rs = connection.createStatement().executeQuery("select 42 x")) {
                         Assert.assertTrue(rs.next());
@@ -119,10 +108,7 @@ public class PGFiberTest extends BasePGTest {
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                for (int i = 0; i < 60_000 && !server.isListening(); i++) {
-                    Os.sleep(1);
-                }
-                Assert.assertTrue(server.isListening());
+                TestUtils.assertEventually(() -> Assert.assertTrue(server.isListening()));
                 try (Connection connection = getConnection(Mode.EXTENDED, server.getPort(), true)) {
                     // a plain query end-to-end on a fiber
                     try (ResultSet rs = connection.createStatement().executeQuery("select 42 x")) {
@@ -145,16 +131,6 @@ public class PGFiberTest extends BasePGTest {
                     }
                 }
             }
-        });
-    }
-
-    @Test
-    public void testWorkerPoolModeControlsFiberExecution() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQueryExecutionMode(false, WorkerPoolMode.LEGACY, false);
-            assertQueryExecutionMode(false, WorkerPoolMode.FIBER_HOST, false);
-            assertQueryExecutionMode(true, WorkerPoolMode.LEGACY, false);
-            assertQueryExecutionMode(true, WorkerPoolMode.FIBER_HOST, true);
         });
     }
 
@@ -217,10 +193,7 @@ public class PGFiberTest extends BasePGTest {
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                for (int i = 0; i < 60_000 && !server.isListening(); i++) {
-                    Os.sleep(1);
-                }
-                Assert.assertTrue(server.isListening());
+                TestUtils.assertEventually(() -> Assert.assertTrue(server.isListening()));
 
                 final CountDownLatch completed = new CountDownLatch(2);
                 final AtomicReference<Throwable> error = new AtomicReference<>();
@@ -269,6 +242,16 @@ public class PGFiberTest extends BasePGTest {
         });
     }
 
+    @Test
+    public void testWorkerPoolModeControlsFiberExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQueryExecutionMode(false, WorkerPoolMode.LEGACY, false);
+            assertQueryExecutionMode(false, WorkerPoolMode.FIBER_HOST, false);
+            assertQueryExecutionMode(true, WorkerPoolMode.LEGACY, false);
+            assertQueryExecutionMode(true, WorkerPoolMode.FIBER_HOST, true);
+        });
+    }
+
     private void assertQueryExecutionMode(
             boolean isFiberEnabled,
             WorkerPoolMode workerPoolMode,
@@ -308,10 +291,7 @@ public class PGFiberTest extends BasePGTest {
         ) {
             workerPool.start(LOG);
             try {
-                for (int i = 0; i < 60_000 && !server.isListening(); i++) {
-                    Os.sleep(1);
-                }
-                Assert.assertTrue(server.isListening());
+                TestUtils.assertEventually(() -> Assert.assertTrue(server.isListening()));
                 try (
                         Connection connection = getConnection(Mode.EXTENDED, server.getPort(), true);
                         Statement statement = connection.createStatement();

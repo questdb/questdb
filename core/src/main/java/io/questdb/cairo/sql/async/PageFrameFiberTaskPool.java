@@ -93,6 +93,22 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
         CairoException.rethrowCleanupFailure(failure);
     }
 
+    PageFrameFiberTask acquireLeased() {
+        final PageFrameFiberTask pooledTask = freeTasks.pop();
+        if (pooledTask != null) {
+            return pooledTask;
+        }
+        PageFrameFiberTask task = null;
+        try {
+            task = new PageFrameFiberTask(engine, this, dispatcher);
+            createdCount.incrementAndGet();
+            return task;
+        } catch (Throwable th) {
+            Misc.free(task, th);
+            throw th;
+        }
+    }
+
     @TestOnly
     int getCapacity() {
         return capacity;
@@ -107,8 +123,8 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
         return maxRetainedCount;
     }
 
-    boolean hasLeasedTasks() {
-        return (leaseState.get() & LEASE_COUNT_MASK) != 0;
+    boolean hasNoLeasedTasks() {
+        return (leaseState.get() & LEASE_COUNT_MASK) == 0;
     }
 
     void release(PageFrameFiberTask task) {
@@ -173,22 +189,6 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
             task.setScheduleStateForTesting(expectedState, targetState);
         } finally {
             freeTasks.push(task);
-        }
-    }
-
-    PageFrameFiberTask acquireLeased() {
-        final PageFrameFiberTask pooledTask = freeTasks.pop();
-        if (pooledTask != null) {
-            return pooledTask;
-        }
-        PageFrameFiberTask task = null;
-        try {
-            task = new PageFrameFiberTask(engine, this, dispatcher);
-            createdCount.incrementAndGet();
-            return task;
-        } catch (Throwable th) {
-            Misc.free(task, th);
-            throw th;
         }
     }
 

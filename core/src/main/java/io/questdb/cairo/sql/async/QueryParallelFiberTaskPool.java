@@ -27,9 +27,9 @@ package io.questdb.cairo.sql.async;
 import io.questdb.cairo.CairoException;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
 
 import java.util.concurrent.atomic.AtomicInteger;
-import io.questdb.std.QuietCloseable;
 
 final class QueryParallelFiberTaskPool<T extends AbstractQueryParallelFiberTask> implements QuietCloseable {
     private Runnable beforeNewTaskForTesting;
@@ -99,33 +99,6 @@ final class QueryParallelFiberTaskPool<T extends AbstractQueryParallelFiberTask>
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    boolean hasNoLeasedTasks() {
-        return leasedCount.get() == 0;
-    }
-
-    void releaseLease() {
-        leasedCount.decrementAndGet();
-    }
-
-    boolean tryLease() {
-        if (closed) {
-            return false;
-        }
-        while (true) {
-            final int current = leasedCount.get();
-            if (current >= capacity) {
-                return false;
-            }
-            if (leasedCount.compareAndSet(current, current + 1)) {
-                return true;
-            }
-        }
-    }
-
-    synchronized int getCreatedCount() {
-        return createdCount;
-    }
-
     synchronized T acquireLeased() {
         if (freeTasks != null) {
             final T task = freeTasks;
@@ -153,36 +126,12 @@ final class QueryParallelFiberTaskPool<T extends AbstractQueryParallelFiberTask>
         }
     }
 
-    synchronized void setBeforeNewTaskForTesting(Runnable hook) {
-        beforeNewTaskForTesting = hook;
+    synchronized int getCreatedCount() {
+        return createdCount;
     }
 
-    void updateLimits(int capacity, int maxRetainedCount) {
-        T retiredTasks = null;
-        synchronized (this) {
-            if (closed) {
-                return;
-            }
-            this.capacity = capacity;
-            this.maxRetainedCount = maxRetainedCount;
-            while (freeCount > maxRetainedCount) {
-                final T task = freeTasks;
-                @SuppressWarnings("unchecked") final T next = (T) task.nextFree;
-                freeTasks = next;
-                task.pooled = false;
-                task.nextFree = retiredTasks;
-                retiredTasks = task;
-                freeCount--;
-                createdCount--;
-            }
-        }
-        while (retiredTasks != null) {
-            final T task = retiredTasks;
-            @SuppressWarnings("unchecked") final T next = (T) task.nextFree;
-            retiredTasks = next;
-            task.nextFree = null;
-            Misc.free(task);
-        }
+    boolean hasNoLeasedTasks() {
+        return leasedCount.get() == 0;
     }
 
     void release(AbstractQueryParallelFiberTask task) {
@@ -209,6 +158,57 @@ final class QueryParallelFiberTaskPool<T extends AbstractQueryParallelFiberTask>
             leasedCount.decrementAndGet();
         }
         if (free) {
+            Misc.free(task);
+        }
+    }
+
+    void releaseLease() {
+        leasedCount.decrementAndGet();
+    }
+
+    synchronized void setBeforeNewTaskForTesting(Runnable hook) {
+        beforeNewTaskForTesting = hook;
+    }
+
+    boolean tryLease() {
+        if (closed) {
+            return false;
+        }
+        while (true) {
+            final int current = leasedCount.get();
+            if (current >= capacity) {
+                return false;
+            }
+            if (leasedCount.compareAndSet(current, current + 1)) {
+                return true;
+            }
+        }
+    }
+
+    void updateLimits(int capacity, int maxRetainedCount) {
+        T retiredTasks = null;
+        synchronized (this) {
+            if (closed) {
+                return;
+            }
+            this.capacity = capacity;
+            this.maxRetainedCount = maxRetainedCount;
+            while (freeCount > maxRetainedCount) {
+                final T task = freeTasks;
+                @SuppressWarnings("unchecked") final T next = (T) task.nextFree;
+                freeTasks = next;
+                task.pooled = false;
+                task.nextFree = retiredTasks;
+                retiredTasks = task;
+                freeCount--;
+                createdCount--;
+            }
+        }
+        while (retiredTasks != null) {
+            final T task = retiredTasks;
+            @SuppressWarnings("unchecked") final T next = (T) task.nextFree;
+            retiredTasks = next;
+            task.nextFree = null;
             Misc.free(task);
         }
     }

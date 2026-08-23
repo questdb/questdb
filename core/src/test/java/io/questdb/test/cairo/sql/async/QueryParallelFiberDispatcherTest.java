@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
+import io.questdb.griffin.engine.groupby.vect.VectorAggregateEntry;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
@@ -74,6 +75,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -256,52 +259,23 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testAdapterCreationFailureReleasesFiberReservation() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                final FiberRuntime runtime = new FiberRuntime(1);
-                final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
-                        engine,
-                        engine.getMessageBus(),
-                        runtime
-                );
-                try {
-                    final MessageBus messageBus = engine.getMessageBus();
-                    final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
-                    final AtomicInteger startedCounter = new AtomicInteger();
-                    final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
-                    doneLatch.reset();
+    public void testLatestByAdapterCreationFailureCompletesClaimedTaskOwnership() throws Exception {
+        assertLatestByAdapterCreationFailureCompletesOwnership();
+    }
 
-                    final MPSequence pubSeq = messageBus.getGroupByMergeShardPubSeq();
-                    final long cursor = pubSeq.next();
-                    Assert.assertTrue(cursor > -1);
-                    final GroupByMergeShardTask task = messageBus.getGroupByMergeShardQueue().get(cursor);
-                    task.of(circuitBreaker, startedCounter, doneLatch, null, 0);
-                    pubSeq.done(cursor);
+    @Test
+    public void testLongTopKAdapterCreationFailureCompletesClaimedTaskOwnership() throws Exception {
+        assertCountedAdapterCreationFailureCompletesOwnership(true);
+    }
 
-                    final RuntimeException injected = new RuntimeException("injected adapter creation failure");
-                    dispatcher.setBeforeMergeShardTaskCreationForTesting(() -> {
-                        throw injected;
-                    });
-                    try {
-                        dispatcher.consumeMergeShard(-1);
-                        Assert.fail("expected injected adapter creation failure");
-                    } catch (RuntimeException th) {
-                        Assert.assertSame(injected, th);
-                    }
-                    Assert.assertEquals(0, runtime.getOutstandingTaskCount());
-                    final Fiber fiber = runtime.tryReserveFiber();
-                    Assert.assertNotNull(fiber);
-                    runtime.releaseReservedFiber(fiber, fiber.getReservationEpoch());
-                } finally {
-                    Misc.free(dispatcher);
-                    if (runtime.getOutstandingTaskCount() == 0) {
-                        closeRuntime(runtime);
-                    }
-                }
-            }
-        });
+    @Test
+    public void testMergeShardAdapterCreationFailureCompletesClaimedTaskOwnership() throws Exception {
+        assertCountedAdapterCreationFailureCompletesOwnership(false);
+    }
+
+    @Test
+    public void testVectorAggregateAdapterCreationFailureCompletesClaimedTaskOwnership() throws Exception {
+        assertVectorAggregateAdapterCreationFailureCompletesOwnership();
     }
 
     @Test
@@ -1155,6 +1129,372 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
         });
     }
 
+    private static void assertClaimedCursorAcknowledgedAndReusable(
+            MPSequence pubSeq,
+            MCSequence subSeq,
+            long cursor
+    ) {
+        final long reusedCursor = pubSeq.next();
+        long reusedConsumerCursor = -1;
+        if (reusedCursor > -1) {
+            pubSeq.done(reusedCursor);
+            reusedConsumerCursor = subSeq.next();
+            if (reusedConsumerCursor > -1) {
+                subSeq.done(reusedConsumerCursor);
+            }
+        } else {
+            // Keep branch-mutation REDs cleanup-safe. The dispatcher claimed this cursor, so
+            // release it before dispatcher.close() attempts to quiesce the capacity-one queue.
+            subSeq.done(cursor);
+        }
+
+        Assert.assertEquals("adapter failure must release the capacity-one queue slot", cursor + 1, reusedCursor);
+        Assert.assertEquals("consumer cursor must remain reusable", reusedCursor, reusedConsumerCursor);
+    }
+
+    private static void assertCountedAdapterCreationFailureCompletesOwnership(boolean isLongTopK) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public int getGroupByMergeShardQueueCapacity() {
+                    return 1;
+                }
+
+                @Override
+                public int getGroupByTopKQueueCapacity() {
+                    return 1;
+                }
+            };
+            try (CairoEngine engine = new CairoEngine(configuration);
+                 SqlCompiler compiler = engine.getSqlCompiler();
+                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine, 2)) {
+                final String sql = "select key, max(v) from adapter_failure_group_by";
+                engine.execute(
+                        "create table adapter_failure_group_by as "
+                                + "(select ('k' || x) key, x v from long_sequence(2))",
+                        executionContext
+                );
+                try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
+                    final AsyncGroupByAtom atom = (AsyncGroupByAtom) TestUtils.findAtom(factory, sql);
+                    final AsyncQueryProgressState progressState = atom.getShardingContext().getProgressState();
+                    final FiberRuntime runtime = new FiberRuntime(1);
+                    final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
+                            engine,
+                            engine.getMessageBus(),
+                            runtime
+                    );
+                    try {
+                        final MessageBus messageBus = engine.getMessageBus();
+                        final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+                        final AtomicInteger startedCounter = new AtomicInteger();
+                        final AtomicInteger doneCounter = new AtomicInteger();
+                        final RuntimeException cleanupFailure = isLongTopK
+                                ? null
+                                : new RuntimeException("injected cleanup failure");
+                        final CountDownLatchSPI doneLatch = () -> {
+                            doneCounter.incrementAndGet();
+                            if (cleanupFailure != null) {
+                                throw cleanupFailure;
+                            }
+                        };
+                        final MPSequence pubSeq;
+                        final MCSequence subSeq;
+                        GroupByLongTopKTask longTopKTask = null;
+                        GroupByMergeShardTask mergeShardTask = null;
+                        final long cursor;
+                        if (isLongTopK) {
+                            pubSeq = messageBus.getGroupByLongTopKPubSeq();
+                            subSeq = messageBus.getGroupByLongTopKSubSeq();
+                            cursor = pubSeq.next();
+                            Assert.assertTrue("long top-K queue slot must be available", cursor > -1);
+                            longTopKTask = messageBus.getGroupByLongTopKQueue().get(cursor);
+                            longTopKTask.of(
+                                    circuitBreaker,
+                                    startedCounter,
+                                    doneLatch,
+                                    atom,
+                                    null,
+                                    0,
+                                    0,
+                                    1
+                            );
+                        } else {
+                            pubSeq = messageBus.getGroupByMergeShardPubSeq();
+                            subSeq = messageBus.getGroupByMergeShardSubSeq();
+                            cursor = pubSeq.next();
+                            Assert.assertTrue("merge-shard queue slot must be available", cursor > -1);
+                            mergeShardTask = messageBus.getGroupByMergeShardQueue().get(cursor);
+                            mergeShardTask.of(
+                                    circuitBreaker,
+                                    startedCounter,
+                                    doneLatch,
+                                    atom.getShardingContext(),
+                                    0
+                            );
+                        }
+                        pubSeq.done(cursor);
+
+                        final long queryProgressBefore = progressState.getVersion();
+                        final RuntimeException injected = new RuntimeException("injected adapter creation failure");
+                        if (isLongTopK) {
+                            setBeforeTaskCreationForTesting(dispatcher, "longTopKTaskPool", () -> {
+                                throw injected;
+                            });
+                        } else {
+                            setBeforeTaskCreationForTesting(dispatcher, "mergeShardTaskPool", () -> {
+                                throw injected;
+                            });
+                        }
+
+                        final RuntimeException thrown = Assert.assertThrows(
+                                RuntimeException.class,
+                                isLongTopK
+                                        ? () -> dispatcher.consumeLongTopK(-1)
+                                        : () -> dispatcher.consumeMergeShard(-1)
+                        );
+                        final boolean isCancelled = circuitBreaker.checkIfTripped();
+                        final int startedCount = startedCounter.get();
+                        final int doneCount = doneCounter.get();
+                        final long queryProgressAfter = progressState.getVersion();
+                        final boolean isTaskCleared = isLongTopK
+                                ? longTopKTask.getAtom() == null
+                                && longTopKTask.getShardIndex() == -1
+                                : mergeShardTask.getShardingContext() == null
+                                && mergeShardTask.getShardIndex() == -1;
+
+                        if (!isTaskCleared) {
+                            if (isLongTopK) {
+                                longTopKTask.clear();
+                            } else {
+                                mergeShardTask.clear();
+                            }
+                        }
+                        if (!isCancelled) {
+                            circuitBreaker.cancel();
+                        }
+                        if (startedCount == 0) {
+                            startedCounter.incrementAndGet();
+                        }
+                        if (doneCount == 0) {
+                            try {
+                                doneLatch.countDown();
+                            } catch (Throwable ignored) {
+                                // The merge-shard case deliberately throws after recording countDown().
+                            }
+                        }
+                        assertClaimedCursorAcknowledgedAndReusable(pubSeq, subSeq, cursor);
+                        assertFiberAndLeaseReleased(dispatcher, runtime);
+
+                        final String family = isLongTopK ? "long top-K" : "merge-shard";
+                        Assert.assertSame(family + " must preserve the acquisition failure", injected, thrown);
+                        if (cleanupFailure == null) {
+                            Assert.assertEquals(0, thrown.getSuppressed().length);
+                        } else {
+                            Assert.assertEquals(1, thrown.getSuppressed().length);
+                            Assert.assertSame(cleanupFailure, thrown.getSuppressed()[0]);
+                        }
+                        Assert.assertTrue(family + " must cancel the shared breaker", isCancelled);
+                        Assert.assertEquals(family + " must count the task as started", 1, startedCount);
+                        Assert.assertEquals(family + " must count down its completion latch", 1, doneCount);
+                        Assert.assertTrue(family + " must clear the queue task", isTaskCleared);
+                        Assert.assertTrue(
+                                family + " must signal real per-query progress",
+                                queryProgressAfter > queryProgressBefore
+                        );
+                    } finally {
+                        Misc.free(dispatcher);
+                        closeRuntime(runtime);
+                    }
+                }
+            }
+        });
+    }
+
+    private static void assertFiberAndLeaseReleased(
+            QueryParallelFiberDispatcher dispatcher,
+            FiberRuntime runtime
+    ) {
+        Assert.assertEquals("adapter failure must not launch a fiber task", 0, runtime.getOutstandingTaskCount());
+        final Fiber fiber = runtime.tryReserveFiber();
+        Assert.assertNotNull("adapter failure must release its fiber reservation", fiber);
+        runtime.releaseReservedFiber(fiber, fiber.getReservationEpoch());
+
+        dispatcher.beginQuiesce();
+        dispatcher.progressQuiesce();
+        Assert.assertTrue("adapter failure must release its task-pool lease", dispatcher.isQuiesced());
+    }
+
+    private static void assertLatestByAdapterCreationFailureCompletesOwnership() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public int getLatestByQueueCapacity() {
+                    return 1;
+                }
+            };
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                final FiberRuntime runtime = new FiberRuntime(1);
+                final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
+                        engine,
+                        engine.getMessageBus(),
+                        runtime
+                );
+                try {
+                    final MessageBus messageBus = engine.getMessageBus();
+                    final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+                    final AtomicInteger doneCounter = new AtomicInteger();
+                    final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
+                    final MPSequence pubSeq = messageBus.getLatestByPubSeq();
+                    final MCSequence subSeq = messageBus.getLatestBySubSeq();
+                    final long cursor = pubSeq.next();
+                    Assert.assertTrue("latest-by queue slot must be available", cursor > -1);
+                    final LatestByTask task = messageBus.getLatestByQueue().get(cursor);
+                    task.of(
+                            null, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0, 0, -1, 0, 0L, 0L,
+                            doneCounter::incrementAndGet,
+                            circuitBreaker,
+                            progressState,
+                            new AsyncQueryErrorState()
+                    );
+                    pubSeq.done(cursor);
+
+                    final long queryProgressBefore = progressState.getVersion();
+                    final RuntimeException injected = new RuntimeException("injected adapter creation failure");
+                    setBeforeTaskCreationForTesting(dispatcher, "latestByTaskPool", () -> {
+                        throw injected;
+                    });
+                    final RuntimeException thrown = Assert.assertThrows(
+                            RuntimeException.class,
+                            () -> dispatcher.consumeLatestBy(-1)
+                    );
+                    final boolean isCancelled = circuitBreaker.checkIfTripped();
+                    final int doneCount = doneCounter.get();
+                    final long queryProgressAfter = progressState.getVersion();
+
+                    if (!isCancelled || doneCount == 0) {
+                        task.abort();
+                    }
+                    assertClaimedCursorAcknowledgedAndReusable(pubSeq, subSeq, cursor);
+                    assertFiberAndLeaseReleased(dispatcher, runtime);
+
+                    Assert.assertSame("latest-by must preserve the acquisition failure", injected, thrown);
+                    Assert.assertEquals(0, thrown.getSuppressed().length);
+                    Assert.assertTrue("latest-by must abort and cancel its task", isCancelled);
+                    Assert.assertEquals("latest-by must release its owner", 1, doneCount);
+                    Assert.assertTrue(queryProgressAfter > queryProgressBefore);
+                } finally {
+                    Misc.free(dispatcher);
+                    closeRuntime(runtime);
+                }
+            }
+        });
+    }
+
+    private static void assertVectorAggregateAdapterCreationFailureCompletesOwnership() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public int getVectorAggregateQueueCapacity() {
+                    return 1;
+                }
+            };
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                final FiberRuntime runtime = new FiberRuntime(1);
+                final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
+                        engine,
+                        engine.getMessageBus(),
+                        runtime
+                );
+                try {
+                    final MessageBus messageBus = engine.getMessageBus();
+                    final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+                    final AtomicInteger startedCounter = new AtomicInteger();
+                    final AtomicInteger doneCounter = new AtomicInteger();
+                    final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
+                    final AtomicBoolean isAborted = new AtomicBoolean();
+                    final AtomicBoolean isStartedArgument = new AtomicBoolean();
+                    final VectorAggregateEntry entry = new VectorAggregateEntry() {
+                        @Override
+                        public void abort(boolean isStarted) {
+                            isAborted.set(true);
+                            isStartedArgument.set(isStarted);
+                            if (!isStarted) {
+                                startedCounter.incrementAndGet();
+                            }
+                            try {
+                                circuitBreaker.cancel();
+                            } finally {
+                                doneCounter.incrementAndGet();
+                            }
+                        }
+
+                        @Override
+                        public AsyncQueryProgressState getProgressState() {
+                            return progressState;
+                        }
+                    };
+                    final MPSequence pubSeq = messageBus.getVectorAggregatePubSeq();
+                    final MCSequence subSeq = messageBus.getVectorAggregateSubSeq();
+                    final long cursor = pubSeq.next();
+                    Assert.assertTrue("vector aggregate queue slot must be available", cursor > -1);
+                    final VectorAggregateTask task = messageBus.getVectorAggregateQueue().get(cursor);
+                    task.entry = entry;
+                    pubSeq.done(cursor);
+
+                    final long queryProgressBefore = progressState.getVersion();
+                    final RuntimeException injected = new RuntimeException("injected adapter creation failure");
+                    setBeforeTaskCreationForTesting(dispatcher, "vectorAggregateTaskPool", () -> {
+                        throw injected;
+                    });
+                    final RuntimeException thrown = Assert.assertThrows(
+                            RuntimeException.class,
+                            () -> dispatcher.consumeVectorAggregate(-1)
+                    );
+                    final boolean isTaskDetached = task.entry == null;
+                    final boolean isAbortedAfterFailure = isAborted.get();
+                    final boolean isStartedArgumentAfterFailure = isStartedArgument.get();
+                    final boolean isCancelled = circuitBreaker.checkIfTripped();
+                    final int startedCount = startedCounter.get();
+                    final int doneCount = doneCounter.get();
+                    final long queryProgressAfter = progressState.getVersion();
+
+                    task.entry = null;
+                    if (!isAbortedAfterFailure) {
+                        entry.abort(false);
+                    }
+                    assertClaimedCursorAcknowledgedAndReusable(pubSeq, subSeq, cursor);
+                    assertFiberAndLeaseReleased(dispatcher, runtime);
+
+                    Assert.assertSame("vector aggregate must preserve the acquisition failure", injected, thrown);
+                    Assert.assertEquals(0, thrown.getSuppressed().length);
+                    Assert.assertTrue("vector aggregate must detach the queue entry", isTaskDetached);
+                    Assert.assertTrue("vector aggregate must abort the detached entry", isAbortedAfterFailure);
+                    Assert.assertFalse("never-started vector work must use abort(false)", isStartedArgumentAfterFailure);
+                    Assert.assertTrue("vector aggregate must cancel the shared breaker", isCancelled);
+                    Assert.assertEquals("vector aggregate must count the task as started", 1, startedCount);
+                    Assert.assertEquals("vector aggregate must release its owner", 1, doneCount);
+                    Assert.assertTrue(queryProgressAfter > queryProgressBefore);
+                } finally {
+                    Misc.free(dispatcher);
+                    closeRuntime(runtime);
+                }
+            }
+        });
+    }
+
+    private static void setBeforeTaskCreationForTesting(
+            QueryParallelFiberDispatcher dispatcher,
+            String poolFieldName,
+            Runnable hook
+    ) throws Exception {
+        final Field poolField = QueryParallelFiberDispatcher.class.getDeclaredField(poolFieldName);
+        poolField.setAccessible(true);
+        final Object taskPool = poolField.get(dispatcher);
+        final Method setter = taskPool.getClass().getDeclaredMethod("setBeforeNewTaskForTesting", Runnable.class);
+        setter.setAccessible(true);
+        setter.invoke(taskPool, hook);
+    }
+
     private static void assertFiberOwnerParks(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -1418,7 +1758,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     final String sql = "select * from latest_foreign latest on ts partition by sym";
                     engine.execute(
                             "create table latest_foreign as ("
-                                    + "select (x * 1000000L)::timestamp ts, "
+                                    + "select (x * 1_000_000L)::timestamp ts, "
                                     + "('k' || (x % 64))::symbol sym, x value "
                                     + "from long_sequence(512)"
                                     + "), index(sym) timestamp(ts)",

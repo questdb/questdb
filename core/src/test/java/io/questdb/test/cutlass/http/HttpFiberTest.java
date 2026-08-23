@@ -83,15 +83,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * Runs the HTTP server with fiber execution enabled: every connection
- * operation executes as a FiberTask on a pooled fiber mounted by the network
- * pool's workers, acquiring a request-processor selector per step. Exercises the
- * production shape end-to-end over a real socket: the dispatch job launches the
- * task, the fiber runs the JSON query, a sleep() query freezes the fiber on a
- * timer wait and resumes through the pool's continuation queue to finish the
- * response.
- */
+/** Exercises HTTP query execution on pooled fibers. */
 public class HttpFiberTest extends AbstractTest {
 
     @Test

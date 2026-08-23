@@ -247,8 +247,14 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             if (cursor < 0) {
                 return true;
             }
-            fiberTask = latestByTaskPool.acquireLeased();
-            fiberTask.of(messageBus.getLatestByQueue().get(cursor), subSeq, cursor);
+            final LatestByTask task = messageBus.getLatestByQueue().get(cursor);
+            try {
+                fiberTask = latestByTaskPool.acquireLeased();
+            } catch (Throwable th) {
+                completeFailedLatestByAcquisition(subSeq, cursor, task, th);
+                throw th;
+            }
+            fiberTask.of(task, subSeq, cursor);
             launchOwnership = false;
             launch(fiber, reservationEpoch, fiberTask, workerId > -1);
             return false;
@@ -287,8 +293,14 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             if (cursor < 0) {
                 return true;
             }
-            fiberTask = longTopKTaskPool.acquireLeased();
-            fiberTask.of(workerId, messageBus.getGroupByLongTopKQueue().get(cursor), subSeq, cursor);
+            final GroupByLongTopKTask task = messageBus.getGroupByLongTopKQueue().get(cursor);
+            try {
+                fiberTask = longTopKTaskPool.acquireLeased();
+            } catch (Throwable th) {
+                completeFailedLongTopKAcquisition(subSeq, cursor, task, th);
+                throw th;
+            }
+            fiberTask.of(workerId, task, subSeq, cursor);
             launchOwnership = false;
             launch(fiber, reservationEpoch, fiberTask, workerId > -1);
             return false;
@@ -327,8 +339,14 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             if (cursor < 0) {
                 return true;
             }
-            fiberTask = mergeShardTaskPool.acquireLeased();
-            fiberTask.of(workerId, messageBus.getGroupByMergeShardQueue().get(cursor), subSeq, cursor);
+            final GroupByMergeShardTask task = messageBus.getGroupByMergeShardQueue().get(cursor);
+            try {
+                fiberTask = mergeShardTaskPool.acquireLeased();
+            } catch (Throwable th) {
+                completeFailedMergeShardAcquisition(subSeq, cursor, task, th);
+                throw th;
+            }
+            fiberTask.of(workerId, task, subSeq, cursor);
             launchOwnership = false;
             launch(fiber, reservationEpoch, fiberTask, workerId > -1);
             return false;
@@ -367,8 +385,14 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             if (cursor < 0) {
                 return true;
             }
-            fiberTask = vectorAggregateTaskPool.acquireLeased();
-            fiberTask.of(workerId, messageBus.getVectorAggregateQueue().get(cursor), subSeq, cursor);
+            final VectorAggregateTask task = messageBus.getVectorAggregateQueue().get(cursor);
+            try {
+                fiberTask = vectorAggregateTaskPool.acquireLeased();
+            } catch (Throwable th) {
+                completeFailedVectorAggregateAcquisition(subSeq, cursor, task, th);
+                throw th;
+            }
+            fiberTask.of(workerId, task, subSeq, cursor);
             launchOwnership = false;
             launch(fiber, reservationEpoch, fiberTask, workerId > -1);
             return false;
@@ -407,13 +431,13 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     }
 
     @TestOnly
-    public void setBeforeMergeShardTaskCreationForTesting(Runnable hook) {
-        mergeShardTaskPool.setBeforeNewTaskForTesting(hook);
+    public int getVectorAggregateCreatedTaskCount() {
+        return vectorAggregateTaskPool.getCreatedCount();
     }
 
     @TestOnly
-    public int getVectorAggregateCreatedTaskCount() {
-        return vectorAggregateTaskPool.getCreatedCount();
+    public void setBeforeMergeShardTaskCreationForTesting(Runnable hook) {
+        mergeShardTaskPool.setBeforeNewTaskForTesting(hook);
     }
 
     public boolean isOwnerParkable() {
@@ -528,6 +552,147 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
                 return cursor;
             }
             Os.pause();
+        }
+    }
+
+    private void completeFailedLatestByAcquisition(
+            MCSequence subSeq,
+            long cursor,
+            LatestByTask task,
+            Throwable failure
+    ) {
+        final AsyncQueryProgressState progressState = task.getProgressState();
+        try {
+            task.abort();
+        } catch (Throwable cleanupFailure) {
+            addSuppressed(failure, cleanupFailure);
+        }
+        completeFailedCursorOwnership(subSeq, cursor, progressState, failure);
+    }
+
+    private void completeFailedLongTopKAcquisition(
+            MCSequence subSeq,
+            long cursor,
+            GroupByLongTopKTask task,
+            Throwable failure
+    ) {
+        final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
+        final AtomicInteger startedCounter = task.getStartedCounter();
+        final CountDownLatchSPI doneLatch = task.getDoneLatch();
+        final AsyncQueryProgressState progressState = task.getAtom() != null
+                ? task.getAtom().getShardingContext().getProgressState()
+                : null;
+        try {
+            task.clear();
+        } catch (Throwable cleanupFailure) {
+            addSuppressed(failure, cleanupFailure);
+        }
+        completeFailedCountedAcquisition(
+                subSeq,
+                cursor,
+                circuitBreaker,
+                startedCounter,
+                doneLatch,
+                progressState,
+                failure
+        );
+    }
+
+    private void completeFailedMergeShardAcquisition(
+            MCSequence subSeq,
+            long cursor,
+            GroupByMergeShardTask task,
+            Throwable failure
+    ) {
+        final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
+        final AtomicInteger startedCounter = task.getStartedCounter();
+        final CountDownLatchSPI doneLatch = task.getDoneLatch();
+        final AsyncQueryProgressState progressState = task.getShardingContext() != null
+                ? task.getShardingContext().getProgressState()
+                : null;
+        try {
+            task.clear();
+        } catch (Throwable cleanupFailure) {
+            addSuppressed(failure, cleanupFailure);
+        }
+        completeFailedCountedAcquisition(
+                subSeq,
+                cursor,
+                circuitBreaker,
+                startedCounter,
+                doneLatch,
+                progressState,
+                failure
+        );
+    }
+
+    private void completeFailedVectorAggregateAcquisition(
+            MCSequence subSeq,
+            long cursor,
+            VectorAggregateTask task,
+            Throwable failure
+    ) {
+        final VectorAggregateEntry entry = task.entry;
+        final AsyncQueryProgressState progressState = entry != null ? entry.getProgressState() : null;
+        task.entry = null;
+        try {
+            if (entry != null) {
+                entry.abort(false);
+            }
+        } catch (Throwable cleanupFailure) {
+            addSuppressed(failure, cleanupFailure);
+        }
+        completeFailedCursorOwnership(subSeq, cursor, progressState, failure);
+    }
+
+    private void completeFailedCountedAcquisition(
+            MCSequence subSeq,
+            long cursor,
+            @Nullable AtomicBooleanCircuitBreaker circuitBreaker,
+            @Nullable AtomicInteger startedCounter,
+            @Nullable CountDownLatchSPI doneLatch,
+            @Nullable AsyncQueryProgressState progressState,
+            Throwable failure
+    ) {
+        try {
+            if (circuitBreaker != null) {
+                circuitBreaker.cancel();
+            }
+        } catch (Throwable cleanupFailure) {
+            addSuppressed(failure, cleanupFailure);
+        }
+        try {
+            if (startedCounter != null) {
+                startedCounter.incrementAndGet();
+            }
+        } catch (Throwable cleanupFailure) {
+            addSuppressed(failure, cleanupFailure);
+        }
+        try {
+            if (doneLatch != null) {
+                doneLatch.countDown();
+            }
+        } catch (Throwable cleanupFailure) {
+            addSuppressed(failure, cleanupFailure);
+        }
+        completeFailedCursorOwnership(subSeq, cursor, progressState, failure);
+    }
+
+    private void completeFailedCursorOwnership(
+            MCSequence subSeq,
+            long cursor,
+            @Nullable AsyncQueryProgressState progressState,
+            Throwable failure
+    ) {
+        try {
+            subSeq.done(cursor);
+        } catch (Throwable cleanupFailure) {
+            addSuppressed(failure, cleanupFailure);
+        }
+        try {
+            signalProgress(progressState);
+        } catch (Throwable cleanupFailure) {
+            addSuppressed(failure, cleanupFailure);
         }
     }
 

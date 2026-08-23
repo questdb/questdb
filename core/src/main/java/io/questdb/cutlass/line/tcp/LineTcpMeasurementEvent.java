@@ -74,7 +74,7 @@ public class LineTcpMeasurementEvent implements Closeable {
     private TableUpdateDetails tableUpdateDetails;
     private int writerWorkerId;
 
-    public LineTcpMeasurementEvent(
+    LineTcpMeasurementEvent(
             long bufLo,
             long bufSize,
             byte timestampUnit,
