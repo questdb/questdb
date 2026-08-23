@@ -248,6 +248,21 @@ public class LiveViewCheckpointMetaSegmentWriter implements Closeable {
     }
 
     /**
+     * Returns the id of the segment currently being assembled. This is used by
+     * aggregate root builders to validate that every page in a batched pass is
+     * charged to the segment which will contain it.
+     */
+    public long getSegmentId() {
+        ensureOpen();
+        return segmentId;
+    }
+
+    public int getPageCount() {
+        ensureOpen();
+        return pageCount;
+    }
+
+    /**
      * Opens {@code <checkpointsDir>/meta/m.<segmentId>.tmp} for writing and lays
      * down the segment header (with a placeholder page count patched at
      * {@link #commit()}). A pre-existing {@code .tmp} at the same path is a crash

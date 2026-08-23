@@ -1363,7 +1363,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", failed=").$(result.getFailedSegmentCount())
                         .$(", orphans=").$(result.getRemovedOrphanCount())
                         .$(", failedOrphans=").$(result.getFailedOrphanCount())
-                        .$(", retirableEntries=").$(result.getRetirableEntryCount()).I$();
+                        .$(", retirableEntries=").$(result.getRetirableEntryCount())
+                        .$(", queueEntriesVisited=").$(result.getQueueEntriesVisited())
+                        .$(", catalogueEntriesVisited=").$(result.getCatalogueEntriesVisited())
+                        .$(", physicalEntriesVisited=").$(result.getPhysicalEntriesVisited()).I$();
             }
         } catch (Throwable t) {
             LOG.error().$("could not sweep live view checkpoint segments [view=")

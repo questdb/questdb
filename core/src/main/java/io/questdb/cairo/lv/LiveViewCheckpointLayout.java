@@ -41,6 +41,8 @@ import org.jetbrains.annotations.NotNull;
  * <pre>
  *   &lt;live-view-table&gt;/_checkpoints/
  *     _timeline                 fixed A/B superblock (LiveViewCheckpointSuperblock)
+ *     _retirements              checksummed zero-reference reclamation work set
+ *     _retirements.tmp          copy-on-write queue publication
  *     meta/
  *       m.&lt;segmentId&gt;           immutable, per-page-checksummed metadata segment
  *       m.&lt;segmentId&gt;.tmp       unpublished metadata segment
@@ -117,6 +119,11 @@ public final class LiveViewCheckpointLayout {
      */
     public static final String REPAIRING_MARKER_FILE_NAME = "_repairing";
     /**
+     * CRC-checked copy-on-write work set of zero-reference segments awaiting
+     * generation-safe physical removal.
+     */
+    public static final String RETIREMENT_QUEUE_FILE_NAME = "_retirements";
+    /**
      * Filename prefix for a repair descriptor: {@code r.<repairId>}.
      */
     public static final String REPAIR_DESCRIPTOR_PREFIX = "r.";
@@ -173,6 +180,7 @@ public final class LiveViewCheckpointLayout {
      * Suffix for an unpublished ({@code .tmp}) metadata or data segment.
      */
     public static final String TMP_SUFFIX = ".tmp";
+    public static final String RETIREMENT_QUEUE_TMP_FILE_NAME = RETIREMENT_QUEUE_FILE_NAME + TMP_SUFFIX;
 
     private LiveViewCheckpointLayout() {
     }
@@ -311,6 +319,10 @@ public final class LiveViewCheckpointLayout {
      */
     public static Path repairingMarkerPath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir) {
         return dst.of(checkpointsDir).concat(REPAIRING_MARKER_FILE_NAME);
+    }
+
+    public static Path retirementQueuePath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir) {
+        return dst.of(checkpointsDir).concat(RETIREMENT_QUEUE_FILE_NAME);
     }
 
     /**

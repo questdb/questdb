@@ -172,6 +172,8 @@ public class LiveViewSteadyStateBenchmark {
         int batches = 15;
         long checkpointRows = 135_000L;
         long checkpointDurationMicros = 24L * Micros.HOUR_MICROS;
+        long checkpointPurgeInterval = -1;
+        long checkpointCompactionInterval = -1;
         boolean isIndexed = true;
         boolean isRestartMeasured = false;
         boolean isSymbolPreSized = true;
@@ -247,6 +249,12 @@ public class LiveViewSteadyStateBenchmark {
                 checkpointRows = Long.parseLong(arg.substring(18));
             } else if (arg.startsWith("--checkpoint-duration-us=")) {
                 checkpointDurationMicros = Long.parseLong(arg.substring(25));
+            } else if (arg.startsWith("--checkpoint-purge-interval=")) {
+                checkpointPurgeInterval = Long.parseLong(arg.substring("--checkpoint-purge-interval=".length()));
+            } else if (arg.startsWith("--checkpoint-compaction-interval=")) {
+                checkpointCompactionInterval = Long.parseLong(
+                        arg.substring("--checkpoint-compaction-interval=".length())
+                );
             } else if (arg.startsWith("--presize-symbol=")) {
                 isSymbolPreSized = Boolean.parseBoolean(arg.substring(17));
             } else if (arg.startsWith("--index=")) {
@@ -334,6 +342,9 @@ public class LiveViewSteadyStateBenchmark {
         if (o3FromBatch < 0) {
             throw new IllegalArgumentException("--o3-from-batch must not be negative: " + o3FromBatch);
         }
+        if (checkpointPurgeInterval < -1 || checkpointCompactionInterval < -1) {
+            throw new IllegalArgumentException("checkpoint maintenance intervals must be -1 or non-negative");
+        }
         if (o3CommitPercent < 1 || o3CommitPercent > 100) {
             throw new IllegalArgumentException("--o3-commit-percent must be within [1, 100]: " + o3CommitPercent);
         }
@@ -402,6 +413,8 @@ public class LiveViewSteadyStateBenchmark {
         CairoEngine engine = null;
         final long finalCheckpointRows = checkpointRows;
         final long finalCheckpointDuration = checkpointDurationMicros;
+        final long finalCheckpointPurgeInterval = checkpointPurgeInterval;
+        final long finalCheckpointCompactionInterval = checkpointCompactionInterval;
         final int finalCompactThreshold = compactThreshold;
         final int finalCompactStalePercent = compactStalePercent;
         final int finalRepairMaxChainedBoundaries = repairMaxChainedBoundaries;
@@ -417,6 +430,20 @@ public class LiveViewSteadyStateBenchmark {
                 @Override
                 public long getLiveViewCheckpointMaxDurationMicros() {
                     return finalCheckpointDuration;
+                }
+
+                @Override
+                public long getLiveViewCheckpointCompactionInterval() {
+                    return finalCheckpointCompactionInterval >= 0
+                            ? finalCheckpointCompactionInterval
+                            : super.getLiveViewCheckpointCompactionInterval();
+                }
+
+                @Override
+                public long getLiveViewCheckpointPurgeInterval() {
+                    return finalCheckpointPurgeInterval >= 0
+                            ? finalCheckpointPurgeInterval
+                            : super.getLiveViewCheckpointPurgeInterval();
                 }
 
                 @Override
@@ -489,7 +516,8 @@ public class LiveViewSteadyStateBenchmark {
             };
             System.out.printf(
                     Locale.ROOT,
-                    "# seed=%d batch=%d batches=%d checkpointRows=%d preSizeSymbol=%s index=%s recycleAccounts=%d "
+                    "# seed=%d batch=%d batches=%d checkpointRows=%d checkpointPurgeInterval=%d "
+                            + "checkpointCompactionInterval=%d preSizeSymbol=%s index=%s recycleAccounts=%d "
                             + "anchorPeriod=%s accountWindow=%d rowsPerBucket=%d buckets=%d compactThreshold=%d "
                             + "compactStalePercent=%d shape=%s keyType=%s nullPercent=%d sumColumns=%d "
                             + "commitsPerBatch=%d commitRows=%d o3EveryN=%d o3Lag=%s o3LagRows=%d o3FromBatch=%d "
@@ -498,7 +526,10 @@ public class LiveViewSteadyStateBenchmark {
                             + "spanHours=%.2f baseDedup=%s lvDedup=%s repairMaxChainedBoundaries=%d repairPerSegment=%s "
                             + "repairIsolatedRuntime=%s repairSegmentYield=%s repairKeyedReplay=%s "
                             + "openSegmentKeyedReplay=%s keyedScanIndexOpenRows=%d%n",
-                    seedRows, batchRows, batches, checkpointRows, isSymbolPreSized, isIndexed, recycleAccounts,
+                    seedRows, batchRows, batches, checkpointRows,
+                    configuration.getLiveViewCheckpointPurgeInterval(),
+                    configuration.getLiveViewCheckpointCompactionInterval(),
+                    isSymbolPreSized, isIndexed, recycleAccounts,
                     anchorPeriod, accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
                     configuration.getLiveViewPartitionCompactThreshold(),
                     configuration.getLiveViewPartitionCompactStalePercent(),

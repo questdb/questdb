@@ -145,7 +145,24 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
      * what a resume and a restart read off it.
      */
     public void build(long metadataSegmentId, @NotNull LiveViewCheckpointPageRef out) {
+        segmentWriter.of(checkpointsDir, metadataSegmentId);
+        buildIntoOpenSegment(metadataSegmentId, segmentWriter, out);
+        lastSegmentBytes = segmentWriter.commit();
+    }
+
+    /**
+     * Writes the function directory and checkpoint root into an aggregate
+     * metadata segment owned by the caller.
+     */
+    public void buildIntoOpenSegment(
+            long metadataSegmentId,
+            @NotNull LiveViewCheckpointMetaSegmentWriter writer,
+            @NotNull LiveViewCheckpointPageRef out
+    ) {
         ensureInitialized();
+        if (writer.getSegmentId() != metadataSegmentId) {
+            throw CairoException.critical(0).put("live view checkpoint aggregate segment id mismatch");
+        }
         sortFunctions();
         for (int i = 1; i < functionCount; i++) {
             if (LiveViewCheckpointMetadata.compareBytes(functionIdentities[i - 1], functionIdentities[i]) == 0) {
@@ -155,13 +172,12 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
         // The root page and its function directory land here, so this segment is
         // part of the boundary's closure as much as the ones below it are.
         addSegmentId(metadataSegmentId);
-        segmentWriter.of(checkpointsDir, metadataSegmentId);
         final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
         LiveViewCheckpointFunctionDirectory.writeTo(
                 functionIdentities,
                 functionRootRefs,
                 functionCount,
-                segmentWriter,
+                writer,
                 functionDirectoryRef
         );
         resultRoot.ofBuilder(
@@ -172,8 +188,7 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
                 functionDirectoryRef,
                 segmentIds
         );
-        resultRoot.writeTo(segmentWriter, out);
-        lastSegmentBytes = segmentWriter.commit();
+        resultRoot.writeTo(writer, out);
     }
 
     @Override

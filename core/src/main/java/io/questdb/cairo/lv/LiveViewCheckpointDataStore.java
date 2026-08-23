@@ -63,6 +63,10 @@ public class LiveViewCheckpointDataStore implements Closeable {
     private final FilesFacade ff;
     private final LiveViewCheckpointSegmentDirectoryEntry lookupEntry = new LiveViewCheckpointSegmentDirectoryEntry();
     private final LiveViewCheckpointMetaStore metaStore;
+    private final LongList retirementEntries = new LongList();
+    private final LongList retirementRemaining = new LongList();
+    private final LiveViewCheckpointRetirementQueue.State retirementState =
+            new LiveViewCheckpointRetirementQueue.State();
     private final LiveViewCheckpointSegmentDirectoryReader segmentDirectory;
     private final PurgeSweep sweep = new PurgeSweep();
     private boolean isOpen;
@@ -108,21 +112,81 @@ public class LiveViewCheckpointDataStore implements Closeable {
         ensureOpen();
         try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
             segmentDirectory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
+            final boolean queueMatchesGeneration = LiveViewCheckpointRetirementQueue.read(
+                    configuration,
+                    checkpointsDir,
+                    retirementEntries,
+                    retirementState
+            ) && retirementState.generation == pin.getGeneration();
+            final boolean requiresPhysicalOrphanScan = !queueMatchesGeneration;
+            final int[] catalogueEntriesVisited = {0};
+            if (!queueMatchesGeneration) {
+                // Upgrade/corruption recovery is deliberately the one full scan:
+                // rebuild the durable work set from the selected catalogue, then
+                // every steady sweep point-looks only these zero-reference ids.
+                retirementEntries.clear();
+                retirementState.generation = pin.getGeneration();
+                retirementState.liveDataSegmentCount = 0;
+                segmentDirectory.iterateAll(entry -> {
+                    catalogueEntriesVisited[0]++;
+                    if (entry.referenceCount == 0) {
+                        retirementEntries.add(
+                                entry.segmentId,
+                                entry.fileLength,
+                                entry.retireGeneration,
+                                entry.kind
+                        );
+                    } else if (!entry.isMetadata()) {
+                        retirementState.liveDataSegmentCount++;
+                    }
+                });
+            }
             sweep.of(
                     metaStore.getOldestValidSuperblockGeneration(),
                     metaStore.getMinPinnedGeneration()
             );
-            // Walking the catalogue costs the segment count, not the timeline
-            // length: the tree carries one entry per segment however many logical
-            // checkpoints reference it.
-            segmentDirectory.iterateAll(sweep);
+            sweep.liveSegments = retirementState.liveDataSegmentCount > Integer.MAX_VALUE
+                    ? Integer.MAX_VALUE
+                    : (int) retirementState.liveDataSegmentCount;
+            retirementRemaining.clear();
+            for (int i = 0, n = retirementEntries.size(); i < n; i += LiveViewCheckpointRetirementQueue.ENTRY_STRIDE) {
+                final long segmentId = retirementEntries.getQuick(i);
+                if (!segmentDirectory.find(segmentId, lookupEntry)) {
+                    // The normal publication after a successful unlink pruned
+                    // the catalogue entry. Only then can the durable work item go.
+                    continue;
+                }
+                if (lookupEntry.referenceCount != 0) {
+                    // A failed publication can queue a false retirement, and a
+                    // later generation can revive a zero-reference segment. The
+                    // selected catalogue is authoritative in both cases.
+                    continue;
+                }
+                sweep.onEntry(lookupEntry);
+                retirementRemaining.add(
+                        lookupEntry.segmentId,
+                        lookupEntry.fileLength,
+                        lookupEntry.retireGeneration,
+                        lookupEntry.kind
+                );
+            }
+            LiveViewCheckpointRetirementQueue.write(
+                    configuration,
+                    checkpointsDir,
+                    retirementRemaining,
+                    pin.getGeneration(),
+                    retirementState.liveDataSegmentCount
+            );
             return new PurgeResult(
                     sweep.purgedSegments,
                     sweep.failedSegments,
                     sweep.purgedBytes,
                     sweep.liveSegments,
                     sweep.obsoleteBytes,
-                    sweep.retirableSegments
+                    sweep.retirableSegments,
+                    requiresPhysicalOrphanScan,
+                    retirementEntries.size() / LiveViewCheckpointRetirementQueue.ENTRY_STRIDE,
+                    catalogueEntriesVisited[0]
             );
         }
     }
@@ -484,10 +548,13 @@ public class LiveViewCheckpointDataStore implements Closeable {
 
     public static final class PurgeResult {
         private final int failedSegmentCount;
+        private final int catalogueEntriesVisited;
         private final int liveSegmentCount;
         private final long obsoleteBytes;
         private final long purgedBytes;
         private final int purgedSegmentCount;
+        private final int queueEntriesVisited;
+        private final boolean requiresPhysicalOrphanScan;
         private final LongList retirableSegmentIds;
 
         private PurgeResult(
@@ -496,7 +563,10 @@ public class LiveViewCheckpointDataStore implements Closeable {
                 long purgedBytes,
                 int liveSegmentCount,
                 long obsoleteBytes,
-                @NotNull LongList retirableSegmentIds
+                @NotNull LongList retirableSegmentIds,
+                boolean requiresPhysicalOrphanScan,
+                int queueEntriesVisited,
+                int catalogueEntriesVisited
         ) {
             this.purgedSegmentCount = purgedSegmentCount;
             this.failedSegmentCount = failedSegmentCount;
@@ -504,6 +574,13 @@ public class LiveViewCheckpointDataStore implements Closeable {
             this.liveSegmentCount = liveSegmentCount;
             this.obsoleteBytes = obsoleteBytes;
             this.retirableSegmentIds = new LongList(retirableSegmentIds);
+            this.requiresPhysicalOrphanScan = requiresPhysicalOrphanScan;
+            this.queueEntriesVisited = queueEntriesVisited;
+            this.catalogueEntriesVisited = catalogueEntriesVisited;
+        }
+
+        public int getCatalogueEntriesVisited() {
+            return catalogueEntriesVisited;
         }
 
         public int getFailedSegmentCount() {
@@ -536,6 +613,10 @@ public class LiveViewCheckpointDataStore implements Closeable {
             return purgedSegmentCount;
         }
 
+        public int getQueueEntriesVisited() {
+            return queueEntriesVisited;
+        }
+
         /**
          * @return ascending ids of the catalogued segments this sweep left with no
          * file - the ones it unlinked, plus the ones an earlier sweep unlinked and
@@ -545,6 +626,16 @@ public class LiveViewCheckpointDataStore implements Closeable {
          */
         public LongList getRetirableSegmentIds() {
             return retirableSegmentIds;
+        }
+
+        /**
+         * Returns whether purge had to rebuild its work set because the durable
+         * queue was absent, invalid, or named another generation. A queue from a
+         * future generation is the durable trace of a pre-superblock publication
+         * failure, so the caller must run one physical orphan scan as well.
+         */
+        public boolean requiresPhysicalOrphanScan() {
+            return requiresPhysicalOrphanScan;
         }
     }
 

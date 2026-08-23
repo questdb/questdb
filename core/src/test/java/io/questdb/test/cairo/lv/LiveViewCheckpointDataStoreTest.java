@@ -217,11 +217,14 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                 final LiveViewCheckpointDataStore.PurgeResult failed = dataStore.purge();
                 Assert.assertEquals(0, failed.getPurgedSegmentCount());
                 Assert.assertEquals(1, failed.getFailedSegmentCount());
+                Assert.assertTrue(failed.getCatalogueEntriesVisited() > 0);
                 Assert.assertTrue(dataFileExists(1));
 
                 final LiveViewCheckpointDataStore.PurgeResult retried = dataStore.purge();
                 Assert.assertEquals(1, retried.getPurgedSegmentCount());
                 Assert.assertEquals(0, retried.getFailedSegmentCount());
+                Assert.assertEquals(0, retried.getCatalogueEntriesVisited());
+                Assert.assertEquals(1, retried.getQueueEntriesVisited());
                 Assert.assertEquals(source.fileLength, retried.getPurgedBytes());
                 Assert.assertFalse(dataFileExists(1));
             }

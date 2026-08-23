@@ -97,7 +97,23 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
     }
 
     public void build(long metadataSegmentId, @NotNull LiveViewCheckpointPageRef out) {
+        segmentWriter.of(checkpointsDir, metadataSegmentId);
+        buildIntoOpenSegment(metadataSegmentId, segmentWriter, out);
+        lastSegmentBytes = segmentWriter.commit();
+    }
+
+    /**
+     * Writes this root into an aggregate metadata segment owned by the caller.
+     */
+    public void buildIntoOpenSegment(
+            long metadataSegmentId,
+            @NotNull LiveViewCheckpointMetaSegmentWriter writer,
+            @NotNull LiveViewCheckpointPageRef out
+    ) {
         ensureInitialized();
+        if (writer.getSegmentId() != metadataSegmentId) {
+            throw CairoException.critical(0).put("live view checkpoint aggregate segment id mismatch");
+        }
         final LongList candidateCounts = new LongList(segmentUseCounts);
         for (int i = 0; i < mutationCount; i++) {
             final LiveViewCheckpointPartitionMapWriter.Mutation mutation = mutations[i];
@@ -110,13 +126,12 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
             }
         }
 
-        segmentWriter.of(checkpointsDir, metadataSegmentId);
         final LiveViewCheckpointPageRef partitionMapRoot = new LiveViewCheckpointPageRef();
         partitionMapWriter.applyToOpenSegment(
                 oldPartitionMapRoot,
                 mutations,
                 mutationCount,
-                segmentWriter,
+                writer,
                 partitionMapRoot
         );
         // The metadata closure moves by exactly what the path copy took away and
@@ -139,8 +154,7 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
                 partitionMapRoot,
                 candidateCounts
         );
-        resultFunctionRoot.writeTo(segmentWriter, out);
-        lastSegmentBytes = segmentWriter.commit();
+        resultFunctionRoot.writeTo(writer, out);
         segmentUseCounts.clear();
         segmentUseCounts.add(candidateCounts);
         oldPartitionMapRoot.of(partitionMapRoot.getSegmentId(), partitionMapRoot.getOffset(), partitionMapRoot.getLength());

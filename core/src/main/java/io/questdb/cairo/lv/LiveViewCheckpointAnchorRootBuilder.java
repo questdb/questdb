@@ -89,7 +89,25 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
     }
 
     public void build(long metadataSegmentId, @NotNull LiveViewCheckpointPageRef out) {
+        segmentWriter.of(checkpointsDir, metadataSegmentId);
+        buildIntoOpenSegment(metadataSegmentId, segmentWriter, out);
+        lastSegmentBytes = segmentWriter.commit();
+    }
+
+    /**
+     * Writes this root into an aggregate metadata segment owned by the caller.
+     * The caller commits the segment after all roots in the pass have been
+     * appended.
+     */
+    public void buildIntoOpenSegment(
+            long metadataSegmentId,
+            @NotNull LiveViewCheckpointMetaSegmentWriter writer,
+            @NotNull LiveViewCheckpointPageRef out
+    ) {
         ensureInitialized();
+        if (writer.getSegmentId() != metadataSegmentId) {
+            throw CairoException.critical(0).put("live view checkpoint aggregate segment id mismatch");
+        }
         if (isCompleteSnapshot) {
             partitionMapReader.iterateAll(oldPartitionMapRoot, entry -> {
                 if (!putKeys.contains(ByteBuffer.wrap(entry.getKey()))) {
@@ -98,13 +116,12 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
             });
         }
 
-        segmentWriter.of(checkpointsDir, metadataSegmentId);
         final LiveViewCheckpointPageRef partitionMapRoot = new LiveViewCheckpointPageRef();
         partitionMapWriter.applyToOpenSegment(
                 oldPartitionMapRoot,
                 mutations,
                 mutationCount,
-                segmentWriter,
+                writer,
                 partitionMapRoot
         );
         final LongList releasedSegmentIds = partitionMapWriter.getLastReleasedSegmentIds();
@@ -116,8 +133,7 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
         }
         LiveViewCheckpointMetadata.adjustSegmentUseCount(segmentUseCounts, metadataSegmentId, partitionMapWriter.getLastSegmentPageCount() + 1);
         resultAnchorRoot.ofBuilder(windowName, anchorValueType, keySchema, partitionMapRoot, segmentUseCounts);
-        resultAnchorRoot.writeTo(segmentWriter, out);
-        lastSegmentBytes = segmentWriter.commit();
+        resultAnchorRoot.writeTo(writer, out);
         oldPartitionMapRoot.of(
                 partitionMapRoot.getSegmentId(),
                 partitionMapRoot.getOffset(),

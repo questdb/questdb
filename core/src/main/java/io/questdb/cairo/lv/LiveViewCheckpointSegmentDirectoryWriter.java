@@ -97,6 +97,10 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
     private final LiveViewCheckpointPageRef oldRoot = new LiveViewCheckpointPageRef();
     private final LongList ownReleasedSegmentIds = new LongList();
     private final LiveViewCheckpointPageRef pageRef = new LiveViewCheckpointPageRef();
+    // (segmentId, fileLength, retireGeneration, kind) for entries whose
+    // staged reference count crossed from positive to zero. The publication
+    // owner persists these before committing the superblock.
+    private final LongList retirementTransitions = new LongList();
     private final LiveViewCheckpointSegmentDirectoryReader reader;
     private final LongList releaseTally = new LongList();
     private final LongHashSet removedSegmentIds = new LongHashSet();
@@ -107,6 +111,7 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
     private boolean isBegun;
     private long lastSegmentBytes;
     private int lastSegmentPageCount;
+    private long liveDataSegmentDelta;
     private LiveViewCheckpointSegmentDirectoryNode[] nodePool = new LiveViewCheckpointSegmentDirectoryNode[0];
     private LongList[] outPool = new LongList[0];
     private LiveViewCheckpointSegmentDirectoryNode[] piecePool = new LiveViewCheckpointSegmentDirectoryNode[0];
@@ -173,6 +178,9 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
                 STAGED_FLAG_INSERT,
                 kind
         );
+        if (kind == LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_DATA) {
+            liveDataSegmentDelta++;
+        }
     }
 
     /**
@@ -241,11 +249,57 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
     }
 
     /**
+     * Applies sorted {@code (segmentId, netDelta)} pairs for one atomic batch of
+     * root replacements. Zero deltas must have been removed by the accumulator.
+     * The complete batch is validated before any staged reference count changes.
+     */
+    public void applyRootReferenceDeltas(@NotNull LongList deltas, long generation) {
+        ensureBegun();
+        if (generation < 0 || (deltas.size() & 1) != 0) {
+            throw CairoException.critical(0).put("invalid live view checkpoint root reference delta batch");
+        }
+        long previousSegmentId = -1;
+        for (int i = 0, n = deltas.size(); i < n; i += 2) {
+            final long segmentId = deltas.getQuick(i);
+            final long delta = deltas.getQuick(i + 1);
+            validateReferenceSegmentId(segmentId);
+            if (segmentId <= previousSegmentId || delta == 0) {
+                throw CairoException.critical(0)
+                        .put("invalid live view checkpoint root reference delta order, segmentId=")
+                        .put(segmentId);
+            }
+            final int index = stageExisting(segmentId, delta > 0);
+            ensureNotRetiring(index, segmentId);
+            ensureRootCounted(index, segmentId);
+            final long count = staged.getQuick(index * STAGED_STRIDE + STAGED_REFERENCE_COUNT);
+            final long updated;
+            try {
+                updated = Math.addExact(count, delta);
+            } catch (ArithmeticException e) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint segment root reference count overflow, segmentId=")
+                        .put(segmentId);
+            }
+            if (updated < 0) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint segment root reference count underflow, segmentId=")
+                        .put(segmentId);
+            }
+            previousSegmentId = segmentId;
+        }
+        for (int i = 0, n = deltas.size(); i < n; i += 2) {
+            addReference(deltas.getQuick(i), deltas.getQuick(i + 1), generation);
+        }
+    }
+
+    /**
      * Starts a publication against the generation rooted at {@code oldRoot}
      * (null for a fresh catalogue), discarding any staged mutations.
      */
     public void begin(@NotNull LiveViewCheckpointPageRef oldRoot) {
         staged.clear();
+        retirementTransitions.clear();
+        liveDataSegmentDelta = 0;
         releaseTally.clear();
         ownReleasedSegmentIds.clear();
         this.oldRoot.of(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength());
@@ -272,6 +326,10 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
      */
     public long getLastSegmentBytes() {
         return lastSegmentBytes;
+    }
+
+    public long getLiveDataSegmentDelta() {
+        return liveDataSegmentDelta;
     }
 
     /**
@@ -303,6 +361,16 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
         return index >= 0
                 ? staged.getQuick(index * STAGED_STRIDE + STAGED_RETIRE_GENERATION)
                 : required(segmentId).retireGeneration;
+    }
+
+    /**
+     * Returns the zero-reference transitions staged by this publication as
+     * {@code (segmentId, fileLength, retireGeneration, kind)} records. A later
+     * transition back to a positive count removes the record, so only the
+     * publication's net new retirements remain.
+     */
+    public LongList getRetirementTransitions() {
+        return retirementTransitions;
     }
 
     /**
@@ -516,12 +584,45 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
 
     private void addReference(long segmentId, long delta, long generation) {
         final int base = stagedIndexOf(segmentId) * STAGED_STRIDE;
-        final long count = staged.getQuick(base + STAGED_REFERENCE_COUNT) + delta;
+        final long oldCount = staged.getQuick(base + STAGED_REFERENCE_COUNT);
+        final long count = oldCount + delta;
         staged.setQuick(base + STAGED_REFERENCE_COUNT, count);
         staged.setQuick(
                 base + STAGED_RETIRE_GENERATION,
                 count == 0 ? generation : LiveViewCheckpointSegmentDirectory.RETIRE_GENERATION_NONE
         );
+        if (oldCount > 0 && count == 0) {
+            recordRetirementTransition(
+                    segmentId,
+                    staged.getQuick(base + STAGED_FILE_LENGTH),
+                    generation,
+                    staged.getQuick(base + STAGED_KIND)
+            );
+            if (staged.getQuick(base + STAGED_KIND) == LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_DATA) {
+                liveDataSegmentDelta--;
+            }
+        } else if (oldCount == 0 && count > 0) {
+            removeRetirementTransition(segmentId);
+            if (staged.getQuick(base + STAGED_KIND) == LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_DATA) {
+                liveDataSegmentDelta++;
+            }
+        }
+    }
+
+    private void recordRetirementTransition(long segmentId, long fileLength, long generation, long kind) {
+        removeRetirementTransition(segmentId);
+        retirementTransitions.add(segmentId, fileLength, generation, kind);
+    }
+
+    private void removeRetirementTransition(long segmentId) {
+        for (int i = 0, n = retirementTransitions.size(); i < n; i += 4) {
+            if (retirementTransitions.getQuick(i) == segmentId) {
+                for (int r = 0; r < 4; r++) {
+                    retirementTransitions.removeIndex(i);
+                }
+                return;
+            }
+        }
     }
 
     /**

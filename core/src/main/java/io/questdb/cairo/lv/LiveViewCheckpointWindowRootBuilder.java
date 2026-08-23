@@ -104,7 +104,23 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
     }
 
     public void build(long metadataSegmentId, @NotNull LiveViewCheckpointPageRef out) {
+        segmentWriter.of(checkpointsDir, metadataSegmentId);
+        buildIntoOpenSegment(metadataSegmentId, segmentWriter, out);
+        lastSegmentBytes = segmentWriter.commit();
+    }
+
+    /**
+     * Writes this root into an aggregate metadata segment owned by the caller.
+     */
+    public void buildIntoOpenSegment(
+            long metadataSegmentId,
+            @NotNull LiveViewCheckpointMetaSegmentWriter writer,
+            @NotNull LiveViewCheckpointPageRef out
+    ) {
         ensureInitialized();
+        if (writer.getSegmentId() != metadataSegmentId) {
+            throw CairoException.critical(0).put("live view checkpoint aggregate segment id mismatch");
+        }
         if (isCompleteSnapshot) {
             if (outputKeys != null) {
                 // A partial-domain repair is complete only inside Q. Walking the old
@@ -127,13 +143,12 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
             }
         }
 
-        segmentWriter.of(checkpointsDir, metadataSegmentId);
         final LiveViewCheckpointPageRef partitionMapRoot = new LiveViewCheckpointPageRef();
         partitionMapWriter.applyToOpenSegment(
                 oldPartitionMapRoot,
                 mutations,
                 mutationCount,
-                segmentWriter,
+                writer,
                 partitionMapRoot
         );
         final LongList releasedSegmentIds = partitionMapWriter.getLastReleasedSegmentIds();
@@ -157,8 +172,7 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
                 partitionMapRoot,
                 segmentUseCounts
         );
-        resultWindowRoot.writeTo(segmentWriter, out);
-        lastSegmentBytes = segmentWriter.commit();
+        resultWindowRoot.writeTo(writer, out);
         oldPartitionMapRoot.of(
                 partitionMapRoot.getSegmentId(),
                 partitionMapRoot.getOffset(),
