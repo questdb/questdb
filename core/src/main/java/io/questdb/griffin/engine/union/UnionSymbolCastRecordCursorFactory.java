@@ -215,6 +215,12 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         CairoException.rethrowCleanupFailure(failure);
     }
 
+    RecordCursorFactory detachBase() {
+        final RecordCursorFactory detachedBase = base;
+        base = null;
+        return detachedBase;
+    }
+
     private static boolean isProjectionOfColumn(Function function, int column) {
         return symbolFunction(function).getArg() instanceof StrColumn strColumn
                 && strColumn.getColumnIndex() == column;

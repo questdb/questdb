@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.griffin.model.IQueryModel;
+import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
@@ -67,6 +68,7 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
                 baseTableName,
                 baseTableNamePosition,
                 selectSql,
+                Chars.toString(sqlText),
                 flushEveryInterval,
                 flushEveryIntervalUnit,
                 inMemoryInterval,

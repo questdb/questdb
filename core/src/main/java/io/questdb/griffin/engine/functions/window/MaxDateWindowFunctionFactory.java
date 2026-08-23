@@ -35,6 +35,7 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.window.MaxMinWindowFunctionFactoryHelper.TimestampComparator;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -69,6 +70,7 @@ public class MaxDateWindowFunctionFactory extends AbstractWindowFunctionFactory 
                 supportNullsDesc(),
                 MaxTimestampWindowFunctionFactory.GREATER_THAN,
                 MaxTimestampWindowFunctionFactory.NAME,
+                WindowAccumulatorDescriptor.FAMILY_LONG_MAX,
                 CurrentRowDate::new,
                 PartitionDate::new,
                 PartitionRangeDate::new,
@@ -209,8 +211,9 @@ public class MaxDateWindowFunctionFactory extends AbstractWindowFunctionFactory 
                                    String name,
                                    ColumnTypes partitionByKeyTypes,
                                    boolean liveView,
-                                   CairoConfiguration configuration) {
-            super(map, partitionByRecord, partitionBySink, arg, comparator, name, partitionByKeyTypes, liveView, configuration);
+                                   CairoConfiguration configuration,
+                                   int accumulatorFamily) {
+            super(map, partitionByRecord, partitionBySink, arg, comparator, name, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
         }
 
         @Override
