@@ -14608,12 +14608,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (index > 0) {
                         path.put('.').put(index);
                     }
-                    final long swpFd = TableUtils.openRONoCache(ff, path.$(), LOG);
-                    if (swpFd != -1) {
-                        ff.fsyncAndClose(swpFd);
-                    }
+                    TableUtils.fsyncFileDurable(ff, path.$(), configuration.getWriterFileOpenOpts());
                 } finally {
-                    // Always restore path to the table root. If openRONoCache above faults, the
+                    // Always restore path to the table root. If the open above faults, the
                     // rollback-DDL catch calls openMetaFile(ff, path, ...), which assumes path is at
                     // pathSize and concatenates _meta -- a stale _meta.swp suffix would make it open
                     // "_meta.swp/_meta" (ENOTDIR), fail the revert, and falsely distress the writer.
@@ -17068,12 +17065,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (targetEffectiveCommitMode != CommitMode.NOSYNC) {
                 try {
                     path.concat(TODO_FILE_NAME);
-                    final long todoFd = TableUtils.openRONoCache(ff, path.$(), LOG);
-                    if (todoFd != -1) {
-                        ff.fsyncAndClose(todoFd);
-                    }
+                    TableUtils.fsyncFileDurable(ff, path.$(), configuration.getWriterFileOpenOpts());
                 } finally {
-                    // Restore path even if openRONoCache faults, so the RECOVER_FROM_TODO_WRITE_FAILURE
+                    // Restore path even if the open faults, so the RECOVER_FROM_TODO_WRITE_FAILURE
                     // handler below (and any later use) sees path at the table root rather than a stale
                     // _todo_ suffix.
                     path.trimTo(pathSize);
