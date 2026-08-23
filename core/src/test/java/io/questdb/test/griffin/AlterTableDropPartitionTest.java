@@ -106,10 +106,6 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         );
     }
 
-
-
-
-
     @Test
     public void testConvertPartitionWhereNegatedBindVariableStrideIsAccepted() throws Exception {
         assertMemoryLeak(() -> {
@@ -169,10 +165,6 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
             }
         });
     }
-
-
-
-
 
     @Test
     public void testDetachPartitionWhereNegatedBindVariableStrideIsAccepted() throws Exception {
@@ -614,24 +606,6 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
             assertPartitionFilterMatchesNothing("nul3", "ts > 1_000_000 % 0");
         });
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     @Test
     public void testDropPartitionWhereTimestampColumnNameIsOtherThanTimestamp() throws Exception {

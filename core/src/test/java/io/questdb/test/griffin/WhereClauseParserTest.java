@@ -4647,9 +4647,30 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntConstFunctionDateGreater() throws SqlException {
+        // An INT expression is a valid timestamp bound: the predicate reads the wrapped INT value
+        // exactly as if it had been written as an INT literal, so abs(1) prunes to the same
+        // interval as the literal 1. See griffin/CLAUDE.md on INT widening.
+        // intervalToString() hands back a shared sink that the next call clears, so materialize
+        // the literal's interval before extracting the function's one.
+        String expected = intervalToString(modelOf("timestamp > 1")).toString();
+        Assert.assertNotEquals("", expected);
+        TestUtils.assertEquals(expected, intervalToString(modelOf("timestamp > abs(1)")));
+    }
+
+    @Test
+    public void testIntConstFunctionDateLess() throws SqlException {
+        String expected = intervalToString(modelOf("timestamp <= 1")).toString();
+        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=, hi=1970-01-01T00:00:00.000001Z}]"), expected);
+        TestUtils.assertEquals(expected, intervalToString(modelOf("timestamp <= abs(1)")));
+    }
+
+    @Test
     public void testWrongTypeConstFunctionDateGreater() {
+        // DOUBLE has no timestamp reading, so it is still rejected at the position of the
+        // offending function. INT is not - see testIntConstFunctionDateGreater.
         try {
-            modelOf("timestamp > abs(1)");
+            modelOf("timestamp > abs(1.5)");
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(12, e.getPosition());
@@ -4659,7 +4680,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testWrongTypeConstFunctionDateLess() {
         try {
-            modelOf("timestamp <= abs(1)");
+            modelOf("timestamp <= abs(1.5)");
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(13, e.getPosition());
