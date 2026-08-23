@@ -116,6 +116,7 @@ import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.ExecutionState;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryCacheBuilder;
@@ -1373,6 +1374,17 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void closeNameRegistry() {
         tableNameRegistry.close();
+    }
+
+    /**
+     * Called once per SqlExecutionContextImpl construction. Engines that need per-execution
+     * state attached to every execution context return an ExecutionState instance; the default
+     * engine attaches nothing. Note: invoked from the engine constructor's root-context
+     * creation, i.e. potentially before a subclass's own fields are initialized — overrides
+     * must not read subclass state here, only capture references.
+     */
+    public @Nullable ExecutionState createExecutionState() {
+        return null;
     }
 
     public void createLiveView(
