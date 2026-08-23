@@ -2180,6 +2180,37 @@ public final class TableUtils {
         ff.fsyncAndClose(openRONoCache(ff, dirPath, LOG));
     }
 
+    /**
+     * fsync a FILE that a durable pointer is about to name, opening it solely for the barrier.
+     * <p>
+     * The handle is opened READ-WRITE, not read-only, because Windows requires it: {@code fsync} there is
+     * {@code FlushFileBuffers}, which needs {@code GENERIC_WRITE} on the handle and returns
+     * {@code ERROR_ACCESS_DENIED} (errno 5) for the {@code GENERIC_READ}-only handle {@link #openRONoCache}
+     * produces. A POSIX {@code O_RDONLY} fd fsyncs perfectly well, so a read-only barrier passes every Linux
+     * CI leg while being dead on Windows -- which is exactly how the {@code data.parquet} barrier shipped and
+     * took the whole conversion path (and Enterprise cold storage with it) down on that platform. See
+     * {@code ParquetBarrierHandleAccessTest}.
+     * <p>
+     * Unlike {@link #fsyncDirDurable} this is NOT skipped on a restricted file system: a directory barrier is
+     * impossible on Windows, whereas a file barrier is merely being asked for through the wrong handle.
+     * <p>
+     * Fail-stop: a missing file, an unopenable one, or a failed fsync all propagate, because a silently
+     * skipped barrier is indistinguishable from one that never existed.
+     */
+    public static void fsyncFileDurable(FilesFacade ff, LPSZ path, int fileOpenOpts) {
+        // Checked BEFORE the open, not after: openRW creates the file when it is absent (O_CREAT on POSIX,
+        // OPEN_ALWAYS on Windows), so without this a vanished data file would be replaced by an empty one and
+        // the barrier would report success over nothing.
+        if (!ff.exists(path)) {
+            throw CairoException.critical(ff.errno()).put("could not open, file does not exist: ").put(path).put(']');
+        }
+        final long fd = ff.openRWNoCache(path, fileOpenOpts);
+        if (fd < 0) {
+            throw CairoException.critical(ff.errno()).put("could not open read-write for fsync [file=").put(path).put(']');
+        }
+        ff.fsyncAndClose(fd);
+    }
+
     public static long openRONoCache(FilesFacade ff, LPSZ path, Log log) {
         final long fd = ff.openRONoCache(path);
         if (fd > -1) {
@@ -2557,10 +2588,7 @@ public final class TableUtils {
                 if (commitMode != CommitMode.NOSYNC) {
                     // fsync data.parquet before _pm (data before metadata, mirrors syncColumns0 ordering)
                     setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
-                    final long parquetDataFd = TableUtils.openRONoCache(ff, other.$(), LOG);
-                    if (parquetDataFd != -1) {
-                        ff.fsyncAndClose(parquetDataFd);
-                    }
+                    fsyncFileDurable(ff, other.$(), configuration.getWriterFileOpenOpts());
                     ff.fsync(parquetMetaFd);
                     if (!Os.isWindows()) {
                         setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
