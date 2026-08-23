@@ -90,7 +90,9 @@ final class LiveViewCheckpointRetirementQueue {
         write(configuration, checkpointsDir, entries, generation, liveDataSegmentCount);
     }
 
-    /** Returns true only for a present, structurally valid, checksummed image. */
+    /**
+     * Returns true only for a present, structurally valid, checksummed image.
+     */
     static boolean read(
             @NotNull CairoConfiguration configuration,
             @Transient @NotNull Path checkpointsDir,
