@@ -460,16 +460,33 @@ public class PartitionGeometry implements Closeable, Mutable {
         geometryFile.setLastWriteMicros(nowMicros);
 
         final long committedRef = resolved.getQuick(slot + RES_GEOMETRY_REF);
-        final int generation = committedRef == -1L ? 0 : TxReader.geometryGeneration(committedRef);
-        final long offset = committedRef == -1L
+        int generation = committedRef == -1L ? 0 : TxReader.geometryGeneration(committedRef);
+        long offset = committedRef == -1L
                 ? 0
                 : TxReader.geometryOffset(committedRef) + resolved.getQuick(slot + RES_COMMITTED_RECORD_SIZE);
-        if ((offset & ~TxReader.PARTITION_GEOMETRY_OFFSET_MASK) != 0) {
+        // Every record is a full snapshot (see the class doc), so rotating costs nothing beyond starting
+        // a fresh file: this record, not a copy of what came before, is what the new generation opens
+        // with. A record only ever needs to know its OWN size ahead of writing to decide this - it is
+        // built already, in the scratch buffer beginRecord/addPiece above filled.
+        if (committedRef != -1L && offset + geometryFile.getRecordSize() > PartitionGeometryFile.MAX_FILE_SIZE) {
+            generation++;
+            offset = 0;
+            if (generation > TxReader.PARTITION_GEOMETRY_MAX_GENERATION) {
+                throw CairoException.critical(0)
+                        .put("partition geometry generations exhausted [partitionTimestamp=").put(partitionTimestamp)
+                        .put(", nameTxn=").put(nameTxn)
+                        .put(']');
+            }
+        }
+        assert (offset & ((1L << TxReader.PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT) - 1)) == 0
+                : "geometry offset must be 8-byte aligned";
+        final long packedOffset = offset >>> TxReader.PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT;
+        if ((packedOffset & ~TxReader.PARTITION_GEOMETRY_OFFSET_MASK) != 0) {
             throw CairoException.critical(0)
                     .put("partition geometry file is full [partitionTimestamp=").put(partitionTimestamp)
                     .put(", nameTxn=").put(nameTxn)
                     .put(", offset=").put(offset)
-                    .put("]; generation rotation is not implemented");
+                    .put(']');
         }
         final Path path = Path.getThreadLocal(tableRoot);
         TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn);
@@ -480,7 +497,7 @@ public class PartitionGeometry implements Closeable, Mutable {
         resolved.setQuick(slot + RES_LAST_WRITE_MICROS, nowMicros);
         final long ref = TxReader.PARTITION_COMPOSITE_FLAG
                 | ((long) generation << TxReader.PARTITION_GEOMETRY_GENERATION_BIT_OFFSET)
-                | offset;
+                | packedOffset;
         resolved.setQuick(slot + RES_GEOMETRY_REF, ref);
         if ((resolved.getQuick(slot + RES_FLAGS) & FLAG_DIRTY) != 0) {
             resolved.setQuick(slot + RES_FLAGS, resolved.getQuick(slot + RES_FLAGS) & ~FLAG_DIRTY);

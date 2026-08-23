@@ -107,10 +107,15 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
-     * Builds two composite partitions in the same table, ten days apart, at the same simulated
-     * "wall clock" write time - so the ONLY thing that can tell them apart at sweep time is each
-     * partition's own data-timestamp recency, never {@code _geometry}'s {@code lastWriteMicros}.
-     * Two plain (never split) partitions sit alongside them as a control.
+     * Builds one composite partition in each of two SEPARATE tables: {@code cx}'s 2020-01-01 gets its
+     * pieces at a long-ago simulated "wall clock" write time, {@code cy}'s 2020-01-09 only 20 minutes
+     * before the job runs below - genuinely recent by BOTH measures at once, its own data timestamps AND
+     * {@code _geometry}'s {@code lastWriteMicros}. Kept as two tables, not two partitions of one, because
+     * {@link #dispatchComposite} runs through {@link TableWriter#compactPartitionNoCommit(int)} plus a
+     * real {@link TableWriter#commit()}: that commit runs the writer's OWN per-commit housekeeping too,
+     * which would freely sweep up any OTHER wall-clock-idle composite partition on the SAME writer,
+     * regardless of this job's own recency filter - a separate table means {@code cx}'s compaction commit
+     * cannot reach {@code cy} at all. A plain (never split) partition sits alongside each as a control.
      */
     @Test
     public void testScanCompactsIdleCompositePartitionButLeavesRecentAndPlainAlone() throws Exception {
@@ -118,9 +123,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
 
         assertMemoryLeak(() -> {
-            // Every insert below lands at this same simulated wall-clock instant, so both composite
-            // partitions get the exact same _geometry lastWriteMicros - only the recency filter (each
-            // partition's OWN data timestamps) can distinguish "old enough" from "too recent" below.
+            // cx's pieces land at this long-ago simulated wall-clock instant.
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
 
             // One day at 15s, so the partition holds 5760 rows before anything backdated lands.
@@ -141,35 +144,44 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             execute("INSERT INTO cx " + dayABackfill);
             drainWalQueue();
 
-            execute("INSERT INTO cx " + dayCBase);
+            // cy's pieces land only 20 minutes before the job runs below - well inside the 1-hour idle
+            // window on both measures at once. A separate table, so this advance cannot make cx's OWN
+            // composite partition look any more idle than it already is.
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-09T23:50:00.000000Z"));
+            execute("CREATE TABLE cy AS (" + dayCBase + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO cy " + dayDPlain);
             drainWalQueue();
-            execute("INSERT INTO cx " + dayDPlain);
-            drainWalQueue();
-            execute("INSERT INTO cx " + dayCBackfill);
+            execute("INSERT INTO cy " + dayCBackfill);
             drainWalQueue();
 
             final TableToken cxToken = engine.verifyTableName("cx");
+            final TableToken cyToken = engine.verifyTableName("cy");
             final long liveRowsABefore;
             final long liveRowsCBefore;
-            try (TableReader reader = engine.getReader(cxToken)) {
-                final TxReader tx = reader.getTxFile();
-                Assert.assertEquals(4, tx.getPartitionCount());
-                Assert.assertTrue("2020-01-01 should be composite", tx.isPartitionComposite(0));
-                Assert.assertTrue("2020-01-01 should have more than one piece", reader.getGeometry().getPieceCount(0) > 1);
-                Assert.assertFalse("2020-01-03 is plain, never split", tx.isPartitionComposite(1));
-                Assert.assertTrue("2020-01-09 should be composite", tx.isPartitionComposite(2));
-                Assert.assertTrue("2020-01-09 should have more than one piece", reader.getGeometry().getPieceCount(2) > 1);
-                Assert.assertFalse("2020-01-11 is plain, never split", tx.isPartitionComposite(3));
-                liveRowsABefore = tx.getPartitionSize(0);
-                liveRowsCBefore = tx.getPartitionSize(2);
+            try (TableReader cxReader = engine.getReader(cxToken); TableReader cyReader = engine.getReader(cyToken)) {
+                final TxReader cxTx = cxReader.getTxFile();
+                Assert.assertEquals(2, cxTx.getPartitionCount());
+                Assert.assertTrue("2020-01-01 should be composite", cxTx.isPartitionComposite(0));
+                Assert.assertTrue("2020-01-01 should have more than one piece", cxReader.getGeometry().getPieceCount(0) > 1);
+                Assert.assertFalse("2020-01-03 is plain, never split", cxTx.isPartitionComposite(1));
+
+                final TxReader cyTx = cyReader.getTxFile();
+                Assert.assertEquals(2, cyTx.getPartitionCount());
+                Assert.assertTrue("2020-01-09 should be composite", cyTx.isPartitionComposite(0));
+                Assert.assertTrue("2020-01-09 should have more than one piece", cyReader.getGeometry().getPieceCount(0) > 1);
+                Assert.assertFalse("2020-01-11 is plain, never split", cyTx.isPartitionComposite(1));
+
+                liveRowsABefore = cxTx.getPartitionSize(0);
+                liveRowsCBefore = cyTx.getPartitionSize(0);
             }
             Assert.assertEquals(5960, liveRowsABefore);
             Assert.assertEquals(5960, liveRowsCBefore);
 
             // 1 hour: long enough that anything written back at 2020-01-01T00:00 is idle by the time the
-            // job runs, short enough that 2020-01-09's own upper bound (2020-01-10T00:00, ten minutes
-            // before "now" below) still counts as too recent.
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "3600000");
+            // job runs, short enough that cy's pieces - built only 20 minutes before "now" below - still
+            // count as too recent, on both the data-timestamp recency check and the writer's own
+            // _geometry-based age rule.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
 
             try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
@@ -179,29 +191,35 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             engine.releaseAllReaders();
             engine.releaseAllWriters();
 
-            try (TableReader reader = engine.getReader(cxToken)) {
-                final TxReader tx = reader.getTxFile();
-                Assert.assertFalse("2020-01-01 is idle, should have been compacted", tx.isPartitionComposite(0));
-                Assert.assertEquals(1, reader.getGeometry().getPieceCount(0));
-                Assert.assertEquals("compaction must not change the row count", liveRowsABefore, tx.getPartitionSize(0));
+            try (TableReader cxReader = engine.getReader(cxToken); TableReader cyReader = engine.getReader(cyToken)) {
+                final TxReader cxTx = cxReader.getTxFile();
+                Assert.assertFalse("2020-01-01 is idle, should have been compacted", cxTx.isPartitionComposite(0));
+                Assert.assertEquals(1, cxReader.getGeometry().getPieceCount(0));
+                Assert.assertEquals("compaction must not change the row count", liveRowsABefore, cxTx.getPartitionSize(0));
+                Assert.assertFalse("2020-01-03 is plain, must stay untouched", cxTx.isPartitionComposite(1));
 
-                Assert.assertFalse("2020-01-03 is plain, must stay untouched", tx.isPartitionComposite(1));
-
-                Assert.assertTrue("2020-01-09 is too recent, must stay composite", tx.isPartitionComposite(2));
-                Assert.assertTrue(reader.getGeometry().getPieceCount(2) > 1);
-                Assert.assertEquals("a skipped partition's row count must be unchanged", liveRowsCBefore, tx.getPartitionSize(2));
-
-                Assert.assertFalse("2020-01-11 is plain, must stay untouched", tx.isPartitionComposite(3));
+                final TxReader cyTx = cyReader.getTxFile();
+                Assert.assertTrue("2020-01-09 is too recent, must stay composite", cyTx.isPartitionComposite(0));
+                Assert.assertTrue(cyReader.getGeometry().getPieceCount(0) > 1);
+                Assert.assertEquals("a skipped partition's row count must be unchanged", liveRowsCBefore, cyTx.getPartitionSize(0));
+                Assert.assertFalse("2020-01-11 is plain, must stay untouched", cyTx.isPartitionComposite(1));
             }
 
-            assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n12020\n");
+            assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n6010\n");
+            assertQuery("SELECT count() c FROM cy").noRandomAccess().expectSize().returns("c\n6010\n");
 
             execute("CREATE TABLE cx_oracle AS (SELECT i, ts FROM (" +
-                    dayABase + " UNION ALL " + dayBPlain + " UNION ALL " + dayABackfill + " UNION ALL " +
-                    dayCBase + " UNION ALL " + dayDPlain + " UNION ALL " + dayCBackfill +
+                    dayABase + " UNION ALL " + dayBPlain + " UNION ALL " + dayABackfill +
                     ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             TestUtils.assertSqlCursors(
                     engine, sqlExecutionContext, "SELECT * FROM cx_oracle ORDER BY ts, i", "SELECT * FROM cx ORDER BY ts, i", LOG
+            );
+
+            execute("CREATE TABLE cy_oracle AS (SELECT i, ts FROM (" +
+                    dayCBase + " UNION ALL " + dayDPlain + " UNION ALL " + dayCBackfill +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            TestUtils.assertSqlCursors(
+                    engine, sqlExecutionContext, "SELECT * FROM cy_oracle ORDER BY ts, i", "SELECT * FROM cy ORDER BY ts, i", LOG
             );
         });
     }
@@ -276,7 +294,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             // after every write above has already landed, to the values the job itself should act on.
             node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "0.01");
             node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, "1");
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "3600000");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:00:00.000000Z"));
 
             try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {

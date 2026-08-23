@@ -35,6 +35,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -590,12 +591,15 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
 
             // Eleven backdated batches, two hours apart, each landing between rows the batch before it left
             // alone. The day accumulates pieces instead of being rewritten whole.
+            StringBuilder backfillUnion = new StringBuilder();
             for (int hour = 1; hour < 23; hour += 2) {
-                execute("INSERT INTO x SELECT x::INT + " + (100_000 * hour) + " i," +
+                String backfill = "SELECT x::INT + " + (100_000 * hour) + " i," +
                         " -x - " + (100_000L * hour) + " j, " + WIDE_COLUMNS + "," +
                         " timestamp_sequence('2020-02-03T" + String.format("%02d", hour) + ":07:03', 5*1000000L) ts" +
-                        " FROM long_sequence(40)");
+                        " FROM long_sequence(40)";
+                execute("INSERT INTO x " + backfill);
                 drainWalQueue();
+                backfillUnion.append(" UNION ALL ").append(backfill);
             }
 
             final TableToken xt = engine.verifyTableName("x");
@@ -635,6 +639,20 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
                 assertSameWindow(boundary, boundary + 1);
                 assertSameWindow(boundary - 1, boundary);
             }
+
+            // A full, unfiltered scan is a different cursor path from the interval windows above - it is
+            // FwdTableReaderPageFrameCursor cutting frames at piece boundaries rather than
+            // CompositeTimestampFinder searching within one - so it needs its own check. The oracle here is
+            // built from the raw generating SQL rather than "SELECT * FROM x": an oracle read back through
+            // x's own (possibly broken) full scan would inherit the same corruption and the comparison
+            // would pass either way.
+            execute("CREATE TABLE o2 AS (SELECT " + ORACLE_PROJECTION + " FROM (" +
+                    base + " UNION ALL " + nextDay + backfillUnion + ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // No ORDER BY: a bare table scan, exactly what the fuzz suite's own _nonwal-vs-_wal comparison
+            // runs (FuzzRunner.runFuzz: "String limit = \"\"; assertSqlCursors(tableNameNoWal + limit,
+            // tableNameWal + limit, ...)"). It trusts the reader to already hand back ts order on its own,
+            // which is the exact claim FwdTableReaderPageFrameCursor's piece-boundary stitching makes.
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "o2", "x", LOG);
         });
     }
 
@@ -814,6 +832,328 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             Assert.assertFalse("the replace commit suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
             assertQuery("SELECT min(ts) mn FROM x").expectSize().timestamp("mn")
                     .returns("mn\n2022-02-24T00:00:00.000000Z\n");
+        });
+    }
+
+    /**
+     * A commit that BOTH merge-appends the still-active last partition into a composite one AND lands rows
+     * on a brand-new later partition - a day rollover crossed by the very same commit that promotes the
+     * day it rolls off. {@code txWriter}'s last-partition pointer moves to the new day before {@code
+     * columns[]} is ever told the old one went composite, so a plain reuse-via-close of {@code columns[]}
+     * (the next {@code openPartition}, repointing the same {@code MemoryMA} objects at the new day) would
+     * truncate the old day's files down to {@code columns[]}'s stale, pre-promotion append offset -
+     * discarding every row the composite frame executor appended since, silently, because the geometry it
+     * published is never consulted by that close. The corruption itself throws nothing; only a LATER
+     * commit or read that maps the partition against its (unaffected) geometry notices the file fell
+     * short.
+     * <p>
+     * Minimised from a {@code WalWriterFuzzTest#testWalWriteManyTablesInOrder} failure: "composite
+     * timestamp column file too short".
+     */
+    @Test
+    public void testMergeAppendAcrossDayRolloverInSameCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            // This table is narrower than the WIDE_COLUMNS ones the rest of this class uses, so the split
+            // threshold - in rows derived from an average record size - needs a proportionally smaller
+            // setting before a cut is worth proposing at all.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+            // 2020-02-03 alone, in order - the table's only partition, so it is still the writer's active
+            // last partition when the next commit lands.
+            final String base = "SELECT x::INT i, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                    " FROM long_sequence(5760)";
+            execute("CREATE TABLE x AS (" + base + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            // ONE commit: a backdated batch that merge-appends into 2020-02-03 (promoting it to
+            // composite), UNIONed with rows that land on 2020-02-04 - a brand-new partition this SAME
+            // commit creates.
+            // Big enough that the gap between the stale pre-promotion row count (5760) and E after the
+            // merge clears a whole OS page (512 rows for an 8-byte column) - otherwise page-rounding both
+            // sides up to the same page hides the corruption by sheer luck.
+            final String backfill = "SELECT x::INT + 70000 i, timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts" +
+                    " FROM long_sequence(2000)";
+            final String nextDay = "SELECT x::INT + 90000 i, timestamp_sequence('2020-02-04', 60*1000000L) ts" +
+                    " FROM long_sequence(50)";
+            execute("INSERT INTO x " + backfill + " UNION ALL " + nextDay);
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            Assert.assertFalse("the composite write suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("2020-02-03 should have gone composite",
+                        reader.getGeometry().getPieceCount(0) > 1);
+                // The direct check: the ts column FILE has to reach at least E rows, independently of
+                // whether anything has read it back yet - a reuse-via-close that truncated it to a stale
+                // pre-promotion offset would still leave the geometry claiming E, and only a LATER commit
+                // or read that maps against that claim would notice.
+                final long requiredBytes = reader.getGeometry().getE(0) * Long.BYTES;
+                Assert.assertTrue("ts column file [" + columnFileSize(reader, 0, "ts") + "] shorter than E requires [" + requiredBytes + ']',
+                        columnFileSize(reader, 0, "ts") >= requiredBytes);
+            }
+
+            // The real failure needed a SECOND commit landing back on 2020-02-03 - now composite and no
+            // longer last - to surface the corruption: the truncate already happened silently above.
+            final String again = "SELECT x::INT + 80000 i, timestamp_sequence('2020-02-03T10:00:00', 5*1000000L) ts" +
+                    " FROM long_sequence(50)";
+            execute("INSERT INTO x " + again);
+            drainWalQueue();
+            Assert.assertFalse("the follow-up commit suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            execute("CREATE TABLE o AS (SELECT i, ts FROM (" +
+                    base + " UNION ALL " + backfill + " UNION ALL " + nextDay + " UNION ALL " + again +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT * FROM o ORDER BY ts, i",
+                    "SELECT * FROM x ORDER BY ts, i",
+                    LOG
+            );
+        });
+    }
+
+    /**
+     * Dropping the partition below a composite one has to recompute the table's new min timestamp from
+     * what remains on disk - and file row 0 of a composite directory is not that value once a
+     * merge-append has relocated the piece that used to own it to the tail. The relocated piece keeps its
+     * timestamp range, so file row 0 goes on holding the superseded, now-dead value.
+     */
+    @Test
+    public void testDroppingFirstPartitionReadsTrueMinAcrossPieces() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            // Narrower than the WIDE_COLUMNS tables the rest of this class uses, so the split threshold -
+            // in rows derived from an average record size - needs a proportionally smaller setting.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+            // Dropped once 2020-02-03 is composite, promoting 2020-02-03 to the table's first partition.
+            final String day1 = "SELECT x::INT i, timestamp_sequence('2020-02-01', 15*1000000L) ts" +
+                    " FROM long_sequence(5760)";
+            // Starts at noon, so its own min timestamp - the one sitting at file row 0 - leaves the
+            // morning free for a later backdated batch to relocate into.
+            final String day2 = "SELECT x::INT + 60000 i, timestamp_sequence('2020-02-03T12:00:00', 15*1000000L) ts" +
+                    " FROM long_sequence(2880)";
+            // Keeps 2020-02-03 from being the writer's active last partition when the backdated batch
+            // lands, so the write goes through the O3 path rather than an append to the open partition.
+            final String day3 = "SELECT x::INT + 90000 i, timestamp_sequence('2020-02-06', 60*1000000L) ts" +
+                    " FROM long_sequence(50)";
+            execute("CREATE TABLE x AS (" + day1 + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x " + day2);
+            execute("INSERT INTO x " + day3);
+            drainWalQueue();
+
+            // Lands entirely before 2020-02-03's current min of noon: the merge writes the merged piece
+            // at the tail, so file row 0 keeps the stale noon value while the directory's true min drops
+            // to midnight.
+            final String backfill = "SELECT x::INT + 70000 i, timestamp_sequence('2020-02-03T00:00:00', 5*1000000L) ts" +
+                    " FROM long_sequence(2000)";
+            execute("INSERT INTO x " + backfill);
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            Assert.assertFalse("the composite write suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("2020-02-03 should have gone composite", reader.getGeometry().getPieceCount(1) > 1);
+            }
+
+            execute("ALTER TABLE x DROP PARTITION LIST '2020-02-01'");
+            drainWalQueue();
+            Assert.assertFalse("the drop suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            // The QUERY reads the composite geometry directly and gets this right either way - the field
+            // the bug corrupts is the table's CACHED min timestamp, which nothing re-derives from the
+            // geometry unless asked to, so it has to be checked on its own rather than through a query.
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertEquals(
+                        "cached table min timestamp must match the composite directory's true min",
+                        "2020-02-03T00:00:00.000000Z",
+                        Micros.toUSecString(reader.getMinTimestamp())
+                );
+            }
+
+            assertQuery("select ts from x order by ts limit 1")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\n2020-02-03T00:00:00.000000Z\n");
+        });
+    }
+
+    /**
+     * The mirror image of {@link #testDroppingFirstPartitionReadsTrueMinAcrossPieces}: dropping the
+     * ACTIVE (last) partition promotes its predecessor to last and has to recompute the table's new max
+     * timestamp from what remains on disk. The old code read that off byte offset
+     * {@code (liveRows - 1) * 8} in the ts column - the live row count's own offset, not the physical
+     * one - which lands inside a composite directory's dead space or a relocated piece instead of the
+     * physically-last live row once a merge-append has moved rows around.
+     */
+    @Test
+    public void testDroppingLastPartitionReadsTrueMaxAcrossPieces() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+            // Promoted to last once 2020-02-06 is dropped below it, so its own max - 23:59:45, the last
+            // row of a day filled end to end - has to survive the promotion.
+            final String day1 = "SELECT x::INT i, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                    " FROM long_sequence(5760)";
+            // The partition that gets dropped: keeps 2020-02-03 from being the writer's active last
+            // partition when the backdated batch lands, so that write goes through the O3 path.
+            final String day3 = "SELECT x::INT + 90000 i, timestamp_sequence('2020-02-06', 60*1000000L) ts" +
+                    " FROM long_sequence(50)";
+            execute("CREATE TABLE x AS (" + day1 + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x " + day3);
+            drainWalQueue();
+
+            // Lands inside 2020-02-03, well short of its 23:59:45 close: the merge relocates the pieces it
+            // touches to the tail, so the file row that used to sit at physical offset (liveRows - 1) is
+            // no longer the row holding the day's unmoved, still-true max.
+            final String backfill = "SELECT x::INT + 70000 i, timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts" +
+                    " FROM long_sequence(2000)";
+            execute("INSERT INTO x " + backfill);
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            Assert.assertFalse("the composite write suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("2020-02-03 should have gone composite", reader.getGeometry().getPieceCount(0) > 1);
+            }
+
+            execute("ALTER TABLE x DROP PARTITION LIST '2020-02-06'");
+            drainWalQueue();
+            Assert.assertFalse("the drop suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            // The QUERY reads the composite geometry directly and gets this right either way - the field
+            // the bug corrupts is the table's CACHED max timestamp, which nothing re-derives from the
+            // geometry unless asked to, so it has to be checked on its own rather than through a query.
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertEquals(
+                        "cached table max timestamp must match the composite directory's true max",
+                        "2020-02-03T23:59:45.000000Z",
+                        Micros.toUSecString(reader.getMaxTimestamp())
+                );
+            }
+
+            assertQuery("select ts from x order by ts limit -1")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\n2020-02-03T23:59:45.000000Z\n");
+        });
+    }
+
+    /**
+     * Regression test for a fixed bug: {@code CONVERT PARTITION TO PARQUET} used to call
+     * {@code TableWriter.getPartitionSize} (live rows) and map each column file as one flat range from
+     * byte 0 for that many rows - correct for an ordinary partition, but wrong for a composite one, whose
+     * live rows sit out of order behind dead space and relocated pieces. The fix compacts a composite
+     * partition ahead of conversion so the parquet encoder always reads an ordinary, contiguous directory.
+     * Minimised from a natural {@code WalWriterFuzzTest#testConvertPartitionToParquet} failure - the fuzz
+     * suite's own {@code _nonwal}-vs-{@code _wal} comparison reported "wrong row" at an arbitrary offset,
+     * which is what a dropped row does to every comparison after it, not a hint that the row itself was
+     * corrupted.
+     */
+    @Test
+    public void testConvertingCompositePartitionToParquetKeepsAllRows() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            // Narrower than the WIDE_COLUMNS tables the rest of this class uses, so the split threshold -
+            // in rows derived from an average record size - needs a proportionally smaller setting.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+            final String base = "SELECT x::INT i, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                    " FROM long_sequence(5760)";
+            // Keeps 2020-02-03 from being the writer's active last partition when the backdated batch
+            // lands, so that write goes through the O3 path and can be cut into pieces.
+            final String nextDay = "SELECT x::INT + 90000 i, timestamp_sequence('2020-02-06', 60*1000000L) ts" +
+                    " FROM long_sequence(50)";
+            execute("CREATE TABLE x AS (" + base + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x " + nextDay);
+            drainWalQueue();
+
+            // Lands inside 2020-02-03: the merge relocates the pieces it touches to the tail, cutting the
+            // day into several pieces instead of rewriting it whole.
+            final String backfill = "SELECT x::INT + 70000 i, timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts" +
+                    " FROM long_sequence(2000)";
+            execute("INSERT INTO x " + backfill);
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            Assert.assertFalse("the composite write suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("2020-02-03 should have gone composite", reader.getGeometry().getPieceCount(0) > 1);
+            }
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-02-03'");
+            drainWalQueue();
+            Assert.assertFalse("the conversion suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            // The oracle: the same rows, assembled without ever touching the composite machinery, so any
+            // row the conversion dropped shows up as a row-count/content mismatch here.
+            execute("CREATE TABLE o AS (SELECT i, ts FROM (" +
+                    base + " UNION ALL " + nextDay + " UNION ALL " + backfill +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "o", "x", LOG);
+        });
+    }
+
+    @Test
+    public void testConvertingCompositePartitionToParquetWithColumnAddedAfterPartitionRolledOver() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+            final String base = "SELECT x::INT i, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                    " FROM long_sequence(5760)";
+            // Keeps 2020-02-03 from being the writer's active last partition when the backdated batch
+            // lands, so that write goes through the O3 path and can be cut into pieces.
+            final String nextDay = "SELECT x::INT + 90000 i, timestamp_sequence('2020-02-06', 60*1000000L) ts" +
+                    " FROM long_sequence(50)";
+            execute("CREATE TABLE x AS (" + base + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x " + nextDay);
+            drainWalQueue();
+
+            // Lands inside 2020-02-03: the merge relocates the pieces it touches to the tail, cutting the
+            // day into several pieces instead of rewriting it whole.
+            final String backfill = "SELECT x::INT + 70000 i, timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts" +
+                    " FROM long_sequence(2000)";
+            execute("INSERT INTO x " + backfill);
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("2020-02-03 should have gone composite", reader.getGeometry().getPieceCount(0) > 1);
+            }
+
+            // Added once the writer has already rolled onto 2020-02-06: 2020-02-03 - still composite,
+            // still holding its own pieces - never gets an explicit column-version record for this column
+            // at all, unlike the ordinary case of adding a column to the still-active last partition.
+            execute("ALTER TABLE x ADD COLUMN new_col INT");
+            drainWalQueue();
+            final String moreOnNextDay = "SELECT x::INT + 95000 i, timestamp_sequence('2020-02-06T01', 60*1000000L) ts," +
+                    " (x + 95000)::INT new_col FROM long_sequence(20)";
+            execute("INSERT INTO x " + moreOnNextDay);
+            drainWalQueue();
+            Assert.assertFalse("adding the column suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-02-03'");
+            drainWalQueue();
+            Assert.assertFalse("the conversion suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            // The oracle: the same rows, assembled without ever touching the composite machinery, so any
+            // row the conversion dropped - or any wrong value it read for a column that never had real
+            // data in this directory - shows up as a row-count/content mismatch here.
+            execute("CREATE TABLE o AS (SELECT i, ts, new_col FROM (" +
+                    "SELECT x::INT i, timestamp_sequence('2020-02-03', 15*1000000L) ts, NULL::INT new_col" +
+                    " FROM long_sequence(5760)" +
+                    " UNION ALL SELECT x::INT + 90000 i, timestamp_sequence('2020-02-06', 60*1000000L) ts," +
+                    " NULL::INT new_col FROM long_sequence(50)" +
+                    " UNION ALL SELECT x::INT + 70000 i, timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts," +
+                    " NULL::INT new_col FROM long_sequence(2000)" +
+                    " UNION ALL " + moreOnNextDay +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "o", "x", LOG);
         });
     }
 

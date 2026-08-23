@@ -1325,6 +1325,23 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testBitmapIndexMaxRowIsInclusiveAfterWalO3AppendToNonLastPartition() throws Exception {
+        // Classic (non-composite) O3 rewrite: physical row space equals logical row space, so the
+        // index's max row is the live row count minus one.
+        testBitmapIndexMaxRowIsInclusiveAfterWalO3AppendToNonLastPartition0(false, 19);
+    }
+
+    @Test
+    public void testBitmapIndexMaxRowIsInclusiveAfterWalO3AppendToNonLastPartitionMergeAppend() throws Exception {
+        // Merge-append relocates the merged piece to the files' physical tail (10 old + 20 merged
+        // rows land at physical offset 10), so the index's max row is the physical tail, not the
+        // live row count.
+        testBitmapIndexMaxRowIsInclusiveAfterWalO3AppendToNonLastPartition0(true, 29);
+    }
+
+    private void testBitmapIndexMaxRowIsInclusiveAfterWalO3AppendToNonLastPartition0(
+            boolean mergeAppendEnabled, long expectedMaxRow
+    ) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, mergeAppendEnabled);
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             execute("CREATE TABLE " + tableName + " (" +
@@ -1350,7 +1367,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("count\n21\n");
-            assertBitmapIndexMaxValue(tableName);
+            assertBitmapIndexMaxValue(tableName, expectedMaxRow);
         });
     }
 
@@ -2326,6 +2343,9 @@ public class WalWriterTest extends AbstractCairoTest {
     public void testMaxLagTxnCount() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
         configOverrideWalMaxLagTxnCount();
+        // Merge-append refuses WAL lag for the whole table, which defeats this test's premise of
+        // rows sitting invisible in the writer's lag buffer.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
 
@@ -5996,7 +6016,7 @@ public class WalWriterTest extends AbstractCairoTest {
         }
     }
 
-    private void assertBitmapIndexMaxValue(String tableName) {
+    private void assertBitmapIndexMaxValue(String tableName, long expectedMaxRow) {
         try (
                 Path path = new Path().of(configuration.getDbRoot())
                         .concat(engine.verifyTableName(tableName))
@@ -6016,7 +6036,7 @@ public class WalWriterTest extends AbstractCairoTest {
             );
             assertEquals(
                     "bitmap index max row must be inclusive",
-                    19,
+                    expectedMaxRow,
                     keyMem.getLong(BITMAP_INDEX_MAX_VALUE_OFFSET)
             );
         }

@@ -28,11 +28,17 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.O3CompositeMergeStrategy;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionGeometry;
+import io.questdb.cairo.PartitionGeometryFile;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -40,7 +46,10 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -62,11 +71,14 @@ import org.junit.Test;
  * below goes through {@link PartitionGeometry} at a partition index and a piece ordinal. The SCENARIOS
  * are the same; only the way the shape is read has changed.
  * <p>
- * One mechanism from the earlier implementation has no counterpart here at all: it distinguished a
+ * One mechanism from the earlier implementation has a different counterpart here: it distinguished a
  * merge-append, which relocated a piece to the tail of the shared files, from an IN-PLACE append at a
- * piece's own end. This tree writes everything at {@code E} and nothing anywhere else, so the tests that
- * turned on that distinction assert the invariant it protected - the files grow by exactly what the commit
- * wrote - rather than which arm ran.
+ * piece's own end. This tree writes everything at {@code E} and nothing anywhere else, so most of the
+ * tests that turned on that distinction instead assert the invariant it protected - the files grow by
+ * exactly what the commit wrote - rather than which arm ran. {@link O3CompositeMergeStrategy.ActionType#APPEND}
+ * reintroduces the in-place case directly: a batch landing above a KEPT piece that already owns the shared
+ * files' tail extends that piece's own {@code tsHi} and row count instead of founding a new one - see
+ * {@link #testAppendExtendsTheTailPieceAroundABelowFloorBatch()}.
  */
 public class O3PartitionPreSplitTest extends AbstractCairoTest {
 
@@ -723,6 +735,65 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
     }
 
     /**
+     * CONVERT PARTITION TO PARQUET does not know a partition can be composite. It calls
+     * {@code TableWriter.getPartitionSize} (live rows) as the row count and maps each column file straight
+     * from byte 0 for that many rows - correct for an ordinary partition, where live rows sit contiguously
+     * at the front, but wrong once a merge-append has relocated a piece to the tail: the bytes at
+     * {@code [0, liveRows)} are then a mix of leftover dead space and out-of-timestamp-order piece data, not
+     * the partition's actual rows in order. The parquet file comes out with the wrong values in the wrong
+     * order. Fixed by compacting the partition to a fresh, ordinary directory first - see
+     * {@code TableWriter.compactPartitionForConversion}.
+     */
+    @Test
+    public void testConvertCompositePartitionToParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 1);
+
+            execute(
+                    "CREATE TABLE x AS (" +
+                            "SELECT x::INT i, -x j," +
+                            " timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                            " FROM long_sequence(5760)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            drainWalQueue();
+            execute("CREATE TABLE x0 AS (SELECT * FROM x)");
+
+            // A backdated stride lands inside the day, relocating the piece it overlaps to the shared
+            // files' tail and leaving the vacated bytes as dead space - the shape a naive linear read of
+            // [0, liveRows) gets wrong.
+            execute(
+                    "CREATE TABLE z AS (SELECT x::INT + 1000000 i, -x - 1000000L AS j," +
+                            " timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts FROM long_sequence(200))"
+            );
+            execute("INSERT INTO x SELECT * FROM z");
+            drainWalQueue();
+
+            Assert.assertTrue("the day was not cut into pieces: " + describePieces("x"), piecesOfDay("x") > 1);
+            assertPieceRelocatedAboveLastPiece("x");
+
+            // A later day, so 2020-02-03 is no longer the active partition and CONVERT PARTITION TO
+            // PARQUET is allowed to touch it.
+            execute(
+                    "CREATE TABLE w AS (SELECT x::INT + 2000000 i, -x - 2000000L AS j," +
+                            " timestamp_sequence('2020-02-04', 15*1000000L) ts FROM long_sequence(100))"
+            );
+            execute("INSERT INTO x SELECT * FROM w");
+            drainWalQueue();
+
+            final String expected = "(SELECT * FROM x0 UNION ALL SELECT * FROM z UNION ALL SELECT * FROM w) ORDER BY ts";
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= '2020-02-03' AND ts < '2020-02-04'");
+            drainWalQueue();
+
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+        });
+    }
+
+    /**
      * A rewrite relocates a piece to the tail of the shared column files, so the pieces of one partition no
      * longer sit in timestamp order: ascending physical row ids can step BACKWARDS in time at a piece
      * boundary. One {@code .pk} serves the whole partition, so a key's posting list carries both pieces and
@@ -832,9 +903,10 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
 
     /**
      * A dedup commit whose overlapping rows are all duplicates, plus a few genuinely new rows above the
-     * piece's last row. The whole piece goes out as one merged image, so it is relocated to the tail of
-     * its own column files and every pre-existing row has to survive the move - before and after a reader
-     * reopen, and after a squash folds the appended tail back.
+     * piece's last row. The duplicate side merges to a no-op - the merged image is byte-identical to the
+     * piece's own bytes, so the piece is kept at its existing file offset instead of being relocated - and
+     * the few new rows land immediately after it with no gap, so the two tile into one piece with no dead
+     * space. Verified before and after a reader reopen, and after a squash folds the appended tail back.
      */
     @Test
     public void testDedupDowngradeDoesNotStampMergeAppend() throws Exception {
@@ -854,7 +926,8 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
 
             // One commit whose overlapping rows are entirely duplicates - selected out of the snapshot, so
             // the non-key columns are identical too - plus five rows past the day's last row but inside
-            // the day.
+            // the day. The duplicates alone would merge-append the whole piece to the tail; tacking on the
+            // five trailing rows must not found a second, tiny piece next to it.
             execute(
                     "CREATE TABLE w2 AS (SELECT x::INT + 9000000 i, -x - 9000000L AS j," +
                             " timestamp_sequence('2020-02-03T23:59:52', 1000000L) ts FROM long_sequence(5))"
@@ -867,9 +940,14 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             execute("INSERT INTO x SELECT * FROM w");
             drainWalQueue();
 
-            Assert.assertTrue(
-                    "the piece was rewritten in place instead of at the tail: " + describePieces("x"),
-                    pieceRowOffsetOfDay("x", 0) > 0
+            Assert.assertEquals(
+                    "the trailing rows founded a piece of their own instead of tiling onto the kept one: "
+                            + describePieces("x"),
+                    1, piecesOfDay("x")
+            );
+            Assert.assertEquals(
+                    "the no-op merge relocated the piece instead of keeping it in place: " + describePieces("x"),
+                    0L, pieceRowOffsetOfDay("x", 0)
             );
 
             final String expected = "(SELECT * FROM x0 UNION ALL SELECT * FROM w2) ORDER BY ts";
@@ -1158,6 +1236,183 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             engine.releaseAllWriters();
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
         });
+    }
+
+    /**
+     * A composite partition's {@code _geometry} chain rotates to a fresh generation, rather than growing
+     * one file without bound, once a record would push the current generation's file past
+     * {@link PartitionGeometryFile#MAX_FILE_SIZE} - see {@code PartitionGeometry.publish}. Actually
+     * growing a file to 100MB through ordinary commits would make this glacially slow for no extra
+     * coverage, so instead: build a small composite partition normally, then plant a byte-identical copy
+     * of its one real record near the 100MB mark of the SAME generation-0 file - a sparse write, not
+     * 100MB of real I/O - and re-point {@code _txn}'s geometry ref at that copy directly. The next commit
+     * that publishes for this partition then has to decide, from a genuinely near-full generation,
+     * whether to rotate - exactly the decision a slow 100MB fill would exercise, without the 100MB.
+     */
+    @Test
+    public void testGeometryChainRotatesToNewGenerationNearFileSizeLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 1);
+
+            execute(
+                    "CREATE TABLE x AS (" +
+                            "SELECT x::INT i, -x j," +
+                            " timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                            " FROM long_sequence(5760)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            drainWalQueue();
+            execute("CREATE TABLE x0 AS (SELECT * FROM x)");
+
+            // A backdated stride relocates a piece to the tail, publishing this partition's first real
+            // _geometry record: generation 0, a small offset.
+            execute(
+                    "CREATE TABLE z AS (SELECT x::INT + 1000000 i, -x - 1000000L AS j," +
+                            " timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts FROM long_sequence(200))"
+            );
+            execute("INSERT INTO x SELECT * FROM z");
+            drainWalQueue();
+            Assert.assertTrue("the day was not cut into pieces: " + describePieces("x"), piecesOfDay("x") > 1);
+
+            // A composite partition's very first real record is always generation 0 - nothing has had a
+            // reason to rotate yet - so faking the near-full copy AT generation 0 is what a genuine
+            // 100MB fill would also leave behind.
+            plantFakeGeometryRecordNearFileLimit("x", DAY_03, 0);
+
+            // Another relocation, landing on the now-near-full generation: publish has to rotate rather
+            // than grow past MAX_FILE_SIZE.
+            execute(
+                    "CREATE TABLE w AS (SELECT x::INT + 2000000 i, -x - 2000000L AS j," +
+                            " timestamp_sequence('2020-02-03T06:00:07', 5*1000000L) ts FROM long_sequence(200))"
+            );
+            execute("INSERT INTO x SELECT * FROM w");
+            drainWalQueue();
+            final TableToken xt = engine.verifyTableName("x");
+            Assert.assertFalse("the rotation commit suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            try (TableReader reader = engine.getReader(xt)) {
+                final int partitionIndex = reader.getTxFile().getPartitionIndex(DAY_03);
+                final long ref = reader.getTxFile().getGeometryRef(partitionIndex);
+                Assert.assertEquals("geometry did not rotate to a new generation",
+                        1, TxReader.geometryGeneration(ref));
+                Assert.assertEquals("the fake-up's byte offset leaked into the rotated record",
+                        0, TxReader.geometryOffset(ref));
+            }
+
+            final String expected = "(SELECT * FROM x0 UNION ALL SELECT * FROM z UNION ALL SELECT * FROM w) ORDER BY ts";
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+        });
+    }
+
+    /**
+     * Generation is a 4-bit field: 16 values, {@code PARTITION_GEOMETRY_MAX_GENERATION == 15} the last
+     * one. Once even the last generation's file would cross {@link PartitionGeometryFile#MAX_FILE_SIZE},
+     * {@code PartitionGeometry.publish} has nowhere left to rotate to - so the commit is routed around it
+     * entirely, into {@code O3PartitionJob.assembleFreshPartitionVersion}: every existing piece plus this
+     * commit's rows, folded into ONE fresh, ordinary (non-composite) directory in the same pass, merging
+     * and compacting together instead of publishing one more piece. The result carries no geometry at
+     * all, so from here the partition is exactly as if merge-append had never touched it.
+     */
+    @Test
+    public void testGeometryChainAtMaxGenerationAssemblesAFreshNonCompositeVersion() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 2 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 1);
+
+            execute(
+                    "CREATE TABLE x AS (" +
+                            "SELECT x::INT i, -x j," +
+                            " timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                            " FROM long_sequence(5760)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            drainWalQueue();
+            execute("CREATE TABLE x0 AS (SELECT * FROM x)");
+
+            execute(
+                    "CREATE TABLE z AS (SELECT x::INT + 1000000 i, -x - 1000000L AS j," +
+                            " timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts FROM long_sequence(200))"
+            );
+            execute("INSERT INTO x SELECT * FROM z");
+            drainWalQueue();
+            Assert.assertTrue("the day was not cut into pieces: " + describePieces("x"), piecesOfDay("x") > 1);
+
+            // Skip straight to the last generation the format has: nothing else about reaching it is
+            // under test here, only what happens once there is nowhere left to rotate to.
+            plantFakeGeometryRecordNearFileLimit("x", DAY_03, 15);
+
+            execute(
+                    "CREATE TABLE w AS (SELECT x::INT + 2000000 i, -x - 2000000L AS j," +
+                            " timestamp_sequence('2020-02-03T06:00:07', 5*1000000L) ts FROM long_sequence(200))"
+            );
+            execute("INSERT INTO x SELECT * FROM w");
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            Assert.assertFalse(
+                    "the commit that should have assembled a fresh version suspended the table instead",
+                    engine.getTableSequencerAPI().isSuspended(xt)
+            );
+
+            try (TableReader reader = engine.getReader(xt)) {
+                final int partitionIndex = reader.getTxFile().getPartitionIndex(DAY_03);
+                Assert.assertFalse(
+                        "the assembled version is still composite - it should carry no geometry at all",
+                        reader.getTxFile().isPartitionComposite(partitionIndex)
+                );
+            }
+
+            final String expected = "(SELECT * FROM x0 UNION ALL SELECT * FROM z UNION ALL SELECT * FROM w) ORDER BY ts";
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+        });
+    }
+
+    /**
+     * Plants a byte-identical copy of {@code tableName}'s currently-committed {@code _geometry} record
+     * for {@code partitionTs} inside {@code fakeGeneration}'s own file, 8 bytes short of
+     * {@link PartitionGeometryFile#MAX_FILE_SIZE} - a sparse write, not 100MB of real I/O - and re-points
+     * {@code _txn}'s geometry ref at that copy. The next commit that publishes for this partition then
+     * sees a genuinely near-full (or, at {@code fakeGeneration == 15}, fully exhausted) generation,
+     * without this test having to write anywhere near that much data through ordinary commits.
+     */
+    private static void plantFakeGeometryRecordNearFileLimit(String tableName, long partitionTs, int fakeGeneration) throws Exception {
+        try (TableWriter writer = getWriter(tableName)) {
+            TxWriter tx = writer.getTxWriter();
+            final int partitionIndex = tx.getPartitionIndex(partitionTs);
+            final long committedRef = tx.getGeometryRef(partitionIndex);
+            // Bit 63 is TxReader.PARTITION_COMPOSITE_FLAG, not reachable from here (protected) -
+            // Long.MIN_VALUE is the same bit.
+            Assert.assertTrue("partition is not composite ahead of the fake-up", (committedRef & Long.MIN_VALUE) != 0);
+            final int realGeneration = TxReader.geometryGeneration(committedRef);
+            final long realOffset = TxReader.geometryOffset(committedRef);
+            final long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
+
+            // 8 bytes of headroom - less than any real record (HEADER_SIZE alone is 48) - so the planted
+            // copy's own committed size is already enough to push the next write past MAX_FILE_SIZE,
+            // regardless of exactly how many pieces either record holds.
+            final long fakeOffset = PartitionGeometryFile.MAX_FILE_SIZE - 8;
+            final FilesFacade geometryFf = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(writer.getTableToken());
+                TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                try (PartitionGeometryFile geometryFile = new PartitionGeometryFile()) {
+                    geometryFile.read(geometryFf, path, realGeneration, realOffset);
+                    geometryFile.append(geometryFf, path, fakeGeneration, fakeOffset, configuration.getCommitMode());
+                }
+            }
+
+            tx.setPartitionGeometryRef(partitionTs, TxReader.packGeometryRef(fakeGeneration, fakeOffset));
+            tx.commit(new ObjList<>());
+        }
     }
 
     /**
@@ -1760,6 +2015,82 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             execute("ALTER TABLE x SQUASH PARTITIONS");
             drainWalQueue();
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x", LOG);
+        });
+    }
+
+    /**
+     * The worked example {@code core/src/main/java/io/questdb/cairo/append-piece.md} designs
+     * {@link O3CompositeMergeStrategy.ActionType#APPEND} around: a partition holds one piece, 11:00-14:00,
+     * and one commit brings rows both BELOW its floor (09:00-10:00) and ABOVE its ceiling (15:00-16:00).
+     * <p>
+     * Without APPEND this is three pieces: a head piece, the untouched original, and a tail piece. With it,
+     * two - the existing piece is KEPT-eligible (it claims none of the batch itself) and already owns the
+     * shared files' tail, so the tail rows extend it in place instead of founding a piece next to it. The
+     * head rows still found their own piece; APPEND only ever concerns the tail.
+     * <p>
+     * The extended piece keeps its file row offset - its bytes never move - so the head piece, written
+     * AFTER it despite sorting BEFORE it by timestamp, ends up at the higher file offset: proof that write
+     * order and record order are different things here.
+     */
+    @Test
+    public void testAppendExtendsTheTailPieceAroundABelowFloorBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 10);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS, 30);
+
+            final String middle = "SELECT x::INT i," +
+                    " timestamp_sequence('2020-02-03T11:00:00', 60*1000000L) ts FROM long_sequence(181)";
+            execute("CREATE TABLE x AS (" + middle + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            Assert.assertEquals("setup did not land as a single piece", 1, piecesOfDay("x"));
+            // Materialised once, so the oracle below reads back these exact rows rather than
+            // re-evaluating timestamp_sequence a second time - a stateful, row-order-dependent function
+            // that a second, differently-parallelised evaluation is not guaranteed to reproduce.
+            execute("CREATE TABLE x0 AS (SELECT * FROM x)");
+
+            final String head = "SELECT x::INT + 100000 i," +
+                    " timestamp_sequence('2020-02-03T09:00:00', 60*1000000L) ts FROM long_sequence(61)";
+            final String tail = "SELECT x::INT + 200000 i," +
+                    " timestamp_sequence('2020-02-03T15:00:00', 60*1000000L) ts FROM long_sequence(61)";
+            execute("CREATE TABLE b AS (" + head + " UNION ALL " + tail + ")");
+
+            final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
+            execute("INSERT INTO x SELECT * FROM b");
+            drainWalQueue();
+            final long written = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenBefore;
+
+            Assert.assertEquals("exactly two pieces: the head and the extended original", 2, piecesOfDay("x"));
+            assertNoOverlappingPieces("x");
+            assertRowsInTimestampOrder("x");
+
+            final long middleLo = MicrosTimestampDriver.floor("2020-02-03T11:00:00.000000Z");
+            final long tailHi = MicrosTimestampDriver.floor("2020-02-03T16:00:00.000000Z");
+            final long headLo = MicrosTimestampDriver.floor("2020-02-03T09:00:00.000000Z");
+            final long headHi = MicrosTimestampDriver.floor("2020-02-03T10:00:00.000000Z");
+
+            // The extended piece: still rooted at file row 0 - its bytes never moved - now 242 rows
+            // (181 original + 61 tail) and its recorded top has grown to the tail's last row.
+            assertPieceRowCount("x", middleLo, 242);
+            assertPieceCoversRange("x", 242, middleLo, tailHi);
+            Assert.assertEquals("the extended piece kept its original file row offset",
+                    0L, pieceRowOffsetOfDay("x", 1));
+            // The head piece: founded fresh, and - because it is written AFTER the tail extension despite
+            // sorting BEFORE it by timestamp - it lands ABOVE the extended piece in file rows.
+            assertPieceCoversRange("x", 61, headLo, headHi);
+            Assert.assertEquals("the head piece landed above the extended piece in file rows",
+                    242L, pieceRowOffsetOfDay("x", 0));
+
+            // The win the design exists for: the commit wrote only the 122 rows it brought, not the 181
+            // rows of the piece it extended. A regression into a merge would jump this to 303.
+            Assert.assertEquals("physicallyWrittenRows must equal exactly the batch, proving an extension"
+                    + " rather than a rewrite; " + describePieces("x"), 122L, written);
+
+            final String expected = "(SELECT * FROM x0 UNION ALL SELECT * FROM b) ORDER BY ts";
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x ORDER BY ts", LOG);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, expected, "x ORDER BY ts", LOG);
         });
     }
 

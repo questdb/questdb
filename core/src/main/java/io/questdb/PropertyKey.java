@@ -609,6 +609,20 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS("cairo.o3.partition.presplit.max.cuts"),
     CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size"),
     CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED("cairo.o3.partition.overwrite.control.enabled"),
+    CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO("cairo.partition.compaction.dead.rows.ratio"),
+    CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE("cairo.partition.compaction.dead.min.size"),
+    CAIRO_PARTITION_COMPACTION_MAX_PIECES("cairo.partition.compaction.max.pieces"),
+    CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT("cairo.partition.compaction.idle.timeout"),
+    CAIRO_PARTITION_COMPACTION_TABLE_DEAD_PERCENT("cairo.partition.compaction.table.dead.percent"),
+    CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_PERCENT("cairo.partition.compaction.table.dead.stop.percent"),
+    CAIRO_PARTITION_COMPACTION_TABLE_DEAD_MAX_SIZE("cairo.partition.compaction.table.dead.max.size"),
+    CAIRO_PARTITION_COMPACTION_TABLE_DEAD_MIN_SIZE("cairo.partition.compaction.table.dead.min.size"),
+    CAIRO_PARTITION_COMPACTION_MAX_ROWS_PER_COMMIT("cairo.partition.compaction.max.rows.per.commit"),
+    CAIRO_PARTITION_COMPACTION_MAX_JOINS_PER_COMMIT("cairo.partition.compaction.max.joins.per.commit"),
+    CAIRO_PARTITION_COMPACTION_TIME_BUDGET("cairo.partition.compaction.time.budget"),
+    CAIRO_PARTITION_COMPACTION_COOLDOWN("cairo.partition.compaction.cooldown"),
+    CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MAX("cairo.partition.compaction.decline.backoff.max"),
+    CAIRO_PARTITION_COMPACTION_PREFIX_MIN_PERCENT("cairo.partition.compaction.prefix.min.percent"),
     CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE("cairo.write.back.off.timeout.on.mem.pressure"),
     DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE("debug.wal.purge.wait.before.delete", false, true),
     RAM_USAGE_LIMIT_BYTES("ram.usage.limit.bytes"),
@@ -710,8 +724,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_QUERY_MEMORY_LIMIT_BYTES("cairo.query.memory.limit.bytes"),
     CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES("cairo.mat.view.refresh.memory.limit.bytes"),
     CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES("cairo.wal.apply.memory.limit.bytes"),
-    CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL("cairo.partition.compaction.check.interval"),
-    CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT("cairo.partition.compaction.idle.timeout");
+    CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL("cairo.partition.compaction.check.interval");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

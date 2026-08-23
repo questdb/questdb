@@ -226,7 +226,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
             if (tableDropped || (lastTxn < 0 && engine.isTableDropped(tableToken))) {
                 if (hasPendingTasks) {
-                    LOG.info().$("table is dropped, but has WALs containing segments with pending tasks [table=")
+                    LOG.debug().$("table is dropped, but has WALs containing segments with pending tasks [table=")
                             .$(tableToken).I$();
                 } else if (
                         TableUtils.exists(

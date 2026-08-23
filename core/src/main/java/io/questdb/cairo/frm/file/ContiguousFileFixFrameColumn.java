@@ -94,6 +94,9 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                                 .put(", srcFd=").put(sourceFd)
                                 .put(", srcOffset=").put(sourceLo << shl)
                                 .put(", srcFileSize=").put(ff.length(sourceFd))
+                                .put(", columnIndex=").put(columnIndex)
+                                .put(", dstColumnTop=").put(columnTop)
+                                .put(", srcColumnTop=").put(sourceColumn.getColumnTop())
                                 .put(']');
                     }
                     if (commitMode != CommitMode.NOSYNC) {

@@ -59,11 +59,17 @@ import java.io.Closeable;
  *     <li>one targeted read for the survivors only - {@code _geometry}'s {@code lastWriteMicros} for a
  *     composite candidate, {@code _pm}'s {@code unusedBytes}/parquet file size for a Parquet candidate.</li>
  * </ol>
- * A partition passing every gate is dispatched via {@link CairoEngine#getWriterOrPublishCommand}: an idle
- * writer applies the command in-process, right here on this job's thread; a busy writer gets it queued onto
- * its own {@link io.questdb.tasks.TableWriterTask} command queue and applies it later, on its own thread,
- * via {@link TableWriter#tick()}. A composite swap that turns out stale (a new piece landed since the merge
- * snapshot was taken) is simply left alone - the next tick sees it again and retries from scratch.
+ * A Parquet candidate is dispatched via {@link CairoEngine#getWriterOrPublishCommand}: an idle writer
+ * applies the command in-process, right here on this job's thread; a busy writer gets it queued onto its
+ * own {@link io.questdb.tasks.TableWriterTask} command queue and applies it later, on its own thread, via
+ * {@link TableWriter#tick()}.
+ * <p>
+ * A composite candidate is dispatched straight through {@link TableWriter#compactPartitionNoCommit(int)},
+ * the one PUBLIC compaction entry point reachable from outside the writer's own per-commit housekeeping -
+ * see that method's javadoc. Skipped, not queued, on a busy writer: a writer mid-commit is already about
+ * to run its own housekeeping pass, which reaches the same partition through the ordinary per-commit path
+ * this job exists only to back up. Reached only for a partition idle for so long that no further commit -
+ * and so no further housekeeping pass - is coming to ever re-check it.
  */
 public class PartitionCompactionScanJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(PartitionCompactionScanJob.class);
@@ -74,7 +80,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private final FilesFacade ff;
     private final PartitionGeometry geometry = new PartitionGeometry();
     private final long idleTimeoutMicros;
-    private final long idleTimeoutMillis;
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final Path path = new Path();
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
@@ -87,8 +92,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         this.clock = clock;
         this.configuration = engine.getConfiguration();
         this.checkInterval = configuration.getPartitionCompactionCheckInterval() * 1000;
-        this.idleTimeoutMillis = configuration.getPartitionCompactionIdleTimeout();
-        this.idleTimeoutMicros = idleTimeoutMillis * 1000;
+        // PartitionCompactionPolicy's own AGE rule reads this same key straight in microseconds - see
+        // PartitionCompactionPolicy#selectPartition - so this job's idle gate uses the exact same
+        // threshold the per-commit path would have applied, had a commit come along to run it.
+        this.idleTimeoutMicros = configuration.getPartitionCompactionIdleTimeout();
         this.txReader = new TxReader(ff);
     }
 
@@ -127,27 +134,32 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Builds the merged staging directory off this thread (no writer lock held), then hands the
-     * {@link CompositePartitionMerger.MergeResult} straight to a {@link PartitionCompactionCommand} - the
-     * only path that lets the eventual swap repair column tops, see that command's class doc.
+     * Runs {@link TableWriter#compactPartitionNoCommit(int)} for one idle composite partition and commits
+     * it - the entry point stays inside the caller's own transaction rather than committing one of its
+     * own, the same contract {@code UpdateOperatorImpl} relies on, so this job supplies the commit an
+     * UPDATE would otherwise have supplied.
+     * <p>
+     * Silently skipped, not queued or retried through any command, when the writer is busy: a writer mid-
+     * commit is already about to run its own {@code housekeep} pass, which reaches this same partition -
+     * were it still a candidate - through the ordinary per-commit path. Also silently skipped when the
+     * partition is no longer composite, or no longer exists, by the time the writer is actually reached
+     * (re-resolved fresh off the live writer, not off the standalone snapshot {@link #scanTable} read) -
+     * both are simply "nothing to do", never an error.
      */
     private void dispatchComposite(TableToken tableToken, long partitionTimestamp) {
-        final CompositePartitionMerger.MergeResult mergeResult = CompositePartitionMerger.merge(engine, tableToken, partitionTimestamp);
-        if (mergeResult == null) {
-            // Not found, or no longer composite by the time the merge actually ran - nothing to do.
+        final TableWriter writer;
+        try {
+            writer = engine.getWriter(tableToken, "partition compaction scan");
+        } catch (EntryUnavailableException e) {
             return;
         }
-        final PartitionCompactionCommand command = new PartitionCompactionCommand(tableToken, tableToken.getTableId(), mergeResult);
-        try (TableWriter writer = engine.getWriterOrPublishCommand(tableToken, command)) {
-            if (writer != null) {
-                final long result = command.apply(writer, true);
-                if (result == TableWriter.SWAP_STALE) {
-                    // A piece landed (or the writer txn advanced) since the merge snapshot was taken.
-                    // Not an error: the next tick sees the partition again and retries from scratch.
-                    LOG.info().$("composite partition compaction stale, will retry [table=").$(tableToken)
-                            .$(", partitionTimestamp=").$ts(partitionTimestamp).I$();
-                }
+        try {
+            final int partitionIndex = writer.getPartitionIndexByTimestamp(partitionTimestamp);
+            if (partitionIndex >= 0 && writer.compactPartitionNoCommit(partitionIndex)) {
+                writer.commit();
             }
+        } finally {
+            writer.close();
         }
     }
 
@@ -219,7 +231,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
             final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
             final long nowInTableUnits = timestampDriver.fromMicros(nowMicros);
-            final long idleTimeoutInTableUnits = timestampDriver.fromMillis(idleTimeoutMillis);
+            final long idleTimeoutInTableUnits = timestampDriver.fromMicros(idleTimeoutMicros);
 
             String tableRoot = null;
             final int partitionCount = txReader.getPartitionCount();

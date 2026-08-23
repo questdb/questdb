@@ -781,8 +781,73 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionCompactionCooldown() {
+        return 10 * Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public long getPartitionCompactionDeadMinSize() {
+        return 50 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public int getPartitionCompactionDeadRowsRatio() {
+        return 3;
+    }
+
+    @Override
+    public long getPartitionCompactionDeclineBackoffMax() {
+        return 60 * Micros.MINUTE_MICROS;
+    }
+
+    @Override
     public long getPartitionCompactionIdleTimeout() {
-        return 900_000;
+        return 60 * Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public int getPartitionCompactionMaxJoinsPerCommit() {
+        return 32;
+    }
+
+    @Override
+    public int getPartitionCompactionMaxPieces() {
+        return 1000;
+    }
+
+    @Override
+    public long getPartitionCompactionMaxRowsPerCommit() {
+        return 5_000_000;
+    }
+
+    @Override
+    public int getPartitionCompactionPrefixMinPercent() {
+        return 50;
+    }
+
+    @Override
+    public long getPartitionCompactionTableDeadMaxSize() {
+        return 10 * Numbers.SIZE_1GB;
+    }
+
+    @Override
+    public long getPartitionCompactionTableDeadMinSize() {
+        return 50 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public int getPartitionCompactionTableDeadPercent() {
+        return 50;
+    }
+
+    @Override
+    public int getPartitionCompactionTableDeadStopPercent() {
+        return 40;
+    }
+
+    @Override
+    public long getPartitionCompactionTimeBudget() {
+        return 200 * Micros.MILLI_MICROS;
     }
 
     @Override

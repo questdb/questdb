@@ -24,30 +24,12 @@
 
 package io.questdb.cairo.frm;
 
-import io.questdb.cairo.ColumnVersionWriter;
-
-import java.io.Closeable;
-
 /**
- * Used for partition squashing in {@link io.questdb.cairo.TableWriter}.
+ * Where a writable {@link Frame} reports a column's new top, instead of writing straight into a
+ * {@code ColumnVersionWriter}. That writer is one instance shared by every worker thread a commit's
+ * O3 partition tasks run on, and is not thread safe - a caller reachable from a worker thread must
+ * report through a sink like this instead of upserting into it directly.
  */
-public interface Frame extends Closeable {
-
-    void close();
-
-    int columnCount();
-
-    FrameColumn createColumn(int columnIndex);
-
-    long getOffset();
-
-    long getRowCount();
-
-    void publishColumnTops(ColumnVersionWriter cvw);
-
-    void saveChanges(FrameColumn column);
-
-    void setOffset(long offset);
-
-    void setRowCount(long rowCount);
+public interface ColumnTopSink {
+    void setColumnTop(int columnIndex, long columnTop);
 }

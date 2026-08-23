@@ -305,6 +305,41 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     @Override
+    public void abandon() {
+        // Unlike closeNoTruncate(), no seal here: the caller's files were already rewritten by a different
+        // writer instance, so this writer's own pending/sealed state - however consistent it looks locally
+        // - describes bytes that are no longer there. A seal would still succeed (it reads back through
+        // this writer's own stale keyMem/valueMem, not the file another writer wrote), and could publish a
+        // chain entry that shadows the correct one the other writer already published.
+        try {
+            if (keyMem.isOpen()) {
+                keyMem.close(false);
+            }
+        } finally {
+            try {
+                Misc.free(sealValueMem);
+                Misc.free(stagingValueMem);
+                if (valueMem.isOpen()) {
+                    valueMem.close(false);
+                }
+            } finally {
+                closeSidecarMems();
+                freeNativeBuffers();
+                keyCount = 0;
+                valueMemSize = 0;
+                genCount = 0;
+                maxValue = 0;
+                hasPendingData = false;
+                activeKeyCount = 0;
+                coverCount = 0;
+                pendingTxnAtSeal = -1;
+                releasePendingPurges();
+                chain.resetState();
+            }
+        }
+    }
+
+    @Override
     public void add(int key, long value) {
         checkNotPoisoned();
         if (key < 0) {
@@ -1075,7 +1110,18 @@ public class PostingIndexWriter implements IndexWriter {
         of(path, name, columnNameTxn, false);
     }
 
+    @Override
+    public void of(Path path, CharSequence name, long columnNameTxn, long partitionTimestamp, long partitionNameTxn, boolean allowFreshIfMissing) {
+        this.partitionTimestamp = partitionTimestamp;
+        this.partitionNameTxn = partitionNameTxn;
+        of(path, name, columnNameTxn, false, allowFreshIfMissing);
+    }
+
     public void of(Path path, CharSequence name, long columnNameTxn, boolean isInit) {
+        of(path, name, columnNameTxn, isInit, false);
+    }
+
+    private void of(Path path, CharSequence name, long columnNameTxn, boolean isInit, boolean allowFreshIfMissing) {
         // close() releases resources but does NOT flush pending add() calls,
         // so the caller must have already committed or sealed. On the
         // TableWriter path this is guaranteed by commit() in switchPartition
@@ -1098,7 +1144,14 @@ public class PostingIndexWriter implements IndexWriter {
                 this.blockCapacity = BLOCK_CAPACITY;
                 initKeyMemory(keyMem);
             } else {
-                if (!ff.exists(keyFile)) {
+                // allowFreshIfMissing skips this exists() pre-check rather than falling back to a fresh,
+                // empty index: the caller has independently established this column had no data before
+                // the writer session now reopening it began, so any real content under this path is that
+                // same session's own earlier, already-committed-to-disk write - genuine, not something
+                // safe to discard. Trust the length() probe below instead: a file this session itself
+                // just created reads back its real size regardless of what exists() claims, while a
+                // truly-absent one still fails the size check just below and still throws.
+                if (!allowFreshIfMissing && !ff.exists(keyFile)) {
                     throw CairoException.critical(0).put("index does not exist [path=").put(path).put(']');
                 }
 

@@ -42,6 +42,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -53,20 +54,32 @@ public class TxReader implements Closeable, Mutable {
     public static final long PARTITION_SIZE_MASK = 0x80000FFFFFFFFFFFL;
     public static final int PARTITION_SQUASH_COUNTER_MAX = 0xFFFF;
     protected static final int NONE_COL_STRUCTURE_VERSION = Integer.MIN_VALUE;
-    // Slot 3 of a NATIVE partition record is a pointer into that partition's own _geometry file:
+    // Slot 3 of a NATIVE partition record is a pointer into that partition's own _geometry.<generation>
+    // file:
     //
-    // | composite | generation | byte offset |
-    // +-----------+------------+-------------+
-    // |   1 bit   |   19 bits  |   44 bits   |
+    // | composite | reserved | generation |    offset, in 8-byte units    |
+    // +-----------+----------+------------+--------------------------------+
+    // |   1 bit   |  35 bits |   4 bits   |            24 bits            |
     //
     // Bit 63 says the partition is COMPOSITE and the rest of the word locates its geometry record. The
     // whole word is the parquet FILE SIZE instead when either parquet bit of slot 1 is set, which is why
     // every read of it goes through hasParquetFileSize first - a parquet partition is materialized whole
     // and is never composite.
+    //
+    // The offset counts 8-byte units, not bytes: every record is 8-byte aligned (PartitionGeometryFile's
+    // HEADER_SIZE and PIECE_SIZE both are), so the low 3 bits of any real byte offset are always zero and
+    // free to drop. 24 such units address up to 128MB - comfortably past PartitionGeometryFile's own
+    // 100MB rotation threshold - and generation selects which of a partition's own _geometry.<N> files
+    // that offset is read against: PartitionGeometry.publish rotates to a fresh file, offset 0, rather
+    // than let one file grow without bound. 4 generation bits cap a partition's own geometry history at
+    // 16 generations; the 35 bits above them are reserved.
     protected static final long PARTITION_COMPOSITE_FLAG = 0x8000000000000000L; // bit 63 (== Long.MIN_VALUE)
-    protected static final int PARTITION_GEOMETRY_GENERATION_BIT_OFFSET = 44;
-    protected static final long PARTITION_GEOMETRY_GENERATION_MASK = 0x7FFFF00000000000L; // bits 44-62
-    protected static final long PARTITION_GEOMETRY_OFFSET_MASK = 0x00000FFFFFFFFFFFL; // bits 0-43
+    protected static final int PARTITION_GEOMETRY_GENERATION_BIT_OFFSET = 24;
+    protected static final long PARTITION_GEOMETRY_GENERATION_MASK = 0x0F000000L; // bits 24-27 (4 bits)
+    protected static final int PARTITION_GEOMETRY_MAX_GENERATION = 15;
+    protected static final long PARTITION_GEOMETRY_OFFSET_MASK = 0x00FFFFFFL; // bits 0-23 (24 bits, 8-byte units)
+    // Every packed offset is this many bits narrower than the byte offset it represents.
+    protected static final int PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT = 3;
     protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
     protected static final int PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET = 60;
     protected static final int PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET = 61;
@@ -489,10 +502,32 @@ public class TxReader implements Closeable, Mutable {
     }
 
     /**
-     * The byte offset inside that file at which the partition's committed geometry record starts.
+     * The byte offset inside that file at which the partition's committed geometry record starts. The
+     * packed word holds this in 8-byte units (see the slot-3 layout comment above); every caller works in
+     * bytes, so the unshift happens here, once.
      */
     public static long geometryOffset(long geometryRef) {
-        return geometryRef & PARTITION_GEOMETRY_OFFSET_MASK;
+        return (geometryRef & PARTITION_GEOMETRY_OFFSET_MASK) << PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT;
+    }
+
+    /**
+     * Packs a slot-3 geometry pointer from its components. Production code never calls this -
+     * {@link PartitionGeometry#publish} packs its own ref inline, next to the overflow check that decides
+     * generation and offset in the first place - but a test that wants to fabricate a ref directly (e.g.
+     * simulating a {@code _geometry} file close to {@link PartitionGeometryFile#MAX_FILE_SIZE} without
+     * actually writing that much data through ordinary commits) has no other way to reach the format.
+     *
+     * @param byteOffset must be 8-byte aligned, as every real geometry record start is
+     */
+    @TestOnly
+    public static long packGeometryRef(int generation, long byteOffset) {
+        assert generation >= 0 && generation <= PARTITION_GEOMETRY_MAX_GENERATION : "generation out of range";
+        assert (byteOffset & ((1L << PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT) - 1)) == 0 : "byteOffset must be 8-byte aligned";
+        final long packedOffset = byteOffset >>> PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT;
+        assert (packedOffset & ~PARTITION_GEOMETRY_OFFSET_MASK) == 0 : "byteOffset out of range";
+        return PARTITION_COMPOSITE_FLAG
+                | ((long) generation << PARTITION_GEOMETRY_GENERATION_BIT_OFFSET)
+                | packedOffset;
     }
 
     /**

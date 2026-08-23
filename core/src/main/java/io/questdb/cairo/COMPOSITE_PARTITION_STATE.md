@@ -49,6 +49,7 @@ inside `PartitionGeometry`, the planner, the executor and the two frame cursors 
 | 15 | Merge that reads below a column top | **BUILT** - top-aware kernels, both sides |
 | 16 | Interval scan over a composite partition | **BUILT** - `CompositeTimestampFinder` |
 | 17 | `ALTER TABLE ... ALTER COLUMN TYPE` over a composite partition | **BUILT** - the conversion spans `E` |
+| 18 | `UPDATE` over a composite partition | **BUILT** - collect/merge two-phase rewrite, physical-row addressed |
 
 With the flag off - the default - nothing above is reachable and the tree behaves exactly as master.
 
@@ -264,43 +265,6 @@ for m in $(grep -o 'public void test[A-Za-z]*' <test> | sed 's/public void //');
   mvn -o -pl core -Dtest="O3PartitionPreSplitTest#$m" surefire:test
 done
 ```
-
-### 26. The composite executor never maintains a BITMAP/POSTING index - FOUND, not fixed
-
-`processCompositePartition`'s whole plan-execution block (`KEEP`/`MERGE`/`NEW_PIECE`, now `DROP`) has no
-reference to `IndexWriter`/`isColumnIndexed` anywhere, unlike the ordinary O3 append/merge path in the same
-file, which explicitly drives a BITMAP or POSTING `IndexWriter` for every column it writes. Every row a
-composite write lands - `MERGE` or `NEW_PIECE` alike - is therefore invisible to that column's index, which
-still only knows about rows written before the partition ever went composite. An indexed point-lookup
-(`WHERE indexed_col = 'x'`) against a composite partition silently misses every row the composite path
-wrote (`testAddDropColumnDropPartition`, `checkIndexRandomValueScan`: the WAL and non-WAL reference tables
-disagree on an indexed lookup, not a full scan).
-
-Not a small fix: a `MERGE` relocates a piece's rows to new row ids at the tail, so an incremental
-`IndexWriter.add(key, newRowid)` alone would leave the OLD rowids for that piece still posted under the
-same keys - BITMAP has no removal, so the index would read back with every relocated row duplicated. The
-correct fix most likely rebuilds the touched column's index over the whole directory after the plan
-executes, reusing `RebuildColumnBase.reindexAfterUpdate` (already piece/`E`-aware, per section 19) rather
-than a new incremental scheme - at the cost of an O(directory) rebuild per commit that touches an indexed
-column, on a feature that is opt-in and off by default. Not attempted this session: the call happens from an
-O3 WORKER thread inside `executeCompositePlan`, and whether `IndexBuilder`/`RebuildColumnBase` is safe to
-invoke from there (as opposed to the writer's own single thread, its only caller today) needs checking
-before wiring it in.
-
-## Known gaps
-
-- **Var-size columns can still read or write short on a composite partition.** See section 25. Caught as a
-  `CairoException` instead of a SIGBUS now; the write-side source is still open.
-- **The composite executor performs no index maintenance.** See section 26. A `MERGE` or `NEW_PIECE` action
-  never updates a BITMAP/POSTING index, so indexed point-lookups against composite-written rows miss them.
-- **The dedup no-op fast path** does not recognise a piece that starts above file row 0, so a fully
-  duplicate commit rewrites the piece instead of writing nothing.
-- **Two dedup scenarios fail unattributed** around the batch boundary. Leads, not diagnoses.
-- **Dedup**: the plan has no dedup term at all. `liveRows` is the plain sum of piece rows.
-- **The split threshold is in ROWS derived from an average record size**, so a narrow table needs a much
-  smaller `cairo.o3.partition.split.min.size` than a wide one before any cut is proposed. A var-size column
-  counts as 28 bytes there whatever it actually holds, which is why the test had to raise its setting from
-  1K to 8K as columns were added.
 
 ## Working notes
 
