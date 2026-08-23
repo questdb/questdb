@@ -131,6 +131,33 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncludeExcludeClauseWithSubqueryFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foofx (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts) PARTITION BY YEAR BYPASS WAL");
+            execute("CREATE TABLE bar (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts) PARTITION BY YEAR BYPASS WAL");
+
+            // INCLUDE (...) consumes its own parentheses and leaves the subquery ')' for the WHERE.
+            assertQuery("SELECT count() FROM ((SHOW CREATE DATABASE INCLUDE (TABLES)) WHERE ddl ILIKE '%fx%')")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            // INCLUDE (ALL) behaves like the bare default.
+            assertQuery("SELECT count() FROM ((SHOW CREATE DATABASE INCLUDE (ALL)) WHERE ddl ILIKE '%fx%')")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            // A multi-category list exercises the comma path and the local ')' inside a subquery.
+            assertQuery("SELECT count() FROM ((SHOW CREATE DATABASE INCLUDE (TABLES, VIEWS)) WHERE ddl ILIKE '%fx%')")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            // EXCLUDE (TABLES) emits no table DDL, so the fx filter matches nothing.
+            assertQuery("SELECT count() FROM ((SHOW CREATE DATABASE EXCLUDE (TABLES)) WHERE ddl ILIKE '%fx%')")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            // CTE parsing owns the outer ')' while the INCLUDE list owns the local ')'.
+            assertQuery("WITH db AS (SHOW CREATE DATABASE INCLUDE (TABLES)) SELECT count() FROM db WHERE ddl ILIKE '%fx%'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            // JOIN parsing owns the outer ')' while the INCLUDE list owns the local ')'.
+            assertQuery("SELECT count() FROM long_sequence(1) CROSS JOIN (SHOW CREATE DATABASE INCLUDE (TABLES)) db")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+        });
+    }
+
+    @Test
     public void testIncludeRejectsMalformedClauses() throws Exception {
         assertMemoryLeak(() -> {
             assertExceptionNoLeakCheck("SHOW CREATE DATABASE INCLUDE (BOGUS)", 30, "unexpected category");
@@ -142,6 +169,14 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("SHOW CREATE DATABASE garbage", 21, "garbage");
             // a category list must be comma-separated
             assertExceptionNoLeakCheck("SHOW CREATE DATABASE INCLUDE (TABLES VIEWS)", 37, "',' or ')'");
+
+            final String sql = "SELECT * FROM (SHOW CREATE DATABASE INCLUDE (TABLES)";
+            final SqlException exception = Assert.assertThrows(
+                    SqlException.class,
+                    () -> assertExceptionNoLeakCheck(sql)
+            );
+            Assert.assertEquals(52, exception.getPosition());
+            TestUtils.assertEquals("')' expected", exception.getFlyweightMessage());
         });
     }
 
@@ -234,7 +269,7 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertExceptionNoLeakCheck(
                 "SHOW CREATE WAREHOUSE",
                 12,
-                "expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW' or 'DATABASE'"
+                "expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW' or 'LIVE VIEW' or 'DATABASE'"
         ));
     }
 
@@ -400,6 +435,71 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDatabaseDumpEmitsLiveViewAndOrdersItAfterItsBase() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            node1.setProperty(PropertyKey.CAIRO_LIVE_VIEW_ENABLED, true);
+            // a_lv sorts alphabetically BEFORE its base z_base, so a name-only order would
+            // emit the live view first and its CREATE LIVE VIEW replay would fail; the
+            // dependency edge must emit z_base first.
+            execute("create table z_base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("create live view a_lv flush every 1s start from now as " +
+                    "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from z_base where x > 0");
+            drainWalQueue();
+
+            final ObjList<String> before = dumpDatabase();
+            final String dump = before.toString();
+            // The live view must round-trip as CREATE LIVE VIEW, not fall through to
+            // CREATE TABLE (the pre-fix behaviour discarded the LV definition entirely).
+            final int baseIdx = dump.indexOf("CREATE TABLE 'z_base'");
+            final int lvIdx = dump.indexOf("CREATE LIVE VIEW 'a_lv'");
+            Assert.assertTrue("base table DDL must be present", baseIdx >= 0);
+            Assert.assertTrue("live view DDL must be present", lvIdx >= 0);
+            Assert.assertFalse("live view must not be dumped as a plain table", dump.contains("CREATE TABLE 'a_lv'"));
+            Assert.assertTrue("the base table must precede the live view that reads it", baseIdx < lvIdx);
+
+            // Full round-trip: tear everything down and replay the dump verbatim.
+            execute("drop live view a_lv");
+            execute("drop table z_base");
+            drainWalQueue();
+            for (int i = 0, n = before.size(); i < n; i++) {
+                execute(before.getQuick(i));
+            }
+            drainWalQueue();
+
+            final ObjList<String> after = dumpDatabase();
+            Assert.assertEquals(before.size(), after.size());
+            for (int i = 0, n = before.size(); i < n; i++) {
+                Assert.assertEquals("statement " + i + " differs", before.getQuick(i), after.getQuick(i));
+            }
+        });
+    }
+
+    @Test
+    public void testDatabaseDumpFiltersLiveViewsCategory() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            node1.setProperty(PropertyKey.CAIRO_LIVE_VIEW_ENABLED, true);
+            execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("create live view lv flush every 1s start from now as " +
+                    "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from base where x > 0");
+            drainWalQueue();
+
+            final String liveViewsOnly = dump("SHOW CREATE DATABASE INCLUDE (LIVE_VIEWS)");
+            Assert.assertTrue(liveViewsOnly, liveViewsOnly.contains("CREATE LIVE VIEW 'lv'"));
+            Assert.assertFalse(liveViewsOnly, liveViewsOnly.contains("CREATE TABLE 'base'"));
+
+            final String noLiveViews = dump("SHOW CREATE DATABASE EXCLUDE (LIVE_VIEWS)");
+            Assert.assertTrue(noLiveViews, noLiveViews.contains("CREATE TABLE 'base'"));
+            Assert.assertFalse(noLiveViews, noLiveViews.contains("CREATE LIVE VIEW 'lv'"));
+
+            // Live views are part of SCHEMA.
+            final String schema = dump("SHOW CREATE DATABASE INCLUDE (SCHEMA)");
+            Assert.assertTrue(schema, schema.contains("CREATE LIVE VIEW 'lv'"));
+        });
+    }
+
+    @Test
     public void testReplayRecreatesEveryObject() throws Exception {
         assertMemoryLeak(() -> {
             // SHOW CREATE TABLE emits WAL implicitly, so replay needs the WAL default on
@@ -436,6 +536,39 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             for (int i = 0, n = before.size(); i < n; i++) {
                 Assert.assertEquals("statement " + i + " differs", before.getQuick(i), after.getQuick(i));
             }
+        });
+    }
+
+    @Test
+    public void testSubqueryFilterForms() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foofx (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts) PARTITION BY YEAR BYPASS WAL");
+            execute("CREATE TABLE bar (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts) PARTITION BY YEAR BYPASS WAL");
+
+            // The nested WHERE form reproduces the reported query shape.
+            assertQuery("SELECT count() FROM ((SHOW CREATE DATABASE) WHERE ddl ILIKE '%fx%')")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            // Check the surviving row without pinning the complete DDL text.
+            assertQuery("""
+                    SELECT (ddl ILIKE '%foofx%' AND ddl ILIKE '%create table%') ok
+                    FROM (SHOW CREATE DATABASE)
+                    WHERE ddl ILIKE '%fx%'""")
+                    .noLeakCheck().noRandomAccess().returns("ok\ntrue\n");
+            // ORDER BY and LIMIT wrap the filtered SHOW result.
+            assertQuery("""
+                    SELECT count() FROM (
+                        (SHOW CREATE DATABASE)
+                        WHERE ddl ILIKE '%create table%'
+                        ORDER BY ddl
+                        LIMIT 1
+                    )""")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            // CTE parsing owns the closing ')' around SHOW CREATE DATABASE.
+            assertQuery("WITH db AS (SHOW CREATE DATABASE) SELECT count() FROM db WHERE ddl ILIKE '%fx%'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            // JOIN parsing owns the closing ')' around SHOW CREATE DATABASE.
+            assertQuery("SELECT count() FROM long_sequence(1) CROSS JOIN (SHOW CREATE DATABASE) db")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
         });
     }
 

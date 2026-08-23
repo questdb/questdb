@@ -279,6 +279,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                                     bloomFilterFpp,
                                     0.0,
                                     -1,
+                                    -1L,
                                     -1L
                             );
                             long parquetFileSize = ff.length(tempPath.$());

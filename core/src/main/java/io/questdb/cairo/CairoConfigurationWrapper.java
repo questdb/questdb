@@ -34,6 +34,7 @@ import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjObjHashMap;
@@ -481,6 +482,91 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public @NotNull CharSequence getLegacyCheckpointRoot() {
         return getDelegate().getLegacyCheckpointRoot();
+    }
+
+    @Override
+    public long getLiveViewCheckpointCompactionInterval() {
+        return getDelegate().getLiveViewCheckpointCompactionInterval();
+    }
+
+    @Override
+    public long getLiveViewCheckpointMaxDurationMicros() {
+        return getDelegate().getLiveViewCheckpointMaxDurationMicros();
+    }
+
+    @Override
+    public long getLiveViewCheckpointPurgeInterval() {
+        return getDelegate().getLiveViewCheckpointPurgeInterval();
+    }
+
+    @Override
+    public long getLiveViewCheckpointRepairReplayMaxRows() {
+        return getDelegate().getLiveViewCheckpointRepairReplayMaxRows();
+    }
+
+    @Override
+    public long getLiveViewCheckpointRepairScanMaxKeys() {
+        return getDelegate().getLiveViewCheckpointRepairScanMaxKeys();
+    }
+
+    @Override
+    public long getLiveViewCheckpointRepairScanMaxRows() {
+        return getDelegate().getLiveViewCheckpointRepairScanMaxRows();
+    }
+
+    @Override
+    public long getLiveViewCheckpointRows() {
+        return getDelegate().getLiveViewCheckpointRows();
+    }
+
+    @Override
+    public int getLiveViewFlushRetryMax() {
+        return getDelegate().getLiveViewFlushRetryMax();
+    }
+
+    @Override
+    public long getLiveViewFlushRetryMaxDurationMicros() {
+        return getDelegate().getLiveViewFlushRetryMaxDurationMicros();
+    }
+
+    @Override
+    public long getLiveViewInMemoryBufferGrowthBytes() {
+        return getDelegate().getLiveViewInMemoryBufferGrowthBytes();
+    }
+
+    @Override
+    public long getLiveViewInMemoryBufferInitialBytes() {
+        return getDelegate().getLiveViewInMemoryBufferInitialBytes();
+    }
+
+    @Override
+    public long getLiveViewInMemoryMaxMicros() {
+        return getDelegate().getLiveViewInMemoryMaxMicros();
+    }
+
+    @Override
+    public int getLiveViewPartitionCompactThreshold() {
+        return getDelegate().getLiveViewPartitionCompactThreshold();
+    }
+
+    @Override
+    public long getLiveViewRefreshMemoryLimitBytes() {
+        return getDelegate().getLiveViewRefreshMemoryLimitBytes();
+    }
+
+    @Override
+    public int getLiveViewRefreshTurnMaxCommits() {
+        return getDelegate().getLiveViewRefreshTurnMaxCommits();
+    }
+
+    @Override
+    public long getLiveViewRefreshTurnMaxDurationMicros() {
+        return getDelegate().getLiveViewRefreshTurnMaxDurationMicros();
+    }
+
+    @Override
+    public int getLiveViewRefreshWorkerCount() {
+        return getDelegate().getLiveViewRefreshWorkerCount();
     }
 
     @Override
@@ -1619,6 +1705,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isLiveViewEnabled() {
+        return getDelegate().isLiveViewEnabled();
+    }
+
+    @Override
     public boolean isMatViewCoveringIndexEnabled() {
         return getDelegate().isMatViewCoveringIndexEnabled();
     }
@@ -1754,6 +1845,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlWindowMapFusionEnabled() {
+        return getDelegate().isSqlWindowMapFusionEnabled();
+    }
+
+    @Override
     public boolean isTableTypeConversionEnabled() {
         return getDelegate().isTableTypeConversionEnabled();
     }
@@ -1790,6 +1886,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int maxArrayElementCount() {
         return getDelegate().maxArrayElementCount();
+    }
+
+    @Override
+    public ParquetPartitionDecoder newParquetPartitionDecoder() {
+        return getDelegate().newParquetPartitionDecoder();
     }
 
     public void setDelegate(CairoConfiguration delegate) {
