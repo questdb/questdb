@@ -634,6 +634,39 @@ public class IndexBuilderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReindexLeavesParquetPartitionIndexIntact() throws Exception {
+        // A converted-to-parquet partition keeps its bitmap index local but has no
+        // local .d to rebuild it from. The guard must skip it during REINDEX so the
+        // existing index survives instead of being wiped and left empty.
+        ff = TestFilesFacadeImpl.INSTANCE;
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE xxx (ts TIMESTAMP, sym SYMBOL INDEX TYPE BITMAP, x LONG) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO xxx VALUES " +
+                    "('2024-01-01T00:00:00','A',1)," +
+                    "('2024-01-01T06:00:00','B',2)," +
+                    "('2024-01-01T12:00:00','A',3)," +
+                    "('2024-01-01T18:00:00','C',4)," +
+                    "('2024-01-02T00:00:00','A',5)," +
+                    "('2024-01-02T06:00:00','B',6)");
+
+            // Convert the older, non-active partition to parquet.
+            execute("ALTER TABLE xxx CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            engine.releaseAllWriters();
+
+            // Whole-table reindex must not throw or corrupt the parquet partition.
+            runReindexSql("REINDEX TABLE xxx COLUMN sym LOCK EXCLUSIVE");
+
+            // sym='A' spans the parquet partition (x=1,3) and the native one (x=5).
+            assertQuery("SELECT x FROM xxx WHERE sym = 'A' ORDER BY ts")
+                    .noLeakCheck()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("x\n1\n3\n5\n");
+        });
+    }
+
+    @Test
     public void testReindexPartitionSqlSyntax() throws Exception {
         indexType = IndexType.BITMAP;
         String createTableSql = "create table xxx as (" +
@@ -725,6 +758,30 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("price\n10.0\n30.0\n");
+        });
+    }
+
+    @Test
+    public void testReindexRejectsNamedParquetPartition() throws Exception {
+        // REINDEX of an explicitly named parquet partition is rejected rather than
+        // silently destroying an index that cannot be rebuilt from a local .d.
+        ff = TestFilesFacadeImpl.INSTANCE;
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE xxx (ts TIMESTAMP, sym SYMBOL INDEX TYPE BITMAP, x LONG) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO xxx VALUES " +
+                    "('2024-01-01T00:00:00','A',1)," +
+                    "('2024-01-01T06:00:00','B',2)," +
+                    "('2024-01-02T00:00:00','A',3)");
+            execute("ALTER TABLE xxx CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            engine.releaseAllWriters();
+
+            try {
+                execute("REINDEX TABLE xxx COLUMN sym PARTITION '2024-01-01' LOCK EXCLUSIVE");
+                Assert.fail("reindex of a parquet partition must be rejected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot reindex parquet partition");
+            }
         });
     }
 

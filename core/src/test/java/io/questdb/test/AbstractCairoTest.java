@@ -448,6 +448,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         ParanoiaState.FD_PARANOIA_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
         engine.getMetrics().clear();
         engine.getMatViewStateStore().clear();
+        engine.getLiveViewStateStore().clear();
     }
 
     public void tearDown(boolean removeDir) {
@@ -505,8 +506,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 rowCount = txReader.getTransientRowCount();
             }
 
-            long parquetSize = txReader.getPartitionParquetFileSize(i);
-
             if (i > 0) {
                 sink.put(",");
             }
@@ -519,7 +518,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
 
             if (txReader.isPartitionParquet(i)) {
-                sink.put(", parquetSize: ").put(parquetSize);
+                sink.put(", parquetSize: ").put(txReader.getPartitionParquetFileSize(i));
             }
             if (txReader.isPartitionReadOnly(i)) {
                 sink.put(", readOnly=true");
@@ -1000,6 +999,22 @@ public abstract class AbstractCairoTest extends AbstractTest {
             for (int i = 0; i < ticks; i++) {
                 walApplyJob.run();
             }
+        }
+    }
+
+    /**
+     * Reports whether the WAL-level symbol dictionary of {@code columnName} still sits in
+     * {@code walName}'s directory. Every already-written segment of that WAL resolves its clean
+     * symbol band through {@code <wal>/<column>.o} and its siblings, so this is the artifact a
+     * symbol capacity rebuild or a DROP COLUMN strands. Unlike the {@code assert*Existence}
+     * helpers this returns the answer rather than asserting it, because callers both search for
+     * the WAL that holds the dictionary and assert its disappearance.
+     */
+    protected static boolean walSymbolOffsetFileExists(@NotNull TableToken tableToken, String walName, String columnName) {
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(tableToken.getDirName()).concat(walName);
+            TableUtils.offsetFileName(path, columnName, TableUtils.COLUMN_NAME_TXN_NONE);
+            return engine.getConfiguration().getFilesFacade().exists(path.$());
         }
     }
 

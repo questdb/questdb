@@ -26,16 +26,27 @@ package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StatefulAtom;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.AsyncTopKAtom;
+import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
@@ -294,6 +305,66 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
         );
     }
 
+    /**
+     * Validates the parallel tree-chain top-K against the serial encoded reference. Every other test
+     * in this class leaves {@code cairo.sql.orderby.sort.enabled} at its default {@code true}, so
+     * {@link io.questdb.griffin.engine.table.AsyncTopKAtom} always routes to the encoded buffer and
+     * the per-worker {@code LimitedSizeLongTreeChain} arm is only ever reached by the serial oracle -
+     * never through the atom, never with four worker chains feeding an owner merge. Disabling encoded
+     * sort flips the atom onto the tree while the parallel gate in {@code SqlCodeGenerator}, which
+     * does not consult that flag, keeps the async factory in place.
+     * <p>
+     * The oracle is the serial <em>encoded</em> sort, so the implementation under test is not its own
+     * reference.
+     */
+    @Test
+    public void testParallelTopKTreeChain() throws Exception {
+        // assertTopKTreeChainMatch sets both flags per side, so the run is independent of the
+        // enableParallelTopK parameter.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) sqlExecutionContext;
+                        // 40_000 rows over PAGE_FRAME_MAX_ROWS-sized frames give every worker chain
+                        // enough entries to hit its limit repeatedly, so the incremental min/max cache
+                        // and the eviction path run many times per worker and again in the owner merge.
+                        engine.execute(
+                                "CREATE TABLE tree AS (SELECT x id, (x % 97) g, ('v' || x)::varchar v," +
+                                        " (x * 1_000_000L)::timestamp ts FROM long_sequence(40_000))" +
+                                        " TIMESTAMP(ts) PARTITION BY HOUR",
+                                ctx
+                        );
+
+                        // A unique key makes the LIMIT cut total, so the full emitted rows are
+                        // deterministic on both sides.
+                        assertTopKTreeChainMatch(engine, ctx, "SELECT * FROM tree ORDER BY id LIMIT 50");
+                        assertTopKTreeChainMatch(engine, ctx, "SELECT * FROM tree ORDER BY id DESC LIMIT 50");
+
+                        // Duplicate keys: project only the sort column so which tied rows survive the
+                        // cut cannot make the two sides differ.
+                        assertTopKTreeChainMatch(engine, ctx, "SELECT g FROM tree ORDER BY g LIMIT 200");
+                        assertTopKTreeChainMatch(engine, ctx, "SELECT g FROM tree ORDER BY g DESC LIMIT 200");
+
+                        // The filter reducer feeds the tree its filtered row list, and the varchar key
+                        // goes through the compiled comparator rather than a fixed-width one.
+                        assertTopKTreeChainMatch(engine, ctx, "SELECT id, v FROM tree WHERE g > 3 ORDER BY v, id LIMIT 100");
+
+                        // LIMIT past the row count clamps the emit window to the row count.
+                        assertTopKTreeChainMatch(engine, ctx, "SELECT * FROM tree ORDER BY id DESC LIMIT 41_000");
+
+                        // A filter that rejects every row leaves an empty emit window, so the owner
+                        // merges four empty chains.
+                        assertTopKTreeChainMatch(engine, ctx, "SELECT id FROM tree WHERE id > 1_000_000 ORDER BY id LIMIT 10");
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
     @Test
     public void testParallelTopKVarcharSplitPrefixCollision() throws Exception {
         // Regression for the prefix-6 reject: 'aaaaaa' (6 bytes, inlined) dominates so each
@@ -354,6 +425,67 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
         ctx.setParallelTopKEnabled(false);
         node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, false);
         try {
+            final StringSink expected = new StringSink();
+            TestUtils.printSql(engine, ctx, query, expected);
+            TestUtils.assertEquals(query, expected, actual);
+        } finally {
+            node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
+            ctx.setParallelTopKEnabled(true);
+        }
+    }
+
+    private void assertTopKTreeChainMatch(CairoEngine engine, SqlExecutionContextImpl ctx, String query) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, false);
+        ctx.setParallelTopKEnabled(true);
+        final StringSink actual = new StringSink();
+        try {
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                boolean isAsyncTopK = false;
+                for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+                    if (f instanceof AsyncTopKRecordCursorFactory) {
+                        isAsyncTopK = true;
+                        break;
+                    }
+                }
+                Assert.assertTrue("query is no longer routed to the parallel top-K factory: " + query, isAsyncTopK);
+
+                final StatefulAtom atom = TestUtils.findAtom(factory, query);
+                Assert.assertTrue(query, atom instanceof AsyncTopKAtom);
+                final AsyncTopKAtom topKAtom = (AsyncTopKAtom) atom;
+                // Without this the test silently degrades into another encoded-buffer run, which
+                // testParallelTopKEncodedTypes already covers, and the tree arm goes back to being
+                // reachable only from the serial side.
+                Assert.assertFalse("expected the tree-chain atom for: " + query, topKAtom.isEncoded());
+                Assert.assertEquals(4, topKAtom.getWorkerCount());
+                Assert.assertEquals(4, topKAtom.getPerWorkerChains().size());
+                Assert.assertNotNull(topKAtom.getOwnerChain());
+
+                // Drain the same factory the assertions above describe. TestUtils.printSql
+                // recompiles, so printing through it would leave those assertions describing a
+                // different execution than the one that produced the rows.
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    final RecordMetadata metadata = factory.getMetadata();
+                    actual.clear();
+                    CursorPrinter.println(metadata, actual);
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        TestUtils.println(record, metadata, actual);
+                    }
+                }
+            }
+
+            // The oracle: serial encoded sort, an independent implementation.
+            node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
+            ctx.setParallelTopKEnabled(false);
+            // Pin the oracle's routing too. Without this the comparison could silently degrade to
+            // tree against tree and stop being a cross-check at all. "Async" on its own is not the
+            // discriminator - a filtered query still reduces through the async filter on this side -
+            // so pin the encoded sort and the absence of any top-K factory.
+            final StringSink oraclePlan = new StringSink();
+            TestUtils.printSql(engine, ctx, "EXPLAIN " + query, oraclePlan);
+            TestUtils.assertContains(oraclePlan, "Encode sort light");
+            Assert.assertFalse("the oracle must not route to a top-K factory: " + query, Chars.contains(oraclePlan, "Top K"));
             final StringSink expected = new StringSink();
             TestUtils.printSql(engine, ctx, query, expected);
             TestUtils.assertEquals(query, expected, actual);

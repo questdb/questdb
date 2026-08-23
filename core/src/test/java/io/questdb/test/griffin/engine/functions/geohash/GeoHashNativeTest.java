@@ -69,7 +69,7 @@ public class GeoHashNativeTest extends AbstractCairoTest {
         final DirectLongList rows = new DirectLongList(keyCount, MemoryTag.NATIVE_LONG_LIST);
         long argsAddress = LatestByArguments.allocateMemoryArray(1);
 
-        PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool(0L);
+        PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool(configuration, 0L);
 
         try {
             BitmapIndexTest.create(configuration, path, "x", 64);

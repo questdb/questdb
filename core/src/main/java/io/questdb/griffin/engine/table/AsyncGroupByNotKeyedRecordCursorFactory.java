@@ -193,6 +193,37 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         return base;
     }
 
+    // Stable iff every aggregate (which may evaluate arbitrary argument expressions, for example
+    // max(rnd_timestamp(...))), the fused filter (held by the atom, not the base) and the base
+    // are stable. Per-worker filters are clones of the owner filter, so checking it suffices.
+    @Override
+    public boolean isNonDeterministic() {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (groupByFunctions.getQuick(i).isNonDeterministic()) {
+                return true;
+            }
+        }
+        final Function filter = frameSequence.getAtom().getFilterContext().getFilter(-1);
+        if (filter != null && filter.isNonDeterministic()) {
+            return true;
+        }
+        return base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (!groupByFunctions.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        final Function filter = frameSequence.getAtom().getFilterContext().getFilter(-1);
+        if (filter != null && !filter.isStableWithinExecution()) {
+            return false;
+        }
+        return base.isStableWithinExecution();
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
@@ -482,7 +513,6 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
         final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
         final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
-
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
 
         final DirectLongList rows = filterCtx.getFilteredRows(slotId);

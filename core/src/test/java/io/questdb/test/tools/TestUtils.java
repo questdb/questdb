@@ -37,6 +37,7 @@ import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.LogRecordSinkAdapter;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -45,6 +46,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.BindVariableService;
@@ -127,6 +129,8 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.AssumptionViolatedException;
 
 import java.io.BufferedInputStream;
 import java.io.File;
@@ -134,6 +138,8 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadMXBean;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Paths;
@@ -151,7 +157,13 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
+import java.util.function.BooleanSupplier;
+import java.util.function.IntConsumer;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.test.AbstractTest.CLOSEABLE;
@@ -161,7 +173,15 @@ public final class TestUtils {
     public static final boolean INVALID = true;
     public static final boolean VALID = false;
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
+    private static final long THREAD_JOIN_CLEANUP_TIMEOUT_MILLIS = 1_000;
+    private static final long THREAD_JOIN_TIMEOUT_MILLIS = 20_000;
+    private static final Object threadAllocationLock = new Object();
+    private static final Object threadCpuTimeLock = new Object();
     private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
+    private static boolean isThreadAllocationInitiallyEnabled;
+    private static boolean isThreadCpuTimeInitiallyEnabled;
+    private static int threadAllocationScopeCount;
+    private static int threadCpuTimeScopeCount;
 
     private TestUtils() {
     }
@@ -178,13 +198,17 @@ public final class TestUtils {
     }
 
     public static void assertAsciiCompliance(@Nullable Utf8Sequence utf8Sequence) {
-        if (utf8Sequence != null && utf8Sequence.isAscii() && !Utf8s.isAscii(utf8Sequence)) {
-            // isAscii()=true but value is not actually ASCII — this is always wrong.
-            // isAscii()=false is conservatively valid even for ASCII values (e.g. Parquet
-            // VarcharSlice uses column-level metadata and may not know per-value).
-            Utf8StringSink sink = new Utf8StringSink();
-            sink.put("ascii flag set to 'true' for non-ASCII value '").put(utf8Sequence).put("'. ");
-            Assert.fail(sink.toString());
+        if (utf8Sequence != null && utf8Sequence.isAscii()) {
+            for (int i = 0, n = utf8Sequence.size(); i < n; i++) {
+                if (utf8Sequence.byteAt(i) < 0) {
+                    // isAscii()=true but value is not actually ASCII — this is always wrong.
+                    // isAscii()=false is conservatively valid even for ASCII values (e.g. Parquet
+                    // VarcharSlice uses column-level metadata and may not know per-value).
+                    Utf8StringSink sink = new Utf8StringSink();
+                    sink.put("ascii flag set to 'true' for non-ASCII value '").put(utf8Sequence).put("'. ");
+                    Assert.fail(sink.toString());
+                }
+            }
         }
     }
 
@@ -878,6 +902,44 @@ public final class TestUtils {
         }
     }
 
+    public static void assertInterruptedWaitDoesNotSpin(
+            String operation,
+            Runnable wait,
+            @NotNull Object waitBlocker,
+            Runnable release
+    ) throws Exception {
+        assertInterruptedWaitDoesNotSpin(operation, wait, waitBlocker, null, release);
+    }
+
+    public static void assertInterruptedWaitDoesNotSpin(
+            String operation,
+            Runnable wait,
+            @NotNull Object waitBlocker,
+            @Nullable EventualCode waitReady,
+            Runnable release
+    ) throws Exception {
+        assertWaitDoesNotSpin(operation, wait, waitBlocker, waitReady, release, true);
+    }
+
+    public static void assertInterruptedWaitTimesOutWithoutSpin(
+            String operation,
+            long timeoutNanos,
+            BooleanSupplier timedWait,
+            BooleanSupplier releasedWait,
+            Runnable release
+    ) throws Exception {
+        try (ThreadMetricsScope<ThreadMXBean> scope = threadCpuTimeScope()) {
+            assertInterruptedWaitTimesOutWithoutSpin0(
+                    scope.getBean(),
+                    operation,
+                    timeoutNanos,
+                    timedWait,
+                    releasedWait,
+                    release
+            );
+        }
+    }
+
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
         try (LeakCheck ignore = new LeakCheck()) {
             try {
@@ -887,6 +949,15 @@ public final class TestUtils {
                 throw e;
             }
         }
+    }
+
+    public static void assertNonInterruptedWaitDoesNotSpin(
+            String operation,
+            Runnable wait,
+            @NotNull Object waitBlocker,
+            Runnable release
+    ) throws Exception {
+        assertWaitDoesNotSpin(operation, wait, waitBlocker, null, release, false);
     }
 
     /**
@@ -1712,7 +1783,7 @@ public final class TestUtils {
 
     @NotNull
     public static Rnd generateRandom(Log log) {
-        return generateRandom(log, System.nanoTime(), System.currentTimeMillis());
+        return generateRandom(log, seedOf("fuzz.s0", System.nanoTime()), seedOf("fuzz.s1", System.currentTimeMillis()));
     }
 
     @NotNull
@@ -2136,6 +2207,37 @@ public final class TestUtils {
         }
     }
 
+    /**
+     * Reads the {@code seqTxn} stamped into the footer of the {@code _pm}
+     * snapshot identified by {@code parquetFileSize} (the MVCC version token
+     * from {@code _txn} field 3), opening and mapping the file for the
+     * duration of the call. Returns {@code -1} when the file is missing or
+     * unreadable, when no footer in the chain matches {@code parquetFileSize},
+     * or when the matched footer carries no {@code seqTxn}.
+     */
+    public static long readSeqTxnForVersion(FilesFacade ff, LPSZ path, long parquetFileSize) {
+        final ParquetMetaFileReader reader = new ParquetMetaFileReader();
+        long addr = 0;
+        long size = 0;
+        try {
+            addr = ParquetMetaFileReader.openAndMapRO(ff, path, reader);
+            if (addr == 0) {
+                return -1;
+            }
+            // Capture the mapping size before clear() zeros it; needed for munmap.
+            size = reader.getFileSize();
+            if (!reader.resolveFooter(parquetFileSize)) {
+                return -1;
+            }
+            return reader.getResolvedSeqTxn();
+        } finally {
+            reader.clear();
+            if (addr != 0) {
+                ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+        }
+    }
+
     public static boolean remove(LPSZ lpsz) {
         if (Files.remove(lpsz)) {
             return true;
@@ -2196,6 +2298,7 @@ public final class TestUtils {
             StringSink sink
     ) {
         ObjObjHashMap<String, Long> sizes = findPartitionSizes(root, tableName, engine, sink);
+        ObjObjHashMap<String, Long> seqTxns = findPartitionSeqTxns(root, tableName, engine);
         String[] lines = expected.split("\n");
         sink.clear();
         sink.put(lines[0]).put('\n');
@@ -2208,9 +2311,28 @@ public final class TestUtils {
             SizePrettyFunctionFactory.toSizePretty(auxSink, size);
             line = line.replaceAll("SIZE", String.valueOf(size));
             line = line.replaceAll("HUMAN", auxSink.toString());
+            // no seqTxn (non-WAL/legacy native, or a detached/attachable row absent from the
+            // live _txn) renders null; only a real stamp (> 0) shows a number.
+            Long st = seqTxns.get(nameColumn);
+            line = line.replaceAll("SEQTXN", st != null && st > 0 ? String.valueOf(st) : "null");
             sink.put(line).put('\n');
         }
         return sink.toString();
+    }
+
+    /**
+     * Rethrows the first worker failure collected by {@link #runConcurrently}, preserving its message and
+     * stack trace.
+     * <p>
+     * Exposed for the shape {@code runConcurrently} cannot express: readers that spin until told to stop while
+     * the calling thread drives a disturbance. Collect into an {@link AtomicReference} with
+     * {@code compareAndSet(null, th)}, join the workers with {@link #joinThreads}, then call this.
+     */
+    public static void rethrowFirst(AtomicReference<Throwable> firstError) {
+        final Throwable error = firstError.get();
+        if (error != null) {
+            throw new AssertionError("a worker thread failed: " + error, error);
+        }
     }
 
     // Useful for debugging
@@ -2224,9 +2346,135 @@ public final class TestUtils {
         return new String(sb);
     }
 
+    /**
+     * Runs {@code worker} on {@code threadCount} threads released together by a barrier, joins them, and
+     * rethrows the first failure any of them hit. Workers use ordinary JUnit assertions.
+     * <p>
+     * The rethrow is the point. An AssertionError thrown on a spawned thread is otherwise swallowed, and
+     * counting failures instead reports them as "expected:&lt;0&gt; but was:&lt;3&gt;" -- no message, no stack
+     * trace, no failing value.
+     */
+    public static void runConcurrently(int threadCount, IntConsumer worker) throws Exception {
+        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+        final AtomicReference<Throwable> firstError = new AtomicReference<>();
+        final Thread[] threads = new Thread[threadCount];
+        for (int t = 0; t < threadCount; t++) {
+            final int index = t;
+            final Thread thread = new Thread(() -> {
+                try {
+                    barrier.await();
+                    worker.accept(index);
+                } catch (Throwable th) {
+                    firstError.compareAndSet(null, th);
+                }
+            }, "concurrent-test-worker-" + t);
+            thread.setDaemon(true);
+            threads[t] = thread;
+            thread.start();
+        }
+        joinThreads(threads);
+        rethrowFirst(firstError);
+    }
+
+    /**
+     * Joins all workers against one bounded deadline. Workers still alive at the deadline are interrupted and
+     * given a short bounded cleanup window before the method fails.
+     */
+    public static void joinThreads(Thread... threads) throws InterruptedException {
+        joinThreads(THREAD_JOIN_TIMEOUT_MILLIS, threads);
+    }
+
+    static void joinThreads(long timeoutMillis, Thread... threads) throws InterruptedException {
+        final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        boolean timedOut = false;
+        try {
+            for (int i = 0, n = threads.length; i < n; i++) {
+                final Thread thread = threads[i];
+                final long remainingNanos = deadline - System.nanoTime();
+                if (thread.isAlive() && remainingNanos > 0) {
+                    joinNanos(thread, remainingNanos);
+                }
+                timedOut |= thread.isAlive();
+            }
+        } finally {
+            for (int i = 0, n = threads.length; i < n; i++) {
+                final Thread thread = threads[i];
+                if (thread.isAlive()) {
+                    thread.interrupt();
+                }
+            }
+
+            final long cleanupDeadline = System.nanoTime()
+                    + TimeUnit.MILLISECONDS.toNanos(THREAD_JOIN_CLEANUP_TIMEOUT_MILLIS);
+            for (int i = 0, n = threads.length; i < n; i++) {
+                final Thread thread = threads[i];
+                final long remainingNanos = cleanupDeadline - System.nanoTime();
+                if (thread.isAlive() && remainingNanos > 0) {
+                    joinNanos(thread, remainingNanos);
+                }
+            }
+        }
+
+        for (int i = 0, n = threads.length; i < n; i++) {
+            final Thread thread = threads[i];
+            Assert.assertFalse("worker thread did not terminate after interruption: " + thread.getName(), thread.isAlive());
+        }
+        Assert.assertFalse("worker threads did not finish within " + timeoutMillis + "ms", timedOut);
+    }
+
+    private static void joinNanos(Thread thread, long timeoutNanos) throws InterruptedException {
+        final long timeoutMillis = TimeUnit.NANOSECONDS.toMillis(timeoutNanos);
+        final int remainderNanos = (int) (timeoutNanos - TimeUnit.MILLISECONDS.toNanos(timeoutMillis));
+        thread.join(timeoutMillis, remainderNanos);
+    }
+
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
         WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine);
         WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
+    }
+
+    /**
+     * Enables the JVM-wide thread-allocation counter, or skips the calling test when
+     * the JVM does not support it. Closing the returned scope restores the setting
+     * that the first overlapping scope observed.
+     */
+    public static ThreadMetricsScope<com.sun.management.ThreadMXBean> threadAllocationScope() {
+        if (!(ManagementFactory.getThreadMXBean() instanceof com.sun.management.ThreadMXBean bean)) {
+            throw new AssumptionViolatedException("thread allocation measurement not supported");
+        }
+        Assume.assumeTrue("thread allocation measurement not supported", bean.isThreadAllocatedMemorySupported());
+        synchronized (threadAllocationLock) {
+            if (threadAllocationScopeCount == 0) {
+                isThreadAllocationInitiallyEnabled = bean.isThreadAllocatedMemoryEnabled();
+                if (!isThreadAllocationInitiallyEnabled) {
+                    bean.setThreadAllocatedMemoryEnabled(true);
+                }
+            }
+            Assume.assumeTrue("thread allocation measurement not enabled", bean.isThreadAllocatedMemoryEnabled());
+            threadAllocationScopeCount++;
+        }
+        return new ThreadMetricsScope<>(bean, () -> releaseThreadAllocationScope(bean));
+    }
+
+    /**
+     * Enables the JVM-wide thread CPU-time counter, or skips the calling test when
+     * the JVM does not support it. Closing the returned scope restores the setting
+     * that the first overlapping scope observed.
+     */
+    public static ThreadMetricsScope<ThreadMXBean> threadCpuTimeScope() {
+        ThreadMXBean bean = ManagementFactory.getThreadMXBean();
+        Assume.assumeTrue("current thread CPU time measurement not supported", bean.isCurrentThreadCpuTimeSupported());
+        synchronized (threadCpuTimeLock) {
+            if (threadCpuTimeScopeCount == 0) {
+                isThreadCpuTimeInitiallyEnabled = bean.isThreadCpuTimeEnabled();
+                if (!isThreadCpuTimeInitiallyEnabled) {
+                    bean.setThreadCpuTimeEnabled(true);
+                }
+            }
+            Assume.assumeTrue("thread CPU time measurement not enabled", bean.isThreadCpuTimeEnabled());
+            threadCpuTimeScopeCount++;
+        }
+        return new ThreadMetricsScope<>(bean, () -> releaseThreadCpuTimeScope(bean));
     }
 
     public static long toMemory(CharSequence sequence) {
@@ -2486,6 +2734,81 @@ public final class TestUtils {
         }
     }
 
+    private static void assertInterruptedWaitTimesOutWithoutSpin0(
+            ThreadMXBean bean,
+            String operation,
+            long timeoutNanos,
+            BooleanSupplier timedWait,
+            BooleanSupplier releasedWait,
+            Runnable release
+    ) throws Exception {
+        // Resolve Os native and FFM bindings before the measured thread starts.
+        Os.sleep(1);
+
+        final AtomicLong cpuNanos = new AtomicLong(-1);
+        final AtomicLong elapsedNanos = new AtomicLong(-1);
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final AtomicBoolean hasCompletedAfterRelease = new AtomicBoolean();
+        final AtomicBoolean hasTimedOut = new AtomicBoolean();
+        final AtomicBoolean isInterruptedAfter = new AtomicBoolean();
+        final AtomicBoolean isInterruptedAfterTimeout = new AtomicBoolean();
+        final CountDownLatch timeoutComplete = new CountDownLatch(1);
+        final Thread waiter = new Thread(() -> {
+            try {
+                Thread.currentThread().interrupt();
+                final long cpuBefore = bean.getCurrentThreadCpuTime();
+                final long startNanos = System.nanoTime();
+                Assert.assertTrue("CPU time measurement is disabled", cpuBefore >= 0);
+                hasTimedOut.set(!timedWait.getAsBoolean());
+                elapsedNanos.set(System.nanoTime() - startNanos);
+                final long cpuAfter = bean.getCurrentThreadCpuTime();
+                Assert.assertTrue("CPU time moved backwards", cpuAfter >= cpuBefore);
+                cpuNanos.set(cpuAfter - cpuBefore);
+                isInterruptedAfterTimeout.set(Thread.currentThread().isInterrupted());
+                timeoutComplete.countDown();
+                hasCompletedAfterRelease.set(releasedWait.getAsBoolean());
+            } catch (Throwable th) {
+                failure.set(th);
+                timeoutComplete.countDown();
+            } finally {
+                isInterruptedAfter.set(Thread.currentThread().isInterrupted());
+            }
+        }, "interrupted-timed-waiter");
+        waiter.setDaemon(true);
+        waiter.start();
+
+        final boolean isTimeoutComplete;
+        try {
+            isTimeoutComplete = timeoutComplete.await(10, TimeUnit.SECONDS);
+        } finally {
+            try {
+                release.run();
+            } finally {
+                LockSupport.unpark(waiter);
+                waiter.join(TimeUnit.SECONDS.toMillis(10));
+            }
+        }
+
+        if (failure.get() != null) {
+            throw new AssertionError(operation + " waiter failed", failure.get());
+        }
+        Assert.assertTrue(operation + " timeout did not complete", isTimeoutComplete);
+        Assert.assertFalse(operation + " waiter did not stop", waiter.isAlive());
+        Assert.assertTrue(operation + " did not time out", hasTimedOut.get());
+        Assert.assertTrue(operation + " did not complete after release", hasCompletedAfterRelease.get());
+        Assert.assertTrue(operation + " did not restore the interrupt flag on timeout", isInterruptedAfterTimeout.get());
+        Assert.assertTrue(operation + " did not preserve the interrupt flag", isInterruptedAfter.get());
+        Assert.assertTrue(
+                operation + " returned after " + elapsedNanos.get() + "ns, before the " + timeoutNanos + "ns timeout",
+                elapsedNanos.get() >= timeoutNanos
+        );
+        Assert.assertTrue(operation + " CPU time was not recorded", cpuNanos.get() >= 0);
+        Assert.assertTrue(
+                operation + " burned " + cpuNanos.get() + "ns of CPU time",
+                cpuNanos.get() < TimeUnit.MILLISECONDS.toNanos(100)
+        );
+    }
+
     private static void assertStringEquals(
             RecordMetadata metaL, RecordMetadata metaR, Record lr, Record rr, boolean genericStringMatch, int col
     ) {
@@ -2529,6 +2852,110 @@ public final class TestUtils {
         }
     }
 
+    private static void assertWaitDoesNotSpin(
+            String operation,
+            Runnable wait,
+            @NotNull Object waitBlocker,
+            @Nullable EventualCode waitReady,
+            Runnable release,
+            boolean isInitiallyInterrupted
+    ) throws Exception {
+        try (ThreadMetricsScope<ThreadMXBean> scope = threadCpuTimeScope()) {
+            assertWaitDoesNotSpin0(
+                    scope.getBean(),
+                    operation,
+                    wait,
+                    waitBlocker,
+                    waitReady,
+                    release,
+                    isInitiallyInterrupted
+            );
+        }
+    }
+
+    private static void assertWaitDoesNotSpin0(
+            ThreadMXBean bean,
+            String operation,
+            Runnable wait,
+            @NotNull Object waitBlocker,
+            @Nullable EventualCode waitReady,
+            Runnable release,
+            boolean isInitiallyInterrupted
+    ) throws Exception {
+        // Resolve Os native and FFM bindings before the measured thread starts.
+        Os.sleep(1);
+
+        final AtomicLong cpuNanos = new AtomicLong(-1);
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final AtomicBoolean isInterruptedAfter = new AtomicBoolean();
+        final AtomicBoolean isWaitComplete = new AtomicBoolean();
+        final CountDownLatch waiterStarted = new CountDownLatch(1);
+        final Thread waiter = new Thread(() -> {
+            if (isInitiallyInterrupted) {
+                Thread.currentThread().interrupt();
+            }
+            final long cpuBefore = bean.getCurrentThreadCpuTime();
+            waiterStarted.countDown();
+            try {
+                Assert.assertTrue("CPU time measurement is disabled", cpuBefore >= 0);
+                wait.run();
+                isWaitComplete.set(true);
+                final long cpuAfter = bean.getCurrentThreadCpuTime();
+                Assert.assertTrue("CPU time moved backwards", cpuAfter >= cpuBefore);
+                cpuNanos.set(cpuAfter - cpuBefore);
+            } catch (Throwable th) {
+                failure.set(th);
+            } finally {
+                isInterruptedAfter.set(Thread.currentThread().isInterrupted());
+            }
+        }, "waiter");
+        waiter.setDaemon(true);
+        waiter.start();
+
+        try {
+            Assert.assertTrue(
+                    operation + " waiter did not start",
+                    waiterStarted.await(10, TimeUnit.SECONDS)
+            );
+            assertEventually(
+                    () -> Assert.assertSame(
+                            operation + " waiter did not enter the target park",
+                            waitBlocker,
+                            LockSupport.getBlocker(waiter)
+                    ),
+                    5
+            );
+            if (waitReady != null) {
+                assertEventually(waitReady, 5);
+            }
+            Thread.sleep(500);
+            Assert.assertFalse(operation + " returned before release", isWaitComplete.get());
+        } finally {
+            try {
+                release.run();
+            } finally {
+                LockSupport.unpark(waiter);
+                waiter.join(TimeUnit.SECONDS.toMillis(10));
+            }
+        }
+
+        Assert.assertFalse(operation + " waiter did not stop", waiter.isAlive());
+        if (failure.get() != null) {
+            throw new AssertionError(operation + " waiter failed", failure.get());
+        }
+        Assert.assertTrue(operation + " did not complete", isWaitComplete.get());
+        Assert.assertEquals(
+                operation + " changed the interrupt flag",
+                isInitiallyInterrupted,
+                isInterruptedAfter.get()
+        );
+        Assert.assertTrue(operation + " CPU time was not recorded", cpuNanos.get() >= 0);
+        Assert.assertTrue(
+                operation + " burned " + cpuNanos.get() + "ns of CPU time",
+                cpuNanos.get() < TimeUnit.MILLISECONDS.toNanos(100)
+        );
+    }
+
     private static Object[][] cartesianProduct(Object[][] values, int offset) {
         Object[] currentLvlValues = values[offset];
         if (currentLvlValues.length == 0) {
@@ -2554,6 +2981,50 @@ public final class TestUtils {
             }
         }
         return res;
+    }
+
+    // Independent oracle for the SHOW PARTITIONS / table_partitions() seqTxn column: reads
+    // each live partition's seqTxn straight from _txn (native) or the _pm footer (parquet),
+    // never via the factory under test. Keyed by the rendered partition name. Absent names
+    // (detached/attachable rows) resolve to -1 in the substitution loop, matching the factory.
+    private static ObjObjHashMap<String, Long> findPartitionSeqTxns(
+            Utf8Sequence root,
+            String tableName,
+            CairoEngine engine
+    ) {
+        ObjObjHashMap<String, Long> seqTxns = new ObjObjHashMap<>();
+        TableToken tableToken = engine.verifyTableName(tableName);
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        StringSink nameSink = new StringSink();
+        try (
+                TableReader reader = engine.getReader(tableToken);
+                Path path = new Path().of(root).concat(tableToken)
+        ) {
+            int rootLen = path.size();
+            TxReader txReader = reader.getTxFile();
+            int partitionBy = reader.getPartitionedBy();
+            int timestampType = reader.getMetadata().getTimestampType();
+            for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
+                long timestamp = txReader.getPartitionTimestampByIndex(i);
+                nameSink.clear();
+                PartitionBy.setSinkForPartition(nameSink, timestampType, partitionBy, timestamp);
+                long seqTxn;
+                if (txReader.isPartitionParquet(i)) {
+                    // _txn field 3 holds the parquet file size; the seqTxn is in the _pm footer.
+                    path.trimTo(rootLen);
+                    TableUtils.setPathForNativePartition(path, timestampType, partitionBy, timestamp, txReader.getPartitionNameTxn(i));
+                    seqTxn = readSeqTxnForVersion(
+                            ff,
+                            path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$(),
+                            txReader.getPartitionParquetFileSize(i)
+                    );
+                } else {
+                    seqTxn = txReader.getNativePartitionSeqTxn(i);
+                }
+                seqTxns.put(nameSink.toString(), seqTxn);
+            }
+        }
+        return seqTxns;
     }
 
     private static ObjObjHashMap<String, Long> findPartitionSizes(
@@ -2659,6 +3130,24 @@ public final class TestUtils {
         return sink.toString();
     }
 
+    private static void releaseThreadAllocationScope(com.sun.management.ThreadMXBean bean) {
+        synchronized (threadAllocationLock) {
+            assert threadAllocationScopeCount > 0;
+            if (--threadAllocationScopeCount == 0 && !isThreadAllocationInitiallyEnabled) {
+                bean.setThreadAllocatedMemoryEnabled(false);
+            }
+        }
+    }
+
+    private static void releaseThreadCpuTimeScope(ThreadMXBean bean) {
+        synchronized (threadCpuTimeLock) {
+            assert threadCpuTimeScopeCount > 0;
+            if (--threadCpuTimeScopeCount == 0 && !isThreadCpuTimeInitiallyEnabled) {
+                bean.setThreadCpuTimeEnabled(false);
+            }
+        }
+    }
+
     private static CharSequence reverseLines(CharSequence expected) {
         String[] lines = expected.toString().split("\n");
         StringSink sink = new StringSink(expected.length());
@@ -2666,6 +3155,25 @@ public final class TestUtils {
             sink.put(lines[n - i - 1]).put('\n');
         }
         return sink;
+    }
+
+    /**
+     * Reads a seed override off a system property, falling back to the clock-derived
+     * default. A failing fuzz run prints its seeds; passing them back through
+     * {@code -Dfuzz.s0=<s0> -Dfuzz.s1=<s1>} replays the same draw, which is what makes a
+     * CI fuzz failure actionable at all. Without an override the seeds stay clock-derived,
+     * so ordinary runs keep exploring new cases.
+     */
+    private static long seedOf(String propertyName, long defaultSeed) {
+        final String value = System.getProperty(propertyName);
+        if (value == null) {
+            return defaultSeed;
+        }
+        try {
+            return Numbers.parseLong(value);
+        } catch (NumericException e) {
+            throw new IllegalArgumentException("invalid seed override [" + propertyName + "=" + value + ']');
+        }
     }
 
     private static String toHexString(Long256 expected) {
@@ -2838,6 +3346,29 @@ public final class TestUtils {
 
         public void skipChecks() {
             skipChecksOnClose = true;
+        }
+    }
+
+    public static final class ThreadMetricsScope<T extends ThreadMXBean> implements AutoCloseable {
+        private final T bean;
+        private final Runnable release;
+        private boolean isClosed;
+
+        private ThreadMetricsScope(T bean, Runnable release) {
+            this.bean = bean;
+            this.release = release;
+        }
+
+        @Override
+        public void close() {
+            if (!isClosed) {
+                isClosed = true;
+                release.run();
+            }
+        }
+
+        public T getBean() {
+            return bean;
         }
     }
 }

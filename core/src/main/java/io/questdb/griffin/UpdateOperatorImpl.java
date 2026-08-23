@@ -178,14 +178,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         final long currentRow = Rows.toLocalRowID(rowId);
 
                         if (rowPartitionIndex != partitionIndex) {
-                            if (tableWriter.isPartitionReadOnly(rowPartitionIndex)) {
-                                throw CairoException.critical(0)
-                                        .put("cannot update read-only partition [table=").put(tableToken.getTableName())
-                                        .put(", partitionTimestamp=").ts(
-                                                tableWriter.getTimestampType(),
-                                                tableWriter.getPartitionTimestamp(rowPartitionIndex))
-                                        .put(']');
-                            }
+                            checkPartitionCanUpdate(tableToken, rowPartitionIndex);
                             if (partitionIndex > -1) {
                                 LOG.info()
                                         .$("updating partition [partitionIndex=").$(partitionIndex)
@@ -196,22 +189,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                                         .$(", minRow=").$(minRow)
                                         .I$();
 
-                                copyColumns(
-                                        partitionIndex,
-                                        affectedColumnCount,
-                                        prevRow,
-                                        minRow
-                                );
-
-                                updateEffectiveColumnTops(
-                                        tableWriter,
-                                        partitionIndex,
-                                        updateColumnIndexes,
-                                        affectedColumnCount,
-                                        minRow
-                                );
-
-                                rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);
+                                finishPartitionUpdate(partitionIndex, affectedColumnCount, prevRow, minRow, tableMetadata);
                             }
 
                             openColumns(srcColumns, rowPartitionIndex, false);
@@ -240,17 +218,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     }
 
                     if (partitionIndex > -1) {
-                        copyColumns(partitionIndex, affectedColumnCount, prevRow, minRow);
-
-                        updateEffectiveColumnTops(
-                                tableWriter,
-                                partitionIndex,
-                                updateColumnIndexes,
-                                affectedColumnCount,
-                                minRow
-                        );
-
-                        rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);
+                        finishPartitionUpdate(partitionIndex, affectedColumnCount, prevRow, minRow, tableMetadata);
                     }
                 } finally {
                     Misc.freeObjList(srcColumns);
@@ -321,6 +289,28 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             return Math.min(firstUpdatedPartitionRowId, columnTop);
         }
         return firstUpdatedPartitionRowId;
+    }
+
+    private void checkPartitionCanUpdate(TableToken tableToken, int rowPartitionIndex) {
+        if (tableWriter.isPartitionReadOnly(rowPartitionIndex)) {
+            // The read-only flag is sequenced, so this fails deterministically on every instance.
+            // Although partition-manipulation errors are generally WAL-tolerable, UPDATE commands
+            // must remain unapplied: skipping one would lose DML already acknowledged at sequencing.
+            throw CairoException.partitionManipulationRecoverable()
+                    .put("cannot update read-only partition [table=").put(tableToken.getTableName())
+                    .put(", partitionTimestamp=").ts(
+                            tableWriter.getTimestampType(),
+                            tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                    .put(']');
+        }
+        if (tableWriter.isPartitionParquet(rowPartitionIndex)) {
+            throw CairoException.nonCritical()
+                    .put("cannot update parquet-format partition [table=").put(tableToken.getTableName())
+                    .put(", partitionTimestamp=").ts(
+                            tableWriter.getTimestampType(),
+                            tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                    .put("]; parquet partitions are read-only (e.g. converted by a TO PARQUET storage policy), restrict the UPDATE to native partitions");
+        }
     }
 
     private static void fillUpdatesGapWithNull(
@@ -685,6 +675,25 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     (rowHi - rowLo) << shl
             );
         }
+    }
+
+    private void finishPartitionUpdate(
+            int partitionIndex,
+            int affectedColumnCount,
+            long prevRow,
+            long minRow,
+            TableRecordMetadata tableMetadata
+    ) {
+        copyColumns(partitionIndex, affectedColumnCount, prevRow, minRow);
+        updateEffectiveColumnTops(
+                tableWriter,
+                partitionIndex,
+                updateColumnIndexes,
+                affectedColumnCount,
+                minRow
+        );
+        rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);
+        tableWriter.markPartitionDataChanged(partitionIndex);
     }
 
     private void openColumns(ObjList<? extends MemoryCM> columns, int partitionIndex, boolean forWrite) {

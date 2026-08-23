@@ -530,12 +530,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * SAME {@code packCacheEntry(gen, start)} values. {@code putCacheEntries} itself is idempotent and
      * budget-guarded, so a redundant call (or one over budget) is a safe no-op.
      *
-     * @param key             column key (>= 0)
-     * @param maxValueClamped inclusive clamp the cursor uses; reserved for symmetry with
-     *                        {@link #selectKthMatch} — the cache predicate is value-independent,
-     *                        so it does not currently affect which gens are cached
+     * @param key column key (>= 0)
      */
-    public void populateCacheForKey(int key, long maxValueClamped) {
+    public void populateCacheForKey(int key) {
         if (key < 0 || !genLookup.anySparseGen()) {
             return;
         }
@@ -1341,7 +1338,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
             // headerScratch.formatVersion is populated regardless of pick
             // outcome (read under seqlock at the start of the picker).
-            if (headerScratch.formatVersion != PostingIndexUtils.V2_FORMAT_VERSION) {
+            if (!PostingIndexUtils.isSupportedFormatVersion(headerScratch.formatVersion)) {
                 throw CairoException.critical(0)
                         .put("Unsupported Posting index version: ").put(headerScratch.formatVersion);
             }
@@ -1350,14 +1347,23 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 // Fill staging gen-dir snapshot from the picked entry's payload.
                 // Torn reads here are harmless — the active snapshot from the
                 // previous successful read is still in place until we commit.
-                genLookup.snapshotMetadata(keyMem, entryScratch.genCount, entryScratch.offset);
-                // Re-validate the chain header seqlock. extendHead mutates the
-                // head entry (GEN_COUNT, VALUE_MEM_SIZE) in place via separate
-                // aligned stores and republishes the header. Without this
-                // check the picker can observe e.g. new GEN_COUNT with old
-                // VALUE_MEM_SIZE, leading to a snapshot whose gen-dir entries
-                // reference offsets past the recorded valueMemSize. Retry on
-                // any concurrent publish.
+                final int snapshotGenCount = genLookup.snapshotMetadata(keyMem, entryScratch.genCount, entryScratch.offset, entryScratch.coveringFormat, entryScratch.coverCount);
+                // Best-effort re-check of the chain-header seqlock: it says the
+                // head has moved on, start over. It does NOT hold a seqlock
+                // across snapshotMetadata. PostingIndexChainHeader.publish
+                // always writes the page the reader did NOT pick (:119-161) and
+                // stillStable re-reads only the picked page (:238-243), so ONE
+                // concurrent publish leaves the picked page's sequence pair
+                // untouched and slips through; it takes two or more publishes to
+                // flip back onto that page and trip this check. The pairing
+                // hazard this guards against in spirit -- new GEN_COUNT observed
+                // with old VALUE_MEM_SIZE, whose gen-dir entries would reference
+                // offsets past the recorded valueMemSize -- is already ruled out
+                // by the entry protocol: extendHead stores GEN_COUNT LAST behind
+                // a storeFence (PostingIndexChainWriter:292-293) and
+                // PostingIndexChainEntry.read() latches it FIRST behind a
+                // loadFence (:138-149). Keep the check anyway: it is two loads
+                // and it restarts the walk cheaply once the chain has churned.
                 if (!PostingIndexChainHeader.stillStable(keyMem, headerScratch.pageOffset, headerScratch.sequence)) {
                     if (clock.getTicks() > deadline) {
                         LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
@@ -1365,6 +1371,85 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     }
                     Os.pause();
                     continue;
+                }
+                // Close the ENTRY-level seqlock. PostingIndexChainEntry.read()
+                // latches GEN_COUNT first behind a loadFence, which rules out
+                // "new GEN_COUNT with old payload". It does NOT rule out the
+                // reverse: an entry rewritten in place with a SMALLER GEN_COUNT
+                // (a seal/recreate reusing the same chain offset) leaves our
+                // latched GEN_COUNT too large, so the gen-dir we just walked
+                // mixes the new incarnation's leading slots with the previous
+                // one's stale tail. extendHead mutates the entry BEFORE the
+                // publish() that bumps the chain header, so the outer seqlock
+                // above cannot see it either. Re-read GEN_COUNT and retry on any
+                // change -- this is the release half of the entry protocol.
+                Unsafe.loadFence();
+                if (keyMem.getInt(entryScratch.offset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT) != entryScratch.genCount) {
+                    if (clock.getTicks() > deadline) {
+                        LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
+                        return;
+                    }
+                    Os.pause();
+                    continue;
+                }
+                // The entry-level GEN_COUNT re-read above is what makes the walk
+                // safe, because gen-dir slots [0, GEN_COUNT) of a published entry
+                // are immutable for as long as GEN_COUNT stays equal. The only
+                // in-place gen-dir writer is PostingIndexWriter.publishToChain,
+                // which writes exactly ONE slot -- overrideGenIndex ==
+                // newGenCount - 1 -- and reaches its extend branch only from
+                // PostingIndexWriter.flushAllPending, which increments genCount
+                // before every publish and lets extendHead raise GEN_COUNT to
+                // newGenCount right after the slot write
+                // (PostingIndexChainWriter:292-295). Every other gen-dir writer --
+                // appendNewEntry, migrateHeadToFormat1, applyHeadTrim -- builds
+                // its entry at regionLimit and publishes it by flipping the head
+                // pointer. regionLimit is virgin past the head except where
+                // PostingIndexWriter.truncate() or recoveryDropAbandoned rewound
+                // it, so an entry offset reused with an EQUAL GEN_COUNT is a
+                // residual this re-read cannot see. Otherwise an unchanged
+                // GEN_COUNT means the gen-dir we walked is a single
+                // self-consistent entry version, so a shortfall reported by
+                // snapshotMetadata is corruption at rest, not a torn read.
+                //
+                // Fail the read rather than serving the prefix. The damaged slot
+                // reads as SIZE=0 / KEY_COUNT=0, so silently truncating to the
+                // prefix returns a partial index scan -- wrong rows, no signal.
+                //
+                // snapshotMetadata classifies the shortfall (see
+                // PostingGenLookup#snapshotMetadata): a TXN_AT_SEAL regression, an
+                // exact all-zero declared slot, or structurally impossible
+                // metadata. The latter two are what catch the damage the tag
+                // sequence alone cannot see -- a slot legitimately tagged 0 by
+                // publishToChain's pendingTxnAtSeal<0 fallback keeps reading as
+                // published, so what a zero TAG means is unchanged.
+                //
+                // Nothing repairs this in place: trimInFlightTailGens only cuts a
+                // TAIL whose TXN_AT_SEAL is ABOVE the current table txn, so a slot
+                // damaged by the historical truncation stops the walk and the
+                // entry survives recovery unchanged. REINDEX is the only route
+                // back -- it deletes the .pk and every sealed .pv/.pc for the
+                // column and rebuilds them from the base column data.
+                if (snapshotGenCount < entryScratch.genCount) {
+                    int corruptionKind = genLookup.getSnapshotCorruptionKind();
+                    CharSequence reason = switch (corruptionKind) {
+                        case PostingGenLookup.SNAPSHOT_CORRUPTION_ALL_ZERO_SLOT -> "declared gen-dir slot is all zero";
+                        case PostingGenLookup.SNAPSHOT_CORRUPTION_INVALID_SLOT ->
+                                "declared gen-dir slot is structurally invalid";
+                        default -> "gen-dir TXN_AT_SEAL not monotonic";
+                    };
+                    CairoException ex = CairoException.critical(0)
+                            .put(INDEX_CORRUPT)
+                            .put(", rebuild it with REINDEX TABLE <table> COLUMN ").put(indexColumnName)
+                            .put(" LOCK EXCLUSIVE")
+                            .put(" [reason=").put(reason).put(", column=").put(indexColumnName)
+                            .put(", entryOffset=").put(entryScratch.offset)
+                            .put(", genCount=").put(entryScratch.genCount)
+                            .put(", publishedGenCount=").put(snapshotGenCount)
+                            .put(", sealTxn=").put(entryScratch.sealTxn)
+                            .put(']');
+                    LOG.critical().$safe(ex.getFlyweightMessage()).$();
+                    throw ex;
                 }
                 genLookup.commitSnapshot();
                 genLookup.invalidateCache();
@@ -1381,9 +1466,15 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 // active snapshot. Slots are zero-padded to coverCount so
                 // callers can read them by includeIdx without bounds checks.
                 sidecarFileEndOffsets.clear();
-                sidecarFileEndOffsets.setPos(coverCount);
+                // Use the entry's OWN authoritative cover count where it exceeds
+                // the reader's live .pci coverCount (which can be transiently 0
+                // mid covering-config): a format-1 entry carries its footer for its
+                // packed coverCount, so covered reads stay robust instead of
+                // returning NULL. Equal in the steady state.
+                final int effCoverCount = Math.max(coverCount, entryScratch.coverCount);
+                sidecarFileEndOffsets.setPos(effCoverCount);
                 int picked = entryScratch.coverFileEndOffsets.size();
-                for (int c = 0; c < coverCount; c++) {
+                for (int c = 0; c < effCoverCount; c++) {
                     sidecarFileEndOffsets.setQuick(c, c < picked ? entryScratch.coverFileEndOffsets.getQuick(c) : 0L);
                 }
                 this.lastPickedPinnedTxn = this.pinnedTableTxn;
@@ -1409,7 +1500,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 sidecarFileEndOffsets.setQuick(c, 0L);
             }
             // Reset gen lookup to an empty staging snapshot and promote it.
-            genLookup.snapshotMetadata(keyMem, 0, 0L);
+            genLookup.snapshotMetadata(keyMem, 0, 0L, PostingIndexUtils.COVERING_FORMAT_LEGACY, 0);
             genLookup.commitSnapshot();
             genLookup.invalidateCache();
             this.lastPickedPinnedTxn = this.pinnedTableTxn;
@@ -1786,13 +1877,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         // the genLookup cache is only committed (putCacheEntries) when the gen walk
         // reaches its end, so we must not stop early. Closing the cursor returns it
         // to the reader's free list, which is safe because warming is single-threaded.
-        RowCursor cursor = getCursor(key, 0, Long.MAX_VALUE, requiredCoverColumns);
-        try {
+        try (RowCursor cursor = getCursor(key, 0, Long.MAX_VALUE, requiredCoverColumns)) {
             while (cursor.hasNext()) {
                 cursor.next();
             }
-        } finally {
-            cursor.close();
         }
     }
 

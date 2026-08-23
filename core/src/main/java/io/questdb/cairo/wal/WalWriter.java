@@ -259,6 +259,25 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         apply(alterOp, true);
     }
 
+    public long appendCustomEvent(byte txnType, WalEventPayloadWriter payload) {
+        if (!WalTxnType.isDownstreamType(txnType)) {
+            throw new IllegalArgumentException(
+                    "custom event types must be in reserved range 64..127, got: " + txnType
+            );
+        }
+        try {
+            // A custom event is an ordering barrier. Publish any rows appended before it as a
+            // DATA transaction first; otherwise the custom event would receive the earlier
+            // seqTxn and a later commit would make those rows overtake their call-site order.
+            commit();
+            lastSegmentTxn = events.appendCustomEvent(txnType, payload);
+            return getSequencerTxn();
+        } catch (Throwable th) {
+            distressed = true;
+            throw th;
+        }
+    }
+
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         alterOp.authorize();
@@ -343,6 +362,59 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 lastPeriodHi,
                 lastReplaceRangeLowTs,
                 lastReplaceRangeHiTs,
+                WAL_DEDUP_MODE_REPLACE_RANGE
+        );
+    }
+
+    /**
+     * Commits the live view's WAL block with the highest base sequencer txn whose
+     * rows the block reflects. {@code ApplyWal2TableJob} uses this value to advance
+     * {@code lvConsumedSeqTxn} only when the block has been applied to the live view's
+     * own table, satisfying the "applied to the LV's own on-disk tier" rule for
+     * base-WAL retention.
+     */
+    public void commitLiveView(long maxBaseSeqTxnInBlock) {
+        commit0(
+                WalTxnType.LIVE_VIEW_DATA,
+                maxBaseSeqTxnInBlock,
+                WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
+                WAL_DEFAULT_LAST_PERIOD_HI,
+                0,
+                0,
+                WAL_DEDUP_MODE_DEFAULT
+        );
+    }
+
+    /**
+     * Commits a live view's WAL block that replaces the live view's previously
+     * applied output rows in the {@code [lowTs, hiTs)} timestamp range with the
+     * rows just emitted into this transaction. Used by the refresh worker's
+     * O3-replay path: after restoring window state (head-hit) or resetting it
+     * (head-miss), the worker re-feeds base rows in ts order and emits replay
+     * output as a single REPLACE_RANGE commit, so {@code TableWriter}'s apply
+     * step rewrites the affected partitions transactionally.
+     *
+     * @param maxBaseSeqTxnInBlock highest base sequencer txn whose rows this
+     *                             block reflects; advances {@code lvConsumedSeqTxn}
+     *                             only after the block is applied (same rule as
+     *                             {@link #commitLiveView(long)}).
+     * @param lowTs                inclusive low boundary of the replaced range
+     * @param hiTs                 exclusive high boundary of the replaced range;
+     *                             must be strictly greater than {@code lowTs} and
+     *                             cover every {@code (ts, ...)} row written in
+     *                             the current transaction.
+     */
+    public void commitLiveViewWithReplaceRange(long maxBaseSeqTxnInBlock, long lowTs, long hiTs) {
+        assert lowTs < hiTs;
+        assert txnMinTimestamp >= lowTs;
+        assert txnMaxTimestamp <= hiTs;
+        commit0(
+                WalTxnType.LIVE_VIEW_DATA,
+                maxBaseSeqTxnInBlock,
+                WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
+                WAL_DEFAULT_LAST_PERIOD_HI,
+                lowTs,
+                hiTs,
                 WAL_DEDUP_MODE_REPLACE_RANGE
         );
     }
@@ -538,10 +610,20 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         if (isDistressed()) {
             return;
         }
-        if (isInColumnarWrite()) {
-            columnarAppender.cancelColumnarWrite();
+        try {
+            if (isInColumnarWrite()) {
+                columnarAppender.cancelColumnarWrite();
+            }
+            rollback0();
+        } catch (Throwable th) {
+            // Latch so the expel path's second close attempt short-circuits on
+            // the distressed check above instead of retrying the failed IO and
+            // replacing the original exception. rollback0() already latches
+            // its own failures; this extends the same guarantee to the
+            // columnar cancel.
+            distressed = true;
+            throw th;
         }
-        rollback0();
     }
 
     private void rollback0() {
@@ -2749,9 +2831,21 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
+        public void putDecimalChar(int columnIndex, char decimalValue) {
+            int columnType = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimalChar(columnIndex, decimal256Sink, decimalValue, columnType, this);
+        }
+
+        @Override
         public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
             int columnType = metadata.getColumnType(columnIndex);
             WriterRowUtils.putDecimalStr(columnIndex, decimal256Sink, decimalValue, columnType, this);
+        }
+
+        @Override
+        public void putDecimalVarchar(int columnIndex, Utf8Sequence decimalValue) {
+            int columnType = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimalVarchar(columnIndex, decimal256Sink, decimalValue, columnType, this);
         }
 
         @Override
@@ -2891,21 +2985,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         @Override
         public void putStrUtf8(int columnIndex, Utf8Sequence value) {
-            if (value == null) {
-                putStr(columnIndex, null);
+            if (value instanceof DirectUtf8Sequence directValue) {
+                putStrUtf8(columnIndex, directValue);
                 return;
             }
-            if (value instanceof DirectUtf8Sequence ds) {
-                putStrUtf8(columnIndex, ds);
-                return;
-            }
-            if (value.isAscii()) {
-                putStr(columnIndex, value.asAsciiCharSequence());
-            } else {
-                tempSink.clear();
-                Utf8s.utf8ToUtf16(value, tempSink);
-                putStr(columnIndex, tempSink);
-            }
+            putStr(columnIndex, value != null ? Utf8s.utf8ToUtf16OrThrow(value, tempSink) : null);
         }
 
         @Override

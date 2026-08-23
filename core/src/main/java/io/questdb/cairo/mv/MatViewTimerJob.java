@@ -61,7 +61,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     private final CairoConfiguration configuration;
     private final ObjList<Timer> expired = new ObjList<>();
     private final Predicate<Timer> filterByDirName;
-    private final MatViewGraph matViewGraph;
+    private final DependentViewGraph dependentViewGraph;
     private final MatViewStateStore matViewStateStore;
     // Pool of reusable retry heap entries, to avoid per-retry allocation during a retry storm.
     private final ObjList<RetryEntry> retryEntryPool = new ObjList<>();
@@ -78,7 +78,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         this.configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
         this.timerTaskQueue = engine.getMatViewTimerQueue();
-        this.matViewGraph = engine.getMatViewGraph();
+        this.dependentViewGraph = engine.getDependentViewGraph();
         this.matViewStateStore = engine.getMatViewStateStore();
         this.filterByDirName = this::filterByDirName;
     }
@@ -98,7 +98,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     }
 
     private void addTimers(TableToken viewToken, long nowUs) {
-        final MatViewDefinition viewDefinition = matViewGraph.getViewDefinition(viewToken);
+        final MatViewDefinition viewDefinition = dependentViewGraph.getViewDefinition(viewToken);
         if (viewDefinition == null) {
             LOG.info().$("materialized view definition not found [view=").$(viewToken).I$();
             return;
@@ -249,7 +249,7 @@ public class MatViewTimerJob extends SynchronizedJob {
                     LOG.info().$("unregistered timer for dropped materialized view [view=").$(viewToken)
                             .$(", type=").$(timer.getType())
                             .I$();
-                } else if (!state.isPendingInvalidation() && !state.isInvalid()) {
+                } else if (!state.hasPendingInvalidationReason() && !state.isInvalid()) {
                     switch (timer.getType()) {
                         case Timer.INCREMENTAL_REFRESH_TYPE:
                             // Check if the view has refreshed since the last timer expiration.
@@ -315,7 +315,7 @@ public class MatViewTimerJob extends SynchronizedJob {
             final TableToken viewToken = entry.viewToken;
             releaseRetryEntry(entry);
             final MatViewState state = matViewStateStore.getViewState(viewToken);
-            if (state == null || state.isDropped() || state.isInvalid() || state.isPendingInvalidation()) {
+            if (state == null || state.isDropped() || state.isInvalid() || state.hasPendingInvalidationReason()) {
                 // The view went away or no longer needs re-driving; drop the stale heap entry.
                 continue;
             }

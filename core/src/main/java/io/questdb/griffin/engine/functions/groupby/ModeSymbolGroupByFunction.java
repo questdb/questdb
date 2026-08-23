@@ -207,6 +207,14 @@ public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFu
     }
 
     @Override
+    public boolean supportsKeyValueAccess() {
+        // The key is already materialised in the aggregation map, so getInt() is a plain map read
+        // and valueOf() resolves it through the aggregated argument - neither touches the row's
+        // text. A key consumer such as QWP egress should encode each distinct value once.
+        return true;
+    }
+
+    @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
