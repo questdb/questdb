@@ -178,7 +178,7 @@ public final class LiveViewCheckpointKeyedReplay implements QuietCloseable {
      * model prefers it for this segment. What is left is the domain itself, which has to
      * resolve in three spaces at once: the base reader's, so the posting index can be
      * sought; the checkpoint encoding, so a frozen root can name it; and the view's own,
-     * which {@link #ofStoredRows} does once the merge's cursor - and with it the view's
+     * which {@link #bindStoredRows} does once the merge's cursor - and with it the view's
      * symbol map - is open.
      *
      * @param baseKeyColumnIndex the key column's index in the base scan's metadata

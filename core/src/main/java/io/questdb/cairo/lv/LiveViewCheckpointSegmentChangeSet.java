@@ -59,7 +59,6 @@ import org.jetbrains.annotations.Nullable;
  * produce no output at all, so the caller drops them before they reach {@link #addRow}
  * rather than letting them drag the change floor down to a boundary that denies the
  * repair.
- * <p>
  * <h2>The affected keys</h2>
  * A segment also collects the partition keys its corrections carried, when the caller asks
  * for them. Inside one closed segment only those keys' output has changed - every other key

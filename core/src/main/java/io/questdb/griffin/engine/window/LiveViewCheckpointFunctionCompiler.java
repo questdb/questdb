@@ -672,10 +672,10 @@ public final class LiveViewCheckpointFunctionCompiler {
      * The compiler encodes each function's identity as a signature precisely so two of
      * them can be compared without re-deriving either one's key layout, and this is the
      * one place that comparison decides an object rather than a diagnostic:
-     * {@link LiveViewSegmentRepairEnvelope#keyedScanGate} reports the same answer as
-     * {@code GATE_MIXED_PARTITION_KEYS}. A view with no shared identity keeps every repair
-     * it has today - what it loses is the ability to name one key domain for the whole
-     * view, which a keyed repair would have to rebuild.
+     * {@link io.questdb.cairo.lv.LiveViewSegmentRepairEnvelope#keyedScanGate}
+     * reports the same answer as {@code GATE_MIXED_PARTITION_KEYS}. A view with no shared
+     * identity keeps every repair it has today - what it loses is the ability to name one
+     * key domain for the whole view, which a keyed repair would have to rebuild.
      */
     public static @Nullable LiveViewCheckpointKeyProjector sharedKeyProjector(
             @NotNull ObjList<Function> functions,
