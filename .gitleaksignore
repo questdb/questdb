@@ -21,10 +21,20 @@
 # inserts or deletes lines above it, an unrelated pull request that shifts the
 # same line on master, or a rename of the file. Each gives the same green pull
 # request and red master, and nothing warns you, because the scan reads commit
-# diffs and never re-reads the line. Use an entry here only for a line whose file
-# is settled; for a false positive that recurs, or one in a file that anyone is
-# still changing, add a line-independent [[rules.allowlists]] regex to
-# .gitleaks.toml instead. See CONTRIBUTING.md, "Secret scanning".
+# diffs and never re-reads the line.
+#
+# An entry is also blind to the secret itself. It names a rule, a file and a
+# line, so it silences whatever that rule reports there from then on, including a
+# different, real credential someone later writes on the same line. That one
+# stays green on the pull request and on master too, and the only record is a
+# --log-level=debug line nobody reads on a passing build.
+#
+# So use an entry here only for a line whose file is settled and whose value will
+# not change. For a false positive that recurs, one in a file that anyone is
+# still changing, or one on a line that could later hold a real value, add a
+# [[rules.allowlists]] regex to .gitleaks.toml instead: it matches content rather
+# than position, so it is line-independent and it still fires on a substituted
+# secret. See CONTRIBUTING.md, "Secret scanning".
 #
 # Note that the scan reads each of the branch's commits separately, not the
 # squashed diff. A secret-shaped line added in one commit and removed in a later

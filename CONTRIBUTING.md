@@ -381,7 +381,7 @@ If it is a false positive, the failing job's summary carries the exact lines to
 add to `.gitleaksignore`, under the heading "What to do with these findings", in
 the commit-independent three-part `<file>:<rule-id>:<start-line>` form. Each one
 pins a line number, so commit them to your branch only for a line whose file is
-settled; the caveat below covers what happens when it is not.
+settled; the caveats below cover the cases where that is not enough.
 
 Do not paste the four-part `Fingerprint:` line that gitleaks prints in the job
 log. PRs here are squash-merged, so the commit it names never reaches `master`:
@@ -399,10 +399,20 @@ commit lands stops the entry matching:
 - the file is renamed, even with no edit to the line itself.
 
 Each case leaves the pull request green and fails the push scan of `master`.
-Nothing warns you — the scan reads commit diffs and never re-reads the line. So
-paste an ignore entry only for a line whose file is settled. For a false
-positive that recurs, or one in a file that anyone is still changing, add a
-line-independent allowlist to `.gitleaks.toml` instead:
+Nothing warns you — the scan reads commit diffs and never re-reads the line.
+
+An entry is also blind to the secret itself. It names a rule, a file and a line,
+so it silences whatever that rule reports there from then on — including a
+different, real credential that someone later writes on the same line, which is
+a plausible edit for a line that once held a credential-shaped placeholder. That
+one stays green on the pull request and on `master`, and the only record is a
+`--log-level=debug` line nobody reads on a passing build.
+
+So paste an ignore entry only for a line whose file is settled and whose value
+will not change. For a false positive that recurs, one in a file that anyone is
+still changing, or one on a line that could later hold a real value, add an
+allowlist to `.gitleaks.toml` instead. It matches content rather than position,
+so it is line-independent and it still fires on a substituted secret:
 
 ```toml
 [[rules]]
@@ -412,6 +422,12 @@ id = "generic-api-key"
   regexTarget = "line"
   regexes = ['''Sec-WebSocket-Key''']
 ```
+
+The `id` must name an existing default rule exactly. `[extend]` disables
+gitleaks' rule validation, so a misspelled id is accepted in silence: it defines
+a rule with no regex, allowlists nothing, and leaves the job red on the
+byte-identical finding, with no log line at any level naming it. Check the
+spelling against the rule id in the finding before suspecting the regex.
 
 Add that `[[rules.allowlists]]` block to the existing `[[rules]]` block if
 `.gitleaks.toml` already carries one for the rule id — and it usually will,
