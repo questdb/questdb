@@ -288,6 +288,14 @@ public class WorkerPool implements Closeable {
         haltWithin(timeoutNanos);
     }
 
+    /**
+     * Attempts to halt workers and hosted fibers using one absolute {@link System#nanoTime()}
+     * deadline. A timeout retains the live pool-owned object graph for a later retry.
+     */
+    public boolean haltBy(long deadlineNanos) {
+        return isHaltComplete(true, deadlineNanos, false);
+    }
+
     @TestOnly
     public void haltAndAssertCleanForTest(long timeoutNanos) {
         isHaltComplete(true, System.nanoTime() + Math.max(0, timeoutNanos), true);
