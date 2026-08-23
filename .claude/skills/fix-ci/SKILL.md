@@ -92,15 +92,24 @@ Report these as Category E (non-test failures) in the final output. Common cases
   returns script source first, and a fixed window silently truncates a long
   finding list. Nothing back means the scan produced no findings and the job
   failed for another reason; read the log before naming which one.
-  - `ERROR: Unexpected exit code [1]` alongside `fatal: Invalid revision range`
-    is gitleaks failing on a commit range it cannot resolve, typically after a
-    force-push. A re-run usually clears this one.
+  - `fatal: Invalid revision range` or `fatal: ambiguous argument ... unknown
+    revision`, alongside `ERROR: Unexpected exit code [1]`, is gitleaks failing
+    on a commit range the checkout cannot resolve. The action pins the workspace
+    to the SHA in the event payload, then asks the API for the pull request's
+    commits seconds later, so anything moving the branch head in between hands
+    it a head the checkout does not carry — an ordinary push (the range head is
+    merely ahead) or a force-push (the histories diverge, and gitleaks adds
+    `no leaks found in partial scan` over a scan of nothing). The push that
+    caused it starts a run of its own, so the next run clears it and there is
+    nothing to fix.
   - `FTL unable to load gitleaks config` (exit 1), or a Go `panic:` trace from
     `regexp: Compile` (exit 2), means `.gitleaks.toml` itself is broken — an
-    unbalanced `(` in a `[[rules.allowlists]]` regex is enough. The panic exits
-    2, so the action still reports `Leaks detected, see job summary for details`
-    even though nothing was scanned and no `results.sarif` was written. Name the
-    config error, not that warning, and do not expect a re-run to clear it.
+    unbalanced `(` in a `[[rules.allowlists]]` regex is enough. The panic aborts
+    gitleaks before it writes `results.sarif`, and the action then dies on the
+    missing file while uploading it as an artifact, so this job produces no
+    findings table, no job summary at all, and no `Leaks detected` warning — the
+    log is the only record. Name the config error and do not expect a re-run to
+    clear it.
 
   Report the raw error in both cases; do not call it a leaked credential.
   With findings, report them and do not act on them: like every Category E

@@ -379,8 +379,9 @@ fails on a real secret, rotate it before doing anything else.
 
 If it is a false positive, the failing job's summary carries the exact lines to
 add to `.gitleaksignore`, under the heading "What to do with these findings", in
-the commit-independent three-part `<file>:<rule-id>:<start-line>` form. Add them
-and commit them to your branch.
+the commit-independent three-part `<file>:<rule-id>:<start-line>` form. Each one
+pins a line number, so commit them to your branch only for a line whose file is
+settled; the caveat below covers what happens when it is not.
 
 Do not paste the four-part `Fingerprint:` line that gitleaks prints in the job
 log. PRs here are squash-merged, so the commit it names never reaches `master`:
@@ -411,6 +412,15 @@ id = "generic-api-key"
   regexTarget = "line"
   regexes = ['''Sec-WebSocket-Key''']
 ```
+
+Add that `[[rules.allowlists]]` block to the existing `[[rules]]` block if
+`.gitleaks.toml` already carries one for the rule id — and it usually will,
+because `generic-api-key` raises nearly every finding here. A second
+`[[rules]]` block with the same id replaces the first rather than adding to
+it: gitleaks keys rules by id and keeps the last one, warning about neither
+the collision nor the allowlist it discards. Nothing fails straight away
+either, because the finding that allowlist covered sits outside the scanned
+commit range until someone edits that line again.
 
 The check reads each commit separately rather than the squashed diff, so a
 secret-shaped line added in one commit and removed in a later one still fails
