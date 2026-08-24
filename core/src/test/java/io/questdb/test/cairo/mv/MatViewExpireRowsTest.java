@@ -1416,6 +1416,56 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExpireRowsClauseEndsAtTheGrammarsOwnPairs() throws Exception {
+        // CLEANUP and DEDUP are legal column names, and each ends an EXPIRE ROWS clause only in the pair
+        // the grammar continues with: CLEANUP EVERY, DEDUP UPSERT. One rule decides that for the WHEN
+        // capture and for the KEEP key list, so such a column reads the same way in every mode, and CREATE
+        // agrees with ALTER about where a clause ends.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE base (cleanup SYMBOL, dedup INT, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 1, 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 9, 2.0, '2024-01-02T00:00:00.000000Z')""");
+            execute("""
+                    CREATE MATERIALIZED VIEW mv_when AS (SELECT * FROM base)
+                    EXPIRE ROWS WHEN dedup > 5""");
+            execute("""
+                    CREATE MATERIALIZED VIEW mv_when_every AS (SELECT * FROM base)
+                    EXPIRE ROWS WHEN dedup > 5 CLEANUP EVERY 30m""");
+            execute("""
+                    CREATE MATERIALIZED VIEW mv_keep AS (SELECT * FROM base)
+                    EXPIRE ROWS KEEP LATEST PARTITION BY cleanup""");
+            execute("""
+                    CREATE MATERIALIZED VIEW mv_keep_every AS (SELECT * FROM base)
+                    EXPIRE ROWS KEEP LATEST PARTITION BY cleanup CLEANUP EVERY 30m""");
+            execute("CREATE MATERIALIZED VIEW mv_alter AS (SELECT * FROM base)");
+            execute("ALTER MATERIALIZED VIEW mv_alter SET EXPIRE ROWS WHEN dedup > 5");
+            drainWalAndMatViewQueues();
+
+            assertQuery("""
+                    SELECT view_name, expire_clause, expire_cleanup_every FROM materialized_views()
+                    ORDER BY view_name""")
+                    .noLeakCheck().returns("""
+                            view_name\texpire_clause\texpire_cleanup_every
+                            mv_alter\tdedup > 5\t1h
+                            mv_keep\tKEEP LATEST PARTITION BY cleanup\t1h
+                            mv_keep_every\tKEEP LATEST PARTITION BY cleanup\t30m
+                            mv_when\tdedup > 5\t1h
+                            mv_when_every\tdedup > 5\t30m
+                            """);
+
+            // the policy the boundary words are part of is the policy that runs
+            assertQuery("SELECT dedup FROM mv_when ORDER BY dedup")
+                    .noLeakCheck().returns("dedup\n1\n");
+            assertQuery("SELECT count() c FROM mv_keep")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("c\n1\n");
+        });
+    }
+
+    @Test
     public void testCreateExpireRowsNonParenSelectRejected() throws Exception {
         // #4 (decision: not supported): EXPIRE ROWS is only reachable when the SELECT is parenthesised.
         // In the non-paren AS form the SELECT parser greedily consumes EXPIRE as a table alias for "base"

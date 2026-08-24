@@ -111,6 +111,11 @@ import static io.questdb.std.GenericLexer.unquote;
 public class SqlParser {
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
     public static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
+    // What a token seen at paren depth 0 does to an EXPIRE ROWS clause body: CLEANUP starts the cadence
+    // sub-clause, TAIL hands the token to the CREATE TABLE tail, NONE leaves it as clause content.
+    private static final int EXPIRE_BOUNDARY_CLEANUP = 1;
+    private static final int EXPIRE_BOUNDARY_NONE = 0;
+    private static final int EXPIRE_BOUNDARY_TAIL = 2;
     private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
@@ -511,10 +516,9 @@ public class SqlParser {
      * <p>
      * The predicate is captured as raw SQL text: everything between WHEN and the next boundary,
      * tracking parenthesis depth so a boundary keyword inside parentheses doesn't terminate it.
-     * Boundaries are CLEANUP (consumed here) and ';'/EOF. When {@code inCreateTable} is true, the
-     * clauses that may follow EXPIRE in CREATE TABLE (WITH / IN VOLUME / DEDUP[LICATE]) are also
-     * boundaries and the boundary token is returned to the caller in {@link ExpireRowsClause#nextTok}.
-     * Cleanup interval defaults to 1 hour when omitted.
+     * {@link #expireRowsClauseBoundary} decides what ends the body, for this capture and for the KEEP
+     * column-list one alike; a boundary that belongs to the CREATE TABLE tail is returned to the caller
+     * in {@link ExpireRowsClause#nextTok}. Cleanup interval defaults to 1 hour when omitted.
      */
     public ExpireRowsClause parseExpireRowsClause(GenericLexer lexer, boolean inCreateTable) throws SqlException {
         expectTok(lexer, "rows");
@@ -600,39 +604,12 @@ public class SqlParser {
                     break;
                 }
                 if (depth == 0) {
-                    if (isCleanupKeyword(tok)) {
-                        // 'CLEANUP' is ambiguous: 'CLEANUP EVERY <dur>' ends the predicate, but a bare
-                        // column reference named "cleanup" (e.g. WHEN cleanup > 5) is predicate content.
-                        // Only treat CLEANUP as the boundary when it is followed by EVERY; otherwise keep
-                        // scanning (mirrors the IN -> VOLUME lookahead below).
-                        final int cleanupPos = lexer.lastTokenPosition();
-                        final CharSequence afterCleanup = optTok(lexer);
-                        if (afterCleanup != null && isEveryKeyword(afterCleanup)) {
-                            lexer.unparseLast(); // hand EVERY back so we parse CLEANUP EVERY below
-                            predicateEnd = cleanupPos;
-                            foundCleanup = true;
-                            break;
-                        }
-                        if (afterCleanup != null) {
-                            lexer.unparseLast();
-                        }
-                    } else if (inCreateTable && (isWithKeyword(tok) || isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
-                        predicateEnd = lexer.lastTokenPosition();
+                    final int tokPos = lexer.lastTokenPosition();
+                    final int boundary = expireRowsClauseBoundary(lexer, tok, inCreateTable);
+                    if (boundary != EXPIRE_BOUNDARY_NONE) {
+                        predicateEnd = tokPos;
+                        foundCleanup = boundary == EXPIRE_BOUNDARY_CLEANUP;
                         break;
-                    } else if (inCreateTable && isInKeyword(tok)) {
-                        // 'IN' is ambiguous: 'IN VOLUME' ends the predicate, but '<col> IN (...)' is part of
-                        // it. Only treat IN as the boundary when it is followed by VOLUME; otherwise it is
-                        // predicate content and we keep scanning (the following '(' bumps the paren depth).
-                        final int inPos = lexer.lastTokenPosition();
-                        final CharSequence afterIn = optTok(lexer);
-                        if (afterIn != null && isVolumeKeyword(afterIn)) {
-                            lexer.unparseLast(); // hand VOLUME back so the caller parses IN VOLUME
-                            predicateEnd = inPos;
-                            break;
-                        }
-                        if (afterIn != null) {
-                            lexer.unparseLast();
-                        }
                     }
                 }
                 if (Chars.equals(tok, '(')) {
@@ -683,9 +660,9 @@ public class SqlParser {
     }
 
     /**
-     * Captures the raw column-list text after {@code PARTITION BY} in a KEEP clause, up to the next clause
-     * boundary (CLEANUP / ';' / EOF, plus WITH / IN VOLUME / DEDUP in CREATE TABLE). Shared by KEEP LATEST
-     * and KEEP HIGHEST/LOWEST.
+     * Captures the raw column-list text after {@code PARTITION BY} in a KEEP clause, up to ';' / EOF or the
+     * next clause boundary {@link #expireRowsClauseBoundary} recognises, which is the rule the WHEN
+     * capture follows too. Shared by KEEP LATEST and KEEP HIGHEST/LOWEST.
      */
     private ColumnListCapture captureKeepColumnList(GenericLexer lexer, boolean inCreateTable) throws SqlException {
         final int startPos = lexer.getPosition();
@@ -698,14 +675,11 @@ public class SqlParser {
                 end = tok == null ? lexer.getPosition() : lexer.lastTokenPosition();
                 break;
             }
-            if (isCleanupKeyword(tok)) {
-                end = lexer.lastTokenPosition();
-                foundCleanup = true;
-                break;
-            }
-            // A column list cannot contain WITH/IN/DEDUP, so each unambiguously ends it (e.g. IN VOLUME).
-            if (inCreateTable && (isWithKeyword(tok) || isInKeyword(tok) || isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
-                end = lexer.lastTokenPosition();
+            final int tokPos = lexer.lastTokenPosition();
+            final int boundary = expireRowsClauseBoundary(lexer, tok, inCreateTable);
+            if (boundary != EXPIRE_BOUNDARY_NONE) {
+                end = tokPos;
+                foundCleanup = boundary == EXPIRE_BOUNDARY_CLEANUP;
                 break;
             }
         }
@@ -1736,6 +1710,43 @@ public class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'zone' expected");
     }
 
+    /**
+     * Decides what {@code tok}, read at paren depth 0 while capturing an EXPIRE ROWS clause body, does to
+     * that body: it either ends it (CLEANUP starts the cadence sub-clause; WITH / IN VOLUME / DEDUP UPSERT
+     * belong to the CREATE TABLE tail) or is content of it.
+     * <p>
+     * Every word that can end the body is also a legal column name, so each is a boundary only in the pair
+     * the grammar continues with, confirmed by one token of lookahead. The lookahead token goes
+     * back to the lexer either way: a confirmed boundary is re-read by the clause tail, a rejected one is
+     * body content the capture loop must still see.
+     * <p>
+     * The {@code WHEN <predicate>} capture and the {@code PARTITION BY <columns>} capture both come here,
+     * so a column named {@code cleanup} or {@code dedup} reads the same way in every mode, and CREATE and
+     * ALTER agree on where a clause ends (ALTER has no tail to hand a token to, so only CLEANUP ends its
+     * body).
+     *
+     * @return one of {@link #EXPIRE_BOUNDARY_NONE}, {@link #EXPIRE_BOUNDARY_CLEANUP},
+     * {@link #EXPIRE_BOUNDARY_TAIL}
+     */
+    private int expireRowsClauseBoundary(GenericLexer lexer, CharSequence tok, boolean inCreateTable) throws SqlException {
+        if (isCleanupKeyword(tok)) {
+            return isNextTokKeyword(lexer, "every") ? EXPIRE_BOUNDARY_CLEANUP : EXPIRE_BOUNDARY_NONE;
+        }
+        if (!inCreateTable) {
+            return EXPIRE_BOUNDARY_NONE;
+        }
+        if (isWithKeyword(tok)) {
+            return EXPIRE_BOUNDARY_TAIL;
+        }
+        if (isInKeyword(tok)) {
+            return isNextTokKeyword(lexer, "volume") ? EXPIRE_BOUNDARY_TAIL : EXPIRE_BOUNDARY_NONE;
+        }
+        if (isDedupKeyword(tok) || isDeduplicateKeyword(tok)) {
+            return isNextTokKeyword(lexer, "upsert") ? EXPIRE_BOUNDARY_TAIL : EXPIRE_BOUNDARY_NONE;
+        }
+        return EXPIRE_BOUNDARY_NONE;
+    }
+
     private void generateColumnAlias(GenericLexer lexer, QueryColumn qc, boolean hasFrom) throws SqlException {
         CharSequence token = qc.getAst().token;
         if (qc.getAst().isWildcard() && !hasFrom) {
@@ -1800,6 +1811,20 @@ public class SqlParser {
 
     private boolean isFieldTerm(CharSequence tok) {
         return Chars.equals(tok, ')') || Chars.equals(tok, ',');
+    }
+
+    /**
+     * Reports whether the token after the one just read is {@code keyword}, and hands it back to the lexer
+     * so the caller sees it again. {@code keyword} is lower case.
+     */
+    private boolean isNextTokKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
+        final CharSequence next = optTok(lexer);
+        if (next == null) {
+            return false;
+        }
+        final boolean isKeyword = Chars.equalsLowerCaseAscii(next, keyword);
+        lexer.unparseLast();
+        return isKeyword;
     }
 
     private boolean isIncludePrevailing(GenericLexer lexer, CharSequence tok) throws SqlException {
