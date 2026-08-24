@@ -2208,8 +2208,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                             """
                                     Async Filter workers: 1
                                       filter: sym like a%
-                                        AdaptiveSymbolPattern""")
-                    ;
+                                        AdaptiveSymbolPattern""");
 
             assertQuery("SELECT sym, count() FROM t WHERE sym LIKE 'a%'")
                     .noLeakCheck()
