@@ -7089,7 +7089,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             null,
                                             true,
                                             filter,
-                                            null,
                                             null
                                     );
                                     symbolValueFunc = null;
@@ -7173,7 +7172,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     reader,
                                     true,
                                     filter,
-                                    null,
                                     null
                             );
                         }
@@ -11611,7 +11609,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 null,
                                                 false,
                                                 null,
-                                                null,
                                                 null
                                         );
                                         // coveringFactory now owns dfcFactory and symbolFunc; clear our
@@ -11717,7 +11714,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         reader,
                                         false,
                                         null,
-                                        null,
                                         null
                                 );
                                 // coveringFactory now owns dfcFactory; clear our reference so the
@@ -11813,11 +11809,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // Index fast path for a positive LIKE/ILIKE/regex on an indexed static-symbol column.
                 // Fires only when no discrete key column ('='/'IN') was lifted (so this does not compete
                 // with the keyColumn branch above), the feature is enabled, not opted out, and not an UPDATE.
+                // no_index(t) is the documented escape hatch that forces a full scan, so it suppresses this
+                // route as well; every other index decision in this file consults it too.
                 if (intrinsicModel.keyColumn == null
                         && intrinsicModel.filter != null
                         && intrinsicModel.keySubQuery == null
                         && configuration.isSymbolPatternIndexEnabled()
                         && !SqlHints.hasNoSymbolPatternIndexHint(model)
+                        && !SqlHints.hasNoIndexHint(model)
                         && !model.isUpdate()) {
                     final RecordCursorFactory f;
                     try {
@@ -12734,6 +12733,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
             providerFunction = null;
             residualFilter = null;
+            // Non-owning alias. patternFilter stays the owning local that the catch below frees, and
+            // is nulled at whichever point ownership actually transfers.
+            final AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter preparedFilter = patternFilter;
 
             indexDelegate = new SymbolPatternIndexRecordCursorFactory(
                     configuration,
@@ -12741,6 +12743,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     new AdaptiveSymbolPatternRecordCursorFactory.NonOwningPartitionFrameCursorFactory(dfcFactory),
                     keyColumnIndex,
                     effectiveKeys,
+                    model.getOrderByAdviceMnemonic(),
                     isOrderByDesignatedTimestampOnly(model),
                     IndexReader.DIR_FORWARD,
                     columnIndexes,
@@ -12763,7 +12766,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             reader,
                             false,
                             null,
-                            null,
                             effectiveKeys
                     );
                 }
@@ -12782,6 +12784,41 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     true,
                     false
             );
+
+            // Without a covering delegate the runtime can open the bitmap index route, which has no page
+            // frames, so the adaptive factory cannot advertise page-frame support and the single wrapper
+            // wrapAdaptiveSymbolPatternWithFilter() would build is a serial filter -- on every open,
+            // including the far more common ones that fall back to a full scan. That trades the parallel
+            // page-frame filter away on every broad pattern to keep a route only selective patterns take.
+            // Instead, filter the scan delegate here and let the adaptive factory filter the index route
+            // itself, so the per-open estimate picks between a serial index plan and a parallel scan plan.
+            // Both routes evaluate the very same filter instance, so they cannot diverge on a re-bound
+            // bind variable, and exactly one owner (the async factory) closes it.
+            boolean isSelfFiltering = false;
+            if (coveringDelegate == null && executionContext.isParallelFilterEnabled() && preparedFilter.isThreadSafe()) {
+                final IntHashSet filterUsedColumnIndexes = new IntHashSet();
+                collectColumnIndexes(sqlNodeStack, queryMeta, intrinsicModel.filter, filterUsedColumnIndexes);
+                // Until this constructor returns, patternFilter and the unwrapped scanDelegate are both
+                // still held by this method's catch, so a throw strands neither and double-frees neither.
+                scanDelegate = new AsyncFilteredRecordCursorFactory(
+                        executionContext.getCairoEngine(),
+                        configuration,
+                        executionContext.getMessageBus(),
+                        scanDelegate,
+                        preparedFilter,
+                        filterUsedColumnIndexes,
+                        reduceTaskFactory,
+                        null,
+                        deepClone(expressionNodePool, intrinsicModel.filter),
+                        null,
+                        0,
+                        executionContext.getSharedQueryWorkerCount(),
+                        SqlHints.hasEnablePreTouchHint(model, model.getName())
+                );
+                patternFilter = null; // owned by scanDelegate
+                isSelfFiltering = true;
+            }
+
             final AdaptiveSymbolPatternRecordCursorFactory adaptiveFactory =
                     new AdaptiveSymbolPatternRecordCursorFactory(
                             queryMeta,
@@ -12791,7 +12828,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             columnIndexes.getQuick(keyColumnIndex),
                             isNegated,
                             configuration.getSymbolPatternIndexThreshold(),
-                            patternFilter,
+                            preparedFilter,
+                            isSelfFiltering,
                             indexDelegate,
                             coveringDelegate,
                             scanDelegate
@@ -12800,7 +12838,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             indexDelegate = null;
             coveringDelegate = null;
             scanDelegate = null;
-            final AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter preparedFilter = patternFilter;
+            if (isSelfFiltering) {
+                // Both delegates already filter, so the factory is the top-level operator.
+                return adaptiveFactory;
+            }
             patternFilter = null;
             return wrapAdaptiveSymbolPatternWithFilter(
                     adaptiveFactory,

@@ -806,12 +806,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return frozen;
     }
 
-    /**
-     * True iff the sparse-gen sidecar prefix-sum memo has a built row for {@code gen}. Exposed so a
-     * test can assert {@link #populateCacheForKey} primes the memo single-threaded before the freeze
-     * (the C1 parallel-decode invariant): a covered sparse gen that a frozen worker will decode must
-     * be primed here, otherwise the worker would build the memo lazily and race.
-     */
     @TestOnly
     public static void clearFrozenBaseOrdinalObserverForTesting() {
         TEST_FROZEN_BASE_ORDINAL_OBSERVER.remove();
@@ -822,6 +816,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return sidecarPrefixSum.isFullPrefix(gen);
     }
 
+    /**
+     * True iff the sparse-gen sidecar prefix-sum memo has a built row for {@code gen}. Exposed so a
+     * test can assert {@link #populateCacheForKey} primes the memo single-threaded before the freeze
+     * (the C1 parallel-decode invariant): a covered sparse gen that a frozen worker will decode must
+     * be primed here, otherwise the worker would build the memo lazily and race.
+     */
     @TestOnly
     public boolean isSidecarGenPrimedForTesting(int gen) {
         return sidecarPrefixSum.isPrimed(gen);
@@ -3233,6 +3233,21 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     }
 
     /**
+     * Test hook that fires on the first {@link SparseGenSidecarPrefixSum#baseOrdinal} call a frozen reader
+     * makes and then clears itself, whether or not that call builds a memo row: the callback sits ahead of
+     * the {@code slot == 0} shortcut, ahead of {@code ensureSnapshot} and ahead of both primed-memo hits.
+     * A test installs it with {@link AbstractPostingIndexReader#setFrozenBaseOrdinalObserverForTesting} and
+     * {@link AbstractPostingIndexReader#populateCacheForKey} captures it into the reader the frozen workers
+     * share, so the test can prove the parallel covered-decode path really reached a frozen worker. It is a
+     * positive-path probe, not a violation detector: the {@code assert !isFrozen} guards inside
+     * {@code baseOrdinal} and {@code ensureSnapshot} enforce the priming invariant.
+     */
+    @TestOnly
+    public interface FrozenBaseOrdinalObserver {
+        void onFrozenBaseOrdinal();
+    }
+
+    /**
      * Reader-scoped memo of the per-slot sidecar prefix sum of every SPARSE gen.
      * <p>
      * For a sparse gen, a key's sidecar base ordinal is {@code sum(counts[0..slot))},
@@ -3268,11 +3283,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * drop / grow) happens while frozen — i.e. that priming was complete — turning
      * a would-be silent data race into a deterministic {@code -ea} failure.
      */
-    @TestOnly
-    public interface FrozenBaseOrdinalObserver {
-        void onFrozenBaseOrdinal();
-    }
-
     protected static final class SparseGenSidecarPrefixSum {
         private static final int FULL_PREFIX_PROMOTION_SLOTS = 16;
         // Sparse rows hold (slot, ordinal) pairs. After enough distinct requests, a row is promoted

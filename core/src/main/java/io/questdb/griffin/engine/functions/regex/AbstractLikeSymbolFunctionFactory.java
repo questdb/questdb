@@ -43,13 +43,26 @@ import io.questdb.griffin.engine.functions.eq.EqSymStrFunctionFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static io.questdb.griffin.engine.functions.regex.MatchSymbolFunctionFactory.symbolMatches;
 
 public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrFunctionFactory {
+
+    // Counts the full O(symbolCount) dictionary regex scans extractSymbolKeys() performs. The
+    // per-worker clones of a non-thread-safe pattern predicate inherit the owner's matched key set
+    // (offerStateTo -> stateInherited) precisely so that a cursor open costs ONE scan, not one per
+    // clone, and only a counter can tell an inherited key set from a re-derived one - both produce
+    // the same rows. A plain static boolean guards it: the JIT folds the always-false production
+    // branch away, and the tests that flip it drive their queries on the calling thread.
+    @TestOnly
+    public static boolean isSymbolKeyScanCounterEnabled = false;
+    @TestOnly
+    public static final AtomicLong testSymbolKeyScans = new AtomicLong();
 
     @Override
     public Function newInstance(
@@ -141,6 +154,9 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         assert symbolTable != null;
         symbolKeys.clear();
         if (matcher != null) {
+            if (isSymbolKeyScanCounterEnabled) {
+                testSymbolKeyScans.incrementAndGet();
+            }
             for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
                 if (matcher.reset(symbolTable.valueOf(i)).matches()) {
                     symbolKeys.add(i);
@@ -190,8 +206,16 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
-            stateInherited = false;
-            stateShared = false;
+            if (stateInherited) {
+                // A per-worker clone: the owner ran this method against the CURRENT bind value earlier
+                // in this same init cycle and donated its key set (offerStateTo), so re-deriving it
+                // here would only repeat the owner's O(symbolCount) dictionary scan. The donation is
+                // what re-arms the shortcut - every open of every donating atom offers state to each
+                // clone immediately before initializing it - so a re-bound variable cannot leave a
+                // clone holding the previous pattern's keys.
+                return;
+            }
+            this.stateShared = false;
             // This is a bind variable, so cache regex compilation while rebuilding the key set against
             // the current symbol table on every cursor open. An unchanged bind can still see new symbols.
             final CharSequence patternValue = pattern.getStrA(null);

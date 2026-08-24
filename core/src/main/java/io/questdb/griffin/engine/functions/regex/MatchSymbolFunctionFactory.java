@@ -121,6 +121,14 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            // Retained deliberately, even though no production caller reaches it: init() below sets
+            // initialized eagerly, and every route into this function calls init() first. That is exactly
+            // what makes AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter.isThreadSafe()
+            // able to report true while this function reports false -- its getBool() asserts
+            // hasPreparedKeySet for that reason. Workers of an async filter built with
+            // perWorkerFilters == null share ONE instance of this function, so a lazy rebuild here would
+            // race several threads through the shared Matcher and symbolKeys. The guard is the defence if
+            // that invariant is ever broken; do not remove it as dead code.
             if (!initialized) {
                 extractSymbolKeys(symbolFun, symbolKeys, matcher);
                 initialized = true;
@@ -137,6 +145,8 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
             extractSymbolKeys(symbolFun, symbolKeys, matcher);
+            // Eager: retires getBool()'s lazy-init branch on the query thread before any worker can
+            // reach it. See the comment there.
             initialized = true;
         }
 
@@ -172,6 +182,11 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            // Retained deliberately: see the identical guard in
+            // MatchStaticSymbolTableConstPatternFunction.getBool(). init() sets initialized eagerly, so no
+            // production caller reaches this branch, and that is the precondition
+            // AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter.isThreadSafe() rests on.
+            // Here the shared state is also the lazily created matcher field. Do not remove as dead code.
             if (!initialized) {
                 extractSymbolKeys(symbolFun, symbolKeys, matcher);
                 initialized = true;
@@ -190,6 +205,8 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
             pattern.init(symbolTableSource, executionContext);
             matcher = RegexUtils.createMatcher(pattern, patternPosition);
             extractSymbolKeys(symbolFun, symbolKeys, matcher);
+            // Eager: retires getBool()'s lazy-init branch on the query thread before any worker can
+            // reach it. See the comment there.
             initialized = true;
         }
 

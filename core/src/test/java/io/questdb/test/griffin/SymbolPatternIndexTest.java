@@ -25,20 +25,36 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.BitmapIndexFwdReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.OrderByMnemonic;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
 import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
+import io.questdb.griffin.engine.table.HeapRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -111,9 +127,11 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('AA', 1.0, 0), ('AB', 2.0, 1)");
             execute("INSERT INTO t SELECT 'BA', x::DOUBLE, timestamp_sequence(2, 1) FROM long_sequence(1_000)");
 
+            // A covering delegate exists here, so the policy line must render the COVERING route's
+            // admitted share (2%), not the bitmap index route's 5% -- the two are separate constants.
             assertQuery("SELECT sum(price) FROM t WHERE sym LIKE 'A%'")
                     .noLeakCheck()
-                    .assertsPlanContaining("AdaptiveSymbolPattern");
+                    .assertsPlanContaining("AdaptiveSymbolPattern policy: matching rows <= 2%, bounded probes");
             assertQuery("SELECT sum(price) FROM t WHERE sym LIKE 'A%'")
                     .noLeakCheck()
                     .assertsPlanContaining("CoveringIndex");
@@ -199,6 +217,231 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * M2-a. The probe budget bounds PLANNING work, and it has to bound the two dimensions it spends
+     * that work on -- partition frames and matched dictionary keys -- independently. Multiplying them
+     * into one counter makes a table's partition count alone exhaust the budget: at the default
+     * threshold of 100, a 40-partition table with four matched keys hits 160 probes and the estimate
+     * rejects the route at frame 26, no matter how selective the pattern is. Measured on a 20M-row,
+     * 50-partition table, that flip costs 40x (0.51 ms on the index route against 20.2 ms on the
+     * parallel scan) the moment a LIKE matches a third symbol.
+     */
+    @Test
+    public void testManyPartitionsWithSeveralMatchedKeysUsesIndexRoute() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 4_000 rows at one row per 864s spread over 40 daily partitions; 'r1'..'r4' carry one row
+            // each, so the matched share is 4/4_000 -- far inside the 1/20 the index route admits.
+            execute("INSERT INTO t SELECT CASE WHEN x % 1_000 = 0 THEN 'r' || (x / 1_000) ELSE 'common' END, " +
+                    "x, timestamp_sequence(0, 864_000_000L) FROM long_sequence(4_000)");
+            Assert.assertEquals(40, countOf("SELECT count() FROM table_partitions('t')"));
+            Assert.assertEquals(4, countOf("SELECT count_distinct(sym) FROM t WHERE sym LIKE 'r%'"));
+
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            TestUtils.assertEquals(
+                    select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE 'r%' ORDER BY v"),
+                    select("SELECT sym, v FROM t WHERE sym LIKE 'r%' ORDER BY v")
+            );
+            Assert.assertTrue(
+                    "40 frames x 4 keys must not exhaust a budget of 100 frames and 100 keys per frame",
+                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0
+            );
+            Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get());
+        });
+    }
+
+    /**
+     * M2-b. A timestamp predicate builds an {@code AbstractIntervalPartitionFrameCursor}, whose
+     * {@code size()} answers -1 rather than counting rows it has not walked yet. Reading that -1 as
+     * "unknown row count, reject" put every time-filtered query -- the archetypal time-series query,
+     * and the one whose row set is already narrowed to where an index route wins -- on the fallback
+     * scan permanently. The estimate now counts the selected rows off the frames it walks anyway.
+     */
+    @Test
+    public void testTimestampFilteredQueryUsesIndexRoute() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 400 rows spread over 10 daily partitions; 'rare' carries every hundredth row.
+            execute("INSERT INTO t SELECT CASE WHEN x % 100 = 0 THEN 'rare' ELSE 'common' END, " +
+                    "x, timestamp_sequence(0, 2_160_000_000L) FROM long_sequence(400)");
+            Assert.assertEquals(10, countOf("SELECT count() FROM table_partitions('t')"));
+
+            final String predicate = "sym LIKE 'r%' AND ts >= '1970-01-01T00:00:00.000000Z' "
+                    + "AND ts < '1970-01-06T00:00:00.000000Z'";
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            TestUtils.assertEquals(
+                    select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE " + predicate + " ORDER BY v"),
+                    select("SELECT sym, v FROM t WHERE " + predicate + " ORDER BY v")
+            );
+            Assert.assertTrue(
+                    "an interval cursor reports size() == -1; the estimate must count selected rows instead",
+                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0
+            );
+            Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get());
+        });
+    }
+
+    /**
+     * Pins both probe caps and pins that they stay independent. With the budget at 4:
+     * three frames and four keys is admitted (the old cumulative counter multiplied them to 12 and
+     * rejected); five keys in three frames is rejected by the key cap; one key over ten frames is
+     * rejected by the frame cap. The frame cap is the guard that keeps the index route out of the
+     * partition counts where it loses to the parallel scan, so a change that drops it fails here.
+     * <p>
+     * The frame cap has two implementations and this pins both. A full cursor is rejected in O(1)
+     * off the reader's partition count; an interval cursor cannot be, because it answers
+     * {@code size()} with -1 and its frames are only the partitions IN RANGE. The interval leg is
+     * therefore the only test in this class that reaches the in-loop {@code frames} counter, and it
+     * asserts the exact frame count so that the frame cap, not the row-share test, is provably what
+     * rejected the route.
+     */
+    @Test
+    public void testFrameAndKeyProbeCapsApplyIndependently() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, "4");
+        assertMemoryLeak(() -> {
+            // 400 rows over 3 daily partitions, four matched keys: 3 <= 4 frames, 4 <= 4 keys.
+            execute("CREATE TABLE caps_within (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO caps_within SELECT CASE WHEN x % 100 = 0 THEN 'r' || (x / 100) ELSE 'common' END, " +
+                    "x, timestamp_sequence(0, 648_000_000L) FROM long_sequence(400)");
+            Assert.assertEquals(3, countOf("SELECT count() FROM table_partitions('caps_within')"));
+            assertPatternRoute("caps_within", "sym LIKE 'r%'", true);
+
+            // Same three frames, five matched keys: past the key cap.
+            execute("CREATE TABLE caps_past_keys (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO caps_past_keys SELECT CASE WHEN x % 80 = 0 THEN 'r' || (x / 80) ELSE 'common' END, " +
+                    "x, timestamp_sequence(0, 648_000_000L) FROM long_sequence(400)");
+            Assert.assertEquals(3, countOf("SELECT count() FROM table_partitions('caps_past_keys')"));
+            Assert.assertEquals(5, countOf("SELECT count_distinct(sym) FROM caps_past_keys WHERE sym LIKE 'r%'"));
+            assertPatternRoute("caps_past_keys", "sym LIKE 'r%'", false);
+
+            // One matched key over ten frames: past the frame cap.
+            execute("CREATE TABLE caps_past_frames (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO caps_past_frames SELECT CASE WHEN x % 100 = 0 THEN 'rare' ELSE 'common' END, " +
+                    "x, timestamp_sequence(0, 2_160_000_000L) FROM long_sequence(400)");
+            Assert.assertEquals(10, countOf("SELECT count() FROM table_partitions('caps_past_frames')"));
+            assertPatternRoute("caps_past_frames", "sym LIKE 'r%'", false);
+
+            // One matched key over six IN-RANGE frames of a ten-partition table. An interval cursor
+            // reports size() == -1, so the O(1) pre-check must skip it and only the in-loop frame cap
+            // can reject: the estimate has to pull maxEstimateProbes + 1 == 5 frames and stop there.
+            // The matched rows are 2 of the 240 the interval selects (0.8%), far inside the admitted
+            // 5% share, so the row-share test cannot be what rejects this - the exact frame count is
+            // what proves the frame cap did.
+            execute("CREATE TABLE caps_past_interval_frames (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO caps_past_interval_frames SELECT CASE WHEN x % 100 = 0 THEN 'rare' ELSE 'common' END, " +
+                    "x, timestamp_sequence('2024-01-01T00:00:00.000000Z', 2_160_000_000L) FROM long_sequence(400)");
+            Assert.assertEquals(10, countOf("SELECT count() FROM table_partitions('caps_past_interval_frames')"));
+            final String sixPartitionInterval = "ts >= '2024-01-02T00:00:00.000000Z' AND ts < '2024-01-08T00:00:00.000000Z'";
+            Assert.assertEquals(
+                    6,
+                    countOf("SELECT count() FROM (SELECT DISTINCT timestamp_floor('d', ts) FROM caps_past_interval_frames WHERE "
+                            + sixPartitionInterval + ")")
+            );
+            Assert.assertEquals(240, countOf("SELECT count() FROM caps_past_interval_frames WHERE " + sixPartitionInterval));
+            Assert.assertEquals(2, countOf("SELECT count() FROM caps_past_interval_frames WHERE sym LIKE 'r%' AND " + sixPartitionInterval));
+
+            AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+            AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = true;
+            try {
+                assertPatternRoute("caps_past_interval_frames", "sym LIKE 'r%' AND " + sixPartitionInterval, false);
+                Assert.assertEquals(
+                        "the in-loop frame cap must reject on the frame after the cap, not the row share",
+                        5,
+                        AdaptiveSymbolPatternRecordCursorFactory.testEstimatorFramesWalked.get()
+                );
+            } finally {
+                AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = false;
+                AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+            }
+        });
+    }
+
+    /**
+     * The frame cap has an O(1) form for cursors that walk whole partitions: their frame count is
+     * bounded by the reader's partition count, so a table past the cap can be rejected before the
+     * first {@code next()}. Route counters cannot see the difference -- both forms pick the fallback
+     * scan -- so this counts the frames the estimator pulled. Measured, the walk it skips costs about
+     * 0.02 ms per frame, so roughly 2 ms per open at the default cap.
+     */
+    @Test
+    public void testManyPartitionScanRejectsWithoutWalkingFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 20_000 rows over 200 daily partitions, one 'rare' row per partition: 1% of the table,
+            // well inside the admitted share, so only the frame cap can reject this.
+            execute("INSERT INTO t SELECT CASE WHEN x % 100 = 0 THEN 'rare' ELSE 'common' END, " +
+                    "x, timestamp_sequence(0, 864_000_000L) FROM long_sequence(20_000)");
+            Assert.assertEquals(200, countOf("SELECT count() FROM table_partitions('t')"));
+
+            AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = true;
+            try {
+                TestUtils.assertEquals(
+                        select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE 'r%' ORDER BY v"),
+                        select("SELECT sym, v FROM t WHERE sym LIKE 'r%' ORDER BY v")
+                );
+                Assert.assertTrue(
+                        "200 partitions is past the cap, so the route must be the fallback scan",
+                        SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0
+                );
+                Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get());
+                Assert.assertEquals(
+                        "the partition count already decides this; the estimate must not pull a frame",
+                        0,
+                        AdaptiveSymbolPatternRecordCursorFactory.testEstimatorFramesWalked.get()
+                );
+            } finally {
+                AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = false;
+                AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+                SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            }
+        });
+    }
+
+    /**
+     * The O(1) rejection above must NOT extend to interval cursors. Their frames are the partitions
+     * IN RANGE, which the table's total partition count does not bound usefully: a narrow filter on a
+     * long-lived table walks a handful of frames and is precisely where the index route wins --
+     * measured 0.81 ms against the parallel scan's 2.71 ms on a 100-partition, 20M-row table with a
+     * 30-day filter. Rejecting it off the total partition count would be cheap and wrong.
+     */
+    @Test
+    public void testNarrowIntervalOnManyPartitionTableUsesIndexRoute() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT CASE WHEN x % 100 = 0 THEN 'rare' ELSE 'common' END, " +
+                    "x, timestamp_sequence(0, 864_000_000L) FROM long_sequence(20_000)");
+            Assert.assertEquals(200, countOf("SELECT count() FROM table_partitions('t')"));
+
+            final String predicate = "sym LIKE 'r%' AND ts >= '1970-01-01T00:00:00.000000Z' "
+                    + "AND ts < '1970-01-03T00:00:00.000000Z'";
+            AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = true;
+            try {
+                TestUtils.assertEquals(
+                        select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE " + predicate + " ORDER BY v"),
+                        select("SELECT sym, v FROM t WHERE " + predicate + " ORDER BY v")
+                );
+                Assert.assertTrue(
+                        "two frames in range is well inside the cap, however many partitions the table has",
+                        SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0
+                );
+                Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get());
+                Assert.assertEquals(
+                        "the estimate must walk the two frames the interval selects, not the table's 200",
+                        2,
+                        AdaptiveSymbolPatternRecordCursorFactory.testEstimatorFramesWalked.get()
+                );
+            } finally {
+                AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = false;
+                AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+                SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            }
+        });
+    }
+
     @Test
     public void testBindVariableKeysRefreshAcrossCursorReuse() throws Exception {
         assertMemoryLeak(() -> {
@@ -281,6 +524,81 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The heap row cursor must open one row cursor per LIVE symbol key, not one per per-key factory
+     * ever allocated. {@link SymbolPatternIndexRecordCursorFactory} grows its per-key factory list
+     * monotonically and re-arms only the first {@code cursorFactoriesIdx[0]} entries, so re-running a
+     * prepared statement with a narrower pattern leaves factories behind that still carry a symbol key
+     * from the previous execution. Their rows never reach the result set -- the heap seeds itself only
+     * up to the live count -- so the waste shows up solely as extra index seeks, one per stale key per
+     * page frame, which is why this test counts cursor opens instead of asserting rows.
+     * <p>
+     * The reused factory is compared against a freshly compiled one running the identical query, so the
+     * assertion does not depend on how many page frames the table happens to have.
+     */
+    @Test
+    public void testHeapRowCursorOpensOneCursorPerLiveKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                      ('aa', 1, '2024-01-01T00:00:00.000000Z'),
+                      ('ab', 2, '2024-01-01T00:00:01.000000Z'),
+                      ('ac', 3, '2024-01-01T00:00:02.000000Z'),
+                      ('zz', 4, '2024-01-01T00:00:03.000000Z')""");
+            // Padding so that both patterns stay under the index route's 5% selectivity policy:
+            // 'a%' matches 3 of 100 rows, 'z%' matches 1.
+            execute("INSERT INTO t SELECT 'bb', 100 + x, timestamp_sequence('2024-01-01T00:01:00.000000Z', 1_000_000) FROM long_sequence(96)");
+
+            final String query = "SELECT sym, v FROM t WHERE sym LIKE :pattern";
+            final String oracle = "SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern";
+            bindVariableService.setStr("pattern", "z%");
+            final String expectedNarrow = select(oracle);
+            bindVariableService.setStr("pattern", "a%");
+            final String expectedWide = select(oracle);
+
+            HeapRowCursorFactory.isRowCursorCounterEnabled = true;
+            try {
+                // Baseline: a factory that never saw the wider pattern holds exactly one per-key factory.
+                bindVariableService.setStr("pattern", "z%");
+                final long freshOpens;
+                try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                    HeapRowCursorFactory.testRowCursorsOpened.set(0);
+                    TestUtils.assertEquals(expectedNarrow, printFactory(factory));
+                    freshOpens = HeapRowCursorFactory.testRowCursorsOpened.get();
+                }
+                Assert.assertTrue("the index route opened no row cursor at all", freshOpens > 0);
+
+                // Same query on a factory that first ran 'a%' and so allocated three per-key factories:
+                // the narrower re-execution must not open the two it no longer needs.
+                bindVariableService.setStr("pattern", "a%");
+                try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                    HeapRowCursorFactory.testRowCursorsOpened.set(0);
+                    TestUtils.assertEquals(expectedWide, printFactory(factory));
+                    final long wideOpens = HeapRowCursorFactory.testRowCursorsOpened.get();
+                    // Guards the guard: without this the whole test decays to vacuous. If 'a%' ever
+                    // resolved to one key, or the route fell back to the scan delegate, the reuse
+                    // assertion below would hold trivially while covering nothing. Both drains walk
+                    // the same table and therefore the same page frames, and the counter adds the
+                    // live key count once per frame, so the ratio is exactly the key ratio: three
+                    // keys ('aa', 'ab', 'ac') against one ('zz').
+                    Assert.assertEquals(
+                            "the wide pattern did not open one row cursor per matched key",
+                            3 * freshOpens,
+                            wideOpens
+                    );
+                    bindVariableService.setStr("pattern", "z%");
+                    HeapRowCursorFactory.testRowCursorsOpened.set(0);
+                    TestUtils.assertEquals(expectedNarrow, printFactory(factory));
+                    Assert.assertEquals(freshOpens, HeapRowCursorFactory.testRowCursorsOpened.get());
+                }
+            } finally {
+                HeapRowCursorFactory.isRowCursorCounterEnabled = false;
+                HeapRowCursorFactory.testRowCursorsOpened.set(0);
+            }
+        });
+    }
+
     @Test
     public void testHintConstantWiring() {
         // A plain string-equality check on the constant is tautological: it would still pass if
@@ -322,7 +640,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
             // Three cold matching keys require three posting probes. The configured budget of two
-            // conservatively selects the scan even though the posting-row estimate is selective.
+            // conservatively selects the scan even though the matching-row estimate is selective.
             execute("INSERT INTO t VALUES ('AA', 1, 0), ('AB', 2, 1), ('AC', 3, 2)");
             execute("INSERT INTO t SELECT 'BA', x, timestamp_sequence(3, 1) FROM long_sequence(100)");
             String expected = select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE 'A%' ORDER BY v");
@@ -365,19 +683,20 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    // Pins the exact posting-row selectivity boundary in AdaptiveSymbolPatternRecordCursorFactory:
-    // the cost cutoff is `matchedRows > maxIndexRows` with maxIndexRows = max(1, totalRows / 4).
+    // Pins the exact matching-row selectivity boundary in AdaptiveSymbolPatternRecordCursorFactory:
+    // the cost cutoff is `matchedRows > maxIndexRows` with
+    // maxIndexRows = max(1, totalRows / MAX_INDEX_ROUTE_ROW_SHARE_DIVISOR).
     // At the boundary (matchedRows == maxIndexRows) the estimate is still selective and must use the
     // index; one matched row past it must fall back to scan. A regression flipping `>` to `>=` would
     // route the boundary case to the scan and this test would fail. Single matched key keeps the probe
     // count at one, so the default probe budget (100) is never the deciding factor here.
     @Test
-    public void testSelectivityBoundaryAtQuarterUsesIndexThenScan() throws Exception {
+    public void testSelectivityBoundaryAtAdmittedShareUsesIndexThenScan() throws Exception {
         assertMemoryLeak(() -> {
-            // 16 rows total -> maxIndexRows = 4. Key 'A' has exactly 4 rows == the boundary.
+            // 100 rows total -> maxIndexRows = 5. Key 'A' has exactly 5 rows == the boundary.
             execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t SELECT 'A', x, timestamp_sequence(0, 1) FROM long_sequence(4)");
-            execute("INSERT INTO t SELECT 'B', x, timestamp_sequence(4, 1) FROM long_sequence(12)");
+            execute("INSERT INTO t SELECT 'A', x, timestamp_sequence(0, 1) FROM long_sequence(5)");
+            execute("INSERT INTO t SELECT 'B', x, timestamp_sequence(5, 1) FROM long_sequence(95)");
 
             SymbolPatternIndexRecordCursorFactory.resetTestCounters();
             select("SELECT sym, v FROM t WHERE sym LIKE 'A%' ORDER BY v");
@@ -388,10 +707,10 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             );
             Assert.assertTrue(SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0);
 
-            // 16 rows total -> maxIndexRows = 4. Key 'A' has 5 rows, one past the boundary -> scan.
+            // 100 rows total -> maxIndexRows = 5. Key 'A' has 6 rows, one past the boundary -> scan.
             execute("CREATE TABLE t2 (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t2 SELECT 'A', x, timestamp_sequence(0, 1) FROM long_sequence(5)");
-            execute("INSERT INTO t2 SELECT 'B', x, timestamp_sequence(5, 1) FROM long_sequence(11)");
+            execute("INSERT INTO t2 SELECT 'A', x, timestamp_sequence(0, 1) FROM long_sequence(6)");
+            execute("INSERT INTO t2 SELECT 'B', x, timestamp_sequence(6, 1) FROM long_sequence(94)");
 
             SymbolPatternIndexRecordCursorFactory.resetTestCounters();
             select("SELECT sym, v FROM t2 WHERE sym LIKE 'A%' ORDER BY v");
@@ -401,6 +720,315 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                     SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get()
             );
             Assert.assertTrue(SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0);
+        });
+    }
+
+    /**
+     * {@link BitmapIndexFwdReader#countMatchesInRange} is the estimator's exact-count primitive, so a
+     * count that is merely close is a wrong-plan bug. The key entry's stored value count covers the
+     * key's whole posting list in the partition, which equals the range count only for a range that
+     * covers all of it; a partition frame narrowed by an interval scan or a transaction boundary is
+     * not that. This drives every key against a spread of sub-ranges -- inside one value block, on
+     * block boundaries, straddling both ends, empty, and past the end of the data -- and requires the
+     * count to equal what draining the cursor over the identical range yields.
+     */
+    private void assertBitmapExactCountMatchesCursor(String tableName) {
+        try (TableReader reader = engine.getReader(tableName)) {
+            final long partitionRows = reader.openPartition(0);
+            Assert.assertTrue("the fixture must land in a single partition", partitionRows == reader.size());
+            final int columnIndex = reader.getMetadata().getColumnIndex("sym");
+            final BitmapIndexFwdReader index =
+                    (BitmapIndexFwdReader) reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD);
+            // 499/500/501 straddle t2's columnTop and 1_499/1_500/1_501 the first row of its trailing
+            // NULL batch, so key 0 gets ranges that carry a null prefix and real postings together, one
+            // of the two alone, and neither. Both are in range for t as well, where they are ordinary
+            // interior bounds.
+            final long[] bounds = {
+                    0, 1, 255, 256, 257, 499, 500, 501, 511, 512,
+                    1_499, 1_500, 1_501, partitionRows / 2, partitionRows - 1, partitionRows, Long.MAX_VALUE
+            };
+            long comparisons = 0;
+            for (int key = 0, keyCount = index.getKeyCount(); key < keyCount; key++) {
+                for (long lo : bounds) {
+                    if (lo == Long.MAX_VALUE) {
+                        continue;
+                    }
+                    for (long hi : bounds) {
+                        long viaCursor = 0;
+                        try (RowCursor rowCursor = index.getCursor(key, lo, hi)) {
+                            while (rowCursor.hasNext()) {
+                                rowCursor.next();
+                                viaCursor++;
+                            }
+                        }
+                        Assert.assertEquals(
+                                tableName + " key=" + key + " lo=" + lo + " hi=" + hi,
+                                viaCursor,
+                                index.countMatchesInRange(key, lo, hi)
+                        );
+                        comparisons++;
+                    }
+                }
+            }
+            Assert.assertTrue("the fixture produced no keys to compare", comparisons > 0);
+        }
+    }
+
+    @Test
+    public void testBitmapExactCountMatchesCursorOverSubRanges() throws Exception {
+        assertMemoryLeak(() -> {
+            // Seven keys over 3_000 rows puts several hundred postings on each, so the seeks have to
+            // cross value blocks (default block size 256) instead of resolving inside the first one.
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT 'k' || (x % 7), x, timestamp_sequence(0, 1_000) FROM long_sequence(3_000)");
+            assertBitmapExactCountMatchesCursor("t");
+
+            // Column added after the fact: rows below columnTop carry no index entry at all and the
+            // cursor synthesizes them for the NULL key, so the count has to add the same prefix. The
+            // trailing NULL batch then gives key 0 real postings ABOVE columnTop as well, which is the
+            // only shape where the prefix term and the posting count have to compose -- exactly what
+            // NullCursor does when it exhausts its synthetic ids and falls through to Cursor.hasNext().
+            // Without it a count that returned the prefix alone for key 0 would still pass.
+            execute("CREATE TABLE t2 (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t2 SELECT x, timestamp_sequence(0, 1_000) FROM long_sequence(500)");
+            execute("ALTER TABLE t2 ADD COLUMN sym SYMBOL INDEX");
+            execute("INSERT INTO t2 SELECT 500 + x, timestamp_sequence(500_000, 1_000), 'k' || (x % 3) FROM long_sequence(1_000)");
+            execute("INSERT INTO t2 SELECT 1_500 + x, timestamp_sequence(1_500_000, 1_000), NULL::SYMBOL FROM long_sequence(200)");
+            assertBitmapExactCountMatchesCursor("t2");
+        });
+    }
+
+    /**
+     * The per-open selectivity estimate must cost O(1) metadata reads per key and partition, never a
+     * walk of the index. Row counts cannot tell the two apart -- both produce the same answer -- so
+     * this counts the index entries the estimator itself consumed. On the default BITMAP symbol index
+     * the estimate resolves from the key entry's stored value count plus the two block seeks the
+     * cursor would do anyway, so the count must be exactly zero.
+     * <p>
+     * The pattern deliberately matches half the table: that is the shape where the estimate has to
+     * reject the index route, and where a walk is most expensive, since it runs to the whole
+     * {@code maxIndexRows} budget before the rejection and does so before the caller sees a row.
+     */
+    @Test
+    public void testEstimatorReadsNoBitmapIndexEntries() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT 'c1', x, timestamp_sequence(0, 1_000) FROM long_sequence(10_000)");
+            execute("INSERT INTO t SELECT 'zz', 10_000 + x, timestamp_sequence(10_000_000, 1_000) FROM long_sequence(10_000)");
+
+            final String query = "SELECT sym, v FROM t WHERE sym LIKE 'c%' ORDER BY v";
+            final String expected = select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE 'c%' ORDER BY v");
+
+            AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = true;
+            try {
+                TestUtils.assertEquals(expected, select(query));
+                Assert.assertEquals(
+                        "the estimate must not walk bitmap index entries",
+                        0,
+                        AdaptiveSymbolPatternRecordCursorFactory.testEstimatorIndexEntryReads.get()
+                );
+                // Guards the guard: a shape that never reached the estimate would also read zero
+                // entries. Half the table is far past the admitted share, so the estimate must have
+                // run and rejected the index route.
+                Assert.assertTrue(
+                        "the broad pattern must have been costed and routed to the scan",
+                        SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0
+                );
+                Assert.assertEquals(
+                        "the index route must not fire for a pattern matching half the table",
+                        0,
+                        SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get()
+                );
+            } finally {
+                AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = false;
+                AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+                SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            }
+        });
+    }
+
+    /**
+     * Execution-mode coverage for the estimate. {@code matchedRows} accumulates across every frame
+     * the cursor yields, so a per-partition count that was not partition-local, or that leaked one
+     * partition's postings into another's frame, would mis-add here and pick the wrong route. The
+     * non-partitioned table pins the single-frame shape, and the interval-restricted shape pins the
+     * unknown-size case: an interval frame cursor reports {@code size() == -1}, so the estimate takes
+     * its denominator from the frames it walks anyway rather than rejecting the route outright, and
+     * it must reach that denominator without walking a single index entry.
+     */
+    @Test
+    public void testEstimatorAcrossPartitionsAndIntervalFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Five daily partitions of 1_000 rows: 'a%' is 1% of the table, 'b%' is 19%.
+            execute("""
+                    INSERT INTO t SELECT
+                      CASE WHEN x % 100 = 0 THEN 'a1' WHEN x % 5 = 0 THEN 'b1' ELSE 'z1' END,
+                      x,
+                      timestamp_sequence('2024-01-01T00:00:00.000000Z', 86_400_000)
+                    FROM long_sequence(5_000)""");
+
+            AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+            AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = true;
+            try {
+                SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+                TestUtils.assertEquals(
+                        select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE 'a%' ORDER BY v"),
+                        select("SELECT sym, v FROM t WHERE sym LIKE 'a%' ORDER BY v")
+                );
+                Assert.assertTrue(
+                        "1% spread over five partitions must still use the index",
+                        SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0
+                );
+
+                SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+                TestUtils.assertEquals(
+                        select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE 'b%' ORDER BY v"),
+                        select("SELECT sym, v FROM t WHERE sym LIKE 'b%' ORDER BY v")
+                );
+                Assert.assertTrue(
+                        "19% summed over five partitions must fall back to the scan",
+                        SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0
+                );
+
+                // Interval shape: the frame cursor reports size() == -1, so the estimate counts the
+                // selected rows off the frames instead. The route is not pinned here -- the interval
+                // regime has its own tests -- but the rows must still agree and no index entry may be
+                // walked to decide it.
+                TestUtils.assertEquals(
+                        select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE 'a%' AND ts IN '2024-01-03' ORDER BY v"),
+                        select("SELECT sym, v FROM t WHERE sym LIKE 'a%' AND ts IN '2024-01-03' ORDER BY v")
+                );
+
+                // Non-partitioned table: one frame, one partition index, no accumulation at all.
+                execute("CREATE TABLE tn (sym SYMBOL INDEX, v LONG)");
+                execute("INSERT INTO tn SELECT CASE WHEN x % 100 = 0 THEN 'a1' ELSE 'z1' END, x FROM long_sequence(5_000)");
+                SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+                TestUtils.assertEquals(
+                        select("SELECT /*+ no_symbol_pattern_index(tn) */ sym, v FROM tn WHERE sym LIKE 'a%' ORDER BY v"),
+                        select("SELECT sym, v FROM tn WHERE sym LIKE 'a%' ORDER BY v")
+                );
+                Assert.assertTrue(
+                        "1% of a non-partitioned table must use the index",
+                        SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0
+                );
+
+                Assert.assertEquals(
+                        "no execution mode may make the estimate walk index entries",
+                        0,
+                        AdaptiveSymbolPatternRecordCursorFactory.testEstimatorIndexEntryReads.get()
+                );
+            } finally {
+                AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = false;
+                AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+                SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            }
+        });
+    }
+
+    /**
+     * The admitted share of matched rows must sit below the measured crossover with the parallel
+     * scan, not above it. Benchmarks on a 2M-row table put that crossover at 8-10% of rows for a
+     * bare filter: at 4% the index route is still ~1.8x faster, at 10% it is ~1.3x slower. The
+     * estimator admits up to {@code totalRows / 20}, so a pattern matching 1% of rows takes the
+     * index and one matching 10% must not.
+     */
+    @Test
+    public void testEstimatorRejectsSharesAboveMeasuredCrossover() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 10_000 rows: 'a%' matches 100 (1%), 'b%' matches 1_000 (10%).
+            execute("INSERT INTO t SELECT 'a1', x, timestamp_sequence(0, 1_000) FROM long_sequence(100)");
+            execute("INSERT INTO t SELECT 'b1', 100 + x, timestamp_sequence(100_000, 1_000) FROM long_sequence(1_000)");
+            execute("INSERT INTO t SELECT 'zz', 1_100 + x, timestamp_sequence(1_100_000, 1_000) FROM long_sequence(8_900)");
+
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            TestUtils.assertEquals(
+                    select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE 'a%' ORDER BY v"),
+                    select("SELECT sym, v FROM t WHERE sym LIKE 'a%' ORDER BY v")
+            );
+            Assert.assertTrue(
+                    "1% of rows is well inside the admitted share and must use the index",
+                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0
+            );
+            Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get());
+
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            TestUtils.assertEquals(
+                    select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE 'b%' ORDER BY v"),
+                    select("SELECT sym, v FROM t WHERE sym LIKE 'b%' ORDER BY v")
+            );
+            Assert.assertTrue(
+                    "10% of rows is past the measured crossover and must fall back to the scan",
+                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0
+            );
+            Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get());
+        });
+    }
+
+    /**
+     * The covering route and the index route do not share an admission threshold, and must not: the
+     * covering route reads a narrow projection out of the posting index but produces its page frames on
+     * the opening thread, so only the filter above it scales with the shared query workers while the
+     * fallback scan scales end to end. Benchmarks on a 2M-row table put the covering route's crossover
+     * with that scan at ~4% of rows on 4 workers and ~2.5-3% on 8, against 8-10% for the index route,
+     * so one constant sized for the index route admits the covering route across a band where it is
+     * measurably slower -- 1.25x at 5% and 1.90x at 8% on 4 workers, 2.0x at 5% on 8.
+     * <p>
+     * This pins the split rather than either number: 2% of a covered table takes the covering route,
+     * 4% falls back to the scan, and the very same 4% on a bitmap index still takes the index route.
+     * Collapsing the two constants back into one would fail the second or the third assertion.
+     */
+    @Test
+    public void testCoveringRouteAdmitsSmallerShareThanIndexRoute() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tc (sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 10_000 rows -> the covering route admits 10_000/50 = 200. 'a%' matches exactly that, 'b%' twice it.
+            execute("INSERT INTO tc SELECT 'a1', x::DOUBLE, timestamp_sequence(0, 1_000) FROM long_sequence(200)");
+            execute("INSERT INTO tc SELECT 'b1', (200 + x)::DOUBLE, timestamp_sequence(200_000, 1_000) FROM long_sequence(400)");
+            execute("INSERT INTO tc SELECT 'z1', (600 + x)::DOUBLE, timestamp_sequence(600_000, 1_000) FROM long_sequence(9_400)");
+
+            AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+            TestUtils.assertEquals(
+                    select("SELECT /*+ no_symbol_pattern_index(tc) no_covering(tc) */ sym, price FROM tc WHERE sym LIKE 'a%' ORDER BY price"),
+                    select("SELECT sym, price FROM tc WHERE sym LIKE 'a%' ORDER BY price")
+            );
+            Assert.assertTrue(
+                    "2% of a covered table is inside the covering route's admitted share",
+                    AdaptiveSymbolPatternRecordCursorFactory.testCoveringInvocations.get() > 0
+            );
+            Assert.assertEquals(0, AdaptiveSymbolPatternRecordCursorFactory.testScanInvocations.get());
+
+            AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+            TestUtils.assertEquals(
+                    select("SELECT /*+ no_symbol_pattern_index(tc) no_covering(tc) */ sym, price FROM tc WHERE sym LIKE 'b%' ORDER BY price"),
+                    select("SELECT sym, price FROM tc WHERE sym LIKE 'b%' ORDER BY price")
+            );
+            Assert.assertEquals(
+                    "4% is past the covering route's measured crossover and must fall back to the scan",
+                    0,
+                    AdaptiveSymbolPatternRecordCursorFactory.testCoveringInvocations.get()
+            );
+            Assert.assertTrue(AdaptiveSymbolPatternRecordCursorFactory.testScanInvocations.get() > 0);
+
+            // The same 4% share on a bitmap index, where no covering delegate exists, still takes the
+            // index route: the two thresholds are genuinely separate, not one constant renamed.
+            execute("CREATE TABLE ti (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO ti SELECT 'b1', x, timestamp_sequence(0, 1_000) FROM long_sequence(400)");
+            execute("INSERT INTO ti SELECT 'z1', 400 + x, timestamp_sequence(400_000, 1_000) FROM long_sequence(9_600)");
+
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            TestUtils.assertEquals(
+                    select("SELECT /*+ no_symbol_pattern_index(ti) */ sym, v FROM ti WHERE sym LIKE 'b%' ORDER BY v"),
+                    select("SELECT sym, v FROM ti WHERE sym LIKE 'b%' ORDER BY v")
+            );
+            Assert.assertTrue(
+                    "4% is still inside the index route's admitted share",
+                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0
+            );
+            Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get());
         });
     }
 
@@ -578,6 +1206,87 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     /**
+     * {@code no_index(t)} is the documented escape hatch that forces a full scan, and every other index
+     * route in SqlCodeGenerator consults it (the LATEST BY index route, the sorted-symbol-index route,
+     * the FilterOnValues route, and -- via {@link io.questdb.griffin.SqlHints#hasNoCoveringHint} ORing in
+     * {@code no_index} -- the covering route). The symbol-pattern route must honour it too, otherwise
+     * {@code no_index} leaves the pattern route as the ONLY surviving index path, which is the opposite
+     * of what the hint promises.
+     * <p>
+     * Asserts on the {@code AdaptiveSymbolPattern} plan node, not on {@code SymbolPatternIndex}:
+     * {@code AdaptiveSymbolPatternRecordCursorFactory.toPlan()} prints all three delegates
+     * unconditionally, so only the adaptive node itself proves the route was constructed.
+     */
+    @Test
+    public void testNoIndexHintDisablesSymbolPatternRoute() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT rnd_symbol('AA','AB','BA','BB'), x, timestamp_sequence(0, 60_000_000) FROM long_sequence(1_000)");
+            execute("INSERT INTO t SELECT null, x, timestamp_sequence(1_000*60_000_000, 60_000_000) FROM long_sequence(100)");
+
+            // control: without a hint both the positive and the negated pattern take the adaptive route
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'A%'").noLeakCheck().assertsPlanContaining("AdaptiveSymbolPattern");
+            assertQuery("SELECT sym, v FROM t WHERE sym NOT LIKE 'A%'").noLeakCheck().assertsPlanContaining("AdaptiveSymbolPattern");
+            assertQuery("SELECT sym, v FROM t WHERE sym !~ '^A'").noLeakCheck().assertsPlanContaining("AdaptiveSymbolPattern");
+
+            // positive pattern: no_index(t) must force the scan, with identical rows
+            String positive = select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v, ts FROM t WHERE sym LIKE 'A%' ORDER BY ts, v");
+            assertQuery("SELECT /*+ no_index(t) */ sym, v, ts FROM t WHERE sym LIKE 'A%' ORDER BY ts, v")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanNotContaining("AdaptiveSymbolPattern")
+                    .returns(positive);
+
+            // negated pattern: a different construction path (no covering delegate) that must also honour it
+            String negated = select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v, ts FROM t WHERE sym NOT LIKE 'A%' ORDER BY ts, v");
+            assertQuery("SELECT /*+ no_index(t) */ sym, v, ts FROM t WHERE sym NOT LIKE 'A%' ORDER BY ts, v")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanNotContaining("AdaptiveSymbolPattern")
+                    .returns(negated);
+
+            // binary !~ negation, which the codegen lifts through a synthesized positive '~' provider node
+            String negatedRegex = select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v, ts FROM t WHERE sym !~ '^A' ORDER BY ts, v");
+            assertQuery("SELECT /*+ no_index(t) */ sym, v, ts FROM t WHERE sym !~ '^A' ORDER BY ts, v")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanNotContaining("AdaptiveSymbolPattern")
+                    .returns(negatedRegex);
+
+            // the two hints stay independent and compose: each one alone, and both together, suppress the route
+            assertQuery("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE 'A%'")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("AdaptiveSymbolPattern");
+            assertQuery("SELECT /*+ no_index(t) no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE 'A%'")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("AdaptiveSymbolPattern");
+        });
+    }
+
+    /**
+     * {@code no_index(t)} must also suppress the pattern route when the posting index makes the
+     * projection fully covered -- that shape reaches the covering delegate, which
+     * {@link io.questdb.griffin.SqlHints#hasNoCoveringHint} already suppresses, so without the fix
+     * {@code no_index} would leave the adaptive owner holding only its bitmap and scan delegates.
+     */
+    @Test
+    public void testNoIndexHintDisablesSymbolPatternRouteOnCoveredProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT rnd_symbol('AA','AB','BA'), x::DOUBLE, timestamp_sequence(0, 60_000_000) FROM long_sequence(500)");
+
+            assertQuery("SELECT sym, price FROM t WHERE sym LIKE 'A%'").noLeakCheck().assertsPlanContaining("AdaptiveSymbolPattern");
+
+            String expected = select("SELECT /*+ no_symbol_pattern_index(t) no_covering(t) */ sym, price, ts FROM t WHERE sym LIKE 'A%' ORDER BY ts, price");
+            assertQuery("SELECT /*+ no_index(t) */ sym, price, ts FROM t WHERE sym LIKE 'A%' ORDER BY ts, price")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanNotContaining("AdaptiveSymbolPattern", "CoveringIndex")
+                    .returns(expected);
+        });
+    }
+
+    /**
      * SP2 end-to-end row parity for the NEGATED complement fast path: {@code NOT LIKE 'A%'} via the index
      * (unhinted) must return byte-identical rows to the scan+filter ground truth (hinted), including the
      * NULL-symbol rows that {@code NOT LIKE} includes.
@@ -630,17 +1339,124 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     /**
-     * Unordered queries (no ORDER BY, no timestamp requirement) should use the cheaper
-     * SequentialRowCursorFactory ("Cursor-order scan") rather than the heap-based merge.
+     * The cheaper SequentialRowCursorFactory ("Cursor-order scan") drains one symbol key at a time, so
+     * its rows are not in designated-timestamp order. Like FilterOnValuesRecordCursorFactory, the index
+     * route may pick it only when the model declares its row order invariant: an outer ORDER BY that
+     * re-sorts anyway, or an aggregation that ignores row order.
      */
     @Test
-    public void testUnorderedUsesSequentialScan() throws Exception {
+    public void testOrderInvariantModelUsesSequentialScan() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
-            execute("insert into t select rnd_symbol('AA','AB','BA'), x, timestamp_sequence(0, 60000000) from long_sequence(100)");
-            // No ORDER BY and no timestamp requirement => cheaper Sequential (Cursor-order) scan.
-            assertQuery("select sym, v from t where sym like 'A%'").noLeakCheck().assertsPlanContaining("Cursor-order scan");
+            createKeyOrderVersusTimestampOrderFixture();
+            assertQuery("SELECT sym, v, ts FROM t WHERE sym LIKE 'a%' ORDER BY v")
+                    .withPlanContaining("Cursor-order scan")
+                    .returns("sym\tv\tts\n" +
+                            "ab\t1\t2024-01-01T00:00:00.000000Z\n" +
+                            "aa\t2\t2024-01-01T01:00:00.000000Z\n");
+            assertQuery("SELECT sum(v) FROM t WHERE sym LIKE 'a%'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Cursor-order scan")
+                    .returns("sum\n3\n");
         });
+    }
+
+    /**
+     * A query with no ORDER BY still promises rows in designated-timestamp order, so the index route
+     * must merge its per-key cursors ("Table-order scan"). The fixture assigns symbol key 0 to the row
+     * with the LATER timestamp, so a key-at-a-time drain would emit 'aa' before 'ab' -- the LIMIT case
+     * would then return the wrong rows outright, not merely a different order.
+     */
+    @Test
+    public void testUnorderedScanStaysTimestampOrdered() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyOrderVersusTimestampOrderFixture();
+            assertQuery("SELECT sym, v, ts FROM t WHERE sym LIKE 'a%'")
+                    .timestamp("ts")
+                    .withPlanContaining("Table-order scan")
+                    .returns("sym\tv\tts\n" +
+                            "ab\t1\t2024-01-01T00:00:00.000000Z\n" +
+                            "aa\t2\t2024-01-01T01:00:00.000000Z\n");
+            assertQuery("SELECT sym, v, ts FROM t WHERE sym LIKE 'a%' LIMIT 1")
+                    .timestamp("ts")
+                    .withPlanContaining("Table-order scan")
+                    .returns("sym\tv\tts\n" +
+                            "ab\t1\t2024-01-01T00:00:00.000000Z\n");
+        });
+    }
+
+    /**
+     * The reproducer filed against this PR: {@code WHERE sym LIKE ... LIMIT N} must return the same rows
+     * as the same statement without the index route. The two matched keys interleave in time, so a
+     * key-at-a-time drain would take all four 'a12' rows instead of the first four rows in
+     * designated-timestamp order -- a different ROW SET, not merely a different order, and the web
+     * console appends LIMIT to every query. Pinned against two independent ground truths: the
+     * no_symbol_pattern_index scan+filter oracle, and the equivalent IN list, whose established index
+     * route this one is required to match.
+     */
+    @Test
+    public void testPatternLimitWithoutOrderByReturnsScanFilterRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createInterleavedKeyFixture();
+            final String firstFourInTimestampOrder = """
+                    sym	v
+                    a12	12
+                    a0	24
+                    a12	36
+                    a0	48
+                    """;
+            assertQuery("SELECT sym, v FROM o WHERE sym LIKE 'a%' LIMIT 4")
+                    .withPlanContaining("Table-order scan")
+                    .returns(firstFourInTimestampOrder);
+            assertQuery("SELECT /*+ no_symbol_pattern_index(o) */ sym, v FROM o WHERE sym LIKE 'a%' LIMIT 4")
+                    .withPlanNotContaining("SymbolPatternIndex")
+                    .returns(firstFourInTimestampOrder);
+            assertQuery("SELECT sym, v FROM o WHERE sym IN ('a0','a12') LIMIT 4")
+                    .returns(firstFourInTimestampOrder);
+
+            // Without LIMIT the row set already agreed; what the per-key drain changed was the emission
+            // order (a12,a12,a12,a12,a0,a0,a0,a0 instead of a12,a0,a12,a0,...). Pin the order too.
+            final String allInTimestampOrder = """
+                    sym	v
+                    a12	12
+                    a0	24
+                    a12	36
+                    a0	48
+                    a12	60
+                    a0	72
+                    a12	84
+                    a0	96
+                    """;
+            assertQuery("SELECT sym, v FROM o WHERE sym LIKE 'a%'")
+                    .withPlanContaining("Table-order scan")
+                    .returns(allInTimestampOrder);
+            assertQuery("SELECT /*+ no_symbol_pattern_index(o) */ sym, v FROM o WHERE sym LIKE 'a%'")
+                    .withPlanNotContaining("SymbolPatternIndex")
+                    .returns(allInTimestampOrder);
+        });
+    }
+
+    /**
+     * Every 12th row takes a symbol matching 'a%', alternating between 'a12' and 'a0', so the two
+     * matched keys interleave in designated-timestamp order. The 'z%' rows keep the pattern selective
+     * enough for the adaptive factory to choose an index delegate.
+     */
+    private void createInterleavedKeyFixture() throws SqlException {
+        execute("CREATE TABLE o (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+        execute("""
+                INSERT INTO o SELECT CASE WHEN x % 12 = 0 THEN 'a' || (x % 24) ELSE 'z' || (x % 7) END, x,
+                  timestamp_sequence('2024-01-01T00:00:00.000000Z', 60_000_000L) FROM long_sequence(100)""");
+    }
+
+    /**
+     * Symbol keys are assigned in insertion order, so key 0 is 'aa' at 01:00 and key 1 is 'ab' at 00:00:
+     * key order is the reverse of timestamp order. The 'bb' rows keep the pattern selective enough for
+     * the adaptive factory to choose an index delegate.
+     */
+    private void createKeyOrderVersusTimestampOrderFixture() throws SqlException {
+        execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO t VALUES ('aa', 2, '2024-01-01T01:00:00.000000Z'), ('ab', 1, '2024-01-01T00:00:00.000000Z')");
+        execute("INSERT INTO t SELECT 'bb', x, timestamp_sequence('2024-01-01T02:00:00.000000Z', 1_000_000) FROM long_sequence(1_000)");
     }
 
     /**
@@ -1100,6 +1916,524 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     /**
+     * Fixture for the time-series consumers -- ASOF/LT/SPLICE join, SAMPLE BY with FILL, a nested model
+     * under a timestamp-requiring parent -- that compile only over a base factory reporting
+     * {@code SCAN_DIRECTION_FORWARD}. Each of those queries compiled before the symbol-pattern index
+     * route existed, so the route must keep them compiling and returning the scan+filter rows.
+     * <p>
+     * The slave keeps 'bb' rows both strictly between and exactly on master timestamps, which separates
+     * ASOF (last row at or before) from LT (last row strictly before) on the final master row.
+     */
+    private void createTimeSeriesJoinFixture() throws SqlException {
+        execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t VALUES
+                  ('aa', 1, '2024-01-01T00:00:00.000000Z'),
+                  ('bb', 2, '2024-01-01T01:00:00.000000Z'),
+                  ('ab', 3, '2024-01-01T02:00:00.000000Z'),
+                  ('bb', 4, '2024-01-01T03:00:00.000000Z'),
+                  ('aa', 5, '2024-01-02T00:00:00.000000Z'),
+                  ('bb', 6, '2024-01-02T01:00:00.000000Z'),
+                  ('ab', 7, '2024-01-02T02:00:00.000000Z'),
+                  ('bb', 8, '2024-01-02T02:00:00.000000Z')""");
+    }
+
+    @Test
+    public void testAsOfJoinOnPatternFilteredMaster() throws Exception {
+        assertMemoryLeak(() -> {
+            createTimeSeriesJoinFixture();
+            assertQuery("""
+                    SELECT a.ts, a.sym, b.v FROM (t WHERE sym LIKE 'a%') a
+                    ASOF JOIN (SELECT * FROM t WHERE sym = 'bb') b""")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("SymbolPatternIndex")
+                    .returns("ts\tsym\tv\n" +
+                            "2024-01-01T00:00:00.000000Z\taa\tnull\n" +
+                            "2024-01-01T02:00:00.000000Z\tab\t2\n" +
+                            "2024-01-02T00:00:00.000000Z\taa\t4\n" +
+                            "2024-01-02T02:00:00.000000Z\tab\t8\n");
+        });
+    }
+
+    /**
+     * Same shape as {@link #testAsOfJoinOnPatternFilteredMaster()}, but the master declares its
+     * designated timestamp explicitly. {@code generateSelectChoose()} pushes a {@code false}
+     * timestamp-required flag for such a model, so the factory cannot lean on that flag: it has to
+     * scan in timestamp order and say so.
+     */
+    @Test
+    public void testAsOfJoinOnPatternFilteredMasterWithExplicitTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            createTimeSeriesJoinFixture();
+            assertQuery("""
+                    SELECT a.ts, a.sym, b.v FROM (SELECT * FROM t WHERE sym LIKE 'a%') a timestamp(ts)
+                    ASOF JOIN (SELECT * FROM t WHERE sym = 'bb') b""")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("ts\tsym\tv\n" +
+                            "2024-01-01T00:00:00.000000Z\taa\tnull\n" +
+                            "2024-01-01T02:00:00.000000Z\tab\t2\n" +
+                            "2024-01-02T00:00:00.000000Z\taa\t4\n" +
+                            "2024-01-02T02:00:00.000000Z\tab\t8\n");
+        });
+    }
+
+    /**
+     * Same shape again, but the explicit {@code timestamp(ts)} sits on a parenthesised sub-query that
+     * the join then aliases. That extra nesting level puts a {@code generateSelectChoose()} model
+     * between the pattern route and {@code validateBothTimestampOrders()}, and
+     * {@code generateSelectChoose()} pushes {@code timestampRequired = false} for a model carrying its
+     * own timestamp clause. So neither the factory nor its parent can lean on the execution context
+     * here: only an honest {@code SCAN_DIRECTION_FORWARD} keeps this query compiling.
+     */
+    @Test
+    public void testAsOfJoinOnPatternFilteredMasterWithNestedExplicitTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            createTimeSeriesJoinFixture();
+            assertQuery("""
+                    SELECT a.ts, a.sym, b.v FROM ((SELECT * FROM t WHERE sym LIKE 'a%') timestamp(ts)) a
+                    ASOF JOIN (SELECT * FROM t WHERE sym = 'bb') b""")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("AdaptiveSymbolPattern")
+                    .returns("ts\tsym\tv\n" +
+                            "2024-01-01T00:00:00.000000Z\taa\tnull\n" +
+                            "2024-01-01T02:00:00.000000Z\tab\t2\n" +
+                            "2024-01-02T00:00:00.000000Z\taa\t4\n" +
+                            "2024-01-02T02:00:00.000000Z\tab\t8\n");
+        });
+    }
+
+    @Test
+    public void testLtJoinOnPatternFilteredMaster() throws Exception {
+        assertMemoryLeak(() -> {
+            createTimeSeriesJoinFixture();
+            assertQuery("""
+                    SELECT a.ts, a.sym, b.v FROM (t WHERE sym LIKE 'a%') a
+                    LT JOIN (SELECT * FROM t WHERE sym = 'bb') b""")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("ts\tsym\tv\n" +
+                            "2024-01-01T00:00:00.000000Z\taa\tnull\n" +
+                            "2024-01-01T02:00:00.000000Z\tab\t2\n" +
+                            "2024-01-02T00:00:00.000000Z\taa\t4\n" +
+                            "2024-01-02T02:00:00.000000Z\tab\t6\n");
+        });
+    }
+
+    @Test
+    public void testSpliceJoinOnPatternFilteredMaster() throws Exception {
+        assertMemoryLeak(() -> {
+            createTimeSeriesJoinFixture();
+            assertQuery("""
+                    SELECT a.ts, a.sym, b.v FROM (t WHERE sym LIKE 'a%') a
+                    SPLICE JOIN (SELECT * FROM t WHERE sym = 'bb') b""")
+                    .noRandomAccess()
+                    .returns("ts\tsym\tv\n" +
+                            "2024-01-01T00:00:00.000000Z\taa\tnull\n" +
+                            "2024-01-01T00:00:00.000000Z\taa\t2\n" +
+                            "2024-01-01T02:00:00.000000Z\tab\t2\n" +
+                            "2024-01-01T02:00:00.000000Z\tab\t4\n" +
+                            "2024-01-02T00:00:00.000000Z\taa\t4\n" +
+                            "2024-01-02T00:00:00.000000Z\taa\t6\n" +
+                            "2024-01-02T02:00:00.000000Z\tab\t8\n");
+        });
+    }
+
+    /**
+     * SAMPLE BY over a nested pattern-filtered model: {@code generateSelectChoose()} demands ASC
+     * timestamp order from the sub-query whenever the context requires a timestamp, and reports
+     * {@code [25] ASC order over TIMESTAMP column is required but not provided} when the base does not.
+     */
+    @Test
+    public void testSampleByOverPatternFilteredSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            createTimeSeriesJoinFixture();
+            assertQuery("SELECT ts, count() FROM (SELECT * FROM t WHERE sym LIKE 'a%') SAMPLE BY 1d")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("ts\tcount\n" +
+                            "2024-01-01T00:00:00.000000Z\t2\n" +
+                            "2024-01-02T00:00:00.000000Z\t2\n");
+        });
+    }
+
+    /**
+     * SAMPLE BY with FILL takes the non-parallel route, which rejects a base factory that does not
+     * report ASC designated-timestamp order.
+     */
+    @Test
+    public void testSampleByFillOverPatternFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createTimeSeriesJoinFixture();
+            assertQuery("SELECT ts, count() FROM t WHERE sym LIKE 'a%' SAMPLE BY 1d FILL(LINEAR)")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tcount\n" +
+                            "2024-01-01T00:00:00.000000Z\t2\n" +
+                            "2024-01-02T00:00:00.000000Z\t2\n");
+        });
+    }
+
+    /**
+     * SAMPLE BY with FILL over a nested model that declares its own designated timestamp. The FILL
+     * route rejects a base factory that does not report ASC designated-timestamp order, and the
+     * nested {@code timestamp(ts)} model reaches it with {@code timestampRequired = false}, so the
+     * rejection depends only on what the pattern route advertises.
+     */
+    @Test
+    public void testSampleByFillOverPatternFilteredSubQueryWithExplicitTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            createTimeSeriesJoinFixture();
+            assertQuery("SELECT ts, count() FROM (SELECT * FROM t WHERE sym LIKE 'a%') timestamp(ts) SAMPLE BY 1d FILL(LINEAR)")
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("AdaptiveSymbolPattern")
+                    .returns("ts\tcount\n" +
+                            "2024-01-01T00:00:00.000000Z\t2\n" +
+                            "2024-01-02T00:00:00.000000Z\t2\n");
+        });
+    }
+
+    /**
+     * C3: with no covering delegate the bitmap index route is reachable, and it cannot supply page
+     * frames, so the only wrapper the code generator could put above the adaptive factory was a serial
+     * filter -- on EVERY open, including the majority that fall back to a full scan. The plan must now
+     * show the adaptive node itself dispatching between a serial index child and a parallel
+     * {@code Async Filter} child, and must keep the base plan's parallelism for the fallback.
+     * <p>
+     * Asserts the nested plan text rather than bare node names: the adaptive factory prints all of its
+     * delegates unconditionally, so only the parent/child shape proves which wrapper carries the filter.
+     */
+    @Test
+    public void testBitmapPatternRouteFiltersFallbackScanInParallel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT rnd_symbol('aa','ab','ba','bb'), x, timestamp_sequence(0, 60_000_000) FROM long_sequence(1_000)");
+
+            assertQuery("SELECT * FROM t WHERE sym LIKE 'a%'")
+                    .noLeakCheck()
+                    .assertsPlanContaining(
+                            """
+                                    AdaptiveSymbolPattern policy: matching rows <= 5%, bounded probes route: one child per open
+                                      indexRouteFilter: sym like a%
+                                        SymbolPatternIndex""",
+                            """
+                                    Async Filter workers: 1
+                                          filter: sym like a%
+                                            PageFrame""");
+
+            // the negated route never builds a covering delegate on any index type, so it regressed too
+            assertQuery("SELECT * FROM t WHERE sym NOT LIKE 'a%'")
+                    .noLeakCheck()
+                    .assertsPlanContaining(
+                            """
+                                    AdaptiveSymbolPattern policy: matching rows <= 5%, bounded probes route: one child per open
+                                      indexRouteFilter: not(sym like a%)
+                                        SymbolPatternIndex""",
+                            """
+                                    Async Filter workers: 1
+                                          filter: not(sym like a%)
+                                            PageFrame""");
+
+            // both branches must still agree with the scan+filter oracle, row for row
+            String positive = select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v, ts FROM t WHERE sym LIKE 'a%' ORDER BY ts, v");
+            assertQuery("SELECT sym, v, ts FROM t WHERE sym LIKE 'a%' ORDER BY ts, v")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(positive);
+
+            String negated = select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v, ts FROM t WHERE sym NOT LIKE 'a%' ORDER BY ts, v");
+            assertQuery("SELECT sym, v, ts FROM t WHERE sym NOT LIKE 'a%' ORDER BY ts, v")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(negated);
+        });
+    }
+
+    /**
+     * A POSTING index without an {@code INCLUDE (...)} clause, and a POSTING index whose {@code INCLUDE}
+     * does not cover the projection, both reach the same no-covering-delegate shape as a plain BITMAP
+     * index. So does a negated pattern on a fully covered projection, because
+     * {@code tryGenerateSymbolPatternIndex} guards the covering delegate with {@code !isNegated}. All
+     * three must keep the parallel filter on the fallback scan.
+     */
+    @Test
+    public void testPostingPatternRouteFiltersFallbackScanInParallel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX TYPE POSTING, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT rnd_symbol('aa','ab','ba','bb'), x, timestamp_sequence(0, 60_000_000) FROM long_sequence(1_000)");
+            execute("CREATE TABLE c (sym SYMBOL INDEX TYPE POSTING INCLUDE (v), v LONG, extra LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO c SELECT rnd_symbol('aa','ab','ba','bb'), x, x, timestamp_sequence(0, 60_000_000) FROM long_sequence(1_000)");
+
+            // posting, no INCLUDE at all
+            assertQuery("SELECT * FROM t WHERE sym LIKE 'a%'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("AdaptiveSymbolPattern", "indexRouteFilter: sym like a%", "Async Filter workers: 1");
+
+            // posting + INCLUDE, but the projection reaches a column the sidecar does not carry
+            assertQuery("SELECT sym, extra FROM c WHERE sym LIKE 'a%'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("AdaptiveSymbolPattern", "indexRouteFilter: sym like a%", "Async Filter workers: 1");
+
+            // posting + INCLUDE, fully covered projection, but negated -- no covering delegate is built
+            assertQuery("SELECT sym, v FROM c WHERE sym NOT LIKE 'a%'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("AdaptiveSymbolPattern", "indexRouteFilter: not(sym like a%)", "Async Filter workers: 1");
+
+            String negated = select("SELECT /*+ no_symbol_pattern_index(t) no_covering(t) */ sym, v, ts FROM c WHERE sym NOT LIKE 'a%' ORDER BY ts, v");
+            assertQuery("SELECT sym, v, ts FROM c WHERE sym NOT LIKE 'a%' ORDER BY ts, v")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(negated);
+        });
+    }
+
+    /**
+     * The covered positive pattern keeps the OTHER wrapper shape: the async filter stays ABOVE the
+     * adaptive factory, which is what lets a downstream group by steal the filter and run as
+     * {@code Async Group By}. A fix that moved filtering inside the factory for every shape would have
+     * silently given that up, so pin the parent/child order and the group-by node.
+     */
+    @Test
+    public void testCoveredPositivePatternKeepsAsyncFilterAboveAdaptiveFactory() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX TYPE POSTING INCLUDE (v), v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT rnd_symbol('aa','ab','ba','bb'), x, timestamp_sequence(0, 60_000_000) FROM long_sequence(1_000)");
+
+            assertQuery("SELECT * FROM t WHERE sym LIKE 'a%'")
+                    .noLeakCheck()
+                    .assertsPlanContaining(
+                            """
+                                    Async Filter workers: 1
+                                      filter: sym like a%
+                                        AdaptiveSymbolPattern""")
+                    ;
+
+            assertQuery("SELECT sym, count() FROM t WHERE sym LIKE 'a%'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Group By workers: 1", "AdaptiveSymbolPattern", "CoveringIndex");
+        });
+    }
+
+    /**
+     * With the parallel filter switched off there is no async wrapper to hand the scan route, so the
+     * factory falls back to the pre-existing serial shape. Rows must be identical either way.
+     */
+    @Test
+    public void testPatternRouteStaysSerialWhenParallelFilterDisabled() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT rnd_symbol('aa','ab','ba','bb'), x, timestamp_sequence(0, 60_000_000) FROM long_sequence(1_000)");
+
+            String expected = select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v, ts FROM t WHERE sym LIKE 'a%' ORDER BY ts, v");
+            sqlExecutionContext.setParallelFilterEnabled(false);
+            try {
+                assertQuery("SELECT * FROM t WHERE sym LIKE 'a%'")
+                        .noLeakCheck()
+                        .assertsPlanContaining(
+                                """
+                                        Filter filter: sym like a%
+                                            AdaptiveSymbolPattern""");
+                assertQuery("SELECT * FROM t WHERE sym LIKE 'a%'")
+                        .noLeakCheck()
+                        .assertsPlanNotContaining("Async Filter");
+                assertQuery("SELECT sym, v, ts FROM t WHERE sym LIKE 'a%' ORDER BY ts, v")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns(expected);
+            } finally {
+                sqlExecutionContext.setParallelFilterEnabled(true);
+            }
+        });
+    }
+
+    /**
+     * Self-filtering mode adds owned objects to the construction sequence: the async wrapper takes the
+     * scan factory AND the prepared pattern filter. This throws from
+     * {@code isParallelFilterEnabled()} -- the first call after the index delegate, the scan delegate
+     * and the prepared filter exist but before any of them changes owner -- and asserts nothing is
+     * stranded and the partition frame factory is closed exactly once.
+     */
+    @Test
+    public void testSelfFilteringConstructionFreesDelegatesExactlyOnceOnThrow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t SELECT rnd_symbol('aa','ab','ba'), x, timestamp_sequence(0, 60_000_000) FROM long_sequence(100)");
+            engine.releaseAllWriters();
+
+            final int[] partitionFactoryCloseCount = new int[1];
+            FullPartitionFrameCursorFactory.setCloseObserverForTesting(factory -> partitionFactoryCloseCount[0]++);
+            try {
+                final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 4) {
+                    @Override
+                    public boolean isParallelFilterEnabled() {
+                        throw new RuntimeException("test self-filtering construction failure");
+                    }
+                };
+                ctx.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext());
+                try (ctx) {
+                    try (RecordCursorFactory ignored = engine.select("SELECT v FROM t WHERE sym LIKE 'a%' AND v > 0", ctx)) {
+                        Assert.fail("expected isolated self-filtering construction failure");
+                    } catch (RuntimeException e) {
+                        TestUtils.assertContains(e.getMessage(), "test self-filtering construction failure");
+                    }
+                }
+            } finally {
+                FullPartitionFrameCursorFactory.clearCloseObserverForTesting();
+            }
+            Assert.assertEquals(1, partitionFactoryCloseCount[0]);
+        });
+    }
+
+    /**
+     * Same contract as
+     * {@link #testIndexFactoryCloseReleasesResourcesWhenPartitionFactoryCloseThrowsWithHeapCursor()},
+     * for the other row cursor factory the constructor can pick: ORDER_BY_INVARIANT without a
+     * timestamp order builds a {@code SequentialRowCursorFactory} instead of a heap one, so it is a
+     * different owned object on the same cleanup chain.
+     */
+    @Test
+    public void testIndexFactoryCloseReleasesResourcesWhenPartitionFactoryCloseThrowsWithSequentialCursor() throws Exception {
+        assertIndexFactoryCloseReleasesResourcesOnThrow(OrderByMnemonic.ORDER_BY_INVARIANT);
+    }
+
+    /**
+     * {@code AbstractPageFrameRecordCursorFactory._close()} ends in
+     * {@code CairoException.rethrowCleanupFailure(...)}, so a partition-frame cleanup failure
+     * propagates into {@code SymbolPatternIndexRecordCursorFactory._close()} at its very first
+     * statement. {@code AbstractRecordCursorFactory.close()} sets its closed flag BEFORE calling
+     * {@code _close()}, so no retry ever comes and a sequential free chain strands everything the
+     * throw skipped -- here the index cursor, whose {@code PageFrameAddressCache} holds four native
+     * {@code DirectLongList}s allocated in its constructor.
+     * <p>
+     * The test injects that failure by handing the factory a partition frame cursor factory that
+     * releases everything it owns and only then throws from {@code close()}, which is the shape a
+     * real cleanup failure takes: the throw is the last thing that happens, so nothing below this
+     * factory leaks and the only thing {@code assertMemoryLeak()} can still see is what this
+     * factory's own chain abandoned.
+     */
+    @Test
+    public void testIndexFactoryCloseReleasesResourcesWhenPartitionFactoryCloseThrowsWithHeapCursor() throws Exception {
+        assertIndexFactoryCloseReleasesResourcesOnThrow(OrderByMnemonic.ORDER_BY_UNKNOWN);
+    }
+
+    /**
+     * The serial index branch and the parallel scan branch share ONE filter instance, so a re-bound
+     * pattern cannot make them disagree. Prove it on a single compiled factory whose selectivity, and
+     * therefore whose branch, flips between executions: selective -&gt; index branch, broad -&gt; parallel
+     * scan branch, and back. Each execution is compared against the scan+filter oracle, and the branch
+     * counters prove the route actually flipped rather than both executions taking the same one.
+     */
+    @Test
+    public void testBindVariablePatternAgreesAcrossRouteFlip() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+            // 'rare' is 1 row in 1000 (well under the 5% policy), 'bulk' is the rest (well over it)
+            execute("""
+                    INSERT INTO t SELECT
+                      CASE WHEN x % 1_000 = 0 THEN 'rare' ELSE 'bulk' END, x, timestamp_sequence(0, 60_000_000)
+                    FROM long_sequence(4_000)""");
+
+            final String query = "SELECT sym, v FROM t WHERE sym LIKE :pattern ORDER BY v";
+            final String oracle = "SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v";
+            bindVariableService.setStr("pattern", "r%");
+            try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                assertRouteFlip(factory, oracle, true);
+
+                bindVariableService.setStr("pattern", "b%");
+                assertRouteFlip(factory, oracle, false);
+
+                // and back, on the same factory, to rule out a one-way latch
+                bindVariableService.setStr("pattern", "r%");
+                assertRouteFlip(factory, oracle, true);
+
+                // a pattern no symbol matches short-circuits to an empty index cursor
+                bindVariableService.setStr("pattern", "zz%");
+                assertRouteFlip(factory, oracle, true);
+            }
+        });
+    }
+
+    /**
+     * {@code PreparedSymbolPatternFilter.isThreadSafe()} answers true while ignoring
+     * {@code providerFunction.isThreadSafe()}, which is false for every LIKE/ILIKE and regex provider.
+     * That answer is only sound after {@code prepare()} has run: until then
+     * {@code MatchStaticSymbolTableConstPatternFunction.getBool()} and its runtime-const sibling take a
+     * lazy-init branch that rebuilds their key list through a shared {@code Matcher}, and the async
+     * filter this factory builds passes {@code perWorkerFilters == null}, so every worker would drive
+     * that branch on the same instance. Pin the precondition: {@code getBool()} before {@code prepare()}
+     * fails the assertion, and succeeds after it.
+     */
+    @Test
+    public void testPreparedFilterAssertsPrepareRanBeforeGetBool() {
+        boolean isAssertionEnabled = false;
+        //noinspection AssertWithSideEffects,ConstantValue
+        assert isAssertionEnabled = true;
+        Assert.assertTrue("this test needs -ea; core/pom.xml enables it", isAssertionEnabled);
+
+        final AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter filter =
+                new AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter(
+                        new AlwaysMatchingKeySetProvider(), null, false, 0
+                );
+        try {
+            Assert.assertThrows(AssertionError.class, () -> filter.getBool(null));
+            filter.prepare(null, sqlExecutionContext);
+            Assert.assertTrue(filter.getBool(null));
+        } catch (SqlException e) {
+            throw new AssertionError(e);
+        } finally {
+            filter.close();
+        }
+    }
+
+    /**
+     * Runs {@code factory} once and asserts it agrees with {@code oracle}, and that the open took the
+     * index branch ({@code isIndexBranchExpected}) or the parallel scan branch.
+     */
+    private void assertRouteFlip(RecordCursorFactory factory, String oracle, boolean isIndexBranchExpected) throws SqlException {
+        AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+        SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+        TestUtils.assertEquals(select(oracle), printFactory(factory));
+        if (isIndexBranchExpected) {
+            Assert.assertTrue(
+                    "expected the index branch",
+                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0
+            );
+            Assert.assertEquals(0, AdaptiveSymbolPatternRecordCursorFactory.testScanInvocations.get());
+        } else {
+            Assert.assertTrue(
+                    "expected the parallel scan branch",
+                    AdaptiveSymbolPatternRecordCursorFactory.testScanInvocations.get() > 0
+            );
+            Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get());
+        }
+    }
+
+    /**
+     * Runs {@code table} filtered by {@code predicate}, asserts it agrees with the no-index oracle, and
+     * asserts the open took the bitmap-index route or the fallback scan.
+     */
+    private void assertPatternRoute(String table, String predicate, boolean isIndexRouteExpected) throws SqlException {
+        SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+        TestUtils.assertEquals(
+                select("SELECT /*+ no_symbol_pattern_index(" + table + ") */ sym, v FROM " + table
+                        + " WHERE " + predicate + " ORDER BY v"),
+                select("SELECT sym, v FROM " + table + " WHERE " + predicate + " ORDER BY v")
+        );
+        final long indexInvocations = SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get();
+        final long fallbackInvocations = SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get();
+        if (isIndexRouteExpected) {
+            Assert.assertTrue("expected the index route on " + table + ", got fallback=" + fallbackInvocations, indexInvocations > 0);
+            Assert.assertEquals(0, fallbackInvocations);
+        } else {
+            Assert.assertTrue("expected the fallback scan on " + table + ", got index=" + indexInvocations, fallbackInvocations > 0);
+            Assert.assertEquals(0, indexInvocations);
+        }
+    }
+
+    /**
      * Runs {@code sql} and returns its printed text (header + rows) captured into a private sink, so two
      * queries can be compared without clobbering the shared static test sink.
      */
@@ -1124,6 +2458,70 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         return Long.parseLong(token);
     }
 
+    private void assertIndexFactoryCloseReleasesResourcesOnThrow(int orderByMnemonic) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t SELECT rnd_symbol('aa','ab','ba'), x, timestamp_sequence(0, 60_000_000) FROM long_sequence(1_000)");
+            engine.releaseAllWriters();
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            final GenericRecordMetadata metadata;
+            final int symbolColumnIndex;
+            final IntList effectiveKeys = new IntList();
+            try (TableReader reader = engine.getReader(tableToken)) {
+                metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
+                symbolColumnIndex = reader.getMetadata().getColumnIndexQuiet("sym");
+                effectiveKeys.add(reader.getSymbolMapReader(symbolColumnIndex).keyOf("aa"));
+                effectiveKeys.add(reader.getSymbolMapReader(symbolColumnIndex).keyOf("ab"));
+            }
+            final IntList columnIndexes = new IntList();
+            final IntList columnSizeShifts = new IntList();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                columnIndexes.add(i);
+                columnSizeShifts.add(Numbers.msb(ColumnType.sizeOf(metadata.getColumnType(i))));
+            }
+
+            final ThrowingClosePartitionFrameCursorFactory dfcFactory =
+                    new ThrowingClosePartitionFrameCursorFactory(tableToken, metadata);
+            final SymbolPatternIndexRecordCursorFactory factory = new SymbolPatternIndexRecordCursorFactory(
+                    configuration,
+                    metadata,
+                    dfcFactory,
+                    symbolColumnIndex,
+                    effectiveKeys,
+                    orderByMnemonic,
+                    false,
+                    IndexReader.DIR_FORWARD,
+                    columnIndexes,
+                    columnSizeShifts
+            );
+            // Drain a cursor first, so every resource the factory owns is live rather than merely
+            // constructed: the per-key row cursor factories only exist after initRecordCursor(), and
+            // the index cursor's native page-frame address cache only grows once frames are walked.
+            // The cursor is deliberately left unclosed, because the factory - not the caller - owns
+            // it: getCursor() hands back the factory's own singleton, and
+            // AbstractPageFrameRecordCursorFactory.getCursor() itself abandons that singleton when
+            // initRecordCursor() throws. _close() is then the only thing that can release it.
+            final RecordCursor cursor = factory.getCursor(sqlExecutionContext);
+            int rowCount = 0;
+            while (cursor.hasNext()) {
+                rowCount++;
+            }
+            Assert.assertTrue("the index route must have produced rows", rowCount > 0);
+
+            try {
+                factory.close();
+                Assert.fail("expected the injected partition frame factory close failure");
+            } catch (RuntimeException e) {
+                TestUtils.assertContains(e.getMessage(), ThrowingClosePartitionFrameCursorFactory.CLOSE_FAILURE_MESSAGE);
+            }
+            Assert.assertTrue(
+                    "the injected failure must fire only after the partition frame factory released its own resources",
+                    dfcFactory.hasReleasedOwnResources
+            );
+        });
+    }
+
     /**
      * Executes a pre-compiled {@link RecordCursorFactory} and returns its output as a string
      * (header + rows), using a private sink so it does not clobber the shared static test sink.
@@ -1134,5 +2532,50 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             println(factory.getMetadata(), cursor, localSink);
         }
         return localSink.toString();
+    }
+
+    /**
+     * Stands in for the real LIKE/regex providers in
+     * {@link #testPreparedFilterAssertsPrepareRanBeforeGetBool()}: the only thing that test needs from a
+     * provider is that it satisfies the {@link SymbolKeySetProvider} cast the prepared filter performs.
+     */
+    private static class AlwaysMatchingKeySetProvider extends BooleanFunction implements SymbolKeySetProvider {
+        private final IntList matchedSymbolKeys = new IntList();
+
+        @Override
+        public boolean getBool(Record rec) {
+            return true;
+        }
+
+        @Override
+        public IntList getMatchedSymbolKeys() {
+            return matchedSymbolKeys;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("always-matching-stub");
+        }
+    }
+
+    /**
+     * Fault injection for the cleanup path: releases everything the real factory owns and only then
+     * throws, so the failure reaching the caller's {@code _close()} chain is the sole remaining
+     * source of stranded resources.
+     */
+    private static final class ThrowingClosePartitionFrameCursorFactory extends FullPartitionFrameCursorFactory {
+        private static final String CLOSE_FAILURE_MESSAGE = "test partition frame factory close failure";
+        private boolean hasReleasedOwnResources;
+
+        private ThrowingClosePartitionFrameCursorFactory(TableToken tableToken, RecordMetadata metadata) {
+            super(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, PartitionFrameCursorFactory.ORDER_ASC, null, 0, false);
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            hasReleasedOwnResources = true;
+            throw new RuntimeException(CLOSE_FAILURE_MESSAGE);
+        }
     }
 }

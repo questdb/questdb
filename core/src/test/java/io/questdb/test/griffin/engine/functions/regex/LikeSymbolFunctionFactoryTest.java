@@ -26,6 +26,8 @@ package io.questdb.test.griffin.engine.functions.regex;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.regex.AbstractLikeSymbolFunctionFactory;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -71,6 +73,113 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: x
                             """);
+        });
+    }
+
+    @Test
+    public void testBindVariableRebindRebuildsSymbolKeys() throws Exception {
+        // A compiled statement outlives the values bound to it. The per-worker clones of the LIKE
+        // predicate inherit the owner's matched symbol keys instead of re-deriving them, so a clone
+        // that kept the PREVIOUS pattern's keys would answer the next execution with the previous
+        // pattern's rows - silently, and only on the frames that worker happened to take. Re-bind $1
+        // across opens of the same factory and cross-check every answer against the constant-pattern
+        // oracle, which compiles to a different function class and shares no state with this one.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('alpha'), ('alpine'), ('beta'), ('bravo'), ('gamma')");
+
+            final String alRows = "sym\nalpha\nalpine\n";
+            final String bRows = "sym\nbeta\nbravo\n";
+            final String noRows = "sym\n";
+
+            try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym LIKE $1")) {
+                bindVariableService.setStr(0, "al%");
+                assertBoundLike(factory, alRows);
+                bindVariableService.setStr(0, "b%");
+                assertBoundLike(factory, bRows);
+                // back to the first pattern: a clone caching the second key set answers bRows here
+                bindVariableService.setStr(0, "al%");
+                assertBoundLike(factory, alRows);
+                // a pattern matching nothing must clear the key set, not fall back to the inherited one
+                bindVariableService.setStr(0, "z%");
+                assertBoundLike(factory, noRows);
+            }
+
+            // oracle: the same three predicates as constants, compiled to the Const* siblings
+            assertQuery("SELECT sym FROM x WHERE sym LIKE 'al%'").noLeakCheck().returns(alRows);
+            assertQuery("SELECT sym FROM x WHERE sym LIKE 'b%'").noLeakCheck().returns(bRows);
+            assertQuery("SELECT sym FROM x WHERE sym LIKE 'z%'").noLeakCheck().returns(noRows);
+        });
+    }
+
+    @Test
+    public void testBindVariableUnchangedSeesNewSymbols() throws Exception {
+        // The bind value is identical across the two opens, so escapeSpecialChars() returns null out
+        // of its lastPattern memo and no regex is recompiled. The symbol dictionary grew in between,
+        // so the key set must still be rebuilt: donating the owner's keys to the worker clones is
+        // only safe because the OWNER re-derives them on every open, memo hit or not.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('alpha'), ('beta')");
+
+            try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym LIKE $1")) {
+                bindVariableService.setStr(0, "al%");
+                assertBoundLike(factory, "sym\nalpha\n");
+
+                execute("INSERT INTO x VALUES ('alto'), ('bravo')");
+                assertBoundLike(factory, "sym\nalpha\nalto\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableWorkerClonesInheritSymbolKeys() throws Exception {
+        // BindLikeStaticSymbolTableFunction reports isThreadSafe() == value.isThreadSafe(), which is
+        // false for a plain SymbolColumn, so the async filter compiles one clone per shared worker and
+        // donates the owner's matched key set to each of them. Opening the cursor must therefore scan
+        // the 10_000-entry dictionary exactly ONCE, not once more per clone. The [state-shared] plan
+        // marker keeps the count from being vacuous: it is written by offerStateTo(), so without it no
+        // clone exists and a single scan proves nothing.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT rnd_symbol(10_000, 8, 12, 0) sym FROM long_sequence(10_000))");
+
+            bindVariableService.setStr(0, "a%");
+            assertQuery("SELECT sym FROM x WHERE sym LIKE $1")
+                    .noLeakCheck()
+                    .assertsPlanContaining("[state-shared]");
+
+            Assert.assertEquals(
+                    "opening the cursor must scan the symbol dictionary once, not once per worker clone",
+                    1,
+                    countSymbolKeyScans("SELECT sym FROM x WHERE sym LIKE $1")
+            );
+        });
+    }
+
+    @Test
+    public void testBindVariableWorkerClonesInheritSymbolKeysParallelFilterDisabled() throws Exception {
+        // Control for testBindVariableWorkerClonesInheritSymbolKeys: with the parallel filter off there
+        // is no clone and no donation, so the owner's single scan is the whole cost. Both modes must
+        // land on the same count - that is what makes the donated key set free rather than merely
+        // cheap.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT rnd_symbol(10_000, 8, 12, 0) sym FROM long_sequence(10_000))");
+
+            sqlExecutionContext.setParallelFilterEnabled(false);
+            try {
+                bindVariableService.setStr(0, "a%");
+                assertQuery("SELECT sym FROM x WHERE sym LIKE $1")
+                        .noLeakCheck()
+                        .assertsPlanNotContaining("[state-shared]");
+
+                Assert.assertEquals(
+                        "the serial filter owns the only key set and must scan the dictionary once",
+                        1,
+                        countSymbolKeyScans("SELECT sym FROM x WHERE sym LIKE $1")
+                );
+            } finally {
+                sqlExecutionContext.setParallelFilterEnabled(true);
+            }
         });
     }
 
@@ -562,6 +671,12 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
+    private void assertBoundLike(RecordCursorFactory factory, CharSequence expected) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            assertCursor(expected, cursor, factory.getMetadata(), true);
+        }
+    }
+
     private void assertLike(String expected, String query) throws Exception {
         assertQuery(query)
                 .noLeakCheck()
@@ -569,5 +684,20 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
         assertQuery(query.replace("like", "ilike"))
                 .noLeakCheck()
                 .returns(expected);
+    }
+
+    private long countSymbolKeyScans(String query) throws SqlException {
+        try (RecordCursorFactory factory = select(query)) {
+            AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.set(0);
+            AbstractLikeSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = true;
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                //noinspection StatementWithEmptyBody
+                while (cursor.hasNext()) {
+                }
+            } finally {
+                AbstractLikeSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = false;
+            }
+            return AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get();
+        }
     }
 }

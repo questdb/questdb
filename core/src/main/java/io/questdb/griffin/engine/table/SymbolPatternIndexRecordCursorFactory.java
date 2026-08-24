@@ -25,11 +25,13 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -55,11 +57,11 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
     private final int columnIndex;
     private final int[] cursorFactoriesIdx = new int[]{0};
     private final IntList effectiveKeys;
-    private final PageFrameRecordCursorImpl indexCursor;
     private final int indexDirection;
     private final boolean isHeapCursorUsed;
-    private final ObjList<SymbolFunctionRowCursorFactory> perKeyFactories = new ObjList<>();
-    private final RowCursorFactory rowCursorFactory;
+    private PageFrameRecordCursorImpl indexCursor;
+    private ObjList<SymbolFunctionRowCursorFactory> perKeyFactories = new ObjList<>();
+    private RowCursorFactory rowCursorFactory;
 
     public SymbolPatternIndexRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -67,6 +69,7 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
             @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             @NotNull IntList effectiveKeys,
+            int orderByMnemonic,
             boolean isOrderByTimestamp,
             int indexDirection,
             @NotNull IntList columnIndexes,
@@ -76,12 +79,16 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
         this.columnIndex = columnIndex;
         this.effectiveKeys = effectiveKeys;
         this.indexDirection = indexDirection;
-        if (isOrderByTimestamp) {
-            isHeapCursorUsed = true;
-            rowCursorFactory = new HeapRowCursorFactory(perKeyFactories, cursorFactoriesIdx);
-        } else {
+        // Same policy as FilterOnValuesRecordCursorFactory: the sequential cursor drains one symbol key
+        // at a time and so emits rows out of designated-timestamp order. It is safe only when the model
+        // declares its row order invariant, which is also what lets the factory advertise its scan
+        // direction honestly to ASOF/LT/SPLICE joins and to SAMPLE BY.
+        if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !isOrderByTimestamp) {
             isHeapCursorUsed = false;
             rowCursorFactory = new SequentialRowCursorFactory(perKeyFactories, cursorFactoriesIdx);
+        } else {
+            isHeapCursorUsed = true;
+            rowCursorFactory = new HeapRowCursorFactory(perKeyFactories, cursorFactoriesIdx);
         }
         indexCursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, null);
     }
@@ -131,10 +138,26 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(rowCursorFactory);
-        Misc.free(indexCursor);
-        Misc.freeObjList(perKeyFactories);
+        // Best-effort, like every peer of AbstractPageFrameRecordCursorFactory: super._close() ends in
+        // CairoException.rethrowCleanupFailure(), so a partition-frame cleanup failure lands here, and
+        // close() has already set its closed flag, so nothing retries. A sequential chain would strand
+        // the index cursor and its native page-frame address cache for good.
+        final PageFrameRecordCursorImpl indexCursor = this.indexCursor;
+        this.indexCursor = null;
+        final ObjList<SymbolFunctionRowCursorFactory> perKeyFactories = this.perKeyFactories;
+        this.perKeyFactories = null;
+        final RowCursorFactory rowCursorFactory = this.rowCursorFactory;
+        this.rowCursorFactory = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, rowCursorFactory);
+        failure = Misc.freeBestEffort(failure, indexCursor);
+        failure = Misc.freeObjListBestEffort(failure, perKeyFactories);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override

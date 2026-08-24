@@ -34,6 +34,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.TestOnly;
+
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Returns rows from current page frame in table (physical) order:
@@ -42,6 +45,15 @@ import io.questdb.std.ObjList;
  * record from related cursor into queue until all cursors are exhausted.
  */
 public class HeapRowCursorFactory implements RowCursorFactory {
+    // @TestOnly observability for the loop bound in getCursor(). A row cursor opened past the live
+    // key count never reaches the result set -- HeapRowCursor.of() seeds the heap only up to that
+    // bound -- so only a counter can tell a wasted index seek from a necessary one. A plain static
+    // boolean guards it: the JIT folds the always-false production branch away, and the single test
+    // that flips it drives one query on the calling thread.
+    @TestOnly
+    public static boolean isRowCursorCounterEnabled = false;
+    @TestOnly
+    public static final AtomicLong testRowCursorsOpened = new AtomicLong();
     private final HeapRowCursor cursor;
     private final ObjList<? extends RowCursorFactory> cursorFactories;
     // used to skip some cursor factories if values repeat
@@ -73,10 +85,20 @@ public class HeapRowCursorFactory implements RowCursorFactory {
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         Misc.freeObjListAndClear(cursors);
-        for (int i = 0, n = cursorFactories.size(); i < n; i++) {
+        // Bound by the live key count rather than by cursorFactories.size(): owners grow that list
+        // monotonically across executions and re-arm only its first cursorFactoriesIdx[0] entries, so
+        // a factory past that bound still carries a symbol key from an earlier execution. cursor.of()
+        // seeds the heap up to the same bound, so opening the rest only spends an index seek per page
+        // frame on rows nothing reads. SequentialRowCursorFactory.getCursor() already bounds itself
+        // this way.
+        final int activeCursors = cursorFactoriesIdx[0];
+        for (int i = 0; i < activeCursors; i++) {
             cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
         }
-        cursor.of(cursors, cursorFactoriesIdx[0]);
+        if (isRowCursorCounterEnabled) {
+            testRowCursorsOpened.addAndGet(activeCursors);
+        }
+        cursor.of(cursors, activeCursors);
         return cursor;
     }
 
