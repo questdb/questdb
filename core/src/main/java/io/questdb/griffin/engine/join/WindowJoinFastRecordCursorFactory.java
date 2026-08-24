@@ -128,7 +128,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     private static final int INDEX_LOOKAHEAD = 2;
     private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
     private static final int INITIAL_LIST_CAPACITY = 16;
-    private final @Nullable IntList columnIndex;
     private final boolean includePrevailing;
     private final long indexLookaheadMargin;
     private final int masterSymbolIndex;
@@ -164,7 +163,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     ) {
         super(metadata);
         try {
-            this.columnIndex = columnIndex;
             this.masterFactory = masterFactory;
             this.slaveFactory = slaveFactory;
             this.joinMetadata = joinMetadata;

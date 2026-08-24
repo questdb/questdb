@@ -177,10 +177,6 @@ public final class OperatorExpression {
         return commutative;
     }
 
-    public boolean isConcatenation() {
-        return operator == Operator.Concatenation;
-    }
-
     public boolean greaterPrecedence(int otherPrecedence) {
         return (leftAssociative && precedence >= otherPrecedence) || (!leftAssociative && precedence > otherPrecedence);
     }

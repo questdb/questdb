@@ -393,6 +393,12 @@ public class LatestByTest extends AbstractCairoTest {
                 assertQuery("SELECT sym, c1 FROM t_idx WHERE sym IN ('a', 'b') LATEST ON ts PARTITION BY c1 ORDER BY c1, sym")
                         .expectSize()
                         .returns("sym\tc1\nb\t1.0\n");
+                assertQuery("SELECT sym, c1 FROM t_idx WHERE sym != 'b' LATEST ON ts PARTITION BY c1 ORDER BY c1, sym")
+                        .expectSize()
+                        .returns("sym\tc1\na\t1.0\n\t2.0\n\t3.0\n");
+                assertQuery("SELECT sym, c1 FROM t_idx WHERE sym NOT IN ('a') LATEST ON ts PARTITION BY c1 ORDER BY c1, sym")
+                        .expectSize()
+                        .returns("sym\tc1\nb\t1.0\n\t2.0\n\t3.0\n");
             }
         });
     }

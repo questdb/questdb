@@ -736,12 +736,14 @@ public final class ParquetRowGroupFilter {
     // comparison all at single precision. float_cmp_epsilon is "epsilon >= |lhs - rhs|" in the C++
     // sources (x86 ucomiss/setae, aarch64 fcmp/cset GE, avx2 vcmpps kLE).
     //
-    // THE INVARIANT THIS FILE HAS TO HOLD: the model must contain every comparator the SHIPPED
+    // THE INVARIANT THIS FILE HAS TO HOLD: the model must contain every comparator the RUNNING
     // BINARY might carry, not only the one the sources describe. Nothing in the Maven build compiles
-    // core/src/main/c/, so a checkout runs whichever libquestdb is on the classpath - the committed
-    // one under core/src/main/resources/io/questdb/bin/ until the "Build and Push Release CXX
-    // Libraries" workflow rebuilds it. The comparator was STRICT ("epsilon > |lhs - rhs|") before
-    // that rebuild, so both readings are reachable and the model has to over-approximate BOTH.
+    // core/src/main/c/, so a checkout runs whichever libquestdb is on the classpath: the committed
+    // one under core/src/main/resources/io/questdb/bin/ carries the inclusive reading, but an older
+    // library - a bisect, a partial rebase, or a local build off an earlier source tree - carries the
+    // STRICT one ("epsilon > |lhs - rhs|"), which is what the native float_cmp_epsilon named above
+    // spelled until this change.
+    // Both readings stay reachable, so the model has to over-approximate BOTH.
     //
     // Widening isEq is conservative for the ops that spell "isEq || ..." and the exact opposite for
     // the ops that spell "!isEq && ...", so no single reading is safe for all of them. Hence two
@@ -765,9 +767,10 @@ public final class ParquetRowGroupFilter {
         return FLOAT_TOLERANCE >= Math.abs(l - bound);
     }
 
-    // The same equality read STRICTLY, as the committed (not yet rebuilt) binaries' float_cmp_epsilon
-    // reads it: "epsilon > |lhs - rhs|". Only the eq-EXCLUDING arms use it, and only because "!isEq"
-    // is widest when isEq is narrowest. See isFloatEqAtSinglePrecision for why the model carries both.
+    // The same equality read STRICTLY, as the float_cmp_epsilon of an older library, or one built
+    // from an earlier source tree, reads it: "epsilon > |lhs - rhs|". Only the eq-EXCLUDING arms use
+    // it, and only because "!isEq" is widest when isEq is narrowest. See isFloatEqAtSinglePrecision
+    // for why the model carries both.
     private static boolean isFloatEqStrictAtSinglePrecision(float l, float bound) {
         return FLOAT_TOLERANCE > Math.abs(l - bound);
     }
@@ -807,10 +810,11 @@ public final class ParquetRowGroupFilter {
     // and uses whichever is wider per op:
     //  - Numbers.equals() is INCLUSIVE (|l - d| <= tolerance) and never moves. The Java filter uses it.
     //  - the compiled filter's double_cmp_epsilon (jit/impl/x86.h, mirrored in aarch64.h and avx2.h)
-    //    is INCLUSIVE in the C++ sources but STRICT (|l - d| < tolerance) in the binaries committed
-    //    under core/src/main/resources/io/questdb/bin/, which is what a checkout actually runs until
-    //    the "Build and Push Release CXX Libraries" workflow rebuilds them. Nothing in the Maven
-    //    build compiles the C++, so BOTH readings are live and the model must contain both.
+    //    is INCLUSIVE in the C++ sources and in the binaries committed under
+    //    core/src/main/resources/io/questdb/bin/, and STRICT (|l - d| < tolerance) in any older
+    //    library, or one built from an earlier source tree, that a checkout may run instead -
+    //    nothing in the Maven build compiles the C++, so BOTH readings stay live and the model must
+    //    contain both.
     // The ops that spell "isEq || ..." take the inclusive equality (widest isEq -> widest model);
     // the ops that spell "!isEq && ..." take the strict one (narrowest isEq -> widest model). Get
     // that backwards on the eq-EXCLUDING arms and the model UNDER-approximates the strict comparator:
@@ -856,9 +860,10 @@ public final class ParquetRowGroupFilter {
      * can be kept here and dropped there, and a bound certified against the f64 pair alone prunes
      * the group holding it.
      * <p>
-     * {@code float_cmp_epsilon} itself has two live readings - {@code >=} in the C++ sources,
-     * {@code >} in the binaries a checkout runs until they are rebuilt - so this method takes the
-     * wider of the two per op, exactly as {@link #isRowKept} does:
+     * {@code float_cmp_epsilon} itself has two live readings - {@code >=} in the C++ sources and in
+     * the committed binaries, {@code >} in any older library, or one built from an earlier source
+     * tree, that a checkout may run instead - so this method takes the wider of the two per op,
+     * exactly as {@link #isRowKept} does:
      * {@link #isFloatEqAtSinglePrecision} (inclusive) for the arms that spell {@code isEq || ...},
      * {@link #isFloatEqStrictAtSinglePrecision} for the arms that spell {@code !isEq && ...}. The
      * union contains both comparators, so the model is safe whichever binary is on the classpath.
@@ -946,8 +951,9 @@ public final class ParquetRowGroupFilter {
         // The native BETWEEN prunes a group when max < lo or min > hi, so the first double each end
         // would drop is the one just past it (nextDown(lo) / nextUp(hi)). Certify against
         // Numbers.equals, the INCLUSIVE reading: equality is what keeps a row here, so the widest
-        // equality gives the widest model, and it contains the strict double_cmp_epsilon the
-        // committed binaries still carry as well as the inclusive one the sources specify.
+        // equality gives the widest model, and it contains the strict double_cmp_epsilon an older
+        // library, or one built from an earlier source tree, carries as well as the inclusive one
+        // the sources and the committed binaries specify.
         double lo = Math.nextDown(d - Numbers.DOUBLE_TOLERANCE);
         for (int i = 0; Numbers.equals(Math.nextDown(lo), d); i++) {
             if (i == MAX_BOUND_STEPS) {

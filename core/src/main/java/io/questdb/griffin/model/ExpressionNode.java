@@ -365,8 +365,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     }
 
     /**
-     * Whether this node is marked widening, which closes {@link #isReassociationSafe}'s guard for
-     * every operator except concatenation - {@code ||} short-circuits to safe before reading this.
+     * Whether this node is marked widening, which closes {@link #isReassociationSafe}'s guard.
      * Meaningful only once {@link #isConstantExpression} is set. An n-ary argument that skipped the
      * fold reads {@code true} because {@link #reassociateConstants} fails it closed.
      */
@@ -511,7 +510,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                 && lhs.token.equals(token)) {
             if (lhs.rhs.isConstantExpression) {
                 // Pattern A: (A op C1) op C2 → A op (C1 op C2)
-                if (isReassociationSafe(op, lhs.rhs, rhs)) {
+                if (isReassociationSafe(lhs.rhs, rhs)) {
                     ExpressionNode inner = lhs;
                     ExpressionNode a = inner.lhs;
                     ExpressionNode c1 = inner.rhs;
@@ -525,7 +524,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                 }
             } else if (op.isCommutative() && lhs.lhs.isConstantExpression) {
                 // Pattern B: (C1 op A) op C2 → A op (C1 op C2)
-                if (isReassociationSafe(op, lhs.lhs, rhs)) {
+                if (isReassociationSafe(lhs.lhs, rhs)) {
                     ExpressionNode inner = lhs;
                     ExpressionNode c1 = inner.lhs;
                     ExpressionNode a = inner.rhs;
@@ -547,7 +546,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                 && rhs.token.equals(token)) {
             if (op.isCommutative() && rhs.rhs.isConstantExpression) {
                 // Mirror A: C2 op (A op C1) → A op (C2 op C1)
-                if (isReassociationSafe(op, lhs, rhs.rhs)) {
+                if (isReassociationSafe(lhs, rhs.rhs)) {
                     ExpressionNode inner = rhs;
                     ExpressionNode c2 = lhs;
                     this.lhs = inner.lhs;
@@ -557,7 +556,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                 }
             } else if (rhs.lhs.isConstantExpression) {
                 // Mirror B: C2 op (C1 op A) → (C2 op C1) op A
-                if (isReassociationSafe(op, lhs, rhs.lhs)) {
+                if (isReassociationSafe(lhs, rhs.lhs)) {
                     ExpressionNode inner = rhs;
                     ExpressionNode c2 = lhs;
                     ExpressionNode c1 = inner.lhs;
@@ -854,16 +853,7 @@ public class ExpressionNode implements Mutable, Sinkable {
      * value ranges. Numeric pairs are excluded: floating-point and DECIMAL operations may change
      * through rounding or scale, while integer intermediates may wrap onto NULL sentinels.
      */
-    private static boolean isReassociationSafe(OperatorExpression op, ExpressionNode a, ExpressionNode b) {
-        if (op.isConcatenation()) {
-            // Concatenation resolves to concat(V), which renders each operand through the type
-            // adapter of that operand alone and appends the characters to a sink. No operand's
-            // rendering depends on its neighbours, and no overload resolution can turn one into
-            // a number the way it does for the arithmetic operators. So (A || B) || C and
-            // A || (B || C) emit the same characters for every operand type, and neither the
-            // widening guard nor the integer-sentinel guard below applies.
-            return true;
-        }
+    private static boolean isReassociationSafe(ExpressionNode a, ExpressionNode b) {
         if (a.isConstFoldWidening || b.isConstFoldWidening) {
             return false;
         }
@@ -871,7 +861,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         // reserved sentinel values. The original intermediate can hit a sentinel for a row value
         // that is unavailable to this pre-type-resolution pass, even when the constant pair does
         // not fold to NULL. Only non-integer operators, such as boolean logic, remain eligible
-        // here; concatenation already returned above.
+        // here.
         return !(a.isConstFoldLongValid && b.isConstFoldLongValid);
     }
 

@@ -6027,12 +6027,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         // on the other.
         //
         // THIS TEST PINS THE INCLUSIVE COMPARATOR ITSELF, so it reddens on any build whose
-        // libquestdb still carries the STRICT comparator - i.e. on every checkout until the
-        // "Build and Push Release CXX Libraries" workflow rebuilds and pushes the committed
-        // binaries under core/src/main/resources/io/questdb/bin/, since no Maven profile compiles
-        // core/src/main/c/. That failure mode is "comparator semantics not rebuilt yet", NOT a
-        // pruning bug: tn and tp agree in both worlds, so no row is lost either way. The pruning
-        // property is pinned separately and binary-independently by
+        // libquestdb carries the STRICT comparator. The binaries committed under
+        // core/src/main/resources/io/questdb/bin/ carry the inclusive one, so a plain checkout
+        // passes; an older library, or one built from an earlier source tree, does not, since no
+        // Maven profile compiles core/src/main/c/. That failure mode is "the library predates the
+        // comparator change", NOT a pruning bug: tn and tp agree in both worlds, so no row is lost
+        // either way. The pruning property is pinned separately and binary-independently by
         // testFloatColumnPushdownMatchesNativeUnderEitherComparator.
         //
         // Two oracles, because they fail for different reasons. The ROW assertions are the
@@ -6089,14 +6089,14 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testFloatColumnPushdownMatchesNativeUnderEitherComparator() throws Exception {
         // THE INVARIANT: ParquetRowGroupFilter's certification model must contain every comparator
-        // the SHIPPED BINARY might carry, not only the one the C++ sources describe.
+        // the RUNNING BINARY might carry, not only the one the C++ sources describe.
         //
         // ParquetRowGroupFilter is Java and ships the instant it merges. The native comparators do
-        // not: no Maven profile compiles core/src/main/c/, so a checkout runs the committed
-        // libquestdb under core/src/main/resources/io/questdb/bin/ until the "Build and Push Release
-        // CXX Libraries" workflow rebuilds it. float_cmp_epsilon / double_cmp_epsilon are therefore
-        // STRICT ("epsilon > |lhs - rhs|") on one side of that rebuild and INCLUSIVE ("epsilon >=")
-        // on the other, and BOTH are reachable.
+        // not: no Maven profile compiles core/src/main/c/, so a checkout runs whichever libquestdb
+        // is on the classpath - the committed one under core/src/main/resources/io/questdb/bin/,
+        // which carries the INCLUSIVE reading ("epsilon >="), or an older one, or one built from an
+        // earlier source tree, which carries the STRICT one ("epsilon > |lhs - rhs|").
+        // float_cmp_epsilon / double_cmp_epsilon therefore have two readings and BOTH are reachable.
         //
         // Inclusiveness is not uniformly conservative for the model. The arms that spell
         // "isEq || ..." (LE, GE, EQ) get WIDER as isEq widens - safe. The arms that spell
@@ -6107,7 +6107,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         // STRICTLY on LT/GT and INCLUSIVELY on LE/GE/EQ: the union contains both.
         //
         // Three witnesses, each of which prunes a group under an inclusive-everywhere model running
-        // against the strict committed binary. The oracle is DIFFERENTIAL rather than a literal
+        // against a STRICT float_cmp_epsilon. The oracle is DIFFERENTIAL rather than a literal
         // expectation, because the answer itself is comparator-dependent - under the strict binary
         // the compiled filter keeps the row, under the inclusive one it drops it - while
         // "parquet returns what native returns" is true in both worlds and is exactly the property
@@ -6203,9 +6203,9 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
             // The two predicates that testFloatColumnInclusiveOpCertifiesAgainstCompiledF32Filter
             // pins with a literal, repeated here differentially. That test reddens on the ALL-NATIVE
-            // table whenever the binary still carries the strict comparator, so its tp assertion is
-            // never reached; these two prove that tp agrees with tn there anyway - i.e. that its
-            // failure really is "comparator semantics not rebuilt yet" and not a lost row group.
+            // table whenever the binary carries the strict comparator, so its tp assertion is never
+            // reached; these two prove that tp agrees with tn there anyway - i.e. that its failure
+            // really is "the library predates the comparator change" and not a lost row group.
             execute("DROP TABLE tn");
             execute("DROP TABLE tp");
             createRepeatedFloatPartialParquet("1.641532049179162e-11", "-100.0");
@@ -6656,11 +6656,11 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     // prove the comparison was not empty-vs-empty. The fluent assertQuery(...).returns(...) form
     // cannot be used for these predicates: they sit exactly on the floating-point tolerance boundary,
     // where the answer depends on whether the libquestdb on the classpath carries the STRICT
-    // float_cmp_epsilon (the committed binaries) or the INCLUSIVE one (the C++ sources, once the CXX
-    // workflow rebuilds them). Only one of the two literals could ever be written, so a literal
-    // expectation pins the comparator instead of the pruning - and the pruning is what row-group
-    // pushdown may never get wrong. tn == tp is true under both comparators and is false exactly when
-    // a row group holding a matching row was pruned.
+    // float_cmp_epsilon (an older library, or one built from an earlier source tree) or the
+    // INCLUSIVE one (the C++ sources and the committed binaries). Only one of the two literals could
+    // ever be written, so a literal expectation pins the comparator instead of the pruning - and the
+    // pruning is what row-group pushdown may never get wrong. tn == tp is true under both
+    // comparators and is false exactly when a row group holding a matching row was pruned.
     //
     // Parity on its own is not an oracle - two empty sinks match - so this helper adds two guards
     // that are themselves comparator-independent:

@@ -122,15 +122,16 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConstantPairRegroupingAgreesWithLiteralForm() throws Exception {
-        // reassociateConstants regroups a || C1 || C2 into a || (C1 || C2) for the column
-        // spelling, and never regroups the all-literal one (it returns early once both sides
-        // are constant, so that form folds left to right). The two must still agree: concat
-        // renders each operand through that operand's own type adapter, so regrouping cannot
-        // move a character. Every constant shape below carries a guard that closes the regroup
-        // for the arithmetic operators - a quoted numeric-looking literal, an integer literal
-        // that can wrap onto a NULL sentinel, and a floating-point / DECIMAL literal whose fold
-        // can round. None of those hazards reaches concatenation.
+    public void testConstantChainAgreesWithLiteralForm() throws Exception {
+        // SqlParser.rewriteConcat turns every '||' OPERATION node into a concat() FUNCTION node,
+        // and addConcatArgs folds a nested concat into its parent's argument list, so the column
+        // spelling and the all-literal one both reach FunctionParser as one flat concat(...) call.
+        // reassociateConstants regroups neither: it regroups only a binary OPERATION pair. concat
+        // renders each operand through that operand's own type adapter, so the two spellings must
+        // emit the same characters. Every constant shape below carries a guard that closes the
+        // regroup for the arithmetic operators - a quoted numeric-looking literal, an integer
+        // literal that can wrap onto a NULL sentinel, and a floating-point / DECIMAL literal whose
+        // fold can round. None of those guards has any say over what a '||' chain compiles to.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a VARCHAR)");
             execute("INSERT INTO t VALUES ('x')");
@@ -147,7 +148,7 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
             assertQuery("SELECT 'x' || 1.5m || 2.5m AS v").noLeakCheck().expectSize().returns("v\nx1.52.5\n");
             assertQuery("SELECT a || 1.5m || 2.5m AS v FROM t").noLeakCheck().expectSize().returns("v\nx1.52.5\n");
 
-            // Mirror B: C2 || (C1 || a) regroups to (C2 || C1) || a
+            // The right-nested spelling flattens the same way, into concat('02', '4', a).
             assertQuery("SELECT '02' || ('4' || a) AS v FROM t").noLeakCheck().expectSize().returns("v\n024x\n");
         });
     }

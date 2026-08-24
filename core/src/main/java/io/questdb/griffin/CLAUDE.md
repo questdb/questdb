@@ -528,13 +528,58 @@ sentinel. A **quoted** literal counts as widening for this purpose: overload res
 casts `'02'` to a number, so `l * '02' * 4` is integer arithmetic and regrouping it would
 change the result exactly as `l * 2 * 4` would.
 
-Concatenation is the one operator that escapes all of it. `isReassociationSafe` short-circuits
-to `true` for `||`, because `concat(V)` renders each operand through that operand's own type
-adapter and appends the characters to a sink — no operand's rendering depends on its
-neighbours, and no overload resolution turns one into a number. `(A || B) || C` and
-`A || (B || C)` therefore emit the same characters for every operand type. Without that
-short-circuit the quoted-literal widening mark alone disables `||` regrouping outright, since
-a concatenated constant is almost always a quoted string.
+Concatenation never reaches that guard. `SqlParser.rewriteConcat` converts every `||` `OPERATION`
+node into a `concat` `FUNCTION` node before the expression leaves the parser, and `addConcatArgs`
+folds a nested `concat` into its parent's argument list, so `(A || B) || C`, `A || (B || C)` and
+`A || B || C` all arrive at `FunctionParser` as one `concat(A, B, C)` node. `reassociateConstants`
+runs strictly after that rewrite - `FunctionParser.parseFunction` is its only production caller -
+and it regroups only a binary `OPERATION` pair: a two-argument `concat` fails its
+`type != OPERATION` check, and a wider one takes the n-ary arm, which recurses into `args` without
+restructuring the node. A `||` pair is never a regrouping candidate in the first place. The
+flattening is what makes concatenation associative: both bracketings collapse to the same argument
+list. It says nothing about commutativity, and `concat` is not commutative - the arguments keep
+their source order.
+
+`rewriteConcat` reaches every position whose node `FunctionParser` receives directly.
+`rewriteKnownStatements` runs it over the whole expression tree with `PostOrderTreeTraversalAlgo`,
+which descends through `lhs` / `rhs` and through an n-ary node's `args`, so function arguments,
+`CASE` arms and `IN` lists come with it. Every `SqlParser.expr(...)` overload that returns an
+`ExpressionNode` ends in that rewrite, and the join-`ON` path calls it in both of its branches. A
+window's own sub-expressions hang off `WindowExpression` rather than off `lhs` / `rhs`, so
+`rewriteWindowSubExpression` runs the same traversal battery over `PARTITION BY`, `ORDER BY` and
+the frame bounds - for an inline `OVER (...)` and for a named `WINDOW w AS (...)` alike.
+`expr(...)` parses a `DECLARE` variable's value itself, so substituting that variable splices in
+an already-rewritten subtree.
+
+One production position escapes the rewrite: a live view's `ANCHOR EXPRESSION`.
+`ExpressionParser.parseWindowExpr` builds that node by calling `parseExpr` directly, and
+`SqlParser.rewriteWindowExpression` then walks only `PARTITION BY`, `ORDER BY`, `rowsLoExpr` and
+`rowsHiExpr` - never `WindowExpression.getAnchorExpression()`. `copySpecFrom` does not carry the
+anchor across either. A `||` written there therefore stays an `OPERATION` node on the model.
+
+**The text round-trip that follows is load-bearing - do not optimise it away.**
+`SqlParser.captureAnchoredWindow` renders the anchor node back to SQL with `toSink` and stores the
+text in `LvAnchorSpec.anchorExpressionSql`. Both consumers - `CairoEngine`'s CREATE-time pass-2
+anchor validator and `LiveViewRefreshJob.ensureAnchorFunction` - re-parse that text through
+`SqlCompilerImpl.parseExpression`, which calls the rewriting
+`parser.expr(lexer, (IQueryModel) null, this)` overload, and only then hand the result to
+`FunctionParser.parseFunction`. Nothing hands the raw anchor node to `FunctionParser`:
+`SqlParser`'s other read of `getAnchorExpression()` drives AST-level validation alone. A
+maintainer who deletes the round-trip and passes `w.getAnchorExpression()` straight to
+`parseFunction` would feed a `||` `OPERATION` node to `reassociateConstants` - exactly what this
+section rules out.
+
+Two `parseExpr` callers skip the rewrites. `ExpressionParser.parseWindowExpr` is the production one;
+`rewriteWindowExpression` re-applies them to every window sub-expression it does reach, which leaves
+`ANCHOR EXPRESSION` as the only unrewritten result. The other is the `@TestOnly`
+`SqlParser.expr(lexer, listener, callback)` overload, which only
+`SqlCompiler.testParseExpression(CharSequence, ExpressionParserListener)` reaches.
+
+That distinction matters to the tests. `ConstantReassociationTest.assertReassociation` uses the
+`@TestOnly` overload, so it is faithful only for the operators no rewrite touches - the arithmetic
+and boolean ones. The concatenation cases use `assertPostRewriteReassociation`, which routes
+through `testParseExpression(CharSequence, IQueryModel)` and therefore asserts against the same
+`concat` tree production builds.
 
 ## NULL Sentinels by Type
 

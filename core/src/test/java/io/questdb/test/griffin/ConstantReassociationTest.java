@@ -42,39 +42,41 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConcatenationIsAssociativeButNotCommutative() throws Exception {
-        // || is associative but not commutative, so Pattern B and Mirror A
-        // (which require commutativity) are skipped.
-        assertReassociation("('hello' || d) || 'world'", "'hello' || d || 'world'");
-        assertReassociation("'world' || (d || 'hello')", "'world' || (d || 'hello')");
+    public void testConcatenationFlattensNumericLookingConstants() throws Exception {
+        // The constant shapes that close the regroup for the arithmetic operators never reach that
+        // guard through '||': rewriteConcat has already flattened the chain into a single concat()
+        // argument list, and reassociateConstants leaves an n-ary node's argument list in place.
+        // So none of the guards below has any say over what a '||' chain compiles to.
 
-        // Pattern A and Mirror B don't require commutativity, so they still apply.
-        assertReassociation("d || 'hello' || 'world'", "d || ('hello' || 'world')");
-        assertReassociation("'world' || ('hello' || d)", "'world' || 'hello' || d");
+        // A quoted numeric-looking literal is marked widening, because '*' and '+' resolve it
+        // against a numeric operand (l * '02' * 4 is integer arithmetic).
+        assertPostRewriteReassociation("d || '02' || '4'", "concat(d, '02', '4')");
+        assertPostRewriteReassociation("'02' || ('4' || d)", "concat('02', '4', d)");
+
+        // Integer literals are excluded from arithmetic regrouping because an intermediate can
+        // wrap onto the INT_NULL / LONG_NULL sentinel.
+        assertPostRewriteReassociation("d || 2_147_483_647 || 1", "concat(d, 2_147_483_647, 1)");
+
+        // Floating-point and DECIMAL literals are excluded from arithmetic regrouping because
+        // rounding and scale are not associative.
+        assertPostRewriteReassociation("d || 1.5 || 2.5", "concat(d, 1.5, 2.5)");
+        assertPostRewriteReassociation("d || 1.5m || 2.5m", "concat(d, 1.5m, 2.5m)");
     }
 
     @Test
-    public void testConcatenationRegroupsNumericLookingConstants() throws Exception {
-        // concat(V) renders each operand through that operand's own type adapter, so no
-        // operand's rendering depends on its neighbours. The numeric guards that close the
-        // regroup for the arithmetic operators therefore do not apply to '||', whatever the
-        // constants look like.
+    public void testConcatenationIsAssociativeButNotCommutative() throws Exception {
+        // SqlParser.rewriteConcat turns every '||' OPERATION node into a concat() FUNCTION node and
+        // folds a nested one into its parent's argument list, so reassociateConstants never sees a
+        // '||' pair to regroup. The flattening is what carries associativity: both bracketings of
+        // the same operand order collapse to the same argument list.
+        assertPostRewriteReassociation("('hello' || d) || 'world'", "concat('hello', d, 'world')");
+        assertPostRewriteReassociation("'hello' || (d || 'world')", "concat('hello', d, 'world')");
 
-        // A quoted numeric-looking literal is marked widening, because '*' and '+' resolve it
-        // against a numeric operand (l * '02' * 4 is integer arithmetic). '||' never does, so
-        // the pair still regroups - this is the shape that silently stopped regrouping when
-        // the widening mark was introduced.
-        assertReassociation("d || '02' || '4'", "d || ('02' || '4')");
-        assertReassociation("'02' || ('4' || d)", "'02' || '4' || d");
-
-        // Integer literals are excluded from arithmetic regrouping because an intermediate can
-        // wrap onto the INT_NULL / LONG_NULL sentinel. Concatenation has no sentinel to hit.
-        assertReassociation("d || 2_147_483_647 || 1", "d || (2_147_483_647 || 1)");
-
-        // Floating-point and DECIMAL literals are excluded from arithmetic regrouping because
-        // rounding and scale are not associative. Concatenation only renders them.
-        assertReassociation("d || 1.5 || 2.5", "d || (1.5 || 2.5)");
-        assertReassociation("d || 1.5m || 2.5m", "d || (1.5m || 2.5m)");
+        // Commutativity is a separate question and the answer is no: swapping the operands changes
+        // the argument order, and concat appends its arguments in that order.
+        assertPostRewriteReassociation("'world' || (d || 'hello')", "concat('world', d, 'hello')");
+        assertPostRewriteReassociation("d || 'hello' || 'world'", "concat(d, 'hello', 'world')");
+        assertPostRewriteReassociation("'world' || ('hello' || d)", "concat('world', 'hello', d)");
     }
 
     @Test
@@ -233,6 +235,11 @@ public class ConstantReassociationTest extends AbstractCairoTest {
 
         // OR — Mirror A: C2 OR (col OR C1) (commutative)
         assertReassociation("true or (a or false)", "a or (true or false)");
+
+        // AND - Mirror B: C2 AND (C1 AND col). Pure regrouping, so associativity alone carries it
+        // and the column stays in the outer right operand. The unquoted true / false constants are
+        // neither widening nor integer-valid, so isReassociationSafe opens the guard.
+        assertReassociation("true and (false and a)", "true and false and a");
     }
 
     @Test
@@ -391,11 +398,12 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // two operands of a binary pair - so this pins that skipping the parse changes nothing.
         assertReassociationNoOp("l in (1, 5_000_000_000, 0.5, 1.5m, 0x1f, '02', null)");
         assertReassociationNoOp("coalesce(l, 1, 5_000_000_000, 0.5, 1.5m, 0x1f, '02')");
-        // A subtree nested inside such a list still reassociates by its own rules: the concatenation
-        // regroups its constant pair around the column, the integer arithmetic does not.
-        assertReassociation(
+        // A subtree nested inside such a list still reassociates by its own rules: the integer
+        // arithmetic keeps its source order, and a '||' chain is not a binary pair by the time the
+        // pass runs - rewriteConcat has folded it into one nested concat() argument list.
+        assertPostRewriteReassociation(
                 "coalesce(s, s || 'b' || 'c', 'x')",
-                "coalesce(s, s || ('b' || 'c'), 'x')"
+                "coalesce(s, concat(s, 'b', 'c'), 'x')"
         );
         assertReassociationNoOp("coalesce(l, l + 2 + 3, 4)");
     }
@@ -437,6 +445,45 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         assertReassociation("3 + (-d)", "3 + -(d)");
     }
 
+    /**
+     * Asserts what production does to {@code inputExpr}. Unlike {@link #assertReassociation}, this
+     * routes through {@link SqlCompiler#testParseExpression(CharSequence, IQueryModel)},
+     * which runs {@code SqlParser.rewriteKnownStatements} - and with it {@code rewriteConcat} -
+     * exactly as the production {@code expr(...)} overloads do. The tree handed to
+     * {@link ExpressionNode#reassociateConstants} here is therefore the one {@code FunctionParser}
+     * sees. The helper renders {@code expectedExpr} twice, once before and once after the pass.
+     *
+     * <p>The first assertion carries the coverage: it pins the shape {@code rewriteConcat} flattens
+     * {@code inputExpr} into. The second assertion re-renders after the pass and is a forward guard
+     * only - it cannot fail against the current implementation. {@code reassociateConstants} regroups
+     * a node only when that node satisfies {@code type == OPERATION && paramCount == 2} (see the early
+     * return near the top of {@link ExpressionNode#reassociateConstants}), and a flattened
+     * {@code concat} is a FUNCTION node hanging its operands off an n-ary {@code args} list; neither
+     * that node nor any argument these call sites hand it meets the condition. Keep the assertion
+     * anyway: it goes red the day the n-ary arm starts restructuring {@code args}.</p>
+     */
+    private void assertPostRewriteReassociation(String inputExpr, String expectedExpr) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            ExpressionNode node = compiler.testParseExpression(inputExpr, (IQueryModel) null);
+            Assert.assertNotNull(node);
+            sink.clear();
+            node.toSink(sink);
+            TestUtils.assertEquals("parser rewrite for: " + inputExpr, expectedExpr, sink);
+            node.reassociateConstants(false);
+            sink.clear();
+            node.toSink(sink);
+            TestUtils.assertEquals("reassociation for: " + inputExpr, expectedExpr, sink);
+        }
+    }
+
+    /**
+     * Parses {@code inputExpr} through the {@link io.questdb.griffin.ExpressionParser} alone and
+     * asserts the canonical rendering after {@link ExpressionNode#reassociateConstants}. This helper
+     * deliberately skips {@code SqlParser.rewriteKnownStatements}, so it is faithful only for
+     * operators that rewrite leaves untouched - the arithmetic and boolean ones. An operator the
+     * parser rewrites, {@code ||} above all, must use {@link #assertPostRewriteReassociation}
+     * instead, or the assertion pins a tree production never builds.
+     */
     private void assertReassociation(String inputExpr, String expectedExpr) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExpressionTreeBuilder listener = new ExpressionTreeBuilder();
@@ -455,6 +502,11 @@ public class ConstantReassociationTest extends AbstractCairoTest {
      * structurally unchanged (a no-op), comparing its canonical rendering before and
      * after. Used for the guard cases that must NOT regroup; avoids hand-predicting the
      * canonical string, and goes RED if the guard ever lets the regroup through.
+     *
+     * <p>This helper carries the same hazard as {@link #assertReassociation}: it reaches the parser
+     * through the identical listener overload, so an operator that {@code SqlParser.rewriteConcat}
+     * or a sibling rewrite reshapes, {@code ||} above all, belongs in
+     * {@link #assertPostRewriteReassociation} instead.</p>
      */
     private void assertReassociationNoOp(String inputExpr) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {

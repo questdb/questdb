@@ -2175,6 +2175,18 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "ORDER BY s, sec_offs";
             assertSqlCursors(keyedRef, keyedBind);
 
+            // Sanity check the reference output is non-empty, so the comparison above is meaningful.
+            assertQuery(keyedRef)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tsec_offs\ta0
+                            AX\t0\t20.0
+                            AX\t1\t20.0
+                            BX\t0\t30.0
+                            BX\t1\t30.0
+                            """);
+
             // Non-keyed shape exercises the implicit single-row aggregate path.
             String notKeyedBind = "SELECT sum(p.price) AS a0 " +
                     "FROM trades AS t " +

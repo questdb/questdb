@@ -4809,10 +4809,9 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // two agree regardless.
         //
         // The native comparators were STRICT until this change, and every assertion below reddens if
-        // any of the six sites reverts. Reverting also needs the committed per-platform binaries
-        // under core/src/main/resources/io/questdb/bin/ rebuilt by the "Build and Push Release CXX
-        // Libraries" workflow, since CI runs those and not a local build; the C++ sources alone do
-        // not move CI.
+        // any of the six sites reverts. Reverting takes both the C++ sources and the committed
+        // per-platform binaries under core/src/main/resources/io/questdb/bin/, since CI runs those
+        // and not a local build; the C++ sources alone do not move CI.
         //
         // Only four of the six operators ever depended on it. "<=" and ">" combine the plain
         // comparison with the epsilon test in the direction that already covers the boundary row, so

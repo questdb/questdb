@@ -80,7 +80,6 @@ import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.
  * @see AsyncWindowJoinRecordCursorFactory for the multi-threaded variant
  */
 public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final @Nullable IntList columnIndex;
     private final int hiSign;
     private final char hiTimeUnit;
     private final boolean includePrevailing;
@@ -123,7 +122,6 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     ) {
         super(metadata);
         try {
-            this.columnIndex = columnIndex;
             this.masterFactory = masterFactory;
             this.slaveFactory = slaveFactory;
             this.joinMetadata = joinMetadata;
