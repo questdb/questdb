@@ -4063,9 +4063,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // LiveViewReplicationTest replica restart). On a replica the downloader appends base txns
         // to the on-disk txnlog and reconciles the cached sequencer only later; WAL apply and the
         // refresh read the file, so the view can legitimately move past the cached head. The ahead
-        // guard must treat that as catch-up, not data loss: the base tracker's writerTxn proves
-        // the base applied the watermark's seqTxn. A second TableSequencerAPI plays the
-        // downloader, and setCurrentMicros drives FLUSH EVERY so each drain flushes the lead.
+        // guard must treat that as catch-up, not data loss: the base tracker's writerTxn covers
+        // the stale window. A second TableSequencerAPI plays the downloader, and setCurrentMicros
+        // drives FLUSH EVERY so each drain flushes the lead. The tail pins the other operand:
+        // with writerTxn reset to -1 the guard must fall back to the cached head, not fire.
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -4098,13 +4099,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                                 engine.getTelemetryWal()
                         )
                 ) {
-                    TableWriter.Row row = oobWriter.newRow(MicrosFormatUtils.parseUTCTimestamp("2027-06-01T00:00:03.000000Z"));
-                    row.putLong(1, 3);
-                    row.append();
+                    appendRow(oobWriter, MicrosFormatUtils.parseUTCTimestamp("2027-06-01T00:00:03.000000Z"), 3);
                     oobWriter.commit();
-                    row = oobWriter.newRow(MicrosFormatUtils.parseUTCTimestamp("2027-06-01T00:00:04.000000Z"));
-                    row.putLong(1, 4);
-                    row.append();
+                    appendRow(oobWriter, MicrosFormatUtils.parseUTCTimestamp("2027-06-01T00:00:04.000000Z"), 4);
                     oobWriter.commit();
                 }
                 Assert.assertEquals(
@@ -4112,9 +4109,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         1, engine.getTableSequencerAPI().lastTxn(baseToken)
                 );
 
-                // Post the apply notification the way CheckWalTransactionsJob does, without
-                // touching the cached sequencer; the apply job reads the file and applies 2 and 3.
-                engine.getTableSequencerAPI().notifyOnCheck(baseToken, 3);
+                // Post the apply notification the way the downloader does (enterprise
+                // WalEvents.registerTable), without touching the cached sequencer; the apply job
+                // reads the file and applies 2 and 3.
                 engine.notifyWalTxnCommitted(baseToken);
                 drainWalQueue();
                 Assert.assertEquals(3, engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn());
@@ -4143,7 +4140,17 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainJob(job);
                 Assert.assertFalse(instance.isInvalid());
                 Assert.assertEquals(3, instance.getLastProcessedSeqTxn());
+
+                // A notification-queue overflow resets writerTxn to -1; the guard must then fall
+                // back to the cached head instead of reading the view as ahead.
+                engine.notifyWalTxnRepublisher(baseToken);
+                Assert.assertEquals(SeqTxnTracker.UNINITIALIZED_TXN, engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn());
+                setCurrentMicros(700_000);
+                drainJob(job);
+                Assert.assertFalse("an uninitialised base tracker must not invalidate the live view", instance.isInvalid());
+                Assert.assertEquals(3, instance.getLastProcessedSeqTxn());
             }
+            assertNoRefreshFaults("lv");
 
             assertQuery("SELECT view_status, last_processed_seqtxn FROM live_views() WHERE view_name = 'lv'")
                     .noLeakCheck().noRandomAccess().returns("view_status\tlast_processed_seqtxn\nactive\t3\n");

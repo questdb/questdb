@@ -8258,7 +8258,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // outruns the base it derives from.
             // Read the view watermark first. A refresh publishes it only after consuming the
             // corresponding sequencer transaction, so observing that volatile write before reading
-            // the monotonic base heads yields a coherent pair. Reading base first lets another worker
+            // the monotonic base head yields a coherent pair. Reading base first lets another worker
             // advance the view between the reads and manufactures a false ahead state from two
             // different points in time. Monotonicity is what makes the order sufficient rather than
             // merely narrower: TableTransactionLog.lastTxn is a volatile field over an append-only
@@ -8270,21 +8270,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 simulateBaseCommitBetweenAheadGuardReadsForTest = null;
                 aheadGuardAction.run();
             }
-            // Take the max with the applied head: on an enterprise replica the downloader
-            // appends the on-disk txnlog behind the cached sequencer and reconciles it later,
-            // while WAL apply and this refresh already consume the new txns from the file.
-            // The cached head alone would misread that catch-up as data loss. writerTxn covers
-            // every locally-advanced watermark (ensureBaseApplied), and a hydrate-restored
-            // watermark past the durable head still trips the guard.
-            final long baseSeqLastTxn = Math.max(
-                    engine.getTableSequencerAPI().lastTxn(baseToken),
-                    engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn()
-            );
-            if (lastProcessedSeqTxn > baseSeqLastTxn) {
+            // Compare against the higher of the two base heads. On a primary the cached
+            // sequencer head is authoritative: the sole appender keeps it current, and the
+            // watermark can sit above writerTxn because the notification-driven refresh
+            // consumes a commit before the apply job lands it. On an enterprise replica the
+            // downloader appends the on-disk txnlog behind the cached sequencer and reconciles
+            // it later, while WAL apply and this refresh consume the new txns from the file;
+            // there writerTxn covers the stale window. writerTxn is not monotonic
+            // (notifyWalTxnRepublisher resets it to -1), so the max only ever falls back to the
+            // cached head. Neither head can exceed the durable txnlog, so a hydrate-restored
+            // watermark past it still trips the guard.
+            final long baseSeqLastTxn = engine.getTableSequencerAPI().lastTxn(baseToken);
+            final long baseWriterTxn = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+            if (lastProcessedSeqTxn > Math.max(baseSeqLastTxn, baseWriterTxn)) {
                 LOG.error().$("live view is ahead of base table and cannot be synchronized [view=")
                         .$(instance.getLiveViewToken())
                         .$(", lastProcessedSeqTxn=").$(lastProcessedSeqTxn)
                         .$(", baseTableTxn=").$(baseSeqLastTxn)
+                        .$(", baseWriterTxn=").$(baseWriterTxn)
                         .I$();
                 engine.invalidateLiveView(instance, "live view is ahead of base table and cannot be synchronized");
                 didWork = true;
