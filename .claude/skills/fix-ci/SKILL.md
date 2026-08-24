@@ -84,22 +84,29 @@ Report these as Category E (non-test failures) in the final output. Common cases
 - **build** — compilation failure. The job log contains the error.
 - **gitleaks** — the job failed on a credential-shaped string in one of the
   branch's commits, or on a scan error; tell the two apart before reporting.
-  The Actions API exposes no job summary, but the job tees its findings to the
-  log, so fetch them with
+  A `leaks found: N` line in the job log means the scan ran and found N; a clean
+  scan writes `no leaks found`, with no colon, so the colon form is the signal.
+  The Actions API exposes no job summary, but this repo's job tees ready-to-paste
+  ignore lines to the log, so fetch them with
   `gh run view {run_id} --log | cut -f3- | cut -d' ' -f2- | grep -E '^[^ ]+:[a-z0-9-]+:[0-9]+$' | sort -u`.
   Anchor on that line shape, not a `grep -A N` window around the heading: the
   runner echoes the workflow's own `run:` body into the log, so a heading match
   returns script source first, and a fixed window silently truncates a long
-  finding list. Nothing back means the scan produced no findings and the job
-  failed for another reason; read the log before naming which one.
+  finding list. Only this repo emits those lines: the enterprise and client
+  repos run the same action with no reporting step, so read their findings from
+  gitleaks' own verbose block, which every repo prints, with
+  `gh run view {run_id} --log | cut -f3- | cut -d' ' -f2- | grep -E '^(RuleID|File|Line):'`.
+  Nothing back from either, and no `leaks found:` line, means the job failed
+  before the scan reported anything; read the log before naming why.
   - `fatal: Invalid revision range` or `fatal: ambiguous argument ... unknown
     revision`, alongside `ERROR: Unexpected exit code [1]`, is gitleaks failing
     on a commit range the checkout cannot resolve. The action pins the workspace
     to the SHA in the event payload, then asks the API for the pull request's
     commits seconds later, so anything moving the branch head in between hands
-    it a head the checkout does not carry — an ordinary push (the range head is
-    merely ahead) or a force-push (the histories diverge, and gitleaks adds
-    `no leaks found in partial scan` over a scan of nothing). The push that
+    it a ref the checkout does not carry — an ordinary push (the range head is
+    merely ahead) or a force-push (the histories diverge). Either way gitleaks
+    adds `partial scan completed` and `no leaks found in partial scan` over a
+    scan of nothing, so that pair does not tell the two apart. The push that
     caused it starts a run of its own, so the next run clears it and there is
     nothing to fix.
   - `FTL unable to load gitleaks config` (exit 1), or a Go `panic:` trace from
