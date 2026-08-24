@@ -2043,6 +2043,47 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByNativePlanInvalidatedAfterParquetConversion() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL, val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT 'a', x::VARCHAR, timestamp_sequence('2024-01-01', 100_000)
+                    FROM long_sequence(5000)
+                    """);
+            execute("INSERT INTO x VALUES ('b', 'active', '2024-01-02T00:00:00.000000Z')");
+
+            final String query =
+                    "SELECT sym, val, ts FROM x WHERE val = '250' LATEST ON ts PARTITION BY sym";
+            try (RecordCursorFactory factory = select(query)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertFalse(cursor.hasNext());
+                }
+
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail("expected cached latest-by native plan to be invalidated");
+                } catch (TableReferenceOutOfDateException ignored) {
+                }
+            }
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tval\tts
+                            a\t250\t2024-01-01T00:00:24.900000Z
+                            """);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
     public void testLimitOverConstantFoldedByteNullFilter() throws Exception {
         // The query QueryFuzzTest found for aa809bb54f ("Fix LIMIT under-count on
         // pushdown-pruned skip"), kept as a correctness pin.
