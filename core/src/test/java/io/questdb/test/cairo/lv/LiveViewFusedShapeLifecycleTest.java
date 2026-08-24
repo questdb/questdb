@@ -455,7 +455,9 @@ public class LiveViewFusedShapeLifecycleTest extends AbstractLiveViewTest {
                             writer,
                             instance.getLiveViewToken().getTableId(),
                             0,
+                            instance.getLifecycleIdentity(),
                             true,
+                            null,
                             100,
                             1,
                             64

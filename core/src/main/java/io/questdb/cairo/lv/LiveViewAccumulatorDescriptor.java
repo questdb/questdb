@@ -31,7 +31,6 @@ import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.nio.ByteBuffer;
 import java.util.Arrays;
 
 /**
@@ -317,6 +316,14 @@ public final class LiveViewAccumulatorDescriptor {
         return Arrays.copyOf(encoded, encoded.length);
     }
 
+    /**
+     * Borrows this immutable descriptor's encoded identity while a compiled window-state
+     * plan owns the descriptor. Package-internal callers must not mutate the array.
+     */
+    byte[] borrowEncoded() {
+        return encoded;
+    }
+
     public int getFamily() {
         return runtime.getFamily();
     }
@@ -441,14 +448,14 @@ public final class LiveViewAccumulatorDescriptor {
      * so the plan's merge cannot fold two components a codec bump has separated.
      */
     private byte[] encode() {
-        final ByteBuffer buffer = ByteBuffer.allocate(7 * Integer.BYTES);
-        buffer.putInt(MAGIC);
-        buffer.putInt(FORMAT_VERSION);
-        buffer.putInt(runtime.getFamily());
-        buffer.putInt(codecVersion);
-        buffer.putInt(runtime.getContributionKind());
-        buffer.putInt(runtime.getArgumentColumnIndex());
-        buffer.putInt(runtime.getArgumentColumnType());
-        return buffer.array();
+        final byte[] encoded = new byte[7 * Integer.BYTES];
+        int offset = LiveViewCheckpointMetadata.putInt(encoded, 0, MAGIC);
+        offset = LiveViewCheckpointMetadata.putInt(encoded, offset, FORMAT_VERSION);
+        offset = LiveViewCheckpointMetadata.putInt(encoded, offset, runtime.getFamily());
+        offset = LiveViewCheckpointMetadata.putInt(encoded, offset, codecVersion);
+        offset = LiveViewCheckpointMetadata.putInt(encoded, offset, runtime.getContributionKind());
+        offset = LiveViewCheckpointMetadata.putInt(encoded, offset, runtime.getArgumentColumnIndex());
+        LiveViewCheckpointMetadata.putInt(encoded, offset, runtime.getArgumentColumnType());
+        return encoded;
     }
 }

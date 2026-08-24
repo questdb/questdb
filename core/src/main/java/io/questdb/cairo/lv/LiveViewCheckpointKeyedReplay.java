@@ -127,7 +127,7 @@ import org.jetbrains.annotations.Nullable;
  * route rather than dropping a key it cannot resolve against the base: a key missing from
  * a keyed scan is a key whose rows the repair would not correct.
  */
-public final class LiveViewCheckpointKeyedReplay implements QuietCloseable {
+public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCursor.RowDrain, QuietCloseable {
     // The reader-local base symbol keys the indexed scan follows, in the order it takes
     // them. Never holds a duplicate: two cursors over one key would each yield its rows.
     private final IntList baseSymbolKeys = new IntList();
@@ -379,6 +379,7 @@ public final class LiveViewCheckpointKeyedReplay implements QuietCloseable {
      *
      * @return how many rows it accounted for
      */
+    @Override
     public long drainUpTo(long tsInclusive) {
         if (storedRowCursor == null || walWriter == null) {
             return 0;

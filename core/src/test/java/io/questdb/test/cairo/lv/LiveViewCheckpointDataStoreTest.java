@@ -208,6 +208,7 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
             try (Catalogue directory = new Catalogue();
                  LiveViewCheckpointMetaStore metaStore = openMetaStore();
                  LiveViewCheckpointDataStore dataStore = openDataStore(metaStore)) {
+                final int purgeVisitorIdentity = dataStore.getPurgeVisitorShellIdentityForTest();
                 directory.addSegment(1, source.fileLength, 1);
                 directory.publish(metaStore, 1, 101);
                 directory.retire(1, 2);
@@ -219,6 +220,8 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                 Assert.assertEquals(1, failed.getFailedSegmentCount());
                 Assert.assertTrue(failed.getCatalogueEntriesVisited() > 0);
                 Assert.assertTrue(dataFileExists(1));
+                Assert.assertEquals(purgeVisitorIdentity, dataStore.getPurgeVisitorShellIdentityForTest());
+                Assert.assertTrue(dataStore.isPurgeVisitorShellStateClearForTest());
 
                 final LiveViewCheckpointDataStore.PurgeResult retried = dataStore.purge();
                 Assert.assertEquals(1, retried.getPurgedSegmentCount());
@@ -227,6 +230,8 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                 Assert.assertEquals(1, retried.getQueueEntriesVisited());
                 Assert.assertEquals(source.fileLength, retried.getPurgedBytes());
                 Assert.assertFalse(dataFileExists(1));
+                Assert.assertEquals(purgeVisitorIdentity, dataStore.getPurgeVisitorShellIdentityForTest());
+                Assert.assertTrue(dataStore.isPurgeVisitorShellStateClearForTest());
             }
         });
     }

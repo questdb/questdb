@@ -31,9 +31,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.util.Arrays;
 
 /**
  * Checksummed metadata root for one compiler-identified window function. The
@@ -178,6 +178,16 @@ public class LiveViewCheckpointFunctionRoot implements Closeable {
         }
     }
 
+    void clearBorrowedCompiled() {
+        functionIdentity = null;
+        keySchema = null;
+    }
+
+    @TestOnly
+    boolean isBorrowingCompiledForTest(byte[] functionIdentity, byte[] keySchema) {
+        return this.functionIdentity == functionIdentity && this.keySchema == keySchema;
+    }
+
     void ofBuilder(
             byte[] functionIdentity,
             int stateFormatVersion,
@@ -186,9 +196,9 @@ public class LiveViewCheckpointFunctionRoot implements Closeable {
             LiveViewCheckpointPageRef partitionMapRootRef,
             LongList segmentUseCounts
     ) {
-        this.functionIdentity = Arrays.copyOf(functionIdentity, functionIdentity.length);
+        this.functionIdentity = functionIdentity;
         this.stateFormatVersion = stateFormatVersion;
-        this.keySchema = Arrays.copyOf(keySchema, keySchema.length);
+        this.keySchema = keySchema;
         this.scalarStateRef.of(scalarStateRef.getSegmentId(), scalarStateRef.getOffset(), scalarStateRef.getStoredLength(),
                 scalarStateRef.getDecodedLength(), scalarStateRef.getPageKind(), scalarStateRef.getCodec(),
                 scalarStateRef.getRowCount(), scalarStateRef.getFlags());

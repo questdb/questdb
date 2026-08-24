@@ -105,9 +105,16 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         assertMemoryLeak(() -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                Assert.assertNull(job.getCheckpointTimelineLifecycleStateForTest());
                 long entries = 0;
                 for (int commit = 1; commit <= SEALS; commit++) {
                     appendAndRefresh(job, commit * 10, commit);
+                    if (commit == 1) {
+                        Assert.assertSame(
+                                engine.getLiveViewCheckpointLifecycleState(),
+                                job.getCheckpointTimelineLifecycleStateForTest()
+                        );
+                    }
                     final LiveViewInstance instance = viewInstance();
                     entries = assertEpochRetainsEveryEntry(instance, entries, "after commit " + commit);
                     Assert.assertEquals("one cadence seal appends one logical entry", commit, entries);
@@ -237,12 +244,22 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     public void testLocalizedRepairsReVersionRootsWithoutDroppingOne() throws Exception {
         assertMemoryLeak(() -> {
             createView();
+            final LiveViewInstance instance;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                final LiveViewInstance instance = buildHistory(job);
+                instance = buildHistory(job);
+            }
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                Assert.assertNull(job.getCheckpointTimelineLifecycleStateForTest());
                 long entries = SEALS;
                 for (int correction = 1; correction <= CORRECTIONS; correction++) {
                     final long generationBefore = generation(instance);
                     correct(job, instance, historicalSecond(correction), 900 + correction);
+                    if (correction == 1) {
+                        Assert.assertSame(
+                                engine.getLiveViewCheckpointLifecycleState(),
+                                job.getCheckpointTimelineLifecycleStateForTest()
+                        );
+                    }
 
                     final String when = "after correction " + correction;
                     Assert.assertTrue(
@@ -323,7 +340,12 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             // to its predecessor, and the restart reconstructs the corrupt id in place
             // before restoring cleanly from the healed generation.
             try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                Assert.assertNull(resumed.getCheckpointTimelineLifecycleStateForTest());
                 driveRefreshToQuiescence(resumed);
+                Assert.assertSame(
+                        engine.getLiveViewCheckpointLifecycleState(),
+                        resumed.getCheckpointTimelineLifecycleStateForTest()
+                );
             }
 
             final LiveViewInstance restored = viewInstance();
@@ -457,6 +479,28 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                         findsEntry(instance, ts(timestamp(10)), 0, entry)
                 );
                 assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testRefreshJobTruncateUsesEngineLifecycleState() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            final LiveViewInstance instance;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                instance = buildHistory(job);
+            }
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                Assert.assertNull(job.getCheckpointTimelineLifecycleStateForTest());
+                Assert.assertTrue(job.truncateOrRetireTimelineOnO3ForTest(
+                        instance,
+                        ts(timestamp(SEALS * 10 - 5))
+                ));
+                Assert.assertSame(
+                        engine.getLiveViewCheckpointLifecycleState(),
+                        job.getCheckpointTimelineLifecycleStateForTest()
+                );
             }
         });
     }

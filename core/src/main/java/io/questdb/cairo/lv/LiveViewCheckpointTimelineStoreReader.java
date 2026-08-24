@@ -40,9 +40,9 @@ import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 /**
@@ -69,6 +69,10 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     private final LiveViewCheckpointRowPositionDeltaReader deltaReader;
     private final LiveViewCheckpointFunctionDirectory functionDirectory;
     private final LiveViewCheckpointFunctionRoot functionRoot;
+    private final RestoreAnchorVisitor restoreAnchorVisitor = new RestoreAnchorVisitor();
+    private final RestoreFunctionVisitor restoreFunctionVisitor = new RestoreFunctionVisitor();
+    private final RestoreGroupedFunctionVisitor restoreGroupedFunctionVisitor = new RestoreGroupedFunctionVisitor();
+    private final RestoreWindowStateVisitor restoreWindowStateVisitor = new RestoreWindowStateVisitor();
     private final MemoryCARW keyMemory;
     private final LiveViewStatePageReader keyPageReader = new LiveViewStatePageReader();
     private final LiveViewCheckpointMetaStore metaStore;
@@ -83,6 +87,9 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     private final LiveViewCheckpointSegmentDirectoryEntry segmentDirectoryEntry = new LiveViewCheckpointSegmentDirectoryEntry();
     private final LiveViewStatePageReader statePageReader = new LiveViewStatePageReader();
     private final LiveViewCheckpointTimelineReader timelineReader;
+    private final ValidateAnchorVisitor validateAnchorVisitor = new ValidateAnchorVisitor();
+    private final ValidateFunctionVisitor validateFunctionVisitor = new ValidateFunctionVisitor();
+    private final ValidateWindowStateVisitor validateWindowStateVisitor = new ValidateWindowStateVisitor();
     private final LiveViewCheckpointWindowRoot windowRoot;
     private int dataReaderClock;
     // Whether the root being restored carries its anchored window's state fused into
@@ -191,6 +198,23 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             throw t;
         }
         isOpen = true;
+    }
+
+    @TestOnly
+    public int getVisitorShellIdentityForTest() {
+        return System.identityHashCode(restoreFunctionVisitor);
+    }
+
+    @TestOnly
+    public boolean isVisitorShellStateClearForTest() {
+        return restoreAnchorVisitor.anchorWindow == null
+                && restoreFunctionVisitor.function == null
+                && restoreFunctionVisitor.map == null
+                && restoreGroupedFunctionVisitor.anchorWindow == null
+                && restoreWindowStateVisitor.anchorWindow == null
+                && validateAnchorVisitor.anchorWindow == null
+                && validateFunctionVisitor.function == null
+                && validateWindowStateVisitor.anchorWindow == null;
     }
 
     /**
@@ -712,15 +736,12 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         // half-restored by a framing failure discovered mid-iteration.
         anchorWindow.beginCheckpointRestore();
         restoredLogicalStateBytes = 0;
-        partitionReader.iterateAll(anchorMapRootRef, entry -> {
-            anchorWindow.restoreCheckpointEntry(
-                    openKeyPage(entry.getKey()),
-                    LiveViewCheckpointAnchorRoot.readAnchorValue(entry)
-            );
-            // Mirrors what a complete freeze charges per live anchor entry - see
-            // LiveViewWindow.freezeCheckpointEntries.
-            restoredLogicalStateBytes += entry.getKey().length + LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE;
-        });
+        restoreAnchorVisitor.of(anchorWindow);
+        try {
+            partitionReader.iterateAll(anchorMapRootRef, restoreAnchorVisitor);
+        } finally {
+            restoreAnchorVisitor.clear();
+        }
         if (baselineGeneration != Numbers.LONG_NULL) {
             anchorWindow.onCheckpointPersisted(restoredLogicalStateBytes, baselineGeneration);
         }
@@ -757,14 +778,12 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         windowRoot.getPartitionMapRootRef(windowMapRootRef);
         anchorWindow.beginCheckpointRestore();
         restoredLogicalStateBytes = 0;
-        partitionReader.iterateAll(windowMapRootRef, entry -> {
-            final byte[] encodedKey = entry.getKey();
-            final byte[] scalarState = LiveViewCheckpointWindowRoot.readWindowState(entry, totalInlineStateBytes);
-            anchorWindow.restoreCheckpointWindowEntry(openKeyPage(encodedKey), scalarState);
-            // The fused entry charges its whole payload once, exactly as the freeze
-            // charged it: the grouped projections account for nothing of their own.
-            restoredLogicalStateBytes += encodedKey.length + scalarState.length;
-        });
+        restoreWindowStateVisitor.of(anchorWindow, totalInlineStateBytes);
+        try {
+            partitionReader.iterateAll(windowMapRootRef, restoreWindowStateVisitor);
+        } finally {
+            restoreWindowStateVisitor.clear();
+        }
         if (baselineGeneration != Numbers.LONG_NULL) {
             anchorWindow.onCheckpointPersisted(restoredLogicalStateBytes, baselineGeneration);
         }
@@ -804,51 +823,12 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         final LiveViewCheckpointPageRef partitionRootRef = new LiveViewCheckpointPageRef();
         functionRoot.getPartitionMapRootRef(partitionRootRef);
         restoredLogicalStateBytes = 0;
-        partitionReader.iterateAll(partitionRootRef, entry -> {
-            final byte[] encodedKey = entry.getKey();
-            final MapKey key = map.withKey();
-            final long keyBytes = LiveViewSnapshotKeyCodec.readKey(
-                    key,
-                    openKeyPage(encodedKey),
-                    0,
-                    function.getCheckpointKeyColumnTypes()
-            );
-            if (keyBytes != encodedKey.length) {
-                throw invalid("partition key decoder did not consume reference exactly");
-            }
-            final MapValue value = key.createValue();
-            if (!value.isNew()) {
-                throw invalid("function root contains a duplicate partition key");
-            }
-            if (isRingShaped) {
-                ringStateReader.of(checkpointsDir, segmentDirectory, entry);
-                function.restoreCheckpointRingState(ringStateReader, value);
-                return;
-            }
-            // Mirrors what a complete freeze charges per partition - see the
-            // non-incremental arm of freezeFunction. Both shapes charge the state's own
-            // bytes, so a root part-way through converting from pages to inline entries
-            // still restores the figure it froze.
-            final byte[] scalarState = entry.getScalarState();
-            if (scalarState.length != 0) {
-                final long consumed = function.restoreCheckpointState(
-                        openInlineStatePage(scalarState),
-                        0,
-                        value
-                );
-                if (consumed != scalarState.length) {
-                    throw invalid("inline state decoder did not consume the entry exactly [consumed=")
-                            .put(consumed).put(", length=").put(scalarState.length).put(']');
-                }
-                restoredLogicalStateBytes += encodedKey.length + scalarState.length;
-                return;
-            }
-            final LiveViewCheckpointStatePageRef ref = entry.getStatePageRef(0);
-            final LiveViewCheckpointDataSegmentReader reader = openStatePage(ref);
-            final long consumed = function.restoreCheckpointState(statePageReader, 0, value);
-            reader.assertFullyConsumed(ref.getStoredLength(), consumed, 1);
-            restoredLogicalStateBytes += encodedKey.length + ref.getDecodedLength();
-        });
+        restoreFunctionVisitor.of(function, map, isRingShaped);
+        try {
+            partitionReader.iterateAll(partitionRootRef, restoreFunctionVisitor);
+        } finally {
+            restoreFunctionVisitor.clear();
+        }
         if (!isRingShaped && baselineGeneration != Numbers.LONG_NULL) {
             function.onCheckpointPersisted(restoredLogicalStateBytes, baselineGeneration);
         }
@@ -875,7 +855,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             if (!function.supportsCheckpointState() || isDurableGroupedProjection(anchorWindow, function)) {
                 continue;
             }
-            functionDirectory.find(function.checkpointFunctionIdentity().getEncoded(), functionRootRef);
+            functionDirectory.find(function.checkpointFunctionIdentity().borrowEncoded(), functionRootRef);
             final int memberIndex = memberProjectionIndex(anchorWindow, function, false);
             if (memberIndex >= 0) {
                 restoreGroupedFunction(anchorWindow, memberIndex, function, functionRootRef, baselineGeneration);
@@ -912,15 +892,12 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         final LiveViewCheckpointPageRef partitionRootRef = new LiveViewCheckpointPageRef();
         functionRoot.getPartitionMapRootRef(partitionRootRef);
         restoredLogicalStateBytes = 0;
-        partitionReader.iterateAll(partitionRootRef, entry -> {
-            final byte[] encodedKey = entry.getKey();
-            final byte[] scalarState = entry.getScalarState();
-            if (scalarState.length == 0) {
-                throw invalid("grouped member root entry carries no inline state");
-            }
-            anchorWindow.restoreCheckpointMemberEntry(projectionIndex, openKeyPage(encodedKey), scalarState);
-            restoredLogicalStateBytes += encodedKey.length + scalarState.length;
-        });
+        restoreGroupedFunctionVisitor.of(anchorWindow, projectionIndex);
+        try {
+            partitionReader.iterateAll(partitionRootRef, restoreGroupedFunctionVisitor);
+        } finally {
+            restoreGroupedFunctionVisitor.clear();
+        }
         if (baselineGeneration != Numbers.LONG_NULL) {
             function.onCheckpointPersisted(restoredLogicalStateBytes, baselineGeneration);
         }
@@ -1062,10 +1039,12 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         final int totalInlineStateBytes = windowRoot.getTotalInlineStateBytes();
         final LiveViewCheckpointPageRef windowMapRootRef = new LiveViewCheckpointPageRef();
         windowRoot.getPartitionMapRootRef(windowMapRootRef);
-        partitionReader.iterateAll(windowMapRootRef, entry -> {
-            LiveViewCheckpointWindowRoot.readWindowState(entry, totalInlineStateBytes);
-            anchorWindow.validateCheckpointEntry(openKeyPage(entry.getKey()));
-        });
+        validateWindowStateVisitor.of(anchorWindow, totalInlineStateBytes);
+        try {
+            partitionReader.iterateAll(windowMapRootRef, validateWindowStateVisitor);
+        } finally {
+            validateWindowStateVisitor.clear();
+        }
     }
 
     /**
@@ -1084,19 +1063,19 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         if (plan == null) {
             throw invalid("window state root has no compiled window-state plan to restore into");
         }
-        if (!plan.isSameWindowIdentity(windowRoot.getWindowIdentity())) {
+        if (!plan.isSameWindowIdentity(windowRoot.borrowWindowIdentity())) {
             throw invalid("window state identity does not match the compiled runtime");
         }
         if (windowRoot.getAnchorValueType() != anchorWindow.getAnchorValueType()) {
             throw invalid("window state anchor value type does not match the compiled runtime");
         }
         if (!Arrays.equals(
-                LiveViewCheckpointMetadata.encodeKeySchema(anchorWindow.getPartitionKeyTypes()),
+                anchorWindow.borrowCheckpointKeySchema(),
                 windowRoot.getKeySchema()
         )) {
             throw invalid("window state key schema does not match the compiled runtime");
         }
-        if (!Arrays.equals(plan.getManifest().getEncoded(), windowRoot.getManifest())) {
+        if (!Arrays.equals(plan.getManifest().borrowEncoded(), windowRoot.getManifest())) {
             throw invalid("window state manifest does not match the compiled runtime");
         }
         if (plan.getTotalInlineStateBytes() != windowRoot.getTotalInlineStateBytes()) {
@@ -1148,20 +1127,24 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         windowRoot.getPartitionMapRootRef(windowMapRootRef);
         final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
         restoredLogicalStateBytes = 0;
-        keys.forEach(key -> {
+        for (int i = 0, n = keys.getSlotCount(); i < n; i++) {
+            final byte[] key = keys.getKeyAt(i);
+            if (key == null) {
+                continue;
+            }
             if (!partitionReader.find(windowMapRootRef, key, entry)) {
-                return;
+                continue;
             }
             final byte[] scalarState = LiveViewCheckpointWindowRoot.readWindowState(entry, totalInlineStateBytes);
             anchorWindow.restoreCheckpointWindowEntry(openKeyPage(entry.getKey()), scalarState);
             restoredLogicalStateBytes += entry.getKey().length + scalarState.length;
-        });
+        }
     }
 
     private void validateAnchor(@NotNull LiveViewWindow anchorWindow, LiveViewCheckpointPageRef anchorRootRef) {
         anchorRoot.of(checkpointsDir, anchorRootRef);
         if (!Arrays.equals(
-                anchorWindow.getWindowName().getBytes(StandardCharsets.UTF_8),
+                anchorWindow.borrowCheckpointWindowNameUtf8(),
                 anchorRoot.getWindowName()
         )) {
             throw invalid("anchor window name does not match the compiled runtime");
@@ -1170,27 +1153,29 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             throw invalid("anchor value type does not match the compiled runtime");
         }
         if (!Arrays.equals(
-                LiveViewCheckpointMetadata.encodeKeySchema(anchorWindow.getPartitionKeyTypes()),
+                anchorWindow.borrowCheckpointKeySchema(),
                 anchorRoot.getKeySchema()
         )) {
             throw invalid("anchor key schema does not match the compiled runtime");
         }
         final LiveViewCheckpointPageRef anchorMapRootRef = new LiveViewCheckpointPageRef();
         anchorRoot.getPartitionMapRootRef(anchorMapRootRef);
-        partitionReader.iterateAll(anchorMapRootRef, entry -> {
-            LiveViewCheckpointAnchorRoot.readAnchorValue(entry);
-            anchorWindow.validateCheckpointEntry(openKeyPage(entry.getKey()));
-        });
+        validateAnchorVisitor.of(anchorWindow);
+        try {
+            partitionReader.iterateAll(anchorMapRootRef, validateAnchorVisitor);
+        } finally {
+            validateAnchorVisitor.clear();
+        }
     }
 
     private void validateFunction(WindowFunction function, LiveViewCheckpointPageRef functionRootRef) {
         functionRoot.of(checkpointsDir, functionRootRef);
-        final byte[] identity = function.checkpointFunctionIdentity().getEncoded();
+        final byte[] identity = function.checkpointFunctionIdentity().borrowEncoded();
         if (!Arrays.equals(identity, functionRoot.getFunctionIdentity())) {
             throw invalid("function directory and root identities differ");
         }
         if (!Arrays.equals(
-                LiveViewCheckpointMetadata.encodeKeySchema(function.getCheckpointKeyColumnTypes()),
+                function.checkpointFunctionIdentity().borrowEncodedKeySchema(),
                 functionRoot.getKeySchema()
         )) {
             throw invalid("function key schema does not match the compiled runtime");
@@ -1233,44 +1218,12 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         final int fixedStateLength = function.checkpointStateFixedLength();
         final LiveViewCheckpointPageRef partitionRootRef = new LiveViewCheckpointPageRef();
         functionRoot.getPartitionMapRootRef(partitionRootRef);
-        partitionReader.iterateAll(partitionRootRef, entry -> {
-            final byte[] encodedKey = entry.getKey();
-            final long consumed = LiveViewSnapshotKeyCodec.validateKey(
-                    openKeyPage(encodedKey),
-                    0,
-                    function.getCheckpointKeyColumnTypes()
-            );
-            if (consumed != encodedKey.length) {
-                throw invalid("partition key decoder did not consume reference exactly");
-            }
-            if (isRingShaped) {
-                // The chunk reader validates the entry's own scalar payload and
-                // page references; what it cannot see is whether the segments
-                // those references name belong to this root at all, so that is
-                // checked here, exactly as openStatePage does for a whole image.
-                ringStateReader.ofMetadata(entry);
-                for (int i = 0, n = entry.getStatePageCount(); i < n; i++) {
-                    validateStatePageSegment(entry.getStatePageRef(i));
-                }
-                return;
-            }
-            // Two shapes, and no third. A whole-state image is either inlined in the
-            // leaf at the declared width with no page beside it, or held in one page
-            // the entry names with no scalar beside it. A copy-on-write tree converts
-            // entry by entry, so one root holds both while a legacy predecessor's
-            // untouched leaves are still reachable.
-            final byte[] scalarState = entry.getScalarState();
-            if (scalarState.length != 0) {
-                if (scalarState.length != fixedStateLength || entry.getStatePageCount() != 0) {
-                    throw invalid("function partition entry shape invalid");
-                }
-                return;
-            }
-            if (entry.getStatePageCount() != 1) {
-                throw invalid("function partition entry shape invalid");
-            }
-            openStatePage(entry.getStatePageRef(0));
-        });
+        validateFunctionVisitor.of(function, isRingShaped, fixedStateLength);
+        try {
+            partitionReader.iterateAll(partitionRootRef, validateFunctionVisitor);
+        } finally {
+            validateFunctionVisitor.clear();
+        }
     }
 
     /**
@@ -1315,13 +1268,228 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             if (function.checkpointFunctionIdentity() == null || function.checkpointDependency() == null) {
                 throw invalid("checkpoint-capable function has no compiler metadata");
             }
-            if (!functionDirectory.find(function.checkpointFunctionIdentity().getEncoded(), functionRootRef)) {
+            if (!functionDirectory.find(function.checkpointFunctionIdentity().borrowEncoded(), functionRootRef)) {
                 throw invalid("checkpoint root is missing a compiled function");
             }
             validateFunction(function, functionRootRef);
         }
         if (capableCount != functionDirectory.size()) {
             throw invalid("checkpoint function count does not match the compiled runtime");
+        }
+    }
+
+    private final class RestoreAnchorVisitor implements LiveViewCheckpointPartitionMapReader.Visitor {
+        private LiveViewWindow anchorWindow;
+
+        private void clear() {
+            anchorWindow = null;
+        }
+
+        private void of(LiveViewWindow anchorWindow) {
+            this.anchorWindow = anchorWindow;
+        }
+
+        @Override
+        public void onEntry(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
+            anchorWindow.restoreCheckpointEntry(
+                    openKeyPage(entry.getKey()),
+                    LiveViewCheckpointAnchorRoot.readAnchorValue(entry)
+            );
+            restoredLogicalStateBytes += entry.getKey().length + LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE;
+        }
+    }
+
+    private final class RestoreFunctionVisitor implements LiveViewCheckpointPartitionMapReader.Visitor {
+        private WindowFunction function;
+        private boolean isRingShaped;
+        private Map map;
+
+        private void clear() {
+            function = null;
+            isRingShaped = false;
+            map = null;
+        }
+
+        private void of(WindowFunction function, Map map, boolean isRingShaped) {
+            this.function = function;
+            this.map = map;
+            this.isRingShaped = isRingShaped;
+        }
+
+        @Override
+        public void onEntry(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
+            final byte[] encodedKey = entry.getKey();
+            final MapKey key = map.withKey();
+            final long keyBytes = LiveViewSnapshotKeyCodec.readKey(
+                    key,
+                    openKeyPage(encodedKey),
+                    0,
+                    function.getCheckpointKeyColumnTypes()
+            );
+            if (keyBytes != encodedKey.length) {
+                throw invalid("partition key decoder did not consume reference exactly");
+            }
+            final MapValue value = key.createValue();
+            if (!value.isNew()) {
+                throw invalid("function root contains a duplicate partition key");
+            }
+            if (isRingShaped) {
+                ringStateReader.of(checkpointsDir, segmentDirectory, entry);
+                function.restoreCheckpointRingState(ringStateReader, value);
+                return;
+            }
+            final byte[] scalarState = entry.getScalarState();
+            if (scalarState.length != 0) {
+                final long consumed = function.restoreCheckpointState(openInlineStatePage(scalarState), 0, value);
+                if (consumed != scalarState.length) {
+                    throw invalid("inline state decoder did not consume the entry exactly [consumed=")
+                            .put(consumed).put(", length=").put(scalarState.length).put(']');
+                }
+                restoredLogicalStateBytes += encodedKey.length + scalarState.length;
+                return;
+            }
+            final LiveViewCheckpointStatePageRef ref = entry.getStatePageRef(0);
+            final LiveViewCheckpointDataSegmentReader reader = openStatePage(ref);
+            final long consumed = function.restoreCheckpointState(statePageReader, 0, value);
+            reader.assertFullyConsumed(ref.getStoredLength(), consumed, 1);
+            restoredLogicalStateBytes += encodedKey.length + ref.getDecodedLength();
+        }
+    }
+
+    private final class RestoreGroupedFunctionVisitor implements LiveViewCheckpointPartitionMapReader.Visitor {
+        private LiveViewWindow anchorWindow;
+        private int projectionIndex;
+
+        private void clear() {
+            anchorWindow = null;
+            projectionIndex = 0;
+        }
+
+        private void of(LiveViewWindow anchorWindow, int projectionIndex) {
+            this.anchorWindow = anchorWindow;
+            this.projectionIndex = projectionIndex;
+        }
+
+        @Override
+        public void onEntry(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
+            final byte[] encodedKey = entry.getKey();
+            final byte[] scalarState = entry.getScalarState();
+            if (scalarState.length == 0) {
+                throw invalid("grouped member root entry carries no inline state");
+            }
+            anchorWindow.restoreCheckpointMemberEntry(projectionIndex, openKeyPage(encodedKey), scalarState);
+            restoredLogicalStateBytes += encodedKey.length + scalarState.length;
+        }
+    }
+
+    private final class RestoreWindowStateVisitor implements LiveViewCheckpointPartitionMapReader.Visitor {
+        private LiveViewWindow anchorWindow;
+        private int totalInlineStateBytes;
+
+        private void clear() {
+            anchorWindow = null;
+            totalInlineStateBytes = 0;
+        }
+
+        private void of(LiveViewWindow anchorWindow, int totalInlineStateBytes) {
+            this.anchorWindow = anchorWindow;
+            this.totalInlineStateBytes = totalInlineStateBytes;
+        }
+
+        @Override
+        public void onEntry(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
+            final byte[] encodedKey = entry.getKey();
+            final byte[] scalarState = LiveViewCheckpointWindowRoot.readWindowState(entry, totalInlineStateBytes);
+            anchorWindow.restoreCheckpointWindowEntry(openKeyPage(encodedKey), scalarState);
+            restoredLogicalStateBytes += encodedKey.length + scalarState.length;
+        }
+    }
+
+    private final class ValidateAnchorVisitor implements LiveViewCheckpointPartitionMapReader.Visitor {
+        private LiveViewWindow anchorWindow;
+
+        private void clear() {
+            anchorWindow = null;
+        }
+
+        private void of(LiveViewWindow anchorWindow) {
+            this.anchorWindow = anchorWindow;
+        }
+
+        @Override
+        public void onEntry(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
+            LiveViewCheckpointAnchorRoot.readAnchorValue(entry);
+            anchorWindow.validateCheckpointEntry(openKeyPage(entry.getKey()));
+        }
+    }
+
+    private final class ValidateFunctionVisitor implements LiveViewCheckpointPartitionMapReader.Visitor {
+        private int fixedStateLength;
+        private WindowFunction function;
+        private boolean isRingShaped;
+
+        private void clear() {
+            fixedStateLength = 0;
+            function = null;
+            isRingShaped = false;
+        }
+
+        private void of(WindowFunction function, boolean isRingShaped, int fixedStateLength) {
+            this.function = function;
+            this.isRingShaped = isRingShaped;
+            this.fixedStateLength = fixedStateLength;
+        }
+
+        @Override
+        public void onEntry(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
+            final byte[] encodedKey = entry.getKey();
+            final long consumed = LiveViewSnapshotKeyCodec.validateKey(
+                    openKeyPage(encodedKey),
+                    0,
+                    function.getCheckpointKeyColumnTypes()
+            );
+            if (consumed != encodedKey.length) {
+                throw invalid("partition key decoder did not consume reference exactly");
+            }
+            if (isRingShaped) {
+                ringStateReader.ofMetadata(entry);
+                for (int i = 0, n = entry.getStatePageCount(); i < n; i++) {
+                    validateStatePageSegment(entry.getStatePageRef(i));
+                }
+                return;
+            }
+            final byte[] scalarState = entry.getScalarState();
+            if (scalarState.length != 0) {
+                if (scalarState.length != fixedStateLength || entry.getStatePageCount() != 0) {
+                    throw invalid("function partition entry shape invalid");
+                }
+                return;
+            }
+            if (entry.getStatePageCount() != 1) {
+                throw invalid("function partition entry shape invalid");
+            }
+            openStatePage(entry.getStatePageRef(0));
+        }
+    }
+
+    private final class ValidateWindowStateVisitor implements LiveViewCheckpointPartitionMapReader.Visitor {
+        private LiveViewWindow anchorWindow;
+        private int totalInlineStateBytes;
+
+        private void clear() {
+            anchorWindow = null;
+            totalInlineStateBytes = 0;
+        }
+
+        private void of(LiveViewWindow anchorWindow, int totalInlineStateBytes) {
+            this.anchorWindow = anchorWindow;
+            this.totalInlineStateBytes = totalInlineStateBytes;
+        }
+
+        @Override
+        public void onEntry(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
+            LiveViewCheckpointWindowRoot.readWindowState(entry, totalInlineStateBytes);
+            anchorWindow.validateCheckpointEntry(openKeyPage(entry.getKey()));
         }
     }
 

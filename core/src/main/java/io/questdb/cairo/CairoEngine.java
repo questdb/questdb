@@ -34,6 +34,7 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
+import io.questdb.cairo.lv.LiveViewCheckpointLifecycleState;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness;
 import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
@@ -210,6 +211,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private static final CarrierLocal<MatViewRefreshTask> tlMatViewRefreshTask = new CarrierLocal<>(MatViewRefreshTask::new);
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
+    private final AtomicLong nextLiveViewLifecycleIdentity = new AtomicLong(1);
     private final BackupSeqPartLock backupSeqPartLock = new BackupSeqPartLock();
     private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyExportContext copyExportContext;
@@ -218,6 +220,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final DataID dataID;
     private final DependentViewGraph dependentViewGraph;
     private final FunctionFactoryCache ffCache;
+    private final LiveViewCheckpointLifecycleState liveViewCheckpointLifecycleState = new LiveViewCheckpointLifecycleState();
     private final LiveViewRegistry liveViewRegistry = new LiveViewRegistry();
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
@@ -310,6 +313,8 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull LiveViewStateStore liveViewStateStore = NoOpLiveViewStateStore.INSTANCE;
+    private @Nullable Runnable liveViewCreateRollbackAfterResetHook;
+    private @Nullable Runnable liveViewCreateRollbackBeforeFenceHook;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     // Lazily initialized on first call to getMemoryTrackerProvider(), because the
     // FactoryProvider that produces it is not bound until config.init(engine, ...)
@@ -917,6 +922,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             LiveViewInstance instance = new LiveViewInstance(
                                     definition,
                                     tableToken,
+                                    nextLiveViewLifecycleIdentity(),
                                     metadata.getTimestampIndex() > -1
                                             && metadata.isDedupKey(metadata.getTimestampIndex()),
                                     dedupKeyColumnIndexOf(metadata)
@@ -1287,6 +1293,7 @@ public class CairoEngine implements Closeable, WriterSource {
         matViewStateStore.clear();
         matViewTimerQueue.clear();
         liveViewRegistry.clear();
+        liveViewCheckpointLifecycleState.clear();
         liveViewStateStore.clear();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
@@ -1332,6 +1339,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // one pooled handle to LiveViewInstance would otherwise turn the old order into a
         // use-after-free that no test catches.
         Misc.free(liveViewRegistry);
+        liveViewCheckpointLifecycleState.clear();
         Misc.free(liveViewStateStore);
         Misc.free(sqlCompilerPool);
         Misc.free(writerPool);
@@ -1748,6 +1756,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
             // From here on, any failure must roll back the table to avoid orphan
             // LV-typed directories the startup loader skips and never reclaims.
+            LiveViewInstance instance = null;
             try {
                 // TableUtils.createTable already wrote the table-dir _lv (definition), BEFORE _txn -
                 // see the note there. _txn is what exists() keys on, so a crash between them leaves
@@ -1796,9 +1805,10 @@ public class CairoEngine implements Closeable, WriterSource {
                 );
 
                 // _lv is written by TableUtils.createTable, before _txn - see the note there.
-                LiveViewInstance instance = new LiveViewInstance(
+                instance = new LiveViewInstance(
                         definition,
                         liveViewToken,
+                        nextLiveViewLifecycleIdentity(),
                         sparsePublicationKeyColumnIndex != LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN,
                         sparsePublicationKeyColumnIndex
                 );
@@ -1825,8 +1835,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     // freed instance after the table-drop below succeeds. The
                     // graph-side entry is removed in the same pass so a retried
                     // CREATE does not see a stale dependent.
-                    LiveViewInstance partial = liveViewRegistry.removeView(op.getViewName());
-                    dependentViewGraph.removeLiveView(liveViewToken, op.getBaseTableName());
+                    final LiveViewInstance partial = instance;
                     // registerView already published the instance to getViews, so a
                     // refresh worker may hold its latch. Free via the DROP path's
                     // latch-aware teardown, not close() (which frees off-latch and
@@ -1834,6 +1843,21 @@ public class CairoEngine implements Closeable, WriterSource {
                     // only if unlatched, else defers to the worker's finally hook.
                     if (partial != null) {
                         partial.markAsDropped();
+                        final Runnable beforeFenceHook = liveViewCreateRollbackBeforeFenceHook;
+                        if (beforeFenceHook != null) {
+                            beforeFenceHook.run();
+                        }
+                        partial.fenceRefresh();
+                        liveViewCheckpointLifecycleState.reset(partial.getLifecycleIdentity());
+                        final Runnable afterResetHook = liveViewCreateRollbackAfterResetHook;
+                        if (afterResetHook != null) {
+                            afterResetHook.run();
+                        }
+                        partial.clearCheckpointTimelineOwnership();
+                    }
+                    liveViewRegistry.removeView(op.getViewName());
+                    dependentViewGraph.removeLiveView(liveViewToken, op.getBaseTableName());
+                    if (partial != null) {
                         partial.tryCloseIfDropped();
                     }
                 } catch (Throwable rollbackErr) {
@@ -2050,6 +2074,9 @@ public class CairoEngine implements Closeable, WriterSource {
             // drop.
             instance.markDroppedAndAwaitCheckpoint();
             instance.fenceRefresh();
+        }
+        if (instance != null) {
+            liveViewCheckpointLifecycleState.reset(instance.getLifecycleIdentity());
         }
         if (instance != null) {
             instance.clearCheckpointTimelineOwnership();
@@ -2293,8 +2320,29 @@ public class CairoEngine implements Closeable, WriterSource {
         return getSequencerMetadata(tableToken, desiredVersion);
     }
 
+    public LiveViewCheckpointLifecycleState getLiveViewCheckpointLifecycleState() {
+        return liveViewCheckpointLifecycleState;
+    }
+
+    private long nextLiveViewLifecycleIdentity() {
+        final long identity = nextLiveViewLifecycleIdentity.getAndIncrement();
+        if (identity <= 0) {
+            throw CairoException.critical(0).put("live view lifecycle identity space exhausted");
+        }
+        return identity;
+    }
+
     public LiveViewRegistry getLiveViewRegistry() {
         return liveViewRegistry;
+    }
+
+    @TestOnly
+    public void setLiveViewCreateRollbackHooks(
+            @Nullable Runnable beforeFenceHook,
+            @Nullable Runnable afterResetHook
+    ) {
+        this.liveViewCreateRollbackBeforeFenceHook = beforeFenceHook;
+        this.liveViewCreateRollbackAfterResetHook = afterResetHook;
     }
 
     public LiveViewStateStore getLiveViewStateStore() {
@@ -4785,7 +4833,7 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     private void registerLiveViewStubIfAbsent(TableToken liveViewToken, LiveViewLifecycleState stubState) {
         if (liveViewRegistry.getViewInstance(liveViewToken.getTableName()) == null) {
-            liveViewRegistry.registerStubView(new LiveViewInstance(liveViewToken, stubState));
+            liveViewRegistry.registerStubView(new LiveViewInstance(liveViewToken, stubState, nextLiveViewLifecycleIdentity()));
         }
     }
 

@@ -30,6 +30,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointLifecycleState;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairState;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
@@ -80,6 +81,75 @@ import org.junit.Test;
  * walking it.
  */
 public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
+
+    @Test
+    public void testChainedRepairQualifiesEachFunctionIdentityOncePerProbe() throws Exception {
+        assertMemoryLeak(() -> {
+            final int functionCount = 32;
+            final StringBuilder createTable = new StringBuilder(
+                    "CREATE TABLE base (ts TIMESTAMP, sym SYMBOL"
+            );
+            for (int f = 0; f < functionCount; f++) {
+                createTable.append(", x").append(f).append(" LONG");
+            }
+            createTable.append(") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(createTable);
+
+            final StringBuilder createView = new StringBuilder(
+                    "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, sym"
+            );
+            for (int f = 0; f < functionCount; f++) {
+                createView.append(", sum(x").append(f).append(") OVER (")
+                        .append("PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW")
+                        .append(") s").append(f);
+            }
+            createView.append(" FROM base");
+            execute(createView);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int commit = 1; commit <= 3; commit++) {
+                    setCurrentMicros(currentMicros + 200_000);
+                    final StringBuilder insert = new StringBuilder("INSERT INTO base VALUES ('")
+                            .append(timestamp(commit * 10)).append("', 'k'");
+                    for (int f = 0; f < functionCount; f++) {
+                        insert.append(", ").append(commit + f);
+                    }
+                    insert.append(')');
+                    execute(insert);
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
+                Assert.assertEquals(functionCount, functions.size());
+                final ObjList<LiveViewCheckpointTimelineEntry> entries = new ObjList<>();
+                try (
+                        LiveViewCheckpointTimelineStoreWriter writer =
+                                new LiveViewCheckpointTimelineStoreWriter(configuration);
+                        Path checkpointsDir = checkpointsDir(instance);
+                        LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
+                                writer.beginRepair(checkpointsDir, null, null, true)
+                ) {
+                    capture.collectBoundaries(ts(timestamp(10)), ts(timestamp(40)), entries);
+                    Assert.assertTrue(entries.size() >= 2);
+                    capture.capture(entries.getQuick(0), functions, instance.getAnchorWindow(), 1);
+                    capture.resetFunctionIdentityQualificationCountForTest();
+                    for (int f = 0; f < functions.size(); f++) {
+                        functions.getQuick(f).requireCheckpointFullScan();
+                    }
+                    capture.capture(entries.getQuick(1), functions, instance.getAnchorWindow(), 2);
+                    Assert.assertEquals(
+                            "each partition probe must perform one constant-time identity qualification",
+                            functionCount,
+                            capture.getFunctionIdentityQualificationCountForTest()
+                    );
+                }
+            }
+        });
+    }
 
     // Fields of one snapshotted logical entry: key, root page reference, effective position.
     private static final int ENTRY_CHECKPOINT_ID = 1;
@@ -1365,6 +1435,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                                     normalizedBaseSeqTxn(instance) - 1,
                                     coveredLvSeqTxn(instance),
                                     0,
+                                    instance.getLifecycleIdentity(),
                                     true,
                                     ts(timestamp(50)),
                                     0
@@ -1381,6 +1452,140 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 Assert.assertEquals("a refused repair must not publish", generationBefore, generation(instance));
             }
         });
+    }
+
+    @Test
+    public void testRefusedPublicationsPreserveAcceptedGenerationLifecycleState() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final long definitionTxn = instance.getLiveViewToken().getTableId();
+                final long lifecycleIdentity = instance.getLifecycleIdentity();
+                final LiveViewCheckpointLifecycleState state = engine.getLiveViewCheckpointLifecycleState();
+                final LongList pending = new LongList();
+                pending.add(41);
+                pending.add(42);
+                state.markReconciled(lifecycleIdentity);
+                state.replacePendingRetirements(lifecycleIdentity, pending);
+                state.markOrphanScanCompleted(lifecycleIdentity, false);
+                state.markOrphanRisk(lifecycleIdentity);
+                for (int i = 0; i < 17; i++) {
+                    state.incrementSweepsSinceOrphanScan(lifecycleIdentity);
+                }
+                final int pendingIdentity = state.getPendingRetirementIdentityForTest(lifecycleIdentity);
+
+                try (
+                        LiveViewCheckpointTimelineStoreWriter writer =
+                                new LiveViewCheckpointTimelineStoreWriter(configuration, state);
+                        Path checkpointsDir = checkpointsDir(instance)
+                ) {
+                    try {
+                        writer.append(
+                                checkpointsDir,
+                                new ObjList<>(),
+                                null,
+                                definitionTxn,
+                                0,
+                                normalizedBaseSeqTxn(instance),
+                                coveredLvSeqTxn(instance),
+                                1,
+                                lifecycleIdentity,
+                                true,
+                                0,
+                                0,
+                                Numbers.LONG_NULL,
+                                Numbers.LONG_NULL,
+                                null
+                        );
+                        Assert.fail("expected append definition identity mismatch");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "append definition identity mismatch");
+                    }
+                    assertLifecycleStateUnchanged("append", state, lifecycleIdentity, pendingIdentity);
+
+                    // A persisted identity mismatch must dominate even an unusable plan: the
+                    // publication lifecycle cannot be armed while validating the superblock.
+                    try {
+                        writer.publishCompaction(
+                                checkpointsDir,
+                                definitionTxn,
+                                1,
+                                lifecycleIdentity,
+                                true,
+                                null,
+                                null
+                        );
+                        Assert.fail("expected compaction definition identity mismatch");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "compaction definition identity mismatch");
+                    }
+                    assertLifecycleStateUnchanged("compaction", state, lifecycleIdentity, pendingIdentity);
+
+                    try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
+                                 writer.beginRepair(checkpointsDir, null, null, false)) {
+                        try {
+                            writer.publishRepair(
+                                    capture,
+                                    definitionTxn,
+                                    normalizedBaseSeqTxn(instance),
+                                    coveredLvSeqTxn(instance),
+                                    1,
+                                    lifecycleIdentity,
+                                    true,
+                                    Long.MAX_VALUE,
+                                    0
+                            );
+                            Assert.fail("expected repair definition identity mismatch");
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "repair definition identity mismatch");
+                        }
+                    }
+                    assertLifecycleStateUnchanged("repair", state, lifecycleIdentity, pendingIdentity);
+
+                    try {
+                        writer.publishTruncate(
+                                checkpointsDir,
+                                definitionTxn,
+                                1,
+                                lifecycleIdentity,
+                                Long.MAX_VALUE,
+                                true
+                        );
+                        Assert.fail("expected truncate definition identity mismatch");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "truncate definition identity mismatch");
+                    }
+                    assertLifecycleStateUnchanged("truncate", state, lifecycleIdentity, pendingIdentity);
+                }
+            }
+        });
+    }
+
+    private static void assertLifecycleStateUnchanged(
+            String operation,
+            LiveViewCheckpointLifecycleState state,
+            long lifecycleIdentity,
+            int pendingIdentity
+    ) {
+        Assert.assertTrue("refused " + operation + " must preserve reconciliation",
+                state.isReconciled(lifecycleIdentity));
+        Assert.assertTrue("refused " + operation + " must preserve orphan completion",
+                state.isOrphanScanCompleted(lifecycleIdentity));
+        Assert.assertTrue("refused " + operation + " must preserve orphan risk",
+                state.isOrphanScanNeeded(lifecycleIdentity));
+        Assert.assertEquals("refused " + operation + " must preserve cadence",
+                17, state.getSweepCountForTest(lifecycleIdentity));
+        Assert.assertEquals(
+                "refused " + operation + " must preserve the pending-list shell",
+                pendingIdentity,
+                state.getPendingRetirementIdentityForTest(lifecycleIdentity)
+        );
+        final LongList pending = state.getPendingRetirements(lifecycleIdentity);
+        Assert.assertNotNull(pending);
+        Assert.assertEquals(2, pending.size());
+        Assert.assertEquals(41, pending.getQuick(0));
+        Assert.assertEquals(42, pending.getQuick(1));
     }
 
     @Test
@@ -2415,6 +2620,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 normalizedBaseSeqTxn,
                 coveredLvSeqTxn,
                 0,
+                instance.getLifecycleIdentity(),
                 true,
                 highTsExclusive,
                 suffixRowDelta

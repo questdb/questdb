@@ -106,6 +106,7 @@ public class LiveViewInstance implements QuietCloseable {
     };
     private static final long[] EMPTY_HEAD_CHECKPOINT = {Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL};
     private final LiveViewDefinition definition;
+    private final long lifecycleIdentity;
     // Whether this view's own table carries dedup keys - (designated timestamp, projected
     // partition key), the identity a sparse repair publication upserts on. Resolved where
     // the instance is built, off the table's own metadata, because that is where the flags
@@ -684,11 +685,13 @@ public class LiveViewInstance implements QuietCloseable {
     public LiveViewInstance(
             LiveViewDefinition definition,
             TableToken liveViewToken,
+            long lifecycleIdentity,
             boolean isDedupKeyed,
             int dedupKeyColumnIndex
     ) {
         this.definition = definition;
         this.liveViewToken = liveViewToken;
+        this.lifecycleIdentity = lifecycleIdentity;
         this.isDedupKeyed = isDedupKeyed;
         this.dedupKeyColumnIndex = dedupKeyColumnIndex;
         this.stubState = null;
@@ -703,9 +706,10 @@ public class LiveViewInstance implements QuietCloseable {
      * it with the matching {@code view_status}; the refresh worker never runs against it,
      * and DROP LIVE VIEW removes it best-effort.
      */
-    public LiveViewInstance(TableToken liveViewToken, LiveViewLifecycleState stubState) {
+    public LiveViewInstance(TableToken liveViewToken, LiveViewLifecycleState stubState, long lifecycleIdentity) {
         this.definition = null;
         this.liveViewToken = liveViewToken;
+        this.lifecycleIdentity = lifecycleIdentity;
         this.isDedupKeyed = false;
         this.dedupKeyColumnIndex = LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
         this.stubState = stubState;
@@ -988,6 +992,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     public LiveViewDefinition getDefinition() {
         return definition;
+    }
+
+    public long getLifecycleIdentity() {
+        return lifecycleIdentity;
     }
 
     /**

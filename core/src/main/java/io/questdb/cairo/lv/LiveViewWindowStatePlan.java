@@ -36,8 +36,6 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 /**
@@ -197,23 +195,25 @@ public final class LiveViewWindowStatePlan {
             @NotNull CharSequence partitionSignature,
             @NotNull CharSequence orderSignature
     ) {
-        final byte[][] fields = {
-                canonicalWindowName.toString().getBytes(StandardCharsets.UTF_8),
-                partitionSignature.toString().getBytes(StandardCharsets.UTF_8),
-                orderSignature.toString().getBytes(StandardCharsets.UTF_8)
-        };
-        int size = 2 * Integer.BYTES + fields.length * Integer.BYTES;
-        for (int i = 0; i < fields.length; i++) {
-            size += fields[i].length;
+        final long size = 5L * Integer.BYTES
+                + LiveViewCheckpointMetadata.utf8Bytes(canonicalWindowName)
+                + LiveViewCheckpointMetadata.utf8Bytes(partitionSignature)
+                + LiveViewCheckpointMetadata.utf8Bytes(orderSignature);
+        if (size > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("live view window identity is too large");
         }
-        final ByteBuffer buffer = ByteBuffer.allocate(size);
-        buffer.putInt(WINDOW_IDENTITY_MAGIC);
-        buffer.putInt(WINDOW_IDENTITY_FORMAT_VERSION);
-        for (int i = 0; i < fields.length; i++) {
-            buffer.putInt(fields[i].length);
-            buffer.put(fields[i]);
-        }
-        return buffer.array();
+        final byte[] encoded = new byte[(int) size];
+        int offset = LiveViewCheckpointMetadata.putInt(encoded, 0, WINDOW_IDENTITY_MAGIC);
+        offset = LiveViewCheckpointMetadata.putInt(encoded, offset, WINDOW_IDENTITY_FORMAT_VERSION);
+        offset = putIdentityField(encoded, offset, canonicalWindowName);
+        offset = putIdentityField(encoded, offset, partitionSignature);
+        putIdentityField(encoded, offset, orderSignature);
+        return encoded;
+    }
+
+    private static int putIdentityField(byte[] sink, int offset, CharSequence value) {
+        offset = LiveViewCheckpointMetadata.putInt(sink, offset, LiveViewCheckpointMetadata.utf8Bytes(value));
+        return LiveViewCheckpointMetadata.putUtf8(sink, offset, value);
     }
 
     /**
@@ -346,6 +346,14 @@ public final class LiveViewWindowStatePlan {
      */
     public byte[] getWindowIdentity() {
         return Arrays.copyOf(windowIdentity, windowIdentity.length);
+    }
+
+    /**
+     * Borrows the immutable compiled window identity. The compiled factory owns this
+     * plan and array; package-internal callers must not mutate or outlive that factory.
+     */
+    byte[] borrowWindowIdentity() {
+        return windowIdentity;
     }
 
     /**

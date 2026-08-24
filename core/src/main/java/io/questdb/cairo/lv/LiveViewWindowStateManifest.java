@@ -28,7 +28,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
-import java.nio.ByteBuffer;
 import java.util.Arrays;
 
 /**
@@ -140,6 +139,14 @@ public final class LiveViewWindowStateManifest {
     }
 
     /**
+     * Borrows the immutable compiled manifest. The containing window-state plan owns
+     * this array; package-internal callers must not mutate or outlive that plan.
+     */
+    byte[] borrowEncoded() {
+        return encoded;
+    }
+
+    /**
      * The width of a complete fused leaf scalar payload, anchor value included. A
      * restore requires the entry's scalar to be exactly this long and to name no state
      * page.
@@ -161,24 +168,24 @@ public final class LiveViewWindowStateManifest {
     private byte[] encode(ObjList<LiveViewAccumulatorDescriptor> components, IntList componentOffsets) {
         int size = 6 * Integer.BYTES;
         for (int i = 0; i < componentCount; i++) {
-            size += 4 * Integer.BYTES + components.getQuick(i).getEncoded().length;
+            size += 4 * Integer.BYTES + components.getQuick(i).borrowEncoded().length;
         }
-        final ByteBuffer buffer = ByteBuffer.allocate(size);
-        buffer.putInt(MAGIC);
-        buffer.putInt(FORMAT_VERSION);
-        buffer.putInt(totalInlineStateBytes);
-        buffer.putInt(anchorStateOffset);
-        buffer.putInt(anchorStateLength);
-        buffer.putInt(componentCount);
+        final byte[] encoded = new byte[size];
+        int offset = LiveViewCheckpointMetadata.putInt(encoded, 0, MAGIC);
+        offset = LiveViewCheckpointMetadata.putInt(encoded, offset, FORMAT_VERSION);
+        offset = LiveViewCheckpointMetadata.putInt(encoded, offset, totalInlineStateBytes);
+        offset = LiveViewCheckpointMetadata.putInt(encoded, offset, anchorStateOffset);
+        offset = LiveViewCheckpointMetadata.putInt(encoded, offset, anchorStateLength);
+        offset = LiveViewCheckpointMetadata.putInt(encoded, offset, componentCount);
         for (int i = 0; i < componentCount; i++) {
             final LiveViewAccumulatorDescriptor component = components.getQuick(i);
-            final byte[] identity = component.getEncoded();
-            buffer.putInt(component.getCodecVersion());
-            buffer.putInt(componentOffsets.getQuick(i));
-            buffer.putInt(component.getStateLength());
-            buffer.putInt(identity.length);
-            buffer.put(identity);
+            final byte[] identity = component.borrowEncoded();
+            offset = LiveViewCheckpointMetadata.putInt(encoded, offset, component.getCodecVersion());
+            offset = LiveViewCheckpointMetadata.putInt(encoded, offset, componentOffsets.getQuick(i));
+            offset = LiveViewCheckpointMetadata.putInt(encoded, offset, component.getStateLength());
+            offset = LiveViewCheckpointMetadata.putInt(encoded, offset, identity.length);
+            offset = LiveViewCheckpointMetadata.putBytes(encoded, offset, identity);
         }
-        return buffer.array();
+        return encoded;
     }
 }

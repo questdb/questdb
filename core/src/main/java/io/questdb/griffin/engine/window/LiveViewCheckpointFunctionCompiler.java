@@ -267,7 +267,8 @@ public final class LiveViewCheckpointFunctionCompiler {
                 outputPosition,
                 partitionSignature,
                 orderSignature,
-                codecIdentity
+                codecIdentity,
+                function.getCheckpointKeyColumnTypes()
         );
         function.setCheckpointCompilerMetadata(identity, dependency);
     }

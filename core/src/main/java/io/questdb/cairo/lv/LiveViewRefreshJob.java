@@ -581,6 +581,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // timestamp scratch buffer; WalSegmentRecordCursor adapts the page frame
     // into a RecordCursor for the compiled SELECT's filter / window cursor.
     private final WalSegmentPageFrameCursor walFrameCursor;
+    private final QuietCloseable walSegmentRelease = new WalSegmentRelease();
     private final StringSink walNameSink = new StringSink();
     private final Path walPath = new Path();
     private final WalSegmentRecordCursor walRecordCursor;
@@ -675,6 +676,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     public long getLiveViewApplyMicros() {
         return liveViewApplyNanos / 1000;
+    }
+
+    /**
+     * Test-only: the lifecycle registry supplied to this worker's lazily created
+     * checkpoint timeline writer, or null before a timeline write path first uses it.
+     */
+    @TestOnly
+    public @Nullable LiveViewCheckpointLifecycleState getCheckpointTimelineLifecycleStateForTest() {
+        return checkpointTimelineStoreWriter == null
+                ? null
+                : checkpointTimelineStoreWriter.getLifecycleStateForTest();
+    }
+
+    /**
+     * Test-only: isolates the truncate path's lazy writer construction from earlier repair setup.
+     */
+    @TestOnly
+    public boolean truncateOrRetireTimelineOnO3ForTest(LiveViewInstance instance, long floorTs) {
+        return truncateOrRetireTimelineOnO3(instance, floorTs);
     }
 
     /**
@@ -1177,7 +1197,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long seedCursorOffset
     ) {
         if (checkpointTimelineStoreWriter == null) {
-            checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(engine.getConfiguration());
+            checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
+                    engine.getConfiguration(),
+                    engine.getLiveViewCheckpointLifecycleState()
+            );
             checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
         }
         final long coveredLvSeqTxn = engine.getTableSequencerAPI()
@@ -1204,6 +1227,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     baseSeqTxn,
                     coveredLvSeqTxn,
                     0,
+                    instance.getLifecycleIdentity(),
                     true,
                     batchMaxTs,
                     instance.getLvRowsTotal(),
@@ -1288,7 +1312,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         checkpointTimelineStoreWriter,
                         instance.getLiveViewToken().getTableId(),
                         0,
+                        instance.getLifecycleIdentity(),
                         true,
+                        instance.getMemoryTracker(),
                         COMPACTION_MAX_LIVE_FRACTION_PERCENT,
                         COMPACTION_MIN_SOURCE_SEGMENTS,
                         COMPACTION_MAX_SOURCE_SEGMENTS
@@ -1349,6 +1375,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         checkpointsDir,
                         instance.getLiveViewToken().getTableId(),
                         0,
+                        instance.getLifecycleIdentity(),
                         true
                 );
             } finally {
@@ -1424,7 +1451,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final LiveViewCheckpointRepairState repairState = session.getDescriptor();
         repairBoundaries.clear();
         if (checkpointTimelineStoreWriter == null) {
-            checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(engine.getConfiguration());
+            checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
+                    engine.getConfiguration(),
+                    engine.getLiveViewCheckpointLifecycleState()
+            );
             checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
         }
         LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = null;
@@ -3088,7 +3118,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // releaseSegment() rather than close(): it drops the mappings but keeps the
                 // per-worker scratch, whose retained capacity is what stops a steady sub-cap load
                 // reallocating every turn.
-                QuietCloseable segmentRelease = walFrameCursor::releaseSegment
+                QuietCloseable segmentRelease = walSegmentRelease
         ) {
             if (internSymbols) {
                 // Re-anchor each SYMBOL column's next-new-id to the committed symbol
@@ -3526,9 +3556,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * downstream can detect.
      */
     private void commitLiveViewBlock(LiveViewInstance instance, WalWriter walWriter, long maxBaseSeqTxnInBlock) {
-        fencedLiveViewCommit(instance, instance.isDedupKeyed() && !simulateForwardCommitDedupCollapseForTest
-                ? () -> walWriter.commitLiveViewWithoutDedup(maxBaseSeqTxnInBlock)
-                : () -> walWriter.commitLiveView(maxBaseSeqTxnInBlock));
+        if (instance.isDedupKeyed() && !simulateForwardCommitDedupCollapseForTest) {
+            commitLiveViewWithoutDedupFenced(instance, walWriter, maxBaseSeqTxnInBlock);
+        } else {
+            commitLiveViewFenced(instance, walWriter, maxBaseSeqTxnInBlock);
+        }
     }
 
     // Under symmetric local refresh the live-view table is
@@ -3540,17 +3572,62 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // observer are retained (uncontended, harmless) so the seam stays a single choke point for every LV
     // commit family -- flushLead, the in-WAL-order and applied-base drains, the o3Replay REPLACE_RANGE
     // corrections, and the seed sweep -- pending the Phase 5 cleanup that folds it away entirely.
-    private void fencedLiveViewCommit(LiveViewInstance instance, Runnable commit) {
+    private void commitLiveViewFenced(LiveViewInstance instance, WalWriter walWriter, long seqTxn) {
         final Lock lock = engine.getRoleSwitchReadLock();
         lock.lock();
         try {
             engine.fireRoleSwitchMintObserver();
-            commit.run();
+            walWriter.commitLiveView(seqTxn);
             // Rows are durable now, so the accumulators no longer lead durable state;
             // a later failure must not trigger a rebuild over the committed block.
             // This is also the single point that resolves a carried-over wipe: the
             // runtime that produced the committed rows is by definition consistent
             // with them.
+            windowStateDirty = false;
+            instance.setWindowStateDirty(false);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void commitLiveViewWithoutDedupFenced(LiveViewInstance instance, WalWriter walWriter, long seqTxn) {
+        final Lock lock = engine.getRoleSwitchReadLock();
+        lock.lock();
+        try {
+            engine.fireRoleSwitchMintObserver();
+            walWriter.commitLiveViewWithoutDedup(seqTxn);
+            windowStateDirty = false;
+            instance.setWindowStateDirty(false);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void commitLiveViewWithReplaceRangeFenced(
+            LiveViewInstance instance,
+            WalWriter walWriter,
+            long seqTxn,
+            long replaceLowTs,
+            long replaceHighTs
+    ) {
+        final Lock lock = engine.getRoleSwitchReadLock();
+        lock.lock();
+        try {
+            engine.fireRoleSwitchMintObserver();
+            walWriter.commitLiveViewWithReplaceRange(seqTxn, replaceLowTs, replaceHighTs);
+            windowStateDirty = false;
+            instance.setWindowStateDirty(false);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void commitLiveViewWithUpsertFenced(LiveViewInstance instance, WalWriter walWriter, long seqTxn) {
+        final Lock lock = engine.getRoleSwitchReadLock();
+        lock.lock();
+        try {
+            engine.fireRoleSwitchMintObserver();
+            walWriter.commitLiveViewWithUpsert(seqTxn);
             windowStateDirty = false;
             instance.setWindowStateDirty(false);
         } finally {
@@ -4095,7 +4172,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 historyEpoch = superblock.historyEpoch;
             }
             if (checkpointTimelineStoreWriter == null) {
-                checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(engine.getConfiguration());
+                checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
+                        engine.getConfiguration(),
+                        engine.getLiveViewCheckpointLifecycleState()
+                );
                 checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
             }
             boolean preserved = false;
@@ -4117,6 +4197,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 path,
                                 definitionTxn,
                                 historyEpoch,
+                                instance.getLifecycleIdentity(),
                                 floorTs,
                                 true
                         );
@@ -4943,7 +5024,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // note on walEventReader - and the frame cursor drops its segment mappings
                 // on the way out for the same reason the drain does.
                 WalEventReader eventReader = walEventReader;
-                QuietCloseable segmentRelease = walFrameCursor::releaseSegment
+                QuietCloseable segmentRelease = walSegmentRelease
         ) {
             while (txnCursor.hasNext()) {
                 final long txn = txnCursor.getTxn();
@@ -7309,9 +7390,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 .$(", supersededRows=").$(supersededRows)
                                 .$(", rowsKept=").$(rowsKept)
                                 .$(", outputLowTs=").$ts(replaceLowTs).I$();
-                        fencedLiveViewCommit(instance, () -> walWriter.commitLiveViewWithUpsert(committedSeqTxn));
+                        commitLiveViewWithUpsertFenced(instance, walWriter, committedSeqTxn);
                     } else {
-                        fencedLiveViewCommit(instance, () -> walWriter.commitLiveViewWithReplaceRange(committedSeqTxn, replaceLowTs, Long.MAX_VALUE));
+                        commitLiveViewWithReplaceRangeFenced(instance, walWriter, committedSeqTxn, replaceLowTs, Long.MAX_VALUE);
                     }
                     openSegmentRepairPhases.commitNanos += System.nanoTime() - commitStart;
                     replayCompleted = true;
@@ -8266,7 +8347,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // the merged rows below it as well. Draining here rather
                                 // than only in the row loop is what makes the position it
                                 // records the count of every row at or below it.
-                                boundaryFreezingCursor.setRowDrain(keyedReplay::drainUpTo);
+                                boundaryFreezingCursor.setRowDrain(keyedReplay);
                             }
                             source = boundaryFreezingCursor;
                         }
@@ -8535,14 +8616,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                         .$(", rowsKept=").$(keyedReplay.getMergedRows())
                                         .$(", outputLowTs=").$ts(emitLowTs)
                                         .$(", highTsExclusive=").$ts(plan.getHighTsExclusive()).I$();
-                                fencedLiveViewCommit(instance,
-                                        () -> walWriter.commitLiveViewWithUpsert(effectiveSeqTxn));
+                                commitLiveViewWithUpsertFenced(instance, walWriter, effectiveSeqTxn);
                             } else {
-                                fencedLiveViewCommit(instance, () -> walWriter.commitLiveViewWithReplaceRange(
+                                commitLiveViewWithReplaceRangeFenced(instance, walWriter,
                                         effectiveSeqTxn,
                                         replaceLowTs,
                                         replaceHighTs
-                                ));
+                                );
                             }
                             repairPublication.replacementCommitted(walWriter.getLastSeqTxn());
                         }
@@ -8583,11 +8663,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 primaryKept = false;
                 repairPublication.candidateReady(runtimeDisposition(primaryKept));
                 try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
-                    fencedLiveViewCommit(instance, () -> walWriter.commitLiveViewWithReplaceRange(
+                    commitLiveViewWithReplaceRangeFenced(instance, walWriter,
                             effectiveSeqTxn,
                             deleteLowTs,
                             Long.MAX_VALUE
-                    ));
+                    );
                     repairPublication.replacementCommitted(walWriter.getLastSeqTxn());
                 }
                 LOG.info().$("live view O3 head-miss replay cleared emptied range [view=")
@@ -9633,6 +9713,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         normalizedBaseSeqTxn,
                         coveredLvSeqTxn,
                         0,
+                        instance.getLifecycleIdentity(),
                         true,
                         highTsExclusive,
                         suffixRowDelta
@@ -9937,7 +10018,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
         final long definitionTxn = instance.getLiveViewToken().getTableId();
         if (checkpointTimelineStoreWriter == null) {
-            checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(engine.getConfiguration());
+            checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
+                    engine.getConfiguration(),
+                    engine.getLiveViewCheckpointLifecycleState()
+            );
             checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
         }
         LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = null;
@@ -10070,6 +10154,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         restored.normalizedBaseSeqTxn,
                         coveredLvSeqTxn,
                         0,
+                        instance.getLifecycleIdentity(),
                         true,
                         highTsExclusive,
                         0
@@ -13535,6 +13620,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         private void of(LiveViewInstance instance) {
             this.instance = instance;
+        }
+    }
+
+    private final class WalSegmentRelease implements QuietCloseable {
+        @Override
+        public void close() {
+            walFrameCursor.releaseSegment();
         }
     }
 

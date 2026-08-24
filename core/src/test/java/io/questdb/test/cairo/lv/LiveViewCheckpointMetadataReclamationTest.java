@@ -1092,7 +1092,9 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
                         writer,
                         instance.getLiveViewToken().getTableId(),
                         0,
+                        instance.getLifecycleIdentity(),
                         true,
+                        null,
                         100,
                         1,
                         64

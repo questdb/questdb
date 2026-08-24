@@ -31,9 +31,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.util.Arrays;
 
 /**
  * Checksummed metadata root for the optional anchored-window state.
@@ -226,6 +226,16 @@ public class LiveViewCheckpointAnchorRoot implements Closeable {
         return scalarState;
     }
 
+    void clearBorrowedCompiled() {
+        windowName = null;
+        keySchema = null;
+    }
+
+    @TestOnly
+    boolean isBorrowingCompiledForTest(byte[] windowName, byte[] keySchema) {
+        return this.windowName == windowName && this.keySchema == keySchema;
+    }
+
     void ofBuilder(
             byte[] windowName,
             int anchorValueType,
@@ -233,9 +243,9 @@ public class LiveViewCheckpointAnchorRoot implements Closeable {
             LiveViewCheckpointPageRef partitionMapRootRef,
             LongList segmentUseCounts
     ) {
-        this.windowName = Arrays.copyOf(windowName, windowName.length);
+        this.windowName = windowName;
         this.anchorValueType = anchorValueType;
-        this.keySchema = Arrays.copyOf(keySchema, keySchema.length);
+        this.keySchema = keySchema;
         this.partitionMapRootRef.of(
                 partitionMapRootRef.getSegmentId(),
                 partitionMapRootRef.getOffset(),

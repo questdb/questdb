@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaSegmentWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointMutationArena;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointPartitionMap;
 import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapEntry;
@@ -63,17 +64,87 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testObjectPoolReusedAcrossWriterLifetimesAndTreeShapeChanges() throws Exception {
+        assertMemoryLeak(() -> {
+            final int keyCount = 1_000;
+            LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+            int segmentId = 1;
+            try (LiveViewCheckpointMutationArena initial = new LiveViewCheckpointMutationArena();
+                 LiveViewCheckpointPartitionMapWriter poolOwner =
+                         new LiveViewCheckpointPartitionMapWriter(configuration, 4, 4);
+                 Path dir = new Path()) {
+                poolOwner.of(checkpointsDir(dir));
+                for (int i = 0; i < keyCount; i++) {
+                    put(initial, i, i, i % 5);
+                }
+                poolOwner.apply(root, initial, segmentId++, root);
+                final int poolIdentity = poolOwner.getObjectPoolIdentityForTest();
+                int warmedObjectCount = -1;
+
+                for (int cycle = 0; cycle < 3; cycle++) {
+                    final LiveViewCheckpointPageRef collapsedRoot = new LiveViewCheckpointPageRef();
+                    try (LiveViewCheckpointMutationArena shrink = new LiveViewCheckpointMutationArena();
+                         LiveViewCheckpointPartitionMapWriter writer =
+                                 new LiveViewCheckpointPartitionMapWriter(configuration, 4, 4, poolOwner)) {
+                        writer.of(checkpointsDir(dir));
+                        for (int i = keyCount - 1; i > 0; i--) {
+                            shrink.remove(key(i));
+                        }
+                        writer.apply(root, shrink, segmentId++, collapsedRoot);
+                        Assert.assertEquals(poolIdentity, writer.getObjectPoolIdentityForTest());
+                    }
+                    root = copy(collapsedRoot);
+
+                    final LiveViewCheckpointPageRef expandedRoot = new LiveViewCheckpointPageRef();
+                    try (LiveViewCheckpointMutationArena expand = new LiveViewCheckpointMutationArena();
+                         LiveViewCheckpointPartitionMapWriter writer =
+                                 new LiveViewCheckpointPartitionMapWriter(configuration, 4, 4, poolOwner)) {
+                        writer.of(checkpointsDir(dir));
+                        for (int i = keyCount - 1; i >= 0; i--) {
+                            put(expand, i, cycle * keyCount + i, i % 5);
+                        }
+                        writer.apply(root, expand, segmentId++, expandedRoot);
+                        Assert.assertEquals(poolIdentity, writer.getObjectPoolIdentityForTest());
+                    }
+                    root = copy(expandedRoot);
+
+                    final int retainedObjectCount = poolOwner.getRetainedObjectCountForTest();
+                    Assert.assertTrue(retainedObjectCount > 0);
+                    if (cycle == 0) {
+                        warmedObjectCount = retainedObjectCount;
+                    } else {
+                        Assert.assertEquals(
+                                "measurement publications must reuse the warmed node/ref high-water mark",
+                                warmedObjectCount,
+                                retainedObjectCount
+                        );
+                    }
+                }
+
+                try (LiveViewCheckpointPartitionMapReader reader =
+                             new LiveViewCheckpointPartitionMapReader(configuration)) {
+                    reader.of(checkpointsDir(dir));
+                    Assert.assertEquals(keyCount, reader.size(root));
+                    final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
+                    Assert.assertTrue(reader.find(root, key(keyCount - 1), entry));
+                    Assert.assertEquals(2 * keyCount + keyCount - 1, scalar(entry));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testBatchCopyOnWriteSharesUntouchedSubtreesAndOldRootSurvives() throws Exception {
         assertMemoryLeak(() -> {
             final LiveViewCheckpointPageRef oldRoot = new LiveViewCheckpointPageRef();
-            final LiveViewCheckpointPartitionMapWriter.Mutation[] initial = new LiveViewCheckpointPartitionMapWriter.Mutation[64];
-            for (int i = 0; i < initial.length; i++) {
-                initial[i] = put(i, i, i % 5);
-            }
-            try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 4, 4);
+            try (LiveViewCheckpointMutationArena initial = new LiveViewCheckpointMutationArena();
+                 LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 4, 4);
                  Path dir = new Path()) {
+                for (int i = 0; i < 64; i++) {
+                    put(initial, i, i, i % 5);
+                }
                 writer.of(checkpointsDir(dir));
-                writer.apply(new LiveViewCheckpointPageRef(), initial, initial.length, 1, oldRoot);
+                writer.apply(new LiveViewCheckpointPageRef(), initial, 1, oldRoot);
             }
 
             final LiveViewCheckpointPageRef[] oldChildren;
@@ -90,11 +161,12 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
             }
 
             final LiveViewCheckpointPageRef newRoot = new LiveViewCheckpointPageRef();
-            try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 4, 4);
+            try (LiveViewCheckpointMutationArena update = new LiveViewCheckpointMutationArena();
+                 LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 4, 4);
                  Path dir = new Path()) {
                 writer.of(checkpointsDir(dir));
-                final LiveViewCheckpointPartitionMapWriter.Mutation[] update = {put(0, 999, 9)};
-                writer.apply(oldRoot, update, 1, 2, newRoot);
+                put(update, 0, 999, 9);
+                writer.apply(oldRoot, update, 2, newRoot);
                 Assert.assertTrue(writer.getLastSegmentPageCount() < 8);
             }
 
@@ -123,16 +195,16 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
     public void testDeepCorruptionIsValidatedLazilyOnSelectedPath() throws Exception {
         assertMemoryLeak(() -> {
             final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
-            final LiveViewCheckpointPartitionMapWriter.Mutation[] initial = new LiveViewCheckpointPartitionMapWriter.Mutation[64];
-            for (int i = 0; i < initial.length; i++) {
-                initial[i] = put(i, i, 1);
-            }
             final LiveViewCheckpointPageRef firstChild = new LiveViewCheckpointPageRef();
-            try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 4, 4);
+            try (LiveViewCheckpointMutationArena initial = new LiveViewCheckpointMutationArena();
+                 LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 4, 4);
                  LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
                  Path dir = new Path()) {
+                for (int i = 0; i < 64; i++) {
+                    put(initial, i, i, 1);
+                }
                 writer.of(checkpointsDir(dir));
-                writer.apply(new LiveViewCheckpointPageRef(), initial, initial.length, 10, root);
+                writer.apply(new LiveViewCheckpointPageRef(), initial, 10, root);
                 reader.of(checkpointsDir(dir));
                 Assert.assertTrue(reader.rootChildCount(root) > 1);
                 reader.rootChildRef(root, 0, firstChild);
@@ -166,19 +238,18 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
             // seal duration. That is the shape of the ~2.4-million-partition cliff
             // that took the incremental checkpoint from 0.3s back to 4.5s.
             final int keyCount = 1024;
-            final LiveViewCheckpointPartitionMapWriter.Mutation[] initial =
-                    new LiveViewCheckpointPartitionMapWriter.Mutation[keyCount];
-            for (int i = 0; i < keyCount; i++) {
-                initial[i] = put(i, i, i % 5);
-            }
             final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
             // Narrow nodes stand in for a large map: the depth is what matters. Four
             // rather than the minimum two, so a split hands each side more than one
             // child and the tree stays the shape a production capacity produces.
-            try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 4, 4);
+            try (LiveViewCheckpointMutationArena initial = new LiveViewCheckpointMutationArena();
+                 LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 4, 4);
                  Path dir = new Path()) {
+                for (int i = 0; i < keyCount; i++) {
+                    put(initial, i, i, i % 5);
+                }
                 writer.of(checkpointsDir(dir));
-                writer.apply(new LiveViewCheckpointPageRef(), initial, initial.length, 1, root);
+                writer.apply(new LiveViewCheckpointPageRef(), initial, 1, root);
             }
 
             final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
@@ -221,18 +292,17 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
     public void testDeepDescentsPastMemoLimitUseScratchNode() throws Exception {
         assertMemoryLeak(() -> {
             final int keyCount = 256;
-            final LiveViewCheckpointPartitionMapWriter.Mutation[] initial =
-                    new LiveViewCheckpointPartitionMapWriter.Mutation[keyCount];
-            for (int i = 0; i < keyCount; i++) {
-                initial[i] = put(i, i, i % 5);
-            }
             final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
             // The minimum capacity makes an ascending build degenerate into a
             // chain deeper than the bounded memo.
-            try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 2, 2);
+            try (LiveViewCheckpointMutationArena initial = new LiveViewCheckpointMutationArena();
+                 LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 2, 2);
                  Path dir = new Path()) {
+                for (int i = 0; i < keyCount; i++) {
+                    put(initial, i, i, i % 5);
+                }
                 writer.of(checkpointsDir(dir));
-                writer.apply(new LiveViewCheckpointPageRef(), initial, initial.length, 1, root);
+                writer.apply(new LiveViewCheckpointPageRef(), initial, 1, root);
             }
 
             final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
@@ -267,6 +337,7 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
             LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
             try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 5, 5);
+                 LiveViewCheckpointMutationArena mutations = new LiveViewCheckpointMutationArena();
                  LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
                  Path dir = new Path()) {
                 writer.of(checkpointsDir(dir));
@@ -274,7 +345,7 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
                 for (int generation = 1; generation <= 150; generation++) {
                     final boolean[] used = new boolean[80];
                     final int count = 1 + rnd.nextPositiveInt() % 6;
-                    final LiveViewCheckpointPartitionMapWriter.Mutation[] mutations = new LiveViewCheckpointPartitionMapWriter.Mutation[count];
+                    mutations.clear();
                     for (int i = 0; i < count; i++) {
                         int key;
                         do {
@@ -282,16 +353,16 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
                         } while (used[key]);
                         used[key] = true;
                         if ((rnd.nextInt() & 3) == 0) {
-                            mutations[i] = new LiveViewCheckpointPartitionMapWriter.Mutation().remove(key(key));
+                            mutations.remove(key(key));
                             expected.remove(key);
                         } else {
                             final int value = rnd.nextInt();
-                            mutations[i] = put(key, value, key % 7);
+                            put(mutations, key, value, key % 7);
                             expected.put(key, value);
                         }
                     }
                     final LiveViewCheckpointPageRef next = new LiveViewCheckpointPageRef();
-                    writer.apply(root, mutations, count, 100 + generation, next);
+                    writer.apply(root, mutations, 100 + generation, next);
                     root = copy(next);
                     Assert.assertEquals(expected.size(), reader.size(root));
                     final java.util.Iterator<Map.Entry<Integer, Integer>> iterator = expected.entrySet().iterator();
@@ -315,11 +386,12 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
             // already read, so detaching - which is what drops the mappings a retire,
             // repair or compaction is about to delete - has to drop the memo with them.
             final LiveViewCheckpointPageRef first = new LiveViewCheckpointPageRef();
-            try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration);
+            try (LiveViewCheckpointMutationArena initial = new LiveViewCheckpointMutationArena();
+                 LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration);
                  Path dir = new Path()) {
                 writer.of(checkpointsDir(dir));
-                final LiveViewCheckpointPartitionMapWriter.Mutation[] initial = {put(1, 11, 0)};
-                writer.apply(new LiveViewCheckpointPageRef(), initial, 1, 7, first);
+                put(initial, 1, 11, 0);
+                writer.apply(new LiveViewCheckpointPageRef(), initial, 7, first);
             }
 
             final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
@@ -347,10 +419,11 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
                 }
 
                 final LiveViewCheckpointPageRef second = new LiveViewCheckpointPageRef();
-                try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration)) {
+                try (LiveViewCheckpointMutationArena replacement = new LiveViewCheckpointMutationArena();
+                     LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration)) {
                     writer.of(checkpointsDir(dir));
-                    final LiveViewCheckpointPartitionMapWriter.Mutation[] replacement = {put(1, 22, 0)};
-                    writer.apply(new LiveViewCheckpointPageRef(), replacement, 1, 7, second);
+                    put(replacement, 1, 22, 0);
+                    writer.apply(new LiveViewCheckpointPageRef(), replacement, 7, second);
                 }
                 // Guards the guard: the replacement has to land where the memo keyed
                 // the page it replaces, or a miss would hide a memo that never dropped.
@@ -370,25 +443,25 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
             // per lookup. Each lookup must still answer out of the page it asked for.
             final int keyCount = 64;
             final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
-            final LiveViewCheckpointPartitionMapWriter.Mutation[] initial =
-                    new LiveViewCheckpointPartitionMapWriter.Mutation[keyCount];
-            for (int i = 0; i < keyCount; i++) {
-                initial[i] = put(i, i, i % 5);
-            }
             // Narrow nodes, so a descent is many levels deep and a lookup that leaves
             // the path replaces the memo entry of every level it diverges at.
-            try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 2, 2);
+            try (LiveViewCheckpointMutationArena initial = new LiveViewCheckpointMutationArena();
+                 LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 2, 2);
                  Path dir = new Path()) {
+                for (int i = 0; i < keyCount; i++) {
+                    put(initial, i, i, i % 5);
+                }
                 writer.of(checkpointsDir(dir));
-                writer.apply(new LiveViewCheckpointPageRef(), initial, initial.length, 1, root);
+                writer.apply(new LiveViewCheckpointPageRef(), initial, 1, root);
             }
 
             final LiveViewCheckpointPageRef nextRoot = new LiveViewCheckpointPageRef();
-            try (LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 2, 2);
+            try (LiveViewCheckpointMutationArena update = new LiveViewCheckpointMutationArena();
+                 LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration, 2, 2);
                  Path dir = new Path()) {
                 writer.of(checkpointsDir(dir));
-                final LiveViewCheckpointPartitionMapWriter.Mutation[] update = {put(0, 999, 9)};
-                writer.apply(root, update, 1, 2, nextRoot);
+                put(update, 0, 999, 9);
+                writer.apply(root, update, 2, nextRoot);
             }
 
             final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
@@ -459,6 +532,106 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testExistingInteriorMutationsSearchEachLeafOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            final LiveViewCheckpointPageRef root = new LiveViewCheckpointPageRef();
+            try (LiveViewCheckpointMutationArena initial = new LiveViewCheckpointMutationArena();
+                 LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration);
+                 Path dir = new Path()) {
+                writer.of(checkpointsDir(dir));
+                for (int i = 0; i < 64; i++) {
+                    put(initial, i, i, 7);
+                }
+                writer.apply(new LiveViewCheckpointPageRef(), initial, 1, root);
+            }
+
+            final LiveViewCheckpointPageRef updatedRoot = new LiveViewCheckpointPageRef();
+            try (LiveViewCheckpointMutationArena updates = new LiveViewCheckpointMutationArena();
+                 LiveViewCheckpointPartitionMapWriter writer = new LiveViewCheckpointPartitionMapWriter(configuration);
+                 Path dir = new Path()) {
+                writer.of(checkpointsDir(dir));
+                for (int i = 0; i < 63; i++) {
+                    put(updates, i, 1_000 + i, 8);
+                }
+                updates.resetLowerBoundCountForTest();
+                writer.apply(root, updates, 2, updatedRoot);
+                Assert.assertEquals(
+                        "each existing interior mutation must search its leaf once",
+                        63,
+                        updates.getLowerBoundCountForTest()
+                );
+            }
+
+            try (LiveViewCheckpointPartitionMapReader reader = new LiveViewCheckpointPartitionMapReader(configuration);
+                 Path dir = new Path()) {
+                reader.of(checkpointsDir(dir));
+                final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
+                for (int i = 0; i < 63; i++) {
+                    Assert.assertTrue(reader.find(updatedRoot, key(i), entry));
+                    Assert.assertEquals(1_000 + i, scalar(entry));
+                }
+                Assert.assertTrue(reader.find(updatedRoot, key(63), entry));
+                Assert.assertEquals(63, scalar(entry));
+            }
+        });
+    }
+
+    @Test
+    public void testFlyweightReusesManyExactKeyWidthsInConstantTime() {
+        final int widthCount = 4_096;
+        final byte[] emptyBytes = new byte[0];
+        final LiveViewCheckpointStatePageRef[] emptyRefs = new LiveViewCheckpointStatePageRef[0];
+        final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
+        final byte[][] retained = new byte[widthCount][];
+        for (int charCount = 1; charCount <= widthCount; charCount++) {
+            final int width = Integer.BYTES + Character.BYTES * charCount;
+            entry.of(new byte[width], emptyBytes, emptyRefs);
+            retained[charCount - 1] = entry.getKey();
+        }
+
+        entry.clear();
+        Assert.assertEquals(0, entry.getKey().length);
+        Assert.assertEquals(0, entry.getScalarState().length);
+        Assert.assertEquals(0, entry.getStatePageCount());
+        entry.resetWidthLookupCountForTest();
+        for (int charCount = 1; charCount <= widthCount; charCount++) {
+            final int width = Integer.BYTES + Character.BYTES * charCount;
+            entry.of(new byte[width], emptyBytes, emptyRefs);
+            Assert.assertSame(retained[charCount - 1], entry.getKey());
+        }
+        Assert.assertEquals(
+                "each supported STRING width must perform one direct lookup",
+                widthCount,
+                entry.getWidthLookupCountForTest()
+        );
+    }
+
+    @Test
+    public void testFlyweightReusesScalarAndPageRefExactWidths() {
+        final int widthCount = 128;
+        final byte[] key = new byte[]{1};
+        final byte[][] retainedScalars = new byte[widthCount][];
+        final LiveViewCheckpointStatePageRef[] retainedRefs = new LiveViewCheckpointStatePageRef[widthCount];
+        final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
+        for (int width = 1; width <= widthCount; width++) {
+            final LiveViewCheckpointStatePageRef[] refs = refs(width);
+            entry.of(key, new byte[width], refs);
+            retainedScalars[width - 1] = entry.getScalarState();
+            retainedRefs[width - 1] = entry.getStatePageRef(width - 1);
+        }
+
+        entry.resetWidthLookupCountForTest();
+        for (int width = 1; width <= widthCount; width++) {
+            final LiveViewCheckpointStatePageRef[] refs = refs(width);
+            entry.of(key, new byte[width], refs);
+            Assert.assertSame(retainedScalars[width - 1], entry.getScalarState());
+            Assert.assertSame(retainedRefs[width - 1], entry.getStatePageRef(width - 1));
+            Assert.assertEquals(width, entry.getStatePageCount());
+        }
+        Assert.assertEquals(3 * widthCount, entry.getWidthLookupCountForTest());
+    }
+
     private static void assertRefEquals(LiveViewCheckpointPageRef expected, LiveViewCheckpointPageRef actual) {
         Assert.assertEquals(expected.getSegmentId(), actual.getSegmentId());
         Assert.assertEquals(expected.getOffset(), actual.getOffset());
@@ -481,12 +654,20 @@ public class LiveViewCheckpointPartitionMapTest extends AbstractCairoTest {
         return new byte[]{(byte) (value >>> 24), (byte) (value >>> 16), (byte) (value >>> 8), (byte) value};
     }
 
-    private static LiveViewCheckpointPartitionMapWriter.Mutation put(int key, int value, long segmentId) {
+    private static void put(LiveViewCheckpointMutationArena arena, int key, int value, long segmentId) {
         final byte[] scalar = new byte[]{(byte) (value >>> 24), (byte) (value >>> 16), (byte) (value >>> 8), (byte) value};
         final LiveViewCheckpointStatePageRef ref = new LiveViewCheckpointStatePageRef().of(
                 segmentId, key * 8L, 8, 8, 0x31, 0, 1, 0
         );
-        return new LiveViewCheckpointPartitionMapWriter.Mutation().put(key(key), scalar, new LiveViewCheckpointStatePageRef[]{ref});
+        arena.put(key(key), scalar, new LiveViewCheckpointStatePageRef[]{ref});
+    }
+
+    private static LiveViewCheckpointStatePageRef[] refs(int count) {
+        final LiveViewCheckpointStatePageRef[] refs = new LiveViewCheckpointStatePageRef[count];
+        for (int i = 0; i < count; i++) {
+            refs[i] = new LiveViewCheckpointStatePageRef().of(i + 1, i * 8L, 8, 8, 0x31, 0, 1, i);
+        }
+        return refs;
     }
 
     private static void putLeafEntry(MemoryA mem, byte key) {

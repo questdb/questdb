@@ -31,9 +31,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.util.Arrays;
 
 /**
  * Checksummed metadata root for one live view's <b>fused</b> window state: the anchor
@@ -176,6 +176,14 @@ public class LiveViewCheckpointWindowRoot implements Closeable {
         return totalInlineStateBytes;
     }
 
+    /**
+     * Borrows the decoded persisted identity through this root's lifetime. Callers must
+     * not mutate the returned bytes or retain them after the root is reopened.
+     */
+    byte[] borrowWindowIdentity() {
+        return windowIdentity;
+    }
+
     public byte[] getWindowIdentity() {
         return windowIdentity;
     }
@@ -284,6 +292,17 @@ public class LiveViewCheckpointWindowRoot implements Closeable {
         }
     }
 
+    void clearBorrowedCompiled() {
+        windowIdentity = null;
+        keySchema = null;
+        manifest = null;
+    }
+
+    @TestOnly
+    boolean isBorrowingCompiledForTest(byte[] windowIdentity, byte[] keySchema, byte[] manifest) {
+        return this.windowIdentity == windowIdentity && this.keySchema == keySchema && this.manifest == manifest;
+    }
+
     void ofBuilder(
             byte[] windowIdentity,
             int anchorValueType,
@@ -293,10 +312,10 @@ public class LiveViewCheckpointWindowRoot implements Closeable {
             LiveViewCheckpointPageRef partitionMapRootRef,
             LongList segmentUseCounts
     ) {
-        this.windowIdentity = Arrays.copyOf(windowIdentity, windowIdentity.length);
+        this.windowIdentity = windowIdentity;
         this.anchorValueType = anchorValueType;
-        this.keySchema = Arrays.copyOf(keySchema, keySchema.length);
-        this.manifest = Arrays.copyOf(manifest, manifest.length);
+        this.keySchema = keySchema;
+        this.manifest = manifest;
         this.totalInlineStateBytes = totalInlineStateBytes;
         this.partitionMapRootRef.of(
                 partitionMapRootRef.getSegmentId(),

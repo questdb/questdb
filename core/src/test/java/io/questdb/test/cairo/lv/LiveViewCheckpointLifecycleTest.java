@@ -58,6 +58,7 @@ import org.junit.Test;
 public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
 
     private static final LongList EMPTY_SEGMENT_IDS = new LongList();
+    private static final long LIFECYCLE_IDENTITY = 101;
     private static final String LV_DIR = "lv_checkpoint_lifecycle";
 
     @Test
@@ -349,7 +350,7 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
                  Path dir = checkpointsDir()) {
                 try {
                     writer.append(
-                            dir, new ObjList<>(), null, 7, 0, 0, 0, 0, false, 1, 0,
+                            dir, new ObjList<>(), null, 7, 0, 0, 0, 0, LIFECYCLE_IDENTITY, false, 1, 0,
                             Numbers.LONG_NULL, Numbers.LONG_NULL, null
                     );
                     Assert.fail("expected replica publication rejection");

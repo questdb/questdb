@@ -29,7 +29,9 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
 import io.questdb.cairo.lv.LiveViewAccumulatorProjection;
+import io.questdb.cairo.lv.LiveViewCheckpointAnchorRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
+import io.questdb.cairo.lv.LiveViewCheckpointFunctionRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
@@ -108,6 +110,82 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
             directRootDir(path).concat(LiveViewCheckpointLayout.META_DIR_NAME).slash();
             configuration.getFilesFacade().mkdirs(path, configuration.getMkDirMode());
         }
+    }
+
+    @Test
+    public void testPersistedCompiledFieldsRejectIndependentCorruptionWithoutChangingRuntime() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTable();
+            execute("create live view lv flush every 100ms start from beginning as "
+                    + "select created_at, account_id, sum(amount) over w as s, "
+                    + "sum(amount) over (partition by account_id order by created_at "
+                    + "rows between 3 preceding and current row) as residual "
+                    + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                insertAccount(job, "2026-01-01T09:00:00.000000Z", "acct-1", 5.0);
+                final LiveViewInstance instance = instance();
+                final LiveViewCheckpointPageRef windowRef = headStateRootRef(instance);
+                try (
+                        Path dir = checkpointsDir(instance);
+                        LiveViewCheckpointWindowRoot root = new LiveViewCheckpointWindowRoot(configuration)
+                ) {
+                    root.of(dir, windowRef);
+                    final int fixedSize = 7 * Integer.BYTES + LiveViewCheckpointPageRef.BYTES;
+                    assertRestoreRejectsRootMutation(
+                            instance, windowRef, fixedSize,
+                            "live view checkpoint window state identity does not match the compiled runtime"
+                    );
+                    assertRestoreRejectsRootMutation(
+                            instance, windowRef, fixedSize + root.getWindowIdentity().length,
+                            "live view checkpoint window state key schema does not match the compiled runtime"
+                    );
+                    assertRestoreRejectsRootMutation(
+                            instance, windowRef,
+                            fixedSize + root.getWindowIdentity().length + root.getKeySchema().length,
+                            "live view checkpoint window state manifest does not match the compiled runtime"
+                    );
+                }
+
+                final LiveViewCheckpointPageRef functionRef = headFunctionRootRef(instance);
+                try (
+                        Path dir = checkpointsDir(instance);
+                        LiveViewCheckpointFunctionRoot root = new LiveViewCheckpointFunctionRoot(configuration)
+                ) {
+                    root.of(dir, functionRef);
+                    final int fixedSize = 5 * Integer.BYTES
+                            + LiveViewCheckpointStatePageRef.BYTES + LiveViewCheckpointPageRef.BYTES;
+                    assertRestoreRejectsRootMutation(
+                            instance, functionRef, fixedSize,
+                            "live view checkpoint function directory and root identities differ"
+                    );
+                    assertRestoreRejectsRootMutation(
+                            instance, functionRef, fixedSize + root.getFunctionIdentity().length,
+                            "live view checkpoint function key schema does not match the compiled runtime"
+                    );
+                }
+
+                final LiveViewWindow window = instance.getAnchorWindow();
+                Assert.assertFalse(window.bindCheckpointWindowStatePlan(null));
+                insertAccount(job, "2026-01-01T09:00:10.000000Z", "acct-2", 7.0);
+                final LiveViewCheckpointPageRef anchorRef = headStateRootRef(instance);
+                try (
+                        Path dir = checkpointsDir(instance);
+                        LiveViewCheckpointAnchorRoot root = new LiveViewCheckpointAnchorRoot(configuration)
+                ) {
+                    root.of(dir, anchorRef);
+                    final int fixedSize = 5 * Integer.BYTES + LiveViewCheckpointPageRef.BYTES;
+                    assertRestoreRejectsRootMutation(
+                            instance, anchorRef, fixedSize,
+                            "live view checkpoint anchor window name does not match the compiled runtime"
+                    );
+                    assertRestoreRejectsRootMutation(
+                            instance, anchorRef, fixedSize + root.getWindowName().length,
+                            "live view checkpoint anchor key schema does not match the compiled runtime"
+                    );
+                }
+            }
+        });
     }
 
     @Test
@@ -959,6 +1037,77 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
      * Snapshots the runtime, restores the published head over it and asserts the two
      * agree byte for byte - anchor map and every function map, grouped or residual.
      */
+    private void assertRestoreRejectsRootMutation(
+            LiveViewInstance instance,
+            LiveViewCheckpointPageRef rootRef,
+            int payloadOffset,
+            String expectedMessage
+    ) {
+        final java.nio.file.Path file = checkpointMetaSegmentFile(instance, rootRef.getSegmentId());
+        final byte[] pristine;
+        try {
+            pristine = java.nio.file.Files.readAllBytes(file);
+        } catch (java.io.IOException e) {
+            throw new AssertionError(e);
+        }
+        final byte[] corrupted = Arrays.copyOf(pristine, pristine.length);
+        final int pageOffset = (int) rootRef.getOffset();
+        corrupted[pageOffset + LiveViewCheckpointLayout.PAGE_HEADER_SIZE + payloadOffset] ^= 1;
+        resealPage(corrupted, pageOffset, rootRef.getLength());
+        final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
+        final LiveViewWindow window = instance.getAnchorWindow();
+        final byte[][] before = snapshotRuntime(functions, window);
+        try {
+            writeMetaSegment(file, corrupted);
+            try (
+                    Path dir = checkpointsDir(instance);
+                    LiveViewCheckpointTimelineStoreReader reader =
+                            new LiveViewCheckpointTimelineStoreReader(configuration)
+            ) {
+                reader.of(dir);
+                try {
+                    reader.restoreLatest(instance.getLiveViewToken().getTableId(), functions, window);
+                    Assert.fail("expected persisted compiled-field mismatch");
+                } catch (CairoException e) {
+                    Assert.assertEquals(CairoException.LV_CHECKPOINT_TIMELINE_INVALID, e.getErrno());
+                    Assert.assertEquals(expectedMessage, e.getFlyweightMessage().toString());
+                }
+            }
+        } finally {
+            writeMetaSegment(file, pristine);
+        }
+        final byte[][] after = snapshotRuntime(functions, window);
+        Assert.assertEquals(before.length, after.length);
+        for (int i = 0; i < before.length; i++) {
+            Assert.assertArrayEquals("failed restore changed runtime state at index " + i, before[i], after[i]);
+        }
+    }
+
+    private static java.nio.file.Path checkpointMetaSegmentFile(LiveViewInstance instance, long segmentId) {
+        try (Path dir = checkpointsDir(instance); Path file = new Path()) {
+            LiveViewCheckpointLayout.metaSegmentPath(file, dir, segmentId);
+            return java.nio.file.Paths.get(file.toString());
+        }
+    }
+
+    private LiveViewCheckpointPageRef headFunctionRootRef(LiveViewInstance instance) {
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
+                LiveViewCheckpointFunctionDirectory directory =
+                        new LiveViewCheckpointFunctionDirectory(configuration)
+        ) {
+            headRoot(instance, dir, root);
+            final LiveViewCheckpointPageRef directoryRef = new LiveViewCheckpointPageRef();
+            root.getFunctionDirectoryRef(directoryRef);
+            directory.of(dir, directoryRef);
+            Assert.assertTrue("expected a residual function root", directory.size() > 0);
+            final LiveViewCheckpointPageRef functionRef = new LiveViewCheckpointPageRef();
+            directory.getRootRef(0, functionRef);
+            return functionRef;
+        }
+    }
+
     private void assertHeadRestoresRuntime(LiveViewInstance instance) {
         final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
         final LiveViewWindow window = instance.getAnchorWindow();

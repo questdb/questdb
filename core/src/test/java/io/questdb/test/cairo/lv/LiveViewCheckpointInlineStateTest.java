@@ -96,6 +96,7 @@ import java.util.List;
 public class LiveViewCheckpointInlineStateTest extends AbstractCairoTest {
 
     private static final long DEFINITION_TXN = 11;
+    private static final long LIFECYCLE_IDENTITY = 103;
     // Fits the per-component inline budget, and is what the production
     // accumulators this step is aimed at declare.
     private static final int INLINE_STATE_BYTES = Long.BYTES;
@@ -464,6 +465,7 @@ public class LiveViewCheckpointInlineStateTest extends AbstractCairoTest {
                     seq,
                     seq,
                     0,
+                    LIFECYCLE_IDENTITY,
                     true,
                     seq * 1_000_000L,
                     seq,

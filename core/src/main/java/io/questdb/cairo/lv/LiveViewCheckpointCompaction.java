@@ -28,14 +28,11 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.LongHashSet;
-import io.questdb.std.LongObjHashMap;
-import io.questdb.std.ObjList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
-
-import java.util.HashMap;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * The production driver for physical checkpoint compaction: it decides which data
@@ -91,7 +88,9 @@ public final class LiveViewCheckpointCompaction {
             @NotNull LiveViewCheckpointTimelineStoreWriter writer,
             long definitionTxn,
             long historyEpoch,
+            long lifecycleIdentity,
             boolean primaryOwner,
+            @Nullable MemoryTracker memoryTracker,
             int maxLiveFractionPercent,
             int minSourceSegments,
             int maxSourceSegments
@@ -99,6 +98,8 @@ public final class LiveViewCheckpointCompaction {
         if (!primaryOwner || maxSourceSegments <= 0 || minSourceSegments <= 0 || maxLiveFractionPercent < 0) {
             return Result.NOTHING;
         }
+        final LiveViewCheckpointCompactionScratch scratch = writer.getCompactionScratch();
+        scratch.begin(memoryTracker);
         try (LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)) {
             metaStore.of(checkpointsDir);
             if (!metaStore.isValid()) {
@@ -112,10 +113,6 @@ public final class LiveViewCheckpointCompaction {
 
             // Distinct live pages across every root: a page shared by many roots is
             // counted once here and repacked once, so the redirect stays shared.
-            final HashMap<PageKey, LiveViewCheckpointStatePageRef> livePages = new HashMap<>();
-            final LongObjHashMap<long[]> liveBytesBySegment = new LongObjHashMap<>();
-            final LongHashSet selectedSegments = new LongHashSet();
-            final ObjList<LiveViewCheckpointStatePageRef> sourceRefs = new ObjList<>();
             final long targetSegmentId;
             try (
                     LiveViewCheckpointGenerationPin pin = metaStore.pin();
@@ -134,56 +131,25 @@ public final class LiveViewCheckpointCompaction {
                 final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
                 final LiveViewCheckpointStatePageRef scalarRef = new LiveViewCheckpointStatePageRef();
                 final LiveViewCheckpointPageRef partitionMapRoot = new LiveViewCheckpointPageRef();
-                timelineReader.iterateAll(pin.getTimelineRootRef(), entry -> {
-                    checkpointRoot.of(checkpointsDir, entry.rootRef);
-                    checkpointRoot.getFunctionDirectoryRef(functionDirectoryRef);
-                    functionDirectory.of(checkpointsDir, functionDirectoryRef);
-                    for (int i = 0, n = functionDirectory.size(); i < n; i++) {
-                        functionDirectory.getRootRef(i, functionRootRef);
-                        functionRoot.of(checkpointsDir, functionRootRef);
-                        functionRoot.getScalarStateRef(scalarRef);
-                        if (!scalarRef.isNull()) {
-                            collectPage(livePages, liveBytesBySegment, scalarRef);
-                        }
-                        functionRoot.getPartitionMapRootRef(partitionMapRoot);
-                        partitionReader.iterateAll(partitionMapRoot, pe -> {
-                            for (int p = 0, m = pe.getStatePageCount(); p < m; p++) {
-                                collectPage(livePages, liveBytesBySegment, pe.getStatePageRef(p));
-                            }
-                        });
-                    }
-                });
+                scratch.collectLivePages(
+                        timelineReader,
+                        pin.getTimelineRootRef(),
+                        checkpointsDir,
+                        checkpointRoot,
+                        functionDirectory,
+                        functionDirectoryRef,
+                        functionRoot,
+                        functionRootRef,
+                        scalarRef,
+                        partitionReader,
+                        partitionMapRoot
+                );
 
                 // Select the sparsest referenced segments in catalogue order (oldest
                 // first, most likely superseded), capped so one pass stays bounded.
-                segmentDirectory.iterateAll(entry -> {
-                    // Compaction repacks state pages, so it only ever drains data
-                    // segments; the catalogue's metadata entries are not candidates.
-                    if (selectedSegments.size() >= maxSourceSegments
-                            || entry.isMetadata()
-                            || entry.referenceCount <= 0) {
-                        return;
-                    }
-                    final long[] liveBytes = liveBytesBySegment.get(entry.segmentId);
-                    if (liveBytes == null || liveBytes[0] <= 0 || liveBytes[0] >= entry.fileLength) {
-                        return;
-                    }
-                    // liveBytes * 100 <= fileLength * maxLiveFractionPercent, in a
-                    // form that cannot overflow for realistic segment sizes.
-                    if (liveBytes[0] <= entry.fileLength / 100.0 * maxLiveFractionPercent) {
-                        selectedSegments.add(entry.segmentId);
-                    }
-                });
+                scratch.selectSegments(segmentDirectory, maxSourceSegments, maxLiveFractionPercent);
 
-                if (selectedSegments.size() < minSourceSegments) {
-                    return Result.NOTHING;
-                }
-                for (LiveViewCheckpointStatePageRef ref : livePages.values()) {
-                    if (selectedSegments.contains(ref.getSegmentId())) {
-                        sourceRefs.add(ref);
-                    }
-                }
-                if (sourceRefs.size() == 0) {
+                if (scratch.getSelectedSegmentCount() < minSourceSegments) {
                     return Result.NOTHING;
                 }
                 targetSegmentId = nextFreeSegmentId(configuration, checkpointsDir, superblock.nextSegmentId);
@@ -191,20 +157,18 @@ public final class LiveViewCheckpointCompaction {
 
             try (LiveViewCheckpointDataStore dataStore = new LiveViewCheckpointDataStore(configuration, metaStore)) {
                 dataStore.of(checkpointsDir);
-                try (LiveViewCheckpointDataStore.Candidate candidate = dataStore.beginCandidate()) {
-                    final ObjList<LiveViewCheckpointStatePageRef> targetRefs = new ObjList<>();
-                    final long targetBytes = candidate.repack(targetSegmentId, sourceRefs, targetRefs);
+                try (LiveViewCheckpointDataStore.Candidate candidate = dataStore.beginCandidate(scratch)) {
+                    final long targetBytes = candidate.repack(targetSegmentId, scratch);
                     final LiveViewCheckpointCompactionPlan plan =
-                            new LiveViewCheckpointCompactionPlan(targetSegmentId, targetBytes, generation);
-                    for (int i = 0, n = sourceRefs.size(); i < n; i++) {
-                        plan.addRedirect(sourceRefs.getQuick(i), targetRefs.getQuick(i));
-                    }
+                            scratch.ofPlan(targetSegmentId, targetBytes, generation);
                     final LiveViewCheckpointTimelineStoreWriter.CompactionResult result =
-                            writer.publishCompaction(checkpointsDir, definitionTxn, historyEpoch, primaryOwner, plan);
+                            writer.publishCompaction(
+                                    checkpointsDir, definitionTxn, historyEpoch, lifecycleIdentity, primaryOwner, memoryTracker, plan
+                            );
                     candidate.markPublished();
                     LOG.info().$("compacted live view checkpoint timeline [dir=").$(checkpointsDir)
-                            .$(", sources=").$(selectedSegments.size())
-                            .$(", pages=").$(sourceRefs.size())
+                            .$(", sources=").$(scratch.getSelectedSegmentCount())
+                            .$(", pages=").$(plan.size())
                             .$(", target=").$(targetSegmentId)
                             .$(", targetBytes=").$(targetBytes)
                             .$(", rootsRewritten=").$(result.getRootsRewritten())
@@ -217,25 +181,9 @@ public final class LiveViewCheckpointCompaction {
                     );
                 }
             }
+        } finally {
+            scratch.end();
         }
-    }
-
-    private static void collectPage(
-            HashMap<PageKey, LiveViewCheckpointStatePageRef> livePages,
-            LongObjHashMap<long[]> liveBytesBySegment,
-            LiveViewCheckpointStatePageRef ref
-    ) {
-        final PageKey key = new PageKey(ref.getSegmentId(), ref.getOffset(), ref.getStoredLength());
-        if (livePages.containsKey(key)) {
-            return;
-        }
-        livePages.put(key, LiveViewCheckpointPartitionMapEntry.copyRef(ref));
-        long[] acc = liveBytesBySegment.get(ref.getSegmentId());
-        if (acc == null) {
-            acc = new long[]{0};
-            liveBytesBySegment.put(ref.getSegmentId(), acc);
-        }
-        acc[0] += ref.getStoredLength();
     }
 
     private static long nextFreeSegmentId(CairoConfiguration configuration, Path checkpointsDir, long candidate) {
@@ -293,34 +241,5 @@ public final class LiveViewCheckpointCompaction {
         }
     }
 
-    private static final class PageKey {
-        private final long offset;
-        private final long segmentId;
-        private final int storedLength;
 
-        private PageKey(long segmentId, long offset, int storedLength) {
-            this.segmentId = segmentId;
-            this.offset = offset;
-            this.storedLength = storedLength;
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            if (this == obj) {
-                return true;
-            }
-            if (!(obj instanceof PageKey)) {
-                return false;
-            }
-            final PageKey that = (PageKey) obj;
-            return segmentId == that.segmentId && offset == that.offset && storedLength == that.storedLength;
-        }
-
-        @Override
-        public int hashCode() {
-            long hash = segmentId * 31 + offset;
-            hash = hash * 31 + storedLength;
-            return (int) (hash ^ (hash >>> 32));
-        }
-    }
 }

@@ -159,6 +159,49 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
         }
     }
 
+    boolean adjustStateRefCounts(
+            @NotNull LiveViewCheckpointPageRef rootRef,
+            @NotNull LiveViewCheckpointMutationArena arena,
+            int mutationIndex,
+            @NotNull io.questdb.std.LongList counts,
+            int delta
+    ) {
+        if (rootRef.isNull()) {
+            return false;
+        }
+        long segmentId = rootRef.getSegmentId();
+        long offset = rootRef.getOffset();
+        int length = rootRef.getLength();
+        if (boundRootSegmentId != segmentId || boundRootOffset != offset) {
+            clearNodeCache();
+            boundRootSegmentId = segmentId;
+            boundRootOffset = offset;
+        }
+        int depth = 0;
+        while (true) {
+            final LiveViewCheckpointPartitionMapNode node = decodedNode(segmentId, offset, length, depth++);
+            if (node.isLeaf()) {
+                final int index = node.find(arena, mutationIndex);
+                if (index < 0) {
+                    return false;
+                }
+                for (int i = 0, n = node.statePageRefs[index].length; i < n; i++) {
+                    LiveViewCheckpointMetadata.adjustSegmentUseCount(
+                            counts,
+                            node.statePageRefs[index][i].getSegmentId(),
+                            delta
+                    );
+                }
+                return true;
+            }
+            final int child = node.childIndex(arena, mutationIndex);
+            final LiveViewCheckpointPageRef ref = node.childRefs[child];
+            segmentId = ref.getSegmentId();
+            offset = ref.getOffset();
+            length = ref.getLength();
+        }
+    }
+
     /**
      * @return how many pages this reader has decoded since it was constructed. A
      * descent that the memo cannot serve decodes one page per level, so this is what
@@ -210,6 +253,20 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
         final LiveViewCheckpointMetaSegmentReader reader = readerFor(segmentId);
         reader.openPageAt(offset, length);
         node.decode(reader);
+        decodedPageCount++;
+    }
+
+    void openAndDecode(
+            long segmentId,
+            long offset,
+            int length,
+            LiveViewCheckpointPartitionMapNode node,
+            LiveViewCheckpointMutationArena arena,
+            LiveViewCheckpointPageRefPool pageRefPool
+    ) {
+        final LiveViewCheckpointMetaSegmentReader reader = readerFor(segmentId);
+        reader.openPageAt(offset, length);
+        node.decode(reader, arena, pageRefPool);
         decodedPageCount++;
     }
 

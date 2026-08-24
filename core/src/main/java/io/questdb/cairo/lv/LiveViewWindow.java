@@ -193,6 +193,8 @@ public class LiveViewWindow implements QuietCloseable {
     // can allocate a replacement Map with the same shape without re-deriving
     // it from build()-time inputs.
     private final ColumnTypes partitionKeyTypes;
+    private final byte[] checkpointKeySchema;
+    private final byte[] checkpointWindowNameUtf8;
     private final RecordSink partitionKeySink;
     private final String windowName;
     // The key sink and key-tail start index of whichever value layout anchorMap
@@ -306,9 +308,11 @@ public class LiveViewWindow implements QuietCloseable {
     ) {
         this.cairoConfiguration = cairoConfiguration;
         this.windowName = windowName;
+        this.checkpointWindowNameUtf8 = LiveViewCheckpointMetadata.encodeUtf8(windowName);
         this.anchorExpression = anchorExpression;
         this.anchorValueType = anchorValueType;
         this.partitionKeyTypes = partitionKeyTypes;
+        this.checkpointKeySchema = LiveViewCheckpointMetadata.encodeKeySchema(partitionKeyTypes);
         this.anchorMap = anchorMap;
         this.partitionKeySink = partitionKeySink;
         this.anchorKeySink = anchorKeySink;
@@ -361,8 +365,12 @@ public class LiveViewWindow implements QuietCloseable {
      * into a fresh array, which is the form both the put and the removal channels carry
      * to publication.
      */
-    private static byte[] copyEncodedKey(MemoryCARW keyBuffer, int length) {
-        final byte[] key = new byte[length];
+    private static byte[] copyEncodedKey(
+            MemoryCARW keyBuffer,
+            int length,
+            @Nullable LiveViewCheckpointByteArrayPool byteArrayPool
+    ) {
+        final byte[] key = byteArrayPool == null ? new byte[length] : byteArrayPool.next(length);
         for (int i = 0; i < length; i++) {
             key[i] = keyBuffer.getByte(i);
         }
@@ -837,6 +845,17 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull ObjList<byte[]> removedKeysOut,
             boolean isIncremental
     ) {
+        return freezeCheckpointEntries(keyBuffer, keysOut, valuesOut, removedKeysOut, isIncremental, null);
+    }
+
+    long freezeCheckpointEntries(
+            @NotNull MemoryCARW keyBuffer,
+            @NotNull ObjList<byte[]> keysOut,
+            @NotNull LongList valuesOut,
+            @NotNull ObjList<byte[]> removedKeysOut,
+            boolean isIncremental,
+            @Nullable LiveViewCheckpointByteArrayPool byteArrayPool
+    ) {
         return freezeCheckpointEntries(
                 keyBuffer,
                 keysOut,
@@ -844,7 +863,8 @@ public class LiveViewWindow implements QuietCloseable {
                 removedKeysOut,
                 isIncremental,
                 LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE,
-                null
+                null,
+                byteArrayPool
         );
     }
 
@@ -878,6 +898,28 @@ public class LiveViewWindow implements QuietCloseable {
             int entryStateBytes,
             @Nullable ObjList<byte[]> payloadsOut
     ) {
+        return freezeCheckpointEntries(
+                keyBuffer,
+                keysOut,
+                valuesOut,
+                removedKeysOut,
+                isIncremental,
+                entryStateBytes,
+                payloadsOut,
+                null
+        );
+    }
+
+    long freezeCheckpointEntries(
+            @NotNull MemoryCARW keyBuffer,
+            @NotNull ObjList<byte[]> keysOut,
+            @NotNull LongList valuesOut,
+            @NotNull ObjList<byte[]> removedKeysOut,
+            boolean isIncremental,
+            int entryStateBytes,
+            @Nullable ObjList<byte[]> payloadsOut,
+            @Nullable LiveViewCheckpointByteArrayPool byteArrayPool
+    ) {
         // One member, allocated locally: this runs once per seal, where the batched member
         // walk below runs once per seal for R members and is the one worth pooling.
         final IntList stateBytes = new IntList(1);
@@ -900,7 +942,8 @@ public class LiveViewWindow implements QuietCloseable {
                 stateBytes,
                 payloads,
                 projectionIndexes,
-                logicalBytes
+                logicalBytes,
+                byteArrayPool
         );
         return logicalBytes.getQuick(0);
     }
@@ -950,6 +993,28 @@ public class LiveViewWindow implements QuietCloseable {
             boolean isIncremental,
             @NotNull LongList logicalBytesInOut
     ) {
+        freezeCheckpointMemberEntries(
+                keyBuffer,
+                projectionIndexes,
+                keysOut,
+                imagesOut,
+                removedKeysOut,
+                isIncremental,
+                logicalBytesInOut,
+                null
+        );
+    }
+
+    void freezeCheckpointMemberEntries(
+            @NotNull MemoryCARW keyBuffer,
+            @NotNull IntList projectionIndexes,
+            @NotNull ObjList<byte[]> keysOut,
+            @NotNull ObjList<ObjList<byte[]>> imagesOut,
+            @NotNull ObjList<byte[]> removedKeysOut,
+            boolean isIncremental,
+            @NotNull LongList logicalBytesInOut,
+            @Nullable LiveViewCheckpointByteArrayPool byteArrayPool
+    ) {
         final LiveViewWindowStatePlan plan = checkpointWindowStatePlan;
         if (plan == null) {
             throw CairoException.critical(0)
@@ -982,7 +1047,8 @@ public class LiveViewWindow implements QuietCloseable {
                 entryStateBytes,
                 imagesOut,
                 projectionIndexes,
-                logicalBytesInOut
+                logicalBytesInOut,
+                byteArrayPool
         );
     }
 
@@ -1024,7 +1090,8 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull IntList entryStateBytes,
             @Nullable ObjList<ObjList<byte[]>> payloadsOut,
             @NotNull IntList memberProjectionIndexes,
-            @NotNull LongList logicalBytesInOut
+            @NotNull LongList logicalBytesInOut,
+            @Nullable LiveViewCheckpointByteArrayPool byteArrayPool
     ) {
         checkpointFreezeScanCount++;
         final int memberCount = entryStateBytes.size();
@@ -1084,7 +1151,7 @@ public class LiveViewWindow implements QuietCloseable {
                         throw CairoException.critical(0)
                                 .put("live view checkpoint dirty anchor key is missing from the anchor map");
                     }
-                    final byte[] key = copyEncodedKey(keyBuffer, (int) length);
+                    final byte[] key = copyEncodedKey(keyBuffer, (int) length, byteArrayPool);
                     removedKeysOut.add(key);
                     if (!isNewSinceCheckpoint) {
                         // The predecessor root holds this key, so the build takes its
@@ -1106,7 +1173,7 @@ public class LiveViewWindow implements QuietCloseable {
             if (anchorValue.getByte(SLOT_TOMBSTONE) == 1) {
                 continue;
             }
-            final byte[] key = copyEncodedKey(keyBuffer, (int) length);
+            final byte[] key = copyEncodedKey(keyBuffer, (int) length, byteArrayPool);
             keysOut.add(key);
             if (isAnchorValueEmitted) {
                 valuesOut.add(anchorValue.getLong(SLOT_ANCHOR_VALUE));
@@ -1117,13 +1184,14 @@ public class LiveViewWindow implements QuietCloseable {
                 if (payloadsOut != null) {
                     final int memberProjectionIndex = memberProjectionIndexes.getQuick(m);
                     payloadsOut.getQuick(m).add(memberProjectionIndex == NO_MEMBER_PROJECTION
-                            ? encodeWindowStatePayload(anchorValue, stateBytes)
+                            ? encodeWindowStatePayload(anchorValue, stateBytes, byteArrayPool)
                             : encodeMemberStateImage(
                             memberProjectionIndex,
                             anchorValue,
                             record,
                             keyStartIndex,
-                            stateBytes
+                            stateBytes,
+                            byteArrayPool
                     ));
                 }
                 if (isCharged) {
@@ -1369,6 +1437,24 @@ public class LiveViewWindow implements QuietCloseable {
      */
     public String getWindowName() {
         return windowName;
+    }
+
+    /**
+     * Borrows the compiled partition-key schema for synchronous checkpoint work. This
+     * window owns the immutable array; package-internal callers must not mutate it or
+     * retain it after the compiled view closes.
+     */
+    byte[] borrowCheckpointKeySchema() {
+        return checkpointKeySchema;
+    }
+
+    /**
+     * Borrows the compiled UTF-8 window name for synchronous checkpoint work. This
+     * window owns the immutable array; package-internal callers must not mutate it or
+     * retain it after the compiled view closes.
+     */
+    byte[] borrowCheckpointWindowNameUtf8() {
+        return checkpointWindowNameUtf8;
     }
 
     /**
@@ -2763,7 +2849,11 @@ public class LiveViewWindow implements QuietCloseable {
      * roots they keep. Their slots are still in the value this reads, which is what lets
      * both images come off one loaded entry.
      */
-    private byte[] encodeWindowStatePayload(MapValue value, int entryStateBytes) {
+    private byte[] encodeWindowStatePayload(
+            MapValue value,
+            int entryStateBytes,
+            @Nullable LiveViewCheckpointByteArrayPool byteArrayPool
+    ) {
         final LiveViewWindowStatePlan plan = checkpointWindowStatePlan;
         assert plan != null;
         if (entryStateBytes != plan.getTotalInlineStateBytes()) {
@@ -2771,7 +2861,9 @@ public class LiveViewWindow implements QuietCloseable {
                     .put("live view checkpoint window state payload width does not match the plan [expected=")
                     .put(plan.getTotalInlineStateBytes()).put(", requested=").put(entryStateBytes).put(']');
         }
-        final byte[] payload = new byte[entryStateBytes];
+        final byte[] payload = byteArrayPool == null
+                ? new byte[entryStateBytes]
+                : byteArrayPool.next(entryStateBytes);
         LiveViewCheckpointWindowRoot.encodeAnchorValue(value.getLong(SLOT_ANCHOR_VALUE), payload);
         final LiveViewWindowStateManifest manifest = plan.getManifest();
         for (int c = 0, n = plan.getDurableComponentCount(); c < n; c++) {
@@ -2838,12 +2930,13 @@ public class LiveViewWindow implements QuietCloseable {
             MapValue value,
             MapRecord keyRecord,
             int keyStartIndex,
-            int stateBytes
+            int stateBytes,
+            @Nullable LiveViewCheckpointByteArrayPool byteArrayPool
     ) {
         final LiveViewWindowStatePlan plan = checkpointWindowStatePlan;
         assert plan != null;
         final LiveViewAccumulatorProjection projection = plan.getProjection(projectionIndex);
-        final byte[] image = new byte[stateBytes];
+        final byte[] image = byteArrayPool == null ? new byte[stateBytes] : byteArrayPool.next(stateBytes);
         if (projection.isPartitionKeyGuarded()) {
             if (isPartitionKeyPresent(keyRecord, keyStartIndex)) {
                 final long count = value.getLong(projection.getNonNullCountSlot());

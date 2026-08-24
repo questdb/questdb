@@ -26,7 +26,9 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.lv.LiveViewAccumulatorDescriptor;
+import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewWindowStateManifest;
 import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.map.Map;
@@ -375,6 +377,44 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
     }
 
     @Test
+    public void testFunctionIdentityBytesWithEmptyAndUtf8Fields() {
+        final LiveViewCheckpointFunctionIdentity identity = new LiveViewCheckpointFunctionIdentity(
+                "",
+                "σ()",
+                7,
+                "",
+                "ключ",
+                "v\uD83D\uDE00"
+        );
+        assertGolden(
+                "function identity with empty and UTF-8 fields",
+                "4c5646490000000100000007"
+                        + "00000000"
+                        + "00000004cf832829"
+                        + "00000000"
+                        + "00000008d0bad0bbd18ed187"
+                        + "0000000576f09f9880",
+                identity.getEncoded()
+        );
+    }
+
+    @Test
+    public void testKeySchemaBytes() throws Exception {
+        assertGolden("a null key schema", "00000000", encodeKeySchema(null));
+        assertGolden("an empty key schema", "00000000", encodeKeySchema(ArrayColumnTypes.EMPTY));
+        assertGolden(
+                "an INT, STRING, SYMBOL key schema",
+                "00000003000000050000000b0000000c",
+                encodeKeySchema(
+                        new ArrayColumnTypes()
+                                .add(ColumnType.INT)
+                                .add(ColumnType.STRING)
+                                .add(ColumnType.SYMBOL)
+                )
+        );
+    }
+
+    @Test
     public void testManifestBytesForADirectlyBuiltComponentList() {
         final ObjList<LiveViewAccumulatorDescriptor> components = new ObjList<>();
         components.add(rowCountComponent());
@@ -391,6 +431,22 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
                 total
         );
         assertGolden("a row count beside a Welford accumulator", GOLDEN_MANIFEST_ROW_COUNT_AND_WELFORD, manifest.getEncoded());
+    }
+
+    @Test
+    public void testManifestBytesForAnEmptyComponentList() {
+        final LiveViewWindowStateManifest manifest = new LiveViewWindowStateManifest(
+                new ObjList<>(),
+                new IntList(),
+                LiveViewWindowStatePlan.ANCHOR_STATE_OFFSET,
+                LiveViewWindowStatePlan.ANCHOR_STATE_BYTES,
+                LiveViewWindowStatePlan.ANCHOR_STATE_BYTES
+        );
+        assertGolden(
+                "an empty component manifest",
+                "4c56574d0000000100000008000000000000000800000000",
+                manifest.getEncoded()
+        );
     }
 
     @Test
@@ -433,10 +489,22 @@ public class LiveViewWindowStateGoldenEncodingTest extends AbstractLiveViewTest 
                 hex(LiveViewWindowStatePlan.encodeWindowIdentity("w", "1:1:k;", "1:2:ts:0;")),
                 hex(LiveViewWindowStatePlan.encodeWindowIdentity("w1", ":1:k;", "1:2:ts:0;"))
         );
+        assertGolden(
+                "empty and UTF-8 window identity fields",
+                "4c565749000000010000000000000002ceba00000004f09f9880",
+                LiveViewWindowStatePlan.encodeWindowIdentity("", "κ", "\uD83D\uDE00")
+        );
     }
 
     private static void assertGolden(String what, String expectedHex, byte[] actual) {
         Assert.assertEquals(what, expectedHex, hex(actual));
+    }
+
+    private static byte[] encodeKeySchema(ColumnTypes keyTypes) throws Exception {
+        final Class<?> metadata = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointMetadata");
+        final java.lang.reflect.Method method = metadata.getDeclaredMethod("encodeKeySchema", ColumnTypes.class);
+        method.setAccessible(true);
+        return (byte[]) method.invoke(null, keyTypes);
     }
 
     /**
