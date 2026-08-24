@@ -642,6 +642,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 if (initialSeqTxn < writer.getSeqTxn()) {
+                    if (mvRefreshTask.operation == MatViewRefreshTask.INVALIDATE) {
+                        // One INVALIDATE notification replaces every incremental notification in this
+                        // apply batch. Treat the batch end as the covered frontier so a full snapshot may
+                        // consume it only when it also includes later transactions that got no notification.
+                        mvRefreshTask.invalidationBaseTableToken = mvRefreshTask.baseTableToken;
+                        mvRefreshTask.invalidationBaseTxn = writer.getSeqTxn();
+                    }
                     engine.notifyMatViewBaseTableCommit(mvRefreshTask, writer.getSeqTxn());
                 }
             } catch (Throwable th) {

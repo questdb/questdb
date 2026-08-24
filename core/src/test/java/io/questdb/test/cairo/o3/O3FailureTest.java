@@ -739,7 +739,10 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testOutOfFileHandles() throws Exception {
-        counter.set(600);
+        // Provisioning the tables peaks at ~1000 concurrently open files (measured); the two
+        // concurrent O3 merges further down need ~1900-2000, so this leaves enough margin for
+        // provisioning to complete while still tripping fault injection during the merges.
+        counter.set(1500);
         executeWithPool(
                 4, O3FailureTest::testOutOfFileHandles0, new TestFilesFacadeImpl() {
                     @Override

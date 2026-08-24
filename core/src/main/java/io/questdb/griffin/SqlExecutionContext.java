@@ -138,6 +138,10 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     Decimal64 getDecimal64();
 
+    default @Nullable ExecutionState getExecutionState() {
+        return null;
+    }
+
     int getIntervalFunctionType();
 
     /**
