@@ -56,10 +56,11 @@ jobs:
             echo 'the secret itself: it silences whatever that rule reports at that file and'
             echo 'line from then on, a real credential later written there included. So use'
             echo 'one only for a line whose file is settled and whose value will not change.'
-            echo 'For a false positive in a file that is still changing, one that keeps coming'
-            echo 'back, or one on a line that could later hold a real value, add a'
-            echo 'line-independent `[[rules.allowlists]]` regex to `.gitleaks.toml` instead.'
-            echo 'See CONTRIBUTING.md, "Secret scanning".'
+            echo 'For a false positive in a file that is still changing, or one that keeps'
+            echo 'coming back, add a `[[rules.allowlists]]` regex to `.gitleaks.toml` instead:'
+            echo 'it matches content, so nothing can shift it. Match the placeholder value'
+            echo 'rather than the whole line, or it keeps the same blind spot as an entry'
+            echo 'above. See CONTRIBUTING.md, "Secret scanning".'
             echo
             if [ "$GITHUB_EVENT_NAME" = 'pull_request' ]; then
               echo 'Commit the entry to this branch. Do NOT paste the four-part `Fingerprint:`'

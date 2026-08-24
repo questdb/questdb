@@ -30,11 +30,14 @@
 # --log-level=debug line nobody reads on a passing build.
 #
 # So use an entry here only for a line whose file is settled and whose value will
-# not change. For a false positive that recurs, one in a file that anyone is
-# still changing, or one on a line that could later hold a real value, add a
-# [[rules.allowlists]] regex to .gitleaks.toml instead: it matches content rather
-# than position, so it is line-independent and it still fires on a substituted
-# secret. See CONTRIBUTING.md, "Secret scanning".
+# not change. For a false positive that recurs, or one in a file that anyone is
+# still changing, add a [[rules.allowlists]] regex to .gitleaks.toml instead: it
+# matches content rather than position, so none of the three cases above can
+# shift the finding out from under it. Match the placeholder value rather than
+# the whole line, though. A regexTarget = "line" regex keeps the blind spot an
+# entry here has, silencing whatever that rule reports on a matching line; the
+# default target is the secret itself, so a substituted value stops matching and
+# the finding comes back. See CONTRIBUTING.md, "Secret scanning".
 #
 # Note that the scan reads each of the branch's commits separately, not the
 # squashed diff. A secret-shaped line added in one commit and removed in a later
