@@ -27,7 +27,11 @@ package io.questdb.network;
 import io.questdb.std.Misc;
 
 public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatcher<C> {
+    // PROTOTYPE knob. 0 reproduces today's non-blocking epoll_wait exactly, so
+    // the same binary serves as both arms of an A/B.
+    private static final int BLOCK_MILLIS = Integer.getInteger("questdb.experimental.epoll.block.millis", 0);
     private final Epoll epoll;
+    private boolean idleLastPass;
     private boolean pendingAccept;
 
     public IODispatcherLinux(
@@ -250,7 +254,19 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
 
         final long timestamp = clock.getTicks();
         boolean useful = processDisconnects(timestamp);
-        final int n = epoll.poll();
+        // PROTOTYPE: block in epoll_wait rather than returning immediately, so an
+        // idle dispatcher parks in the kernel instead of being re-polled by every
+        // worker in the pool. Blocking is only entered after a pass that found
+        // nothing, so a busy dispatcher never pays the timeout.
+        //
+        // The bound matters and is not a tuning knob. This dispatcher has two
+        // sources of work -- the epoll fd set, and the in-process registration
+        // queue drained by processRegistrations() -- and only the first can wake
+        // epoll_wait. A registration landing while we are blocked waits out the
+        // timeout. A production version needs an eventfd in the epoll set that
+        // the registration publisher writes to; there is none today, which is
+        // why this is bounded to a millisecond or two rather than to sleepMs.
+        final int n = epoll.poll(idleLastPass ? BLOCK_MILLIS : 0);
         int watermark = pending.size();
         int offset = 0;
         if (n > 0 || pendingAccept) {
@@ -300,7 +316,9 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             useful = true;
         }
 
-        return processRegistrations(timestamp) || useful;
+        final boolean result = processRegistrations(timestamp) || useful;
+        idleLastPass = !result;
+        return result;
     }
 
     @Override
