@@ -200,15 +200,25 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
                     + ") TIMESTAMP(ts) PARTITION BY DAY WAL "
                     + "DEDUP UPSERT KEYS(ts, id)");
 
+            // Pin auto-flush off: the exact-count assertions below need arming to
+            // happen only at this test's explicit flushAndGetSequence() calls. The
+            // default WS auto_flush_interval (100ms) could otherwise fire an
+            // intra-batch flush that arms the recycle early (a smaller
+            // dictSizeAtSwap lowers the C1 re-arm floor), letting the bounded
+            // SYMBOL_CARDINALITY set legally recycle a second time organically.
+            // WebSocket rejects auto_flush_interval=off outright, so pin it to a
+            // value well beyond this test's runtime instead of disabling it.
             String cfg;
             if (sfMode) {
                 String sfDir = temp.newFolder("qwp-symbol-dict-recycle-sf").getAbsolutePath();
                 cfg = "ws::addr=localhost:" + port + ";sf_dir=" + sfDir
                         + ";symbol_dict_reset_threshold=" + SYMBOL_DICT_RESET_THRESHOLD
+                        + ";auto_flush_rows=off;auto_flush_interval=60000"
                         + ";close_flush_timeout_millis=120000;";
             } else {
                 cfg = "ws::addr=localhost:" + port
                         + ";symbol_dict_reset_threshold=" + SYMBOL_DICT_RESET_THRESHOLD
+                        + ";auto_flush_rows=off;auto_flush_interval=60000"
                         + ";close_flush_timeout_millis=120000;";
             }
 
