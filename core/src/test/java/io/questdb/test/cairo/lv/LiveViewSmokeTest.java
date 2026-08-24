@@ -4059,20 +4059,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testLiveViewAheadOfStaleSequencerCacheStaysValid() throws Exception {
-        // Enterprise replica counterpart to testLiveViewAheadOfBaseInvalidates: there the base can
-        // never reach the view's watermark, here it already has. On a replica the Rust downloader
-        // appends base txns straight to the on-disk txnlog, and the Java side reconciles the cached
-        // TableSequencerImpl only later (WalEvents.registerTable -> TableSequencerAPI.reload). In
-        // that window the WAL apply job and the live view refresh both read the txnlog FILE through
-        // cursors, so the view legitimately advances its watermark past the cached head. The ahead
-        // guard in scanForLaggingViews must read that pair as the transient catch-up it is, not as
-        // unrecoverable data loss: the base tracker's writerTxn proves the base has APPLIED the
-        // watermark's seqTxn, so the view can always be synchronized (Azure build 264110,
-        // LiveViewReplicationTest.testReplicaRestartAcrossLagAndPromotionUnderExplicitBoundary).
-        // A second TableSequencerAPI plays the downloader: its own TableSequencerImpl appends the
-        // same on-disk txnlog while the engine's cached sequencer stays behind. The test drives
-        // the FLUSH EVERY cadence with setCurrentMicros so each drain deterministically flushes
-        // the lead and advances the durable watermark the ahead guard reads.
+        // Replica counterpart to testLiveViewAheadOfBaseInvalidates (enterprise
+        // LiveViewReplicationTest replica restart). On a replica the downloader appends base txns
+        // to the on-disk txnlog and reconciles the cached sequencer only later; WAL apply and the
+        // refresh read the file, so the view can legitimately move past the cached head. The ahead
+        // guard must treat that as catch-up, not data loss: the base tracker's writerTxn proves
+        // the base applied the watermark's seqTxn. A second TableSequencerAPI plays the
+        // downloader, and setCurrentMicros drives FLUSH EVERY so each drain flushes the lead.
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -4090,8 +4083,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertEquals(1, instance.getLastProcessedSeqTxn());
                 Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(baseToken));
 
-                // Base seqTxns 2 and 3 land in the txnlog file behind the engine's cached
-                // sequencer, exactly as the downloader's out-of-band appends do.
+                // Append base seqTxns 2 and 3 to the txnlog file behind the engine's cached
+                // sequencer, as the downloader does.
                 try (
                         TableSequencerAPI oobSequencers = new TableSequencerAPI(engine, engine.getConfiguration());
                         WalWriter oobWriter = new WalWriter(
@@ -4119,36 +4112,31 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         1, engine.getTableSequencerAPI().lastTxn(baseToken)
                 );
 
-                // The replica's notifier observes the file head and posts the apply notification
-                // (CheckWalTransactionsJob's exact call pair) without touching the cached
-                // sequencer. The apply job then reads the txnlog file through a cursor, so it
-                // materializes the out-of-band txns and advances the base's applied txn past the
-                // stale cached head.
+                // Post the apply notification the way CheckWalTransactionsJob does, without
+                // touching the cached sequencer; the apply job reads the file and applies 2 and 3.
                 engine.getTableSequencerAPI().notifyOnCheck(baseToken, 3);
                 engine.notifyWalTxnCommitted(baseToken);
                 drainWalQueue();
                 Assert.assertEquals(3, engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn());
                 Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(baseToken));
 
-                // The refresh advances the watermark to 3 and the fallback scan then runs the
-                // ahead guard against the still-stale cached head of 1. This is the exact pair
-                // the replica-restart race presents; the view must survive it.
+                // The refresh moves the watermark past the stale cached head of 1; the ahead
+                // guard must not invalidate the view.
                 setCurrentMicros(400_000);
                 drainJob(job);
                 Assert.assertFalse(
                         "a transiently stale cached base head must not durably invalidate the live view",
                         instance.isInvalid()
                 );
-                // One more FLUSH EVERY tick flushes the second lead; the watermark reaches the
-                // applied head while the cached sequencer still reads 1.
+                // The next FLUSH EVERY tick brings the watermark to the applied head while the
+                // cache still reads 1.
                 setCurrentMicros(500_000);
                 drainJob(job);
                 Assert.assertFalse(instance.isInvalid());
                 Assert.assertEquals(3, instance.getLastProcessedSeqTxn());
                 Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(baseToken));
 
-                // The late Java-side reconcile the downloader performs (registerTable -> reload)
-                // catches the cache up; the view keeps refreshing as if nothing happened.
+                // The late reconcile catches the cache up; the view keeps refreshing.
                 engine.getTableSequencerAPI().reload(baseToken);
                 Assert.assertEquals(3, engine.getTableSequencerAPI().lastTxn(baseToken));
                 setCurrentMicros(600_000);

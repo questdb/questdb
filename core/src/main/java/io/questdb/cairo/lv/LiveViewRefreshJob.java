@@ -8270,20 +8270,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 simulateBaseCommitBetweenAheadGuardReadsForTest = null;
                 aheadGuardAction.run();
             }
-            // The base head is the max of the cached sequencer head and the base's applied seqTxn.
-            // On a primary lastTxn() alone is authoritative, but on an enterprise replica the
-            // downloader appends the on-disk txnlog behind the cached TableSequencerImpl's back and
-            // reconciles the cache only later (registerTable -> TableSequencerAPI.reload). In that
-            // window the WAL apply job consumes the new txns straight from the file and the refresh
-            // advances the watermark behind it, so comparing against the stale cache alone misread
-            // the transient catch-up as data loss and durably invalidated a healthy view (enterprise
-            // LiveViewReplicationTest replica restart, Azure build 264110). The applied head closes
-            // that hole: every locally-advanced watermark is gated by ensureBaseApplied, so at its
-            // publish the tracker's writerTxn already covered it, and writerTxn is monotonic and
-            // read after the watermark here - a locally-advanced watermark can therefore never
-            // read as ahead. A hydrate-restored watermark (the loss case this guard exists for) was
-            // never applied locally: writerTxn cannot exceed the durable txnlog head, so the guard
-            // still fires.
+            // Take the max with the applied head: on an enterprise replica the downloader
+            // appends the on-disk txnlog behind the cached sequencer and reconciles it later,
+            // while WAL apply and this refresh already consume the new txns from the file.
+            // The cached head alone would misread that catch-up as data loss. writerTxn covers
+            // every locally-advanced watermark (ensureBaseApplied), and a hydrate-restored
+            // watermark past the durable head still trips the guard.
             final long baseSeqLastTxn = Math.max(
                     engine.getTableSequencerAPI().lastTxn(baseToken),
                     engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn()
