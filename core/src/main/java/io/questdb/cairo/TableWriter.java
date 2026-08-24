@@ -1667,14 +1667,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
         boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
-        // Compact BEFORE squash, not after. squashPartitionForce folds classic split sibling directories
-        // together by reading each source with frameFactory.openRO(..., partitionRowCount) - live rows,
-        // assuming an ordinary, non-composite directory. A sibling that is itself composite (merge-append
-        // pieces, dead space, out-of-order rows) would be read wrong by squash too, and once squash has
-        // merged that wrong reading into the target, compacting afterward cannot recover it - the
-        // corruption is already baked into the merged directory's bytes. Compacting partitionIndex first
-        // makes it an ordinary directory before squash ever reads it.
-        compactPartitionForConversion(partitionIndex);
+        // squashSplitPartitions now compacts every composite target and source it touches before reading
+        // it (see compactPartitionToPlain), so squashPartitionForce below is safe on its own whenever it
+        // actually has siblings to fold. This call stays because that condition can fail: a logical
+        // partition with no split siblings never enters squashSplitPartitions at all, and if that one
+        // directory is itself composite, produceParquetFromNative still needs it plain before it can map
+        // each column file as one flat [0, liveRows) range from byte 0.
+        compactPartitionToPlain(partitionIndex, "parquet conversion");
         squashPartitionForce(partitionIndex);
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         int newPartitionDirLen = 0;
@@ -5227,27 +5226,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Forces a composite partition into its ordinary, single-piece-at-row-0 shape before an operation
-     * that cannot tolerate dead space or a piece starting above file row 0. CONVERT PARTITION TO PARQUET
-     * is the only caller today: {@code produceParquetFromNative} maps each column file as one flat
-     * {@code [0, liveRows)} range from byte 0, which is only correct for an ordinary partition.
+     * that cannot tolerate dead space or a piece starting above file row 0. Two callers need this today:
+     * CONVERT PARTITION TO PARQUET, because {@code produceParquetFromNative} maps each column file as one
+     * flat {@code [0, liveRows)} range from byte 0; and {@link #squashSplitPartitions(int, int, int, boolean)},
+     * because it reads and writes each target and source the same way, through
+     * {@code frameFactory.openRO}/{@code openRW} sized to {@code partitionRowCount} (live rows) starting
+     * at file row 0. Both are only correct for an ordinary partition - a composite one read that way
+     * either pulls in dead space or misses a piece a merge-append relocated to the tail.
      * <p>
      * Unlike the opportunistic pass {@link #runCompaction} runs from {@code housekeep}, this ignores every
-     * budget (row, join, time): conversion needs the partition compacted NOW, in this transaction, not
+     * budget (row, join, time): the caller needs the partition compacted NOW, in this transaction, not
      * eventually over several commits. JOIN
      * runs first and is free; REWRITE, when JOIN alone cannot finish the job, copies the partition's live
      * rows into a fresh directory - the same shape {@link #squashPartitionForce} already gives a classic
      * split partition, just for pieces instead of sibling directories. MOVE-TAIL is deliberately never
-     * allowed here: this caller needs {@code partitionIndex} ITSELF to end up plain, and MOVE-TAIL would
-     * leave a new sibling partition behind as a side effect instead - the wrong shape for a caller about
-     * to convert one specific directory to parquet.
+     * allowed here: the caller needs {@code partitionIndex} ITSELF to end up plain, and MOVE-TAIL would
+     * leave a new sibling partition behind as a side effect instead - the wrong shape when the caller is
+     * about to read or fold that one specific directory as a whole.
+     *
+     * @param reason short label folded into the exception message if compaction cannot make progress
      */
-    private void compactPartitionForConversion(int partitionIndex) {
+    private void compactPartitionToPlain(int partitionIndex, String reason) {
         final PartitionGeometry geometry = getGeometry();
         while (geometry.isComposite(partitionIndex)) {
             if (compactPhysicalPartition(partitionIndex, true, false, Long.MAX_VALUE) == COMPACTION_NONE) {
                 final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
                 throw CairoException.critical(0)
-                        .put("cannot compact composite partition ahead of parquet conversion [table=").put(tableToken.getTableName())
+                        .put("cannot compact composite partition ahead of ").put(reason)
+                        .put(" [table=").put(tableToken.getTableName())
                         .put(", partition=").put(formatPartitionForTimestamp(partitionTs, txWriter.getPartitionNameTxn(partitionIndex)))
                         .put(']');
             }
@@ -14667,10 +14673,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long targetPartition = Long.MIN_VALUE;
         boolean copyTargetFrame = false;
+        final PartitionGeometry geometry = getGeometry();
 
-        // Move targetPartitionIndex to the first unlocked partition in the range
+        // Move targetPartitionIndex to the first unlocked partition in the range. Composite partitions
+        // are read and written as one flat frame from file row 0 sized to live rows - wrong for one that
+        // holds dead space or a piece a merge-append relocated to the tail - so the opportunistic pass
+        // leaves them for compaction to resolve on its own rather than picking one as a target. A forced
+        // squash (detachPartition, parquet conversion) still needs exactly one plain directory when it
+        // returns, so it compacts a composite target instead of skipping it - see below.
         int targetPartitionIndex = partitionIndexLo;
         for (int n = partitionIndexHi - 1; targetPartitionIndex < n; targetPartitionIndex++) {
+            if (!force && geometry.isComposite(targetPartitionIndex)) {
+                continue;
+            }
             boolean canOverwrite = canSquashOverwritePartitionTail(targetPartitionIndex);
             if (canOverwrite || force) {
                 targetPartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex);
@@ -14690,6 +14705,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
+        if (!force && geometry.isComposite(targetPartitionIndex + 1)) {
+            // The very next sibling is composite and this pass cannot fold across it (see the loop
+            // below) - nothing would actually squash, so return before opening any frame or committing
+            // a no-op transaction. A later pass folds it once compaction has made it plain.
+            return;
+        }
+
+        // The target and every source below get read/written as one contiguous frame sized to
+        // partitionRowCount (live rows) starting at file row 0 - only correct for an ordinary partition.
+        // See compactPartitionToPlain's javadoc. The selection loop above already keeps a composite
+        // partition out of targetPartitionIndex except under force, so this only ever does real work
+        // for a forced squash.
+        if (force) {
+            compactPartitionToPlain(targetPartitionIndex, "squash");
+        }
         long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
         setPathForNativePartition(path, timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
         final long originalSize = txWriter.getPartitionRowCountByTimestamp(targetPartition);
@@ -14731,6 +14761,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     targetFrame.getRowCount()
             );
             for (int i = 0; i < squashCount; i++) {
+                if (geometry.isComposite(targetPartitionIndex + 1)) {
+                    if (!force) {
+                        // Stop rather than skip: a later sibling folded into target across this one
+                        // would land target's rows ahead of this still-standing partition's, even though
+                        // this one covers the earlier time range. Leave the whole remaining run for
+                        // compaction to resolve this partition first, then a later squash pass to fold.
+                        break;
+                    }
+                    compactPartitionToPlain(targetPartitionIndex + 1, "squash");
+                }
                 long sourcePartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex + 1);
 
                 other.trimTo(pathSize);
