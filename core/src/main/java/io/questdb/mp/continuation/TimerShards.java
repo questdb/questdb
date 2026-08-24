@@ -237,6 +237,10 @@ public final class TimerShards {
     }
 
     private void joinThreads() {
+        final Runnable hook = joinThreadsHook;
+        if (hook != null) {
+            hook.run();
+        }
         boolean isInterrupted = false;
         for (int i = 0; i < threads.length; i++) {
             final Thread thread = threads[i];
@@ -258,6 +262,10 @@ public final class TimerShards {
     }
 
     private boolean joinThreads(long deadlineNanos) {
+        final Runnable hook = joinThreadsHook;
+        if (hook != null) {
+            hook.run();
+        }
         boolean isInterrupted = false;
         boolean isComplete = true;
         for (int i = 0; i < threads.length; i++) {
@@ -268,6 +276,7 @@ public final class TimerShards {
             while (thread.isAlive()) {
                 final long remainingNanos = deadlineNanos - System.nanoTime();
                 if (remainingNanos <= 0) {
+                    hasTimedOutThread = true;
                     isComplete = false;
                     break;
                 }
