@@ -10242,6 +10242,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * True if this composite directory holds two neighbouring pieces that TOUCH - the earlier one's
+     * {@code tsHi} equal to the next one's {@code tsLo}. Built only by
+     * {@link O3CompositeMergeStrategy#computeActions}'s tie-avoids-merge optimisation, which only ever
+     * fires when a commit has no DEDUP key to compare against - a dedup MERGE run later against a piece
+     * that touches a neighbour this way would compare an incoming row only against the ONE piece
+     * {@code computeActions} claims it with, missing a duplicate sitting in the other.
+     */
+    private boolean partitionHasTouchingPieces(int partitionIndex) {
+        final PartitionGeometry geometry = getGeometry();
+        final int pieceCount = geometry.getPieceCount(partitionIndex);
+        long previousTsHi = geometry.getPieceTimestampHi(partitionIndex, 0);
+        for (int p = 1; p < pieceCount; p++) {
+            final long tsLo = geometry.getPieceTimestampLo(partitionIndex, p);
+            if (tsLo == previousTsHi) {
+                return true;
+            }
+            previousTsHi = geometry.getPieceTimestampHi(partitionIndex, p);
+        }
+        return false;
+    }
+
     private void performRecovery() {
         rollbackIndexes();
         rollbackSymbolTables(false);
@@ -10613,9 +10635,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     srcOoo = srcOooHi + 1;
 
+                    final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
+
+                    // A composite directory can hold two pieces that TOUCH at one timestamp - a real
+                    // piece ending at V and a single-point piece [V,V] right after it, both built while
+                    // this table had no DEDUP key. A dedup MERGE later in this same commit only compares
+                    // an incoming row against the ONE piece computeActions claims it with, so a row tied
+                    // to V would miss whichever of the two pieces it does not land in and a duplicate
+                    // could survive undetected. Folding the directory back to one plain piece now, before
+                    // anything below reads this partition's state, removes the touching boundary before
+                    // planning ever sees it - cheap and rare: composite directories without a touching
+                    // pair (the ordinary case) cost one geometry scan and nothing else, and a directory
+                    // already compacted once under dedup can never grow a new touching pair, because the
+                    // optimisation that creates one is itself gated on dedup being off for the commit that
+                    // ties a piece.
+                    if (partitionIndexRaw > -1 && isCommitDedupMode()
+                            && txWriter.isPartitionCompositeByRawIndex(partitionIndexRaw)
+                            && partitionHasTouchingPieces(partitionIndexRaw)) {
+                        compactPartitionToPlain(partitionIndexRaw, "dedup touching pieces");
+                    }
+
                     final long srcDataMax;
                     final long srcNameTxn;
-                    final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
                     if (partitionIndexRaw > -1) {
                         if (last) {
                             srcDataMax = transientRowCount;
