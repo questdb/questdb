@@ -97,9 +97,19 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     // asking for an absurd allocation.
     private static final int MAX_PIECE_COUNT = 1 << 20;
     private static final Log LOG = LogFactory.getLog(PartitionGeometryFile.class);
+    private final int memoryTag;
     private long buf;
     private long bufCapacity;
     private int pieceCount;
+
+    /**
+     * {@code memoryTag} should name the owning subsystem - {@code TableReader}, {@code TableWriter} or an
+     * O3 job's own tag - not {@link MemoryTag#NATIVE_TABLE_READER} by default, so a leak or a memory-usage
+     * report attributes this buffer to whoever actually holds it.
+     */
+    public PartitionGeometryFile(int memoryTag) {
+        this.memoryTag = memoryTag;
+    }
 
     public static long recordSize(int pieceCount) {
         return HEADER_SIZE + (long) PIECE_SIZE * pieceCount;
@@ -176,7 +186,7 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     @Override
     public void close() {
         if (buf != 0) {
-            Unsafe.free(buf, bufCapacity, MemoryTag.NATIVE_TABLE_READER);
+            Unsafe.free(buf, bufCapacity, memoryTag);
             buf = 0;
             bufCapacity = 0;
         }
@@ -324,10 +334,10 @@ public class PartitionGeometryFile implements Closeable, Mutable {
             return;
         }
         final long newCapacity = Math.max(capacity, Math.max(bufCapacity * 2, HEADER_SIZE + 8L * PIECE_SIZE));
-        final long newBuf = Unsafe.malloc(newCapacity, MemoryTag.NATIVE_TABLE_READER);
+        final long newBuf = Unsafe.malloc(newCapacity, memoryTag);
         if (buf != 0) {
             Vect.memcpy(newBuf, buf, bufCapacity);
-            Unsafe.free(buf, bufCapacity, MemoryTag.NATIVE_TABLE_READER);
+            Unsafe.free(buf, bufCapacity, memoryTag);
         }
         buf = newBuf;
         bufCapacity = newCapacity;

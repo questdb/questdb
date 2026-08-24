@@ -2349,7 +2349,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Built afresh rather than trimmed out of `path`, which a caller may be holding mid-use.
             try (Path root = new Path()) {
                 root.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                partitionGeometry = new PartitionGeometry().of(ff, txWriter, root.toString(), timestampType, partitionBy);
+                partitionGeometry = new PartitionGeometry().of(ff, txWriter, root.toString(), timestampType, partitionBy, MemoryTag.NATIVE_TABLE_WRITER);
             }
         }
         return partitionGeometry;

@@ -47,6 +47,7 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
@@ -1404,7 +1405,7 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(writer.getTableToken());
                 TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                try (PartitionGeometryFile geometryFile = new PartitionGeometryFile()) {
+                try (PartitionGeometryFile geometryFile = new PartitionGeometryFile(MemoryTag.NATIVE_TABLE_WRITER)) {
                     geometryFile.read(geometryFf, path, realGeneration, realOffset);
                     geometryFile.append(geometryFf, path, fakeGeneration, fakeOffset, configuration.getCommitMode());
                 }
