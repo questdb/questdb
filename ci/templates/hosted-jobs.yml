@@ -3,6 +3,18 @@ jobs:
     displayName: "on"
     strategy:
       matrix:
+        mac-cairo:
+          WEB_CONSOLE_PROFILE: ""
+          # Apple Silicon. The plain macOS-14/15/26 images are Intel x64.
+          imageName: "macOS-15-arm64"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.25"
+          testset: "all"
+          includeTests: "**/cairo/**"
+          excludeTests: "**/cairo/fuzz/**"
+          javadoc_step: ""
+          javadoc_profile: ""
         windows-griffin-base:
           WEB_CONSOLE_PROFILE: ""
           imageName: "windows-latest"
@@ -142,69 +154,4 @@ jobs:
       # Hosted groups only run core-module tests; compile just core and its deps.
       TEST_REACTOR_ARGS: "-pl core -am"
     steps:
-      - template: steps.yml
-
-  # macOS aarch64 on the "GitHub-hosted Agents" pool (Apple Silicon).
-  # The regular Microsoft-hosted macOS images (macOS-14/15/26) are Intel x64;
-  # the arm64 preview of those is paused. Apple Silicon is therefore only
-  # reachable through this pool, which bills per minute (pay-as-you-go) rather
-  # than consuming a parallel job. Standard spec is 3 vCPU / 7 GB.
-  # The self-hosted "m1" pool is not an option here: it is not authorised for
-  # the "questdb" project that runs these pipelines.
-  - job: macos_aarch64
-    workspace:
-      clean: all
-    displayName: "on macos-aarch64"
-    pool:
-      name: "GitHub-hosted Agents"
-      vmImage: "macos-26-arm64"
-    timeoutInMinutes: 60
-    condition: ne(variables['System.PullRequest.IsFork'], 'true')
-    variables:
-      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
-      RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
-      COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
-      CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
-      DIFF_COVER_THRESHOLD_PCT: 50
-      ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
-      MAVEN_OPTS: "-Xmx2g -XX:+UseParallelGC"
-      TEST_REACTOR_ARGS: "-pl core -am"
-      WEB_CONSOLE_PROFILE: ""
-      os: macOS
-      poolName: "GitHub-hosted Agents"
-      jdk: "1.25"
-      testset: "all"
-      # Start with the cairo shard; widen once the pool is proven green.
-      includeTests: "**/cairo/**"
-      excludeTests: "**/cairo/fuzz/**"
-      javadoc_step: ""
-      javadoc_profile: ""
-    steps:
-      # Fail fast if the agent is not really arm64. "macos-14" means arm64 on
-      # GitHub Actions but Intel on Azure's hosted images, so never infer the
-      # architecture from a pool or image label -- assert it.
-      # steps.yml keys JDK activation off the hetzner-* pool names, so none of
-      # those fire here; resolve JAVA_HOME from the agent instead.
-      - bash: |
-          set -eu
-          echo "arch  : $(uname -m)"
-          echo "os    : $(sw_vers -productVersion)"
-          echo "cores : $(sysctl -n hw.ncpu)   mem: $(sysctl -n hw.memsize)"
-          if [ "$(uname -m)" != "arm64" ]; then
-            echo "ERROR: expected arm64, got $(uname -m)"
-            exit 1
-          fi
-          JAVA_PATH="${JAVA_HOME_25_ARM64:-}"
-          if [ -z "$JAVA_PATH" ]; then
-            JAVA_PATH="$(/usr/libexec/java_home -v 25 2>/dev/null || true)"
-          fi
-          if [ -z "$JAVA_PATH" ]; then
-            echo "ERROR: no JDK 25 on the image; available:"
-            /usr/libexec/java_home -V 2>&1 || true
-            exit 1
-          fi
-          echo "JAVA_HOME: $JAVA_PATH"
-          echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
-          echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
-        displayName: "Assert arm64 and activate JDK 25"
       - template: steps.yml

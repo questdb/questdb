@@ -43,6 +43,18 @@ steps:
       rm -rf /tmp/junit* /tmp/surefire-agent /tmp/libquestdbr* /tmp/libqdbsqllogic*
     displayName: "Cleanup dangling test artifacts from /tmp"
     condition: startsWith(variables['poolName'], 'hetzner-')
+  # Never infer the architecture from an image label: "macos-14" is arm64 on
+  # GitHub Actions but Intel x64 on Azure. Assert it so a silent swap back to
+  # Intel fails loudly instead of testing an architecture we do not ship.
+  - bash: |
+      set -eu
+      echo "image=$(imageName) arch=$(uname -m) os=$(sw_vers -productVersion)"
+      if [ "$(uname -m)" != "arm64" ]; then
+        echo "ERROR: expected arm64, got $(uname -m)"
+        exit 1
+      fi
+    displayName: "Assert macOS agent is arm64"
+    condition: eq(variables['os'], 'macOS')
   - bash: sudo sysctl -w fs.file-max=500000
     displayName: "Increase file count on Linux"
     condition: |
