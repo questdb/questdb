@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
@@ -68,6 +69,10 @@ import org.junit.Test;
 public class O3SplitWriteAmplificationBenchTest extends AbstractCairoTest {
 
     private static final long BASE_START = 1_704_067_200_000_000L; // 2024-01-01T00:00:00Z
+    // Reorder window for the slightly-out-of-order bench: a row's delivery lands at most this many rows
+    // away from its true chronological position - the "up to 1000 rows of distortion" a mix of writers
+    // with independent network latency would produce on one real-time stream.
+    private static final int OOO_JITTER_ROWS = 1000;
     private static final int PARTITIONS = Integer.getInteger("bench.partitions", 3);
     private static final long ROWS_PER_PARTITION = Long.getLong("bench.rowsPerPartition", 1_000_000L);
     private static final long STEP_MICROS = Long.getLong("bench.stepSeconds", 1) * Micros.SECOND_MICROS;
@@ -152,6 +157,32 @@ public class O3SplitWriteAmplificationBenchTest extends AbstractCairoTest {
     }
 
     /**
+     * Pure in-order variant: one writer, strictly ascending timestamps, no reordering at all. The
+     * baseline every other scenario is measured against - nothing here ever ties or overlaps an
+     * existing row, so merge-append never fires and amp should sit at 1.0 with 0% dead space.
+     */
+    @Test
+    public void testInOrderWriteAmplification() throws Exception {
+        assertMemoryLeak(() -> {
+            System.out.printf(
+                    "%nin-order bench: partitions=%d, rowsPerPartition=%d, steps=%d%n",
+                    PARTITIONS, ROWS_PER_PARTITION, STEPS
+            );
+            printHeader();
+            runInOrderScenario("split 10/10");
+            compactionEnabled = true;
+            runInOrderScenario("split 10/10 + compaction");
+            compactionCooldown = "0";
+            runInOrderScenario("split 10/10 + compaction (hot)");
+            for (int maxPieces : new int[]{50, 20, 10}) {
+                compactionMaxPieces = maxPieces;
+                runInOrderScenario("compaction, max.pieces=" + maxPieces);
+            }
+            resetCompactionSettings();
+        });
+    }
+
+    /**
      * Random-order variant: same base data and roughly the same commit count / ingest volume as
      * the other benches, but every inserted row lands at a uniformly random timestamp across the
      * whole existing data span - zero chronological locality. Maximal O3 stress: each commit merges
@@ -173,6 +204,34 @@ public class O3SplitWriteAmplificationBenchTest extends AbstractCairoTest {
             for (int maxPieces : new int[]{50, 20, 10}) {
                 compactionMaxPieces = maxPieces;
                 runRandomScenario("compaction, max.pieces=" + maxPieces);
+            }
+            resetCompactionSettings();
+        });
+    }
+
+    /**
+     * Slightly out-of-order variant: one logical, strictly ascending real-time stream, but delivery is
+     * jittered by a bounded reorder window of {@link #OOO_JITTER_ROWS} rows - as if several writers fed
+     * the same stream with independent network latency, each row landing at most that many rows away
+     * from its true chronological position. Gentler O3 than the multi-writer bench's fixed per-writer
+     * lag offsets or the random-order bench's unbounded reshuffle across the whole span.
+     */
+    @Test
+    public void testSlightlyOutOfOrderWriteAmplification() throws Exception {
+        assertMemoryLeak(() -> {
+            System.out.printf(
+                    "%nslightly-out-of-order bench: partitions=%d, rowsPerPartition=%d, steps=%d, jitterRows=%d%n",
+                    PARTITIONS, ROWS_PER_PARTITION, STEPS, OOO_JITTER_ROWS
+            );
+            printHeader();
+            runSlightlyOutOfOrderScenario("split 10/10");
+            compactionEnabled = true;
+            runSlightlyOutOfOrderScenario("split 10/10 + compaction");
+            compactionCooldown = "0";
+            runSlightlyOutOfOrderScenario("split 10/10 + compaction (hot)");
+            for (int maxPieces : new int[]{50, 20, 10}) {
+                compactionMaxPieces = maxPieces;
+                runSlightlyOutOfOrderScenario("compaction, max.pieces=" + maxPieces);
             }
             resetCompactionSettings();
         });
@@ -290,6 +349,9 @@ public class O3SplitWriteAmplificationBenchTest extends AbstractCairoTest {
     }
 
     private void runCatchUpScenario(String name) throws Exception {
+        // Split min size defaults to 1024G in the test harness (core/src/test/resources/server.conf) -
+        // no pre-split cut would ever clear that floor at this bench's row scale, so force it to 0.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 0);
         // bound each storage commit to ~9k rows: with ~1.08M backlog rows this yields
         // ~120 commits, matching the interleaved bench's drain count
         setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 9_000);
@@ -347,7 +409,64 @@ public class O3SplitWriteAmplificationBenchTest extends AbstractCairoTest {
         printSummary(name, ingested, physical, baseRows, elapsedMs, token);
     }
 
+    private void runInOrderScenario(String name) throws Exception {
+        // Split min size defaults to 1024G in the test harness (core/src/test/resources/server.conf) -
+        // no pre-split cut would ever clear that floor at this bench's row scale, so force it to 0.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 0);
+        setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
+        setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, -1);
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 10);
+        setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 10);
+        applyCompactionSettings();
+
+        String tbl = "bench" + scenarioIndex++;
+        execute("CREATE TABLE " + tbl + " (ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        long tsStep = Micros.DAY_MICROS / ROWS_PER_PARTITION;
+        long baseRows = PARTITIONS * ROWS_PER_PARTITION - ROWS_PER_PARTITION / 2;
+        execute("INSERT INTO " + tbl + " SELECT timestamp_sequence(" + BASE_START + ", " + tsStep + ")," +
+                " rnd_symbol('s0','s1','s2','s3','s4','s5','s6','s7'), rnd_double(), rnd_long(0, 100000, 0)" +
+                " FROM long_sequence(" + baseRows + ")");
+        drainWalQueue();
+
+        // one commit per step, rowsPerStep rows each, strictly continuing the base data's own sequence -
+        // never a tie or overlap, so every commit is a plain tail append
+        final int rowsPerStep = (int) (1_080_000L / STEPS); // ~1.08M total, matching the other benches
+        long physicalBefore = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
+        long startNanos = System.nanoTime();
+        long ingested = 0;
+        long ts = BASE_START + baseRows * tsStep;
+        TableToken token = engine.verifyTableName(tbl);
+        Rnd rnd = new Rnd();
+        WalWriter w = engine.getWalWriter(token);
+        try {
+            for (int step = 1; step <= STEPS; step++) {
+                for (int i = 0; i < rowsPerStep; i++) {
+                    TableWriter.Row row = w.newRow(ts);
+                    row.putSym(1, SYMBOLS[rnd.nextInt(SYMBOLS.length)]);
+                    row.putDouble(2, rnd.nextDouble());
+                    row.putLong(3, rnd.nextLong(100_000));
+                    row.append();
+                    ts += tsStep;
+                }
+                w.commit();
+                ingested += rowsPerStep;
+                drainWalQueue();
+            }
+        } finally {
+            w.close();
+        }
+        drainWalQueue();
+
+        long physical = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - physicalBefore;
+        long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
+        printSummary(name, ingested, physical, baseRows, elapsedMs, token);
+    }
+
     private void runRandomScenario(String name) throws Exception {
+        // Split min size defaults to 1024G in the test harness (core/src/test/resources/server.conf) -
+        // no pre-split cut would ever clear that floor at this bench's row scale, so force it to 0.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 0);
         setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
         setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, -1);
         setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
@@ -400,8 +519,8 @@ public class O3SplitWriteAmplificationBenchTest extends AbstractCairoTest {
     }
 
     private void runScenario(String name) throws Exception {
-        // Split min size default is 4MB, not the production 50MB: the 50MB floor blocks all classic
-        // tail-piece splits at this bench scale.
+        // Split min size defaults to 1024G in the test harness (core/src/test/resources/server.conf) -
+        // no pre-split cut would ever clear that floor at this bench's row scale, so force it to 0.
         setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 0);
         setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
         setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, -1);
@@ -448,6 +567,81 @@ public class O3SplitWriteAmplificationBenchTest extends AbstractCairoTest {
                     walWriter.close();
                 }
             }
+        }
+        drainWalQueue();
+
+        long physical = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - physicalBefore;
+        long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
+        printSummary(name, ingested, physical, baseRows, elapsedMs, token);
+    }
+
+    /**
+     * One writer, one strictly ascending "true" timestamp sequence, but delivery is drawn out of a
+     * bounded reorder buffer of {@link #OOO_JITTER_ROWS} pending rows: each pick is uniformly random
+     * over the current buffer, and every pick's slot is refilled from the true sequence before the next
+     * pick - the standard bounded-disorder construction, so no row is ever more than
+     * {@link #OOO_JITTER_ROWS} rows from its true chronological position.
+     */
+    private void runSlightlyOutOfOrderScenario(String name) throws Exception {
+        // Split min size defaults to 1024G in the test harness (core/src/test/resources/server.conf) -
+        // no pre-split cut would ever clear that floor at this bench's row scale, so force it to 0.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 0);
+        setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
+        setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, -1);
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 10);
+        setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 10);
+        applyCompactionSettings();
+
+        String tbl = "bench" + scenarioIndex++;
+        execute("CREATE TABLE " + tbl + " (ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        long tsStep = Micros.DAY_MICROS / ROWS_PER_PARTITION;
+        long baseRows = PARTITIONS * ROWS_PER_PARTITION - ROWS_PER_PARTITION / 2;
+        execute("INSERT INTO " + tbl + " SELECT timestamp_sequence(" + BASE_START + ", " + tsStep + ")," +
+                " rnd_symbol('s0','s1','s2','s3','s4','s5','s6','s7'), rnd_double(), rnd_long(0, 100000, 0)" +
+                " FROM long_sequence(" + baseRows + ")");
+        drainWalQueue();
+
+        final int rowsPerStep = (int) (1_080_000L / STEPS); // ~1.08M total, matching the other benches
+        long physicalBefore = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
+        long startNanos = System.nanoTime();
+        long ingested = 0;
+        long trueTs = BASE_START + baseRows * tsStep;
+        long remaining = (long) rowsPerStep * STEPS;
+        final LongList window = new LongList();
+        TableToken token = engine.verifyTableName(tbl);
+        Rnd rnd = new Rnd();
+        WalWriter w = engine.getWalWriter(token);
+        try {
+            for (int i = 0; i < OOO_JITTER_ROWS && remaining > 0; i++) {
+                window.add(trueTs);
+                trueTs += tsStep;
+                remaining--;
+            }
+            for (int step = 1; step <= STEPS; step++) {
+                for (int i = 0; i < rowsPerStep; i++) {
+                    final int pick = rnd.nextInt(window.size());
+                    final long emitTs = window.getQuick(pick);
+                    final int last = window.size() - 1;
+                    window.setQuick(pick, window.getQuick(last));
+                    window.setPos(last);
+                    if (remaining > 0) {
+                        window.add(trueTs);
+                        trueTs += tsStep;
+                        remaining--;
+                    }
+                    TableWriter.Row row = w.newRow(emitTs);
+                    row.putSym(1, SYMBOLS[rnd.nextInt(SYMBOLS.length)]);
+                    row.putDouble(2, rnd.nextDouble());
+                    row.putLong(3, rnd.nextLong(100_000));
+                    row.append();
+                }
+                w.commit();
+                ingested += rowsPerStep;
+                drainWalQueue();
+            }
+        } finally {
+            w.close();
         }
         drainWalQueue();
 

@@ -3161,6 +3161,16 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
     }
 
     /**
+     * Hides {@link AbstractCairoTest#drainWalQueue()} so every one of this file's bare {@code drainWalQueue()}
+     * calls also checks that {@code getPartitionPhysicalRowCount} still matches what the writer actually put
+     * on disk - see {@link TestUtils#assertPhysicalRowCountsMatchFiles}.
+     */
+    protected static void drainWalQueue() {
+        AbstractCairoTest.drainWalQueue();
+        TestUtils.assertPhysicalRowCountsMatchFiles(engine);
+    }
+
+    /**
      * Feeds one narrow backdated stride of hour {@code hour} to both the table under test and the oracle,
      * casting v to whatever type x currently holds while the oracle keeps it DOUBLE throughout.
      */

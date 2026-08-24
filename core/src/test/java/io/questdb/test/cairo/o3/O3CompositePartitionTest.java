@@ -1510,4 +1510,14 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             }
         }
     }
+
+    /**
+     * Hides {@link AbstractCairoTest#drainWalQueue()} so every one of this file's bare {@code drainWalQueue()}
+     * calls also checks that {@code getPartitionPhysicalRowCount} still matches what the writer actually put
+     * on disk - see {@link TestUtils#assertPhysicalRowCountsMatchFiles}.
+     */
+    protected static void drainWalQueue() {
+        AbstractCairoTest.drainWalQueue();
+        TestUtils.assertPhysicalRowCountsMatchFiles(engine);
+    }
 }

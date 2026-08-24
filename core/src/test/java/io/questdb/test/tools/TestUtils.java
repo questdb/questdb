@@ -909,6 +909,66 @@ public final class TestUtils {
         Assert.fail(formatted + "Expected sequence <" + sequence + "> to NOT contain term <" + term + "> but it did.");
     }
 
+    /**
+     * Cross-checks every WAL table's reported physical row count against its designated timestamp
+     * column's actual on-disk file length. {@link TableReader#getPartitionPhysicalRowCount} is pure
+     * {@code _geometry}/{@code _txn} bookkeeping - never itself read back from the files a commit wrote -
+     * so a bug that mis-publishes it (an undergrown commit, a stale carry-forward after a rewrite) leaves
+     * the file the writer actually produced as the only independent witness. The timestamp column is
+     * fixed-width and always present, so its file length in rows is an exact floor: a shorter file than
+     * the row count claims means the claim is wrong. Skips non-WAL and non-partitioned tables, and any
+     * partition already converted to parquet - this bookkeeping only exists on the native, composite
+     * write path, and a parquet partition's native column files are gone by design.
+     */
+    public static void assertPhysicalRowCountsMatchFiles(CairoEngine engine) {
+        final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
+        engine.getTableTokens(tableTokens, false);
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        for (int i = 0, n = tableTokens.size(); i < n; i++) {
+            final TableToken tableToken = tableTokens.get(i);
+            if (!tableToken.isWal()) {
+                continue;
+            }
+            try (TableReader reader = engine.getReader(tableToken)) {
+                if (!PartitionBy.isPartitioned(reader.getPartitionedBy())) {
+                    continue;
+                }
+                final TableReaderMetadata metadata = reader.getMetadata();
+                final int timestampIndex = metadata.getTimestampIndex();
+                if (timestampIndex < 0) {
+                    continue;
+                }
+                final CharSequence columnName = metadata.getColumnName(timestampIndex);
+                final int writerIndex = metadata.getWriterIndex(timestampIndex);
+                for (int p = 0, partitionCount = reader.getPartitionCount(); p < partitionCount; p++) {
+                    if (reader.getTxFile().isPartitionParquet(p)) {
+                        continue;
+                    }
+                    final long physicalRowCount = reader.getPartitionPhysicalRowCount(p);
+                    if (physicalRowCount <= 0) {
+                        continue;
+                    }
+                    final long partitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(p);
+                    final long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(p);
+                    final long columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(partitionTimestamp, writerIndex);
+                    final Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tableToken);
+                    TableUtils.setPathForNativePartition(
+                            path, metadata.getTimestampType(), reader.getPartitionedBy(), partitionTimestamp, partitionNameTxn
+                    );
+                    final long fileSize = ff.length(TableUtils.dFile(path, columnName, columnNameTxn));
+                    final long minBytes = physicalRowCount * Long.BYTES;
+                    Assert.assertTrue(
+                            "physical row count exceeds ts column file size [table=" + tableToken.getTableName() +
+                                    ", partitionIndex=" + p + ", partitionTimestamp=" + partitionTimestamp +
+                                    ", physicalRowCount=" + physicalRowCount + ", minBytes=" + minBytes +
+                                    ", fileSize=" + fileSize + ']',
+                            fileSize >= minBytes
+                    );
+                }
+            }
+        }
+    }
+
     public static void assertReader(CharSequence expected, TableReader reader, MutableUtf16Sink sink) {
         try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
             assertCursor(expected, cursor, reader.getMetadata(), true, sink);

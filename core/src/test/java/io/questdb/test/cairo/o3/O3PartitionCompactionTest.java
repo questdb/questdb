@@ -750,6 +750,16 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                 " where name like '" + day + "%'");
     }
 
+    /**
+     * Hides {@link AbstractCairoTest#drainWalQueue()} so every one of this file's bare {@code drainWalQueue()}
+     * calls also checks that {@code getPartitionPhysicalRowCount} still matches what the writer actually put
+     * on disk - see {@link TestUtils#assertPhysicalRowCountsMatchFiles}.
+     */
+    protected static void drainWalQueue() {
+        AbstractCairoTest.drainWalQueue();
+        TestUtils.assertPhysicalRowCountsMatchFiles(engine);
+    }
+
     // Compaction is always on now; kept as a no-op so call sites still document intent.
     private static void enableCompaction() {
     }

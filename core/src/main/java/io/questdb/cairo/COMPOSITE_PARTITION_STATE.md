@@ -295,6 +295,61 @@ for m in $(grep -o 'public void test[A-Za-z]*' <test> | sed 's/public void //');
 done
 ```
 
+## Write amplification, measured
+
+`O3SplitWriteAmplificationBenchTest` (`core/src/test/java/io/questdb/test/cairo/o3/`) - not a regression
+test, it prints numbers, with a light row-count assertion to keep it honest. Ported from the enterprise
+`feat-partition-top-split` branch's bench of the same name, then rewritten: that branch's `_txn`-per-piece
+design doesn't exist here, so piece/dead-row accounting goes through `PartitionGeometry` and
+`TableReader.getPartitionPhysicalRowCount` instead of the folder-level dead/live table this branch never
+had. Two bench-only static hooks the old branch added to `TableWriter` itself
+(`benchSquashFullThreshold`, `benchForceBlockApply`/`benchForceOneByOne`) have no equivalent here and were
+dropped rather than faked.
+
+Five scenarios, each run through the same ladder (split-only, +compaction, +compaction hot, then a
+`max.pieces` sweep at 50/20/10) at the default scale (3 partitions, 1M rows each, 120 virtual seconds):
+
+| scenario | what it simulates | amp | dead% |
+|---|---|---|---|
+| in-order | one writer, strictly ascending timestamps - the baseline | 1.0 | 0.0% |
+| slightly-out-of-order | one real-time stream, delivery jittered by a bounded reorder window of 1000 rows - several writers on one stream with independent network latency | 1.7 | 17.2% |
+| multi-writer | 5 writers at fixed lag offsets (realtime, 5s, 1m, 1h, 1d, 2d), interleaved commit+drain | 1.2 | 5.6% |
+| catch-up | the same 5-writer schedule, but committed to WAL in full before a single drain applies the backlog | 1.2 | 5.3% |
+| random-order | every row at a uniformly random position across the whole span - unbounded reorder | 2.2 | 26.7% |
+
+Two findings from building it:
+
+**The pre-split cut has a floor, and the test harness's own default blocks it outright.**
+`O3PartitionJob`'s pre-split (`computeCuts`, the batch-edge cuts) never cuts a piece below
+`getPartitionO3SplitThreshold()` = `cairo.o3.partition.split.min.size / avgRecordSize`.
+`core/src/test/resources/server.conf` sets that property to `1024G` - at this bench's ~30-byte rows, a
+floor of roughly 1.7 BILLION rows, so no cut can ever clear it without an explicit override. Two of the
+five `run*Scenario` methods were first written without `setProperty(CAIRO_O3_PARTITION_SPLIT_MIN_SIZE,
+0)` - only `runScenario` had it, copied from the ported-from bench. With pre-split silently disabled,
+every commit that touched an already-composite piece rewrote the piece WHOLE regardless of how much of
+it the new batch actually overlapped: catch-up's first measured amp was 4.9 (dead 54.2%) purely from
+this, collapsing to 1.2 (dead 5.3%) once the override was added to the two affected methods too. The
+lesson generalizes past this file: any test or bench that wants pre-split to fire at a small row scale
+must force `cairo.o3.partition.split.min.size` down - the default, in both production (50MB) and this
+harness (1024G), assumes real-sized rows and partitions.
+
+**The physically-written-rows metric (`TableWriterMetrics.getPhysicallyWrittenRows`, what `amp` is built
+from) was traced statically end to end** across composite piece processing
+(`O3PartitionJob.executeCompositePlan`), all four compaction strategies
+(`TableWriter.compactPhysicalPartition`'s JOIN / MOVE-TAIL / MAKE-PLAIN / REWRITE) and the fresh-piece
+rewrite path (`O3PartitionJob.assembleFreshPartitionVersion`, used when a directory's geometry generation
+chain is exhausted or a commit would breach compaction's thresholds). Every branch that calls
+`FrameAlgebra.append`/`merge` is paired with a matching `addPhysicallyWrittenRows` call using the exact
+row count written - the post-dedup `mergeRows`, not the pre-dedup ceiling, where dedup applies - and
+every branch that copies nothing (JOIN, MAKE-PLAIN, KEEP in `executeCompositePlan`, DROP) correctly has
+no such call. No missing or double-counted increment found - the bench's numbers can be trusted.
+
+**Open question: compaction shows no measurable effect in any of the five scenarios**, at any of the four
+settings the ladder sweeps (off, on, on+hot-cooldown, max.pieces down to 10) - `amp` and `dead%` come out
+bit-for-bit identical within each scenario regardless. Not yet root-caused; could be the bench's short
+virtual runtime never giving `runCompaction`'s cooldown/age rules real purchase, or a genuine gap in how
+compaction is wired into this ingestion pattern.
+
 ## Working notes
 
 - `JAVA_HOME` must be Java 25: `/opt/homebrew/opt/java/libexec/openjdk.jdk/Contents/Home`.
