@@ -143,3 +143,56 @@ jobs:
       TEST_REACTOR_ARGS: "-pl core -am"
     steps:
       - template: steps.yml
+
+  # macOS aarch64 on the self-hosted "m1" pool.
+  # Azure has no GA arm64 macOS hosted image -- that preview is paused -- so a
+  # self-hosted pool is the only way to test the architecture we actually ship.
+  # Requires the m1 agents to be online; the job queues until one picks it up.
+  - job: macos_aarch64
+    workspace:
+      clean: all
+    displayName: "on macos-aarch64"
+    pool:
+      name: "m1"
+    timeoutInMinutes: 60
+    condition: ne(variables['System.PullRequest.IsFork'], 'true')
+    variables:
+      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
+      RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
+      COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
+      CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
+      DIFF_COVER_THRESHOLD_PCT: 50
+      ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
+      MAVEN_OPTS: "-Xmx2g -XX:+UseParallelGC"
+      TEST_REACTOR_ARGS: "-pl core -am"
+      WEB_CONSOLE_PROFILE: ""
+      os: macOS
+      poolName: "m1"
+      jdk: "1.25"
+      testset: "all"
+      # Start with the cairo shard; widen once the pool is proven green.
+      includeTests: "**/cairo/**"
+      excludeTests: "**/cairo/fuzz/**"
+      javadoc_step: ""
+      javadoc_profile: ""
+    steps:
+      # Fail fast if the agent is not really arm64. "macos-14" means arm64 on
+      # GitHub Actions but Intel on Azure's hosted images, so never infer the
+      # architecture from a pool or image label -- assert it.
+      # steps.yml keys JDK activation off the hetzner-* pool names, so none of
+      # those fire for "m1"; resolve JAVA_HOME from the agent instead.
+      - bash: |
+          set -eu
+          echo "arch  : $(uname -m)"
+          echo "os    : $(sw_vers -productVersion)"
+          echo "cores : $(sysctl -n hw.ncpu)   mem: $(sysctl -n hw.memsize)"
+          if [ "$(uname -m)" != "arm64" ]; then
+            echo "ERROR: expected arm64, got $(uname -m)"
+            exit 1
+          fi
+          JAVA_PATH="$(/usr/libexec/java_home -v 25)"
+          echo "JAVA_HOME: $JAVA_PATH"
+          echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+          echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
+        displayName: "Assert arm64 and activate JDK 25"
+      - template: steps.yml
