@@ -1191,11 +1191,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      *     each contribute at most one, DROP contributes none - so the record-size estimate this checks
      *     against can only ever be too pessimistic, never too optimistic;</li>
      *     <li>the plan would leave the partition past {@link PartitionCompactionPolicy}'s own waste-ratio
-     *     or piece-count thresholds - see {@link TableWriter#wouldBreachCompactionThresholds}. Writing the
-     *     plan as one more piece would only have {@code runCompaction} discover the same breach on some
-     *     later commit and rewrite the partition anyway; assembling the fresh version now folds the write
-     *     this commit already has to do and the rewrite compaction would otherwise do separately into one
-     *     pass.</li>
+     *     or piece-count thresholds - see {@link TableWriter#wouldBreachCompactionThresholds} - AND a
+     *     MOVE-TAIL could not resolve that breach later for less - see
+     *     {@link TableWriter#wouldMoveTailSucceed}. A breach MOVE-TAIL could reach instead is cheaper left
+     *     alone: this commit's own write lands normally, over just the piece(s) it actually touches, and
+     *     the reactive {@code runCompaction} pass right after copies only the tail MOVE-TAIL needs to move,
+     *     not the whole partition. Only when no clean-enough front survives does rewriting fresh right now
+     *     beat leaving the breach for {@code runCompaction} to discover and rewrite whole on a later
+     *     commit.</li>
      * </ol>
      */
     private static boolean shouldAssembleFreshPartitionVersion(
@@ -1224,7 +1227,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 return true;
             }
         }
-        return tableWriter.wouldBreachCompactionThresholds(partitionIndex, geometry, bounds, actions, actionCount);
+        if (!tableWriter.wouldBreachCompactionThresholds(partitionIndex, geometry, bounds, actions, actionCount)) {
+            return false;
+        }
+        if (tableWriter.wouldMoveTailSucceed(bounds, actions, actionCount)) {
+            LOG.info().$("leaving compaction breach for MOVE-TAIL [table=").$(tableWriter.getTableToken())
+                    .$(", partitionIndex=").$(partitionIndex)
+                    .I$();
+            return false;
+        }
+        return true;
     }
 
     /**

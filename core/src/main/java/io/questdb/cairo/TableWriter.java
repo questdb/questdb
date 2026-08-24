@@ -16019,7 +16019,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         final boolean breaches = PartitionCompactionPolicy.exceedsThresholds(configuration, liveRows, deadRows, pieceCount, avgRecordSize());
         if (breaches) {
-            LOG.info().$("assembling fresh composite partition version: would breach compaction thresholds [table=")
+            LOG.info().$("compaction thresholds would be breached [table=")
                     .$(tableToken)
                     .$(", partitionIndex=").$(partitionIndex)
                     .$(", anticipatedLiveRows=").$(liveRows)
@@ -16031,6 +16031,50 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .I$();
         }
         return breaches;
+    }
+
+    /**
+     * True when this commit's own plan would leave piece 0 untouched (a {@code KEEP}, never a
+     * {@code MERGE}/{@code APPEND}) and big enough a share of the anticipated live rows to clear
+     * {@link CairoConfiguration#getPartitionCompactionPrefixMinPercent()} - the exact shape
+     * {@link #moveTailToFreshPartition} requires of the COMMITTED geometry once this commit lands. When
+     * {@link #wouldBreachCompactionThresholds} also says the plan would breach, {@code
+     * O3PartitionJob.shouldAssembleFreshPartitionVersion} uses this to choose the cheaper of two ways to
+     * resolve the breach: pay to rewrite the WHOLE partition fresh right now, or let this commit's own
+     * write land normally and leave a MOVE-TAIL for the reactive {@link #runCompaction} pass right after
+     * to split the tail off for the cost of copying only what actually needs to move.
+     * <p>
+     * Piece 0's row offset is read from {@code bounds}, not {@code geometry}, so a pre-split cut ahead of
+     * piece 0 - impossible today since nothing cuts below row 0, but not asserted against - cannot silently
+     * pass this check against the wrong piece.
+     */
+    boolean wouldMoveTailSucceed(LongList bounds, ObjList<O3CompositeMergeStrategy.Action> actions, int actionCount) {
+        int piece0Action = -1;
+        for (int i = 0; i < actionCount; i++) {
+            if (actions.getQuick(i).pieceIndex == 0) {
+                piece0Action = i;
+                break;
+            }
+        }
+        if (piece0Action == -1
+                || actions.getQuick(piece0Action).type != O3CompositeMergeStrategy.ActionType.KEEP
+                || O3CompositeMergeStrategy.getRowOffset(bounds, 0) != 0) {
+            return false;
+        }
+        long liveRows = 0;
+        for (int i = 0; i < actionCount; i++) {
+            final O3CompositeMergeStrategy.Action action = actions.getQuick(i);
+            switch (action.type) {
+                case KEEP -> liveRows += O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex);
+                case NEW_PIECE -> liveRows += action.getO3RowCount();
+                case MERGE ->
+                        liveRows += O3CompositeMergeStrategy.getRowCount(bounds, action.pieceIndex) + action.getO3RowCount();
+                default -> {
+                }
+            }
+        }
+        final long prefixRows = O3CompositeMergeStrategy.getRowCount(bounds, 0);
+        return prefixRows * 100 >= liveRows * (long) configuration.getPartitionCompactionPrefixMinPercent();
     }
 
     @FunctionalInterface

@@ -382,6 +382,45 @@ toward 0:
 | in-order | 1.0 / 0.0% | 1.0 / 0.0% | 1.0 / 0.0% | 1.0 / 0.0% |
 | multi-writer | 1.2 / 5.6% | 8.4 / 3.0% | 21.0 / 0.0% | 41.7 / ~0.0% |
 
+**The breach-resolution rewrite paid for far more than it had to: it always copied the WHOLE
+partition, never just a tail.** `assembleFreshPartitionVersion` has no MOVE-TAIL option - every action
+(KEEP included) copies into the one fresh directory it builds, so a piece-count breach on a directory
+whose oldest piece is untouched by this commit still rewrote everything, not just the touched region.
+Confirmed from `wouldBreachCompactionThresholds`'s own `anticipatedLiveRows` log field on the
+slightly-out-of-order bench: one partition's breach events fired every ~72-74K rows (STEPS apart) but
+each copied the FULL total-to-date (581K, then 653K, then 707K, ... up to 977K) - a partition that
+never got cheaper to fix, only more expensive, the longer it ran.
+
+Fixed by teaching `shouldAssembleFreshPartitionVersion` to check `TableWriter.wouldMoveTailSucceed`
+(new) before committing to the full rewrite: same shape `moveTailToFreshPartition` itself requires -
+piece 0 untouched by this commit (a `KEEP`, not `MERGE`/`APPEND`) and its share of anticipated live rows
+clears `cairo.partition.compaction.prefix.min.percent`. When it holds, the breach is left alone: this
+commit's own write lands normally over just the piece(s) it touches, and the reactive `runCompaction`
+pass right after (which already has MOVE-TAIL, tried before REWRITE) splits off only the tail - copying
+what actually needs to move, not the whole directory. Confirmed the reactive path fires as anticipated:
+in one run, 46 commits deferred a breach to MOVE-TAIL, 22 actual MOVE-TAILs ran, 0 fell through to a
+plain REWRITE.
+
+Effect at `max.pieces=20`, before -> after:
+
+| scenario | before | after |
+|---|---|---|
+| random-order | 16.8 / 3.6% | 16.8 / 3.6% (unaffected - no commit ever lands on a stable, un-random front) |
+| catch-up | 13.2 / 2.4% | 7.4 / 2.4% |
+| slightly-out-of-order | 9.1 / 1.0% | 3.0 / 1.8% |
+| in-order | 1.0 / 0.0% | 1.0 / 0.0% (never composite - unaffected) |
+| multi-writer | 21.0 / 0.0% | 9.9 / 0.0% |
+
+slightly-out-of-order also flattens across the sweep once fixed (3.0 at both `pieces≤20` and
+`pieces≤10`, instead of climbing 9.1 -> 16.9) - exactly what "copy only the tail" predicts: cost stops
+scaling with how long the partition has been accumulating and starts scaling with how much actually
+needs to move. random-order is the one workload this cannot help, by construction: every commit lands
+at a uniformly random position across the whole span, so piece 0 is essentially never left untouched
+long enough to qualify as a stable front.
+
+Verified against `O3CompositePartitionTest`, `O3PartitionPreSplitTest`, `O3PartitionCompactionTest` (71
+tests, the same 2 pre-existing failures as always, 0 regressions).
+
 ## Working notes
 
 - `JAVA_HOME` must be Java 25: `/opt/homebrew/opt/java/libexec/openjdk.jdk/Contents/Home`.
