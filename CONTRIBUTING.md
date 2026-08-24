@@ -377,44 +377,27 @@ Before opening a PR, please ensure:
 The `Gitleaks` check scans your branch's own commits for credentials. If it
 fails on a real secret, rotate it before doing anything else.
 
-If it is a false positive, the failing job's summary carries the exact lines to
-add to `.gitleaksignore`, under the heading "What to do with these findings", in
-the commit-independent three-part `<file>:<rule-id>:<start-line>` form. Each one
-pins a line number, so commit them to your branch only for a line whose file is
-settled; the caveats below cover the cases where that is not enough.
+For a false positive, the failing job's summary carries ready-to-paste
+`.gitleaksignore` lines under "What to do with these findings", in the
+commit-independent three-part `<file>:<rule-id>:<start-line>` form. Do not paste
+the four-part `Fingerprint:` line that gitleaks prints in the job log: PRs here
+are squash-merged, so the commit it names never reaches `master`, and the entry
+silences your PR and then fails the push scan of `master`.
 
-Do not paste the four-part `Fingerprint:` line that gitleaks prints in the job
-log. PRs here are squash-merged, so the commit it names never reaches `master`:
-the entry silences your PR and then fails the push scan of `master`.
+An ignore entry still pins a path and a line number, so anything that moves the
+finding before the squash lands — a later commit, an unrelated pull request
+shifting that line on `master`, a rename — stops it matching, leaving the PR
+green and `master` red with nothing warning you. It is also blind to the secret
+itself, silencing whatever that rule reports at that file and line from then on,
+a real credential later written there included. Use one only for a settled file
+and a value that will not change; `.gitleaksignore` has the full detail.
 
-A three-part entry still pins a file path and a start line, both recorded as of
-the commit that introduced the finding, and the push scan of `master` matches
-them against the squashed commit. Anything that moves the finding before that
-commit lands stops the entry matching:
-
-- a later commit on your branch inserts or deletes lines above it in the same
-  file;
-- an unrelated pull request lands on `master` and shifts that line, which you
-  neither control nor see;
-- the file is renamed, even with no edit to the line itself.
-
-Each case leaves the pull request green and fails the push scan of `master`.
-Nothing warns you — the scan reads commit diffs and never re-reads the line.
-
-An entry is also blind to the secret itself. It names a rule, a file and a line,
-so it silences whatever that rule reports there from then on — including a
-different, real credential that someone later writes on the same line, which is
-a plausible edit for a line that once held a credential-shaped placeholder. That
-one stays green on the pull request and on `master`, and the only record is a
-`--log-level=debug` line nobody reads on a passing build.
-
-So paste an ignore entry only for a line whose file is settled and whose value
-will not change. For a false positive that recurs, or one in a file that anyone
-is still changing, add an allowlist to `.gitleaks.toml` instead. It matches
-content rather than position, so none of the three cases above can shift the
-finding out from under it. Match the placeholder value itself, not the line it
-sits on: the default target is the secret gitleaks extracted, so a substituted
-value stops matching and the finding comes back.
+For a false positive that recurs, or one in a file anyone is still changing, add
+an allowlist to `.gitleaks.toml` instead. It matches content rather than
+position, so none of those cases can shift the finding out from under it. Match
+the placeholder value itself, not the line it sits on: the default target is the
+secret gitleaks extracted, so a substituted value stops matching and the finding
+comes back.
 
 ```toml
 [[rules]]
@@ -424,13 +407,10 @@ id = "generic-api-key"
   regexes = ['''dGhlIHNhbXBsZSBub25jZQ==''']
 ```
 
-That form is line- and path-independent, and it has to be updated whenever the
-placeholder legitimately changes — which is the point, because the change then
-gets a fresh decision rather than a silent pass.
-
 Reach for `regexTarget = "line"` only where there is no stable value to match —
 the rule fires on a different string each time, or the placeholder itself keeps
-changing — and know what it costs:
+changing. It trades a line number for a piece of content, but keeps the blind
+spot above, silencing whatever that rule reports on any matching line.
 
 ```toml
 [[rules]]
@@ -441,43 +421,27 @@ id = "generic-api-key"
   regexes = ['''Sec-WebSocket-Key''']
 ```
 
-That matches the whole line, so it trades a line number for a piece of content
-but keeps the blind spot an ignore entry has: it silences whatever that rule
-reports on any line carrying `Sec-WebSocket-Key`, a real credential later
-written there included.
-
-The `id` must name an existing default rule exactly. `[extend]` disables
-gitleaks' rule validation, so a misspelled id is accepted in silence: it defines
-a rule with no regex, allowlists nothing, and leaves the job red on the
-byte-identical finding, with no log line at any level naming it. Check the
-spelling against the rule id in the finding before suspecting the regex.
-
-Add that `[[rules.allowlists]]` block to the existing `[[rules]]` block if
-`.gitleaks.toml` already carries one for the rule id — and it usually will,
-because `generic-api-key` raises nearly every finding here. A second
-`[[rules]]` block with the same id replaces the first rather than adding to
-it: gitleaks keys rules by id and keeps the last one, warning about neither
-the collision nor the allowlist it discards. Nothing fails straight away
-either, because the finding that allowlist covered sits outside the scanned
-commit range until someone edits that line again.
+Two ways a hand-written allowlist fails quietly. The `id` must name an existing
+default rule exactly — `[extend]` disables rule validation, so a misspelled id
+is accepted in silence, allowlists nothing, and leaves the job red on the
+byte-identical finding. And add the `[[rules.allowlists]]` to the `[[rules]]`
+block already present for that id, as there usually is one, because
+`generic-api-key` raises nearly every finding here: a second block with the same
+id replaces the first, discarding its allowlist with no warning.
 
 The check reads each commit separately rather than the squashed diff, so a
-secret-shaped line added in one commit and removed in a later one still fails
-the check.
+secret-shaped line added in one commit and removed in a later one still fails.
 
 Three limits are worth knowing, because in all three the push scan of `master`
 is the first thing that reads the code:
 
-- The scan needs a license secret that GitHub withholds from pull requests
-  opened from forks. On a fork PR the job skips the scan and reports success
-  without reading anything.
-- The action reads only the first 30 commits of a pull request, so on a longer
-  branch it never scans commit 31 onwards.
-- The scan walks only your branch's first-parent line, and skips merge commits
-  on it. So nothing reachable only through a merge's second parent is read on
-  the pull request: not a conflict resolution written into the merge commit, and
-  not any commit on a side branch you merged into your branch. The squash-merge
-  folds all of it into the commit that lands on `master`.
+- Fork pull requests do not receive the license secret, so the job skips the
+  scan and reports success without reading anything.
+- The action reads only a pull request's first 30 commits.
+- The scan walks only your branch's first-parent line and skips merge commits,
+  so nothing reachable only through a merge's second parent is read — neither a
+  conflict resolution written into a merge commit nor a side branch you merged
+  in.
 
 ## Branching
 
