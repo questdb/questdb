@@ -10651,8 +10651,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // ties a piece.
                     if (partitionIndexRaw > -1 && isCommitDedupMode()
                             && txWriter.isPartitionCompositeByRawIndex(partitionIndexRaw)
-                            && partitionHasTouchingPieces(partitionIndexRaw)) {
-                        compactPartitionToPlain(partitionIndexRaw, "dedup touching pieces");
+                            && partitionHasTouchingPieces(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION)) {
+                        compactPartitionToPlain(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION, "dedup touching pieces");
                     }
 
                     final long srcDataMax;
