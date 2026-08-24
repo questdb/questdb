@@ -105,6 +105,8 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
     private final LongList releaseTally = new LongList();
     private final LongHashSet removedSegmentIds = new LongHashSet();
     private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
+    private final LongList sortedApplied = new LongList();
+    private final LongList sortedReleased = new LongList();
     private final LongList staged = new LongList();
     private LiveViewCheckpointSegmentDirectoryNode[] builderPool = new LiveViewCheckpointSegmentDirectoryNode[0];
     private LiveViewCheckpointSegmentDirectoryNode[] collectPool = new LiveViewCheckpointSegmentDirectoryNode[0];
@@ -901,15 +903,22 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
         staged.setQuick(base + STAGED_KIND, kind);
     }
 
+    /**
+     * Compares the two id sets order-independently. Both scratch lists are retained
+     * because every publication runs this check, and copying the sets into fresh
+     * lists would charge a seal for the comparison alone.
+     */
     private boolean isReleaseSetComplete() {
         if (appliedSegmentIds.size() != ownReleasedSegmentIds.size()) {
             return false;
         }
-        final LongList applied = new LongList(appliedSegmentIds);
-        final LongList released = new LongList(ownReleasedSegmentIds);
-        applied.sort();
-        released.sort();
-        return applied.equals(released);
+        sortedApplied.clear();
+        sortedApplied.add(appliedSegmentIds);
+        sortedReleased.clear();
+        sortedReleased.add(ownReleasedSegmentIds);
+        sortedApplied.sort();
+        sortedReleased.sort();
+        return sortedApplied.equals(sortedReleased);
     }
 
     private LiveViewCheckpointSegmentDirectoryNode nodeAt(int depth) {

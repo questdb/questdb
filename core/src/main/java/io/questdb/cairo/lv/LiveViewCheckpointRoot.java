@@ -57,7 +57,12 @@ public class LiveViewCheckpointRoot implements Closeable {
     private final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
     private long maxTimestamp;
     private final LiveViewCheckpointMetaSegmentReader reader;
-    private long[] segmentIds = new long[0];
+    /**
+     * Segments this root's closure names. A publication opens several roots and
+     * a seal opens the predecessor's, so the list is retained and refilled rather
+     * than rebuilt per open.
+     */
+    private final LongList segmentIds = new LongList();
 
     public LiveViewCheckpointRoot(@NotNull CairoConfiguration configuration) {
         reader = new LiveViewCheckpointMetaSegmentReader(configuration);
@@ -104,7 +109,7 @@ public class LiveViewCheckpointRoot implements Closeable {
     }
 
     public long getSegmentId(int index) {
-        return segmentIds[index];
+        return segmentIds.getQuick(index);
     }
 
     /**
@@ -123,7 +128,7 @@ public class LiveViewCheckpointRoot implements Closeable {
     }
 
     public int getSegmentIdCount() {
-        return segmentIds.length;
+        return segmentIds.size();
     }
 
     public void of(@Transient @NotNull Path checkpointsDir, @NotNull LiveViewCheckpointPageRef rootRef) {
@@ -162,7 +167,7 @@ public class LiveViewCheckpointRoot implements Closeable {
             throw LiveViewCheckpointMetadata.invalid("root payload length mismatch")
                     .put(" [expected=").put(expectedLength).put(", actual=").put(payloadLength).put(']');
         }
-        segmentIds = new long[segmentCount];
+        segmentIds.clear();
         long previous = -1;
         for (int i = 0; i < segmentCount; i++) {
             final long segmentId = reader.getLong(offset);
@@ -170,7 +175,7 @@ public class LiveViewCheckpointRoot implements Closeable {
                 throw LiveViewCheckpointMetadata.invalid("root segment ids not strictly increasing")
                         .put(" [previous=").put(previous).put(", current=").put(segmentId).put(']');
             }
-            segmentIds[i] = segmentId;
+            segmentIds.add(segmentId);
             previous = segmentId;
             offset += Long.BYTES;
         }
@@ -189,23 +194,21 @@ public class LiveViewCheckpointRoot implements Closeable {
         this.definitionTxn = definitionTxn;
         this.anchorRootRef.of(anchorRootRef.getSegmentId(), anchorRootRef.getOffset(), anchorRootRef.getLength());
         this.functionDirectoryRef.of(functionDirectoryRef.getSegmentId(), functionDirectoryRef.getOffset(), functionDirectoryRef.getLength());
-        this.segmentIds = new long[segmentIds.size()];
-        for (int i = 0; i < segmentIds.size(); i++) {
-            this.segmentIds[i] = segmentIds.getQuick(i);
-        }
+        this.segmentIds.clear();
+        this.segmentIds.add(segmentIds);
     }
 
     void writeTo(@NotNull LiveViewCheckpointMetaSegmentWriter writer, @NotNull LiveViewCheckpointPageRef out) {
         final MemoryA mem = writer.beginPage(PAGE_KIND);
         mem.putInt(FORMAT_VERSION);
-        mem.putInt(segmentIds.length);
+        mem.putInt(segmentIds.size());
         mem.putLong(checkpointId);
         mem.putLong(maxTimestamp);
         mem.putLong(definitionTxn);
         LiveViewCheckpointMetadata.putMetaRef(mem, anchorRootRef);
         LiveViewCheckpointMetadata.putMetaRef(mem, functionDirectoryRef);
-        for (int i = 0; i < segmentIds.length; i++) {
-            mem.putLong(segmentIds[i]);
+        for (int i = 0, n = segmentIds.size(); i < n; i++) {
+            mem.putLong(segmentIds.getQuick(i));
         }
         writer.endPage(out);
     }

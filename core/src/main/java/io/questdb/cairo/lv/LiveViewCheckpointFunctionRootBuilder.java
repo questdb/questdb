@@ -63,6 +63,7 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
     private byte[] keySchema = new byte[0];
     private final LiveViewCheckpointMutationArena mutations;
     private final LiveViewCheckpointFunctionRoot oldFunctionRoot;
+    private final LiveViewCheckpointPageRef builtPartitionMapRoot = new LiveViewCheckpointPageRef();
     private final LiveViewCheckpointPageRef oldPartitionMapRoot = new LiveViewCheckpointPageRef();
     private final LiveViewCheckpointStatePageRef oldScalarStateRef = new LiveViewCheckpointStatePageRef();
     private final LiveViewCheckpointPartitionMapReader partitionMapReader;
@@ -167,7 +168,7 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
             }
         }
 
-        final LiveViewCheckpointPageRef partitionMapRoot = new LiveViewCheckpointPageRef();
+        final LiveViewCheckpointPageRef partitionMapRoot = builtPartitionMapRoot;
         partitionMapWriter.applyToOpenSegment(
                 oldPartitionMapRoot,
                 mutations,

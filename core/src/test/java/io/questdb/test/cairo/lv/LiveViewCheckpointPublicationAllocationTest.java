@@ -79,14 +79,14 @@ public class LiveViewCheckpointPublicationAllocationTest extends AbstractCairoTe
     private static final String LV_DIR = "lv_publication_allocation";
     private static final int MEASURED_SEALS = 16;
     /**
-     * Per-seal ceiling, roughly 1.5x what the retained-shell path measures. One
+     * Per-seal ceiling, roughly 1.4x what the retained-shell path measures. One
      * per-call publication object graph - the stores, readers, writers, roots,
      * directories, builders and their paths - costs several times this before a
      * single key is imaged, and the per-key graph this replaced cost more than
      * this per hundred keys, so either regression lands above the bound while the
      * steady state stays comfortably inside it.
      */
-    private static final long PER_SEAL_ALLOCATION_LIMIT_BYTES = 8_192;
+    private static final long PER_SEAL_ALLOCATION_LIMIT_BYTES = 6_144;
     private static final int WARMUP_SEALS = 16;
 
     @Before
