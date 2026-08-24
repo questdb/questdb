@@ -298,125 +298,36 @@ done
 ## Write amplification, measured
 
 `O3SplitWriteAmplificationBenchTest` (`core/src/test/java/io/questdb/test/cairo/o3/`) - not a regression
-test, it prints numbers, with a light row-count assertion to keep it honest. Ported from the enterprise
-`feat-partition-top-split` branch's bench of the same name, then rewritten: that branch's `_txn`-per-piece
-design doesn't exist here, so piece/dead-row accounting goes through `PartitionGeometry` and
-`TableReader.getPartitionPhysicalRowCount` instead of the folder-level dead/live table this branch never
-had. Two bench-only static hooks the old branch added to `TableWriter` itself
-(`benchSquashFullThreshold`, `benchForceBlockApply`/`benchForceOneByOne`) have no equivalent here and were
-dropped rather than faked.
+test, it prints numbers, with a light row-count assertion to keep it honest. Five scenarios (in-order,
+slightly-out-of-order via a bounded 1000-row reorder window, multi-writer at fixed lag offsets, catch-up,
+random-order), each run through a `max.pieces` sweep, at 3 partitions / 1M rows each / 120 virtual
+seconds. `getPhysicallyWrittenRows` (what `amp` is built from) is traced statically end to end - every
+`FrameAlgebra.append`/`merge` call is paired with a matching increment, every no-copy action (JOIN,
+MAKE-PLAIN, KEEP, DROP) correctly has none - so the numbers can be trusted.
 
-Five scenarios, each run through the same ladder (split-only, +compaction, +compaction hot, then a
-`max.pieces` sweep at 50/20/10) at the default scale (3 partitions, 1M rows each, 120 virtual seconds):
+Requires `cairo.o3.partition.split.min.size=0`: the property defaults to `1024G`
+(`core/src/test/resources/server.conf`), a ~1.7-billion-row floor at this bench's row size, which blocks
+every pre-split cut and forces full-piece rewrites on every touch.
 
-| scenario | what it simulates | amp | dead% |
-|---|---|---|---|
-| in-order | one writer, strictly ascending timestamps - the baseline | 1.0 | 0.0% |
-| slightly-out-of-order | one real-time stream, delivery jittered by a bounded reorder window of 1000 rows - several writers on one stream with independent network latency | 1.7 | 17.2% |
-| multi-writer | 5 writers at fixed lag offsets (realtime, 5s, 1m, 1h, 1d, 2d), interleaved commit+drain | 1.2 | 5.6% |
-| catch-up | the same 5-writer schedule, but committed to WAL in full before a single drain applies the backlog | 1.2 | 5.3% |
-| random-order | every row at a uniformly random position across the whole span - unbounded reorder | 2.2 | 26.7% |
+A piece-count or waste-ratio breach, caught proactively inside `processCompositePartition`
+(`TableWriter.wouldBreachCompactionThresholds`), defers to MOVE-TAIL instead of paying for a full
+`O3PartitionJob.assembleFreshPartitionVersion` rewrite whenever `TableWriter.wouldMoveTailSucceed` says
+one would work: piece 0 untouched by this commit (a `KEEP`) and its share of anticipated live rows
+clearing `cairo.partition.compaction.prefix.min.percent`. When it holds, this commit's own write lands
+normally over just the piece(s) it touches, and the reactive `runCompaction` pass right after (MOVE-TAIL
+tried before REWRITE there) splits off only the tail - copying what actually needs to move, not the
+whole directory. Falls through to the full rewrite only when no clean-enough front survives (geometry
+chain exhausted, or every commit lands somewhere different, as under random-order).
 
-Two findings from building it:
+Final numbers, baseline (no piece cap) vs `cairo.partition.compaction.max.pieces=20`:
 
-**The pre-split cut has a floor, and the test harness's own default blocks it outright.**
-`O3PartitionJob`'s pre-split (`computeCuts`, the batch-edge cuts) never cuts a piece below
-`getPartitionO3SplitThreshold()` = `cairo.o3.partition.split.min.size / avgRecordSize`.
-`core/src/test/resources/server.conf` sets that property to `1024G` - at this bench's ~30-byte rows, a
-floor of roughly 1.7 BILLION rows, so no cut can ever clear it without an explicit override. Two of the
-five `run*Scenario` methods were first written without `setProperty(CAIRO_O3_PARTITION_SPLIT_MIN_SIZE,
-0)` - only `runScenario` had it, copied from the ported-from bench. With pre-split silently disabled,
-every commit that touched an already-composite piece rewrote the piece WHOLE regardless of how much of
-it the new batch actually overlapped: catch-up's first measured amp was 4.9 (dead 54.2%) purely from
-this, collapsing to 1.2 (dead 5.3%) once the override was added to the two affected methods too. The
-lesson generalizes past this file: any test or bench that wants pre-split to fire at a small row scale
-must force `cairo.o3.partition.split.min.size` down - the default, in both production (50MB) and this
-harness (1024G), assumes real-sized rows and partitions.
-
-**The physically-written-rows metric (`TableWriterMetrics.getPhysicallyWrittenRows`, what `amp` is built
-from) was traced statically end to end** across composite piece processing
-(`O3PartitionJob.executeCompositePlan`), all four compaction strategies
-(`TableWriter.compactPhysicalPartition`'s JOIN / MOVE-TAIL / MAKE-PLAIN / REWRITE) and the fresh-piece
-rewrite path (`O3PartitionJob.assembleFreshPartitionVersion`, used when a directory's geometry generation
-chain is exhausted or a commit would breach compaction's thresholds). Every branch that calls
-`FrameAlgebra.append`/`merge` is paired with a matching `addPhysicallyWrittenRows` call using the exact
-row count written - the post-dedup `mergeRows`, not the pre-dedup ceiling, where dedup applies - and
-every branch that copies nothing (JOIN, MAKE-PLAIN, KEEP in `executeCompositePlan`, DROP) correctly has
-no such call. No missing or double-counted increment found - the bench's numbers can be trusted.
-
-**Compaction showed no measurable effect at first - root cause was a test-harness bug, not a compaction
-defect.** `Overrides.setProperty` (`core/src/test/java/io/questdb/test/cairo/Overrides.java`) kept a
-single shared `changed` flag, overwritten rather than accumulated on every call:
-`changed = !Chars.equalsNc(value, existing)`. `applyCompactionSettings()` calls
-`setProperty(MAX_PIECES, ...)` then `setProperty(COOLDOWN, ...)` in that order; across the `max.pieces`
-sweep, cooldown stays `"0"` unchanged the whole time, so its call is always a same-value no-op that runs
-LAST and overwrites `changed` back to `false` - silently discarding the real `MAX_PIECES` change the
-call just before it made. `Overrides.getConfiguration` only rebuilds the live `CairoConfiguration` when
-`changed` is `true`, so `cairo.partition.compaction.max.pieces` stayed stuck at whatever it was the last
-time BOTH calls in one `applyCompactionSettings()` invocation happened to register a real change (1000,
-then later `Integer.MAX_VALUE`) - the 50/20/10 sweep values were computed and matched against
-thresholds on paper (traced with temporary logging in `wouldBreachCompactionThresholds` and
-`shouldAssembleFreshPartitionVersion`) but never actually reached the running engine. Confirmed directly:
-one folder's piece count grew to 617 identically whether `max.pieces` was 1000, 50, 20 or 10.
-
-Fixed by accumulating instead of overwriting: `changed = changed || !Chars.equalsNc(value, existing)`
-(and the same for the property-removal branch). This is a general correctness fix to shared test
-infrastructure - any test that calls `setProperty` more than once per "batch" before the config is next
-read, where a later call happens to be a same-value no-op, was silently losing an earlier real change.
-Verified against `O3CompositePartitionTest`, `O3PartitionPreSplitTest`, `O3PartitionCompactionTest` (71
-tests, the same 2 pre-existing failures as always, 0 regressions).
-
-With the fix, `processCompositePartition`'s proactive rewrite-on-breach
-(`TableWriter.wouldBreachCompactionThresholds` / `O3PartitionJob.assembleFreshPartitionVersion`, called
-from inside every composite-partition commit, not from `housekeep`'s separate `runCompaction`) works
-exactly as designed: piece count stays bounded near the configured cap instead of growing unbounded, and
-compaction shows the real trade-off its own code comments always described - copying to reclaim dead
-space costs additional physical writes, so amp rises sharply as the cap tightens while dead% collapses
-toward 0:
-
-| scenario | baseline (no cap) | pieces≤50 | pieces≤20 | pieces≤10 |
-|---|---|---|---|---|
-| random-order | 2.2 / 26.7% | 8.0 / 4.3% | 16.8 / 3.6% | 41.7 / 0.6% |
-| catch-up | 1.2 / 5.3% | 5.9 / 2.4% | 13.2 / 2.4% | 24.3 / 0.0% |
-| slightly-out-of-order | 1.7 / 17.2% | 4.8 / 2.1% | 9.1 / 1.0% | 16.9 / 0.5% |
-| in-order | 1.0 / 0.0% | 1.0 / 0.0% | 1.0 / 0.0% | 1.0 / 0.0% |
-| multi-writer | 1.2 / 5.6% | 8.4 / 3.0% | 21.0 / 0.0% | 41.7 / ~0.0% |
-
-**The breach-resolution rewrite paid for far more than it had to: it always copied the WHOLE
-partition, never just a tail.** `assembleFreshPartitionVersion` has no MOVE-TAIL option - every action
-(KEEP included) copies into the one fresh directory it builds, so a piece-count breach on a directory
-whose oldest piece is untouched by this commit still rewrote everything, not just the touched region.
-Confirmed from `wouldBreachCompactionThresholds`'s own `anticipatedLiveRows` log field on the
-slightly-out-of-order bench: one partition's breach events fired every ~72-74K rows (STEPS apart) but
-each copied the FULL total-to-date (581K, then 653K, then 707K, ... up to 977K) - a partition that
-never got cheaper to fix, only more expensive, the longer it ran.
-
-Fixed by teaching `shouldAssembleFreshPartitionVersion` to check `TableWriter.wouldMoveTailSucceed`
-(new) before committing to the full rewrite: same shape `moveTailToFreshPartition` itself requires -
-piece 0 untouched by this commit (a `KEEP`, not `MERGE`/`APPEND`) and its share of anticipated live rows
-clears `cairo.partition.compaction.prefix.min.percent`. When it holds, the breach is left alone: this
-commit's own write lands normally over just the piece(s) it touches, and the reactive `runCompaction`
-pass right after (which already has MOVE-TAIL, tried before REWRITE) splits off only the tail - copying
-what actually needs to move, not the whole directory. Confirmed the reactive path fires as anticipated:
-in one run, 46 commits deferred a breach to MOVE-TAIL, 22 actual MOVE-TAILs ran, 0 fell through to a
-plain REWRITE.
-
-Effect at `max.pieces=20`, before -> after:
-
-| scenario | before | after |
+| scenario | baseline | pieces≤20 |
 |---|---|---|
-| random-order | 16.8 / 3.6% | 16.8 / 3.6% (unaffected - no commit ever lands on a stable, un-random front) |
-| catch-up | 13.2 / 2.4% | 7.4 / 2.4% |
-| slightly-out-of-order | 9.1 / 1.0% | 3.0 / 1.8% |
-| in-order | 1.0 / 0.0% | 1.0 / 0.0% (never composite - unaffected) |
-| multi-writer | 21.0 / 0.0% | 9.9 / 0.0% |
-
-slightly-out-of-order also flattens across the sweep once fixed (3.0 at both `pieces≤20` and
-`pieces≤10`, instead of climbing 9.1 -> 16.9) - exactly what "copy only the tail" predicts: cost stops
-scaling with how long the partition has been accumulating and starts scaling with how much actually
-needs to move. random-order is the one workload this cannot help, by construction: every commit lands
-at a uniformly random position across the whole span, so piece 0 is essentially never left untouched
-long enough to qualify as a stable front.
+| in-order | 1.0 / 0.0% | 1.0 / 0.0% (never composite) |
+| slightly-out-of-order | 1.7 / 17.2% | 3.0 / 1.8% |
+| multi-writer | 1.2 / 5.6% | 9.9 / 0.0% |
+| catch-up | 1.2 / 5.3% | 7.4 / 2.4% |
+| random-order | 2.2 / 26.7% | 16.8 / 3.6% (no stable front - every commit lands somewhere new, so MOVE-TAIL never applies) |
 
 Verified against `O3CompositePartitionTest`, `O3PartitionPreSplitTest`, `O3PartitionCompactionTest` (71
 tests, the same 2 pre-existing failures as always, 0 regressions).
