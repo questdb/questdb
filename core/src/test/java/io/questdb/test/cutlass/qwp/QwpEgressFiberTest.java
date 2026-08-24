@@ -33,7 +33,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-/** Exercises QWP WebSocket queries with fiber-enabled HTTP dispatch. */
+/**
+ * Exercises QWP WebSocket queries with fiber-enabled HTTP dispatch.
+ */
 public class QwpEgressFiberTest extends AbstractReusedServerQwpEgressTest {
 
     @Test

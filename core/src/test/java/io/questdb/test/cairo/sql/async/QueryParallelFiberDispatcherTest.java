@@ -1258,9 +1258,9 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                         final long queryProgressAfter = progressState.getVersion();
                         final boolean isTaskCleared = isLongTopK
                                 ? longTopKTask.getAtom() == null
-                                && longTopKTask.getShardIndex() == -1
+                                  && longTopKTask.getShardIndex() == -1
                                 : mergeShardTask.getShardingContext() == null
-                                && mergeShardTask.getShardIndex() == -1;
+                                  && mergeShardTask.getShardIndex() == -1;
 
                         if (!isTaskCleared) {
                             if (isLongTopK) {

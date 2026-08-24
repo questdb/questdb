@@ -83,7 +83,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Exercises HTTP query execution on pooled fibers. */
+/**
+ * Exercises HTTP query execution on pooled fibers.
+ */
 public class HttpFiberTest extends AbstractTest {
 
     @Test

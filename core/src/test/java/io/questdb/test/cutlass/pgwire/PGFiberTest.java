@@ -51,7 +51,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Exercises PGWire query execution on pooled fibers. */
+/**
+ * Exercises PGWire query execution on pooled fibers.
+ */
 public class PGFiberTest extends BasePGTest {
 
     @Test

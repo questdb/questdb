@@ -47,7 +47,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
-/** Verifies I/O dispatcher cleanup when request processing fails. */
+/**
+ * Verifies I/O dispatcher cleanup when request processing fails.
+ */
 public class IODispatcherProcessErrorTest {
     private static final String INJECTED_FAILURE = "injected processing failure";
     private static final Log LOG = LogFactory.getLog(IODispatcherProcessErrorTest.class);

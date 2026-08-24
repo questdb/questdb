@@ -39,7 +39,9 @@ import org.junit.rules.Timeout;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** Verifies ServerMain cleanup when a component fails to stop. */
+/**
+ * Verifies ServerMain cleanup when a component fails to stop.
+ */
 public class ServerMainCloseComponentStopFailureTest extends AbstractBootstrapTest {
 
     private static final ObjList<String> EMPTY_DEPS = new ObjList<>();
