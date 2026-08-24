@@ -204,20 +204,28 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
         writer.rollbackConditionally(loRow);
 
         long lo = Math.max(loRow, columnTop);
-        int bufferCount = (int) (((hiRow - lo) * 4 - 1) / bufferSize + 1);
-        for (int i = 0; i < bufferCount; i++) {
-            long fileOffset = (lo - columnTop) * 4;
-            long bytesToRead = Math.min(bufferSize, (hiRow - lo) * 4);
-            long read = ff.read(dataColumnFd, buffer, bytesToRead, fileOffset);
-            if (read == -1) {
-                throw CairoException.critical(ff.errno()).put("could not read symbol column during indexing [fd=").put(dataColumnFd)
-                        .put(", fileOffset=").put(fileOffset)
-                        .put(", bytesToRead=").put(bytesToRead)
-                        .put(']');
-            }
-            long pHi = buffer + read;
-            for (long p = buffer; p < pHi; p += 4, lo++) {
-                writer.add(TableUtils.toIndexKey(Unsafe.getInt(p)), lo);
+        // An indexer configured with configureWriter (no live follower - see its own javadoc) never gets
+        // ff/dataColumnFd wired up, on the assumption that nothing indexes through it before a later
+        // configureFollowerAndWriter call fixes that up. A commit with no net new rows (lo == hiRow, e.g.
+        // updateIndexesSlow after a housekeeping-only compaction commit) reaches here regardless, so this
+        // range must stay a true no-op - skip the read entirely rather than dereference a possibly-null ff
+        // for zero bytes.
+        if (hiRow > lo) {
+            int bufferCount = (int) (((hiRow - lo) * 4 - 1) / bufferSize + 1);
+            for (int i = 0; i < bufferCount; i++) {
+                long fileOffset = (lo - columnTop) * 4;
+                long bytesToRead = Math.min(bufferSize, (hiRow - lo) * 4);
+                long read = ff.read(dataColumnFd, buffer, bytesToRead, fileOffset);
+                if (read == -1) {
+                    throw CairoException.critical(ff.errno()).put("could not read symbol column during indexing [fd=").put(dataColumnFd)
+                            .put(", fileOffset=").put(fileOffset)
+                            .put(", bytesToRead=").put(bytesToRead)
+                            .put(']');
+                }
+                long pHi = buffer + read;
+                for (long p = buffer; p < pHi; p += 4, lo++) {
+                    writer.add(TableUtils.toIndexKey(Unsafe.getInt(p)), lo);
+                }
             }
         }
         writer.setMaxValue(hiRow - 1);

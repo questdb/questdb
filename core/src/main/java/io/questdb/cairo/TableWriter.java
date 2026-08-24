@@ -5664,6 +5664,45 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 coveringIndices, coveringTypes, metadata.getTimestampIndex());
     }
 
+    /**
+     * A composite (or parquet) active partition leaves {@code columns[]} closed - {@link
+     * #openPartition(long, long)}, which normally reconfigures every indexer's live follower, does not
+     * run for it (see {@link #finishO3Commit}'s own {@code isLastPartitionAppendBlocked} branch). A
+     * POSTING indexer already gets its own fixup there, chain-based and independent of {@code
+     * columns[]} ({@link #sealPostingIndexesForO3Partitions}); every other indexer type (BITMAP) has no
+     * such path and relies solely on {@code openPartition}. Left alone, its underlying {@code
+     * IndexWriter} stays in whatever state an earlier {@link #closeActivePartition(boolean)} left it in
+     * - closed, unmapped - and the next commit that indexes through it (e.g. a housekeeping-only commit
+     * from {@code PartitionCompactionScanJob}, touching a DIFFERENT, non-active partition) dereferences
+     * that unmapped memory. This puts every such indexer into the same "no live follower" state {@link
+     * #openNewColumnFiles} and {@code addIndex}'s {@code indexLastPartition} already use for a
+     * composite last partition, so a later commit's indexing sees a validly reopened writer instead of
+     * a closed one.
+     */
+    private void configureIndexersForClosedActivePartition() {
+        final long lastPartitionTs = txWriter.getLastPartitionTimestamp();
+        final long lastPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(lastPartitionTs);
+        setStateForTimestamp(path, lastPartitionTs);
+        final int plen = path.size();
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)
+                        && !IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                    final ColumnIndexer indexer = indexers.getQuick(i);
+                    if (indexer == null) {
+                        continue;
+                    }
+                    final CharSequence name = metadata.getColumnName(i);
+                    final long columnNameTxn = columnVersionWriter.getColumnNameTxn(lastPartitionTs, i);
+                    final long columnTop = columnVersionWriter.getColumnTopQuick(lastPartitionTs, i);
+                    indexer.configureWriter(path.trimTo(plen), name, columnNameTxn, columnTop, lastPartitionTs, lastPartitionNameTxn);
+                }
+            }
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
     private void configureTimestampSetter() {
         int index = metadata.getTimestampIndex();
         if (index == -1) {
@@ -7239,18 +7278,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (!isEmptyTable() && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)) {
                 if (!isLastPartitionAppendBlocked()) {
                     openPartition(txWriter.getLastPartitionTimestamp(), getLastPartitionFileRowCount());
-                } else if (!isLastPartitionClosed()) {
-                    // The last partition just became append-blocked (composite or parquet) and columns[]
-                    // is STILL open from before that - a commit earlier in this same WAL batch legitimately
-                    // opened it while the partition was still ordinary. Nothing repositions it now (see
-                    // below), so it is left pointing at a stale, pre-promotion append offset. Left alone,
-                    // the next unrelated openPartition - switching columns[] to whatever partition becomes
-                    // active next, since these MemoryMA objects are reused across partitions - would call
-                    // MemoryMA.of() on it, which closes the CURRENT mapping first, and that close truncates
-                    // the file to the stale offset, discarding every byte the composite frame executor
-                    // appended since. Closing it now, without truncating, retires the stale position before
-                    // anything can act on it.
-                    closeActivePartition(false);
+                } else {
+                    if (!isLastPartitionClosed()) {
+                        // The last partition just became append-blocked (composite or parquet) and columns[]
+                        // is STILL open from before that - a commit earlier in this same WAL batch legitimately
+                        // opened it while the partition was still ordinary. Nothing repositions it now (see
+                        // below), so it is left pointing at a stale, pre-promotion append offset. Left alone,
+                        // the next unrelated openPartition - switching columns[] to whatever partition becomes
+                        // active next, since these MemoryMA objects are reused across partitions - would call
+                        // MemoryMA.of() on it, which closes the CURRENT mapping first, and that close truncates
+                        // the file to the stale offset, discarding every byte the composite frame executor
+                        // appended since. Closing it now, without truncating, retires the stale position before
+                        // anything can act on it.
+                        closeActivePartition(false);
+                    }
+                    // openPartition above is skipped for this append-blocked partition, but it is also the
+                    // only thing that reconfigures a BITMAP indexer's live writer - see
+                    // configureIndexersForClosedActivePartition's own javadoc for why leaving it at
+                    // whatever closeActivePartition (here or in an earlier commit) left it in is unsafe.
+                    configureIndexersForClosedActivePartition();
                 }
             }
 
