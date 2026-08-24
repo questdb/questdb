@@ -208,6 +208,40 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
                         """);
     }
 
+    @Test
+    public void testPipeWithSingleArgConcat() throws Exception {
+        // SqlParser.rewriteConcat folds a nested concat() into the parent '||' node's argument
+        // list. A concat() call with fewer than three arguments carries them in rhs/lhs rather
+        // than in args, and the single-argument form leaves lhs null. Folding that null into the
+        // parent's args used to survive parsing and only blow up much later, as a bare NPE out of
+        // SqlOptimiser.emitLiterals.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a VARCHAR)");
+            execute("INSERT INTO t VALUES ('x')");
+
+            // single-argument concat() on either side of '||'
+            assertQuery("SELECT 'x' || concat('y') AS v").noLeakCheck().expectSize().returns("v\nxy\n");
+            assertQuery("SELECT concat('y') || 'x' AS v").noLeakCheck().expectSize().returns("v\nyx\n");
+            assertQuery("SELECT 'x' || concat('y') || 'z' AS v").noLeakCheck().expectSize().returns("v\nxyz\n");
+            assertQuery("SELECT 'w' || concat(concat('y')) || 'z' AS v").noLeakCheck().expectSize().returns("v\nwyz\n");
+
+            // and with a column operand, which takes the non-constant code path
+            assertQuery("SELECT a || concat('y') AS v FROM t").noLeakCheck().expectSize().returns("v\nxy\n");
+            assertQuery("SELECT concat(a) || 'y' AS v FROM t").noLeakCheck().expectSize().returns("v\nxy\n");
+
+            // the two-argument form the fold already handled stays flattened
+            assertQuery("SELECT 'x' || concat('y', 'z') AS v").noLeakCheck().expectSize().returns("v\nxyz\n");
+        });
+    }
+
+    @Test
+    public void testPipeWithZeroArgConcat() throws Exception {
+        // A zero-argument concat() has neither rhs nor lhs, so rewriteConcat leaves it alone
+        // instead of folding an empty operand list into the parent. FunctionParser then rejects
+        // it at its own position, the same way a bare concat() is rejected.
+        assertQuery("SELECT 'x' || concat()").fails(14, "no arguments provided");
+    }
+
     private void testAllTypes(int timestampType) throws Exception {
         assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.NONE, timestampType);
