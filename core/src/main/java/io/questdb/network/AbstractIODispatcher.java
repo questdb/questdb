@@ -140,6 +140,15 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         listening = true;
     }
 
+    // Opt in to carrier affinity. A dispatcher is the one job shape the pinning
+    // is meant for: every worker in the pool holds the same instance and
+    // contends for it, and it is hot enough that the rotating winner hands each
+    // worker just enough work to keep it from ever backing off.
+    @Override
+    protected boolean carrierAffinityEligible() {
+        return true;
+    }
+
     @Override
     public void close() {
         closed = true;

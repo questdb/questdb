@@ -166,6 +166,7 @@ public interface Job {
         public boolean isTerminating() {
             return terminating;
         }
+
     }
 
     /**
@@ -185,5 +186,16 @@ public interface Job {
          * True when the worker pool is halting, signalling the job to wind down.
          */
         boolean isTerminating();
+
+        /**
+         * Microsecond timestamp of the current worker tick. The worker loop
+         * already reads the clock once per pass, so jobs needing only coarse
+         * time (lease checks, rate limits) can compare against this instead of
+         * each paying a vdso call per pass. Out-of-loop drivers read the clock
+         * directly.
+         */
+        default long tickMicros() {
+            return Worker.CLOCK_MICROS.getTicks();
+        }
     }
 }

@@ -65,6 +65,9 @@ public class Worker extends Thread {
     private final SOCountDownLatch haltLatch;
     private final boolean haltOnError;
     private final AtomicLong jobStartMicros = new AtomicLong();
+    // Same value as jobStartMicros, kept as a plain field for the owning
+    // worker's own reads (see WorkerContext.tickMicros()).
+    private long currentTickMicros;
     private final ObjHashSet<? extends Job> jobs;
     private final AtomicReference<WorkerLifecycle> lifecycle = new AtomicReference<>(WorkerLifecycle.BORN);
     private final Log log;
@@ -98,6 +101,16 @@ public class Worker extends Thread {
         @Override
         public boolean isTerminating() {
             return lifecycle.get() == WorkerLifecycle.HALTED;
+        }
+
+        // The loop already reads the clock once per pass for jobStartMicros.
+        // Handing that value to jobs lets them do coarse time comparisons for
+        // free, instead of each one paying its own vdso call per pass. Read
+        // from the plain field rather than the AtomicLong: only this worker
+        // writes it and only this worker reads it within the pass.
+        @Override
+        public long tickMicros() {
+            return currentTickMicros;
         }
     };
     private final int workerId;
@@ -414,7 +427,9 @@ public class Worker extends Thread {
         while (lifecycle.get() == WorkerLifecycle.RUNNING) {
             boolean runAsap = false;
             // measure latency of all jobs tick
-            jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
+            final long tickMicros = CLOCK_MICROS.getTicks();
+            currentTickMicros = tickMicros;
+            jobStartMicros.lazySet(tickMicros);
             for (int i = 0, n = myJobs.size(); i < n; i++) {
                 Unsafe.loadFence();
                 try {

@@ -65,11 +65,12 @@ public abstract class SynchronizedJob implements Job {
         // first iteration and the final log line is never flushed.
         // LogFactoryTest.testLogAutoDeleteByFileAge6months catches precisely
         // that: it asserts the log file ends with '!'.
-        if (AFFINITY_LEASE_MICROS > 0 && !(workerContext instanceof Job.ImmutableWorkerContext)) {
+        if (AFFINITY_LEASE_MICROS > 0 && carrierAffinityEligible()
+                && !(workerContext instanceof Job.ImmutableWorkerContext)) {
             final int me = workerContext.carrierId();
             final int currentOwner = owner;
             if (currentOwner != me && currentOwner != -1) {
-                final long now = Worker.CLOCK_MICROS.getTicks();
+                final long now = workerContext.tickMicros();
                 if (now - ownerSeenMicros < AFFINITY_LEASE_MICROS) {
                     return false;
                 }
@@ -84,14 +85,28 @@ public abstract class SynchronizedJob implements Job {
         }
         if (Unsafe.cas(this, LOCKED_OFFSET, 0, 1)) {
             try {
-                if (AFFINITY_LEASE_MICROS > 0 && !(workerContext instanceof Job.ImmutableWorkerContext) && owner == workerContext.carrierId()) {
-                    ownerSeenMicros = Worker.CLOCK_MICROS.getTicks();
+                if (AFFINITY_LEASE_MICROS > 0 && carrierAffinityEligible()
+                        && !(workerContext instanceof Job.ImmutableWorkerContext)
+                        && owner == workerContext.carrierId()) {
+                    ownerSeenMicros = workerContext.tickMicros();
                 }
                 return runSerially();
             } finally {
                 locked = 0;
             }
         }
+        return false;
+    }
+
+    /**
+     * Whether this job may be pinned to one carrier (see the Leader/Followers
+     * note on {@link #run}). Off by default: pinning only pays for a job that
+     * a whole pool contends over and that runs hot -- the IO dispatchers. It
+     * actively harms anything a single worker already handles, and it changes
+     * a contract shared by every subclass of this class, so it is opt-in
+     * rather than blanket.
+     */
+    protected boolean carrierAffinityEligible() {
         return false;
     }
 
