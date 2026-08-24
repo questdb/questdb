@@ -8258,7 +8258,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // outruns the base it derives from.
             // Read the view watermark first. A refresh publishes it only after consuming the
             // corresponding sequencer transaction, so observing that volatile write before reading
-            // the monotonic base head yields a coherent pair. Reading base first lets another worker
+            // the monotonic base heads yields a coherent pair. Reading base first lets another worker
             // advance the view between the reads and manufactures a false ahead state from two
             // different points in time. Monotonicity is what makes the order sufficient rather than
             // merely narrower: TableTransactionLog.lastTxn is a volatile field over an append-only
@@ -8270,7 +8270,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 simulateBaseCommitBetweenAheadGuardReadsForTest = null;
                 aheadGuardAction.run();
             }
-            final long baseSeqLastTxn = engine.getTableSequencerAPI().lastTxn(baseToken);
+            // The base head is the max of the cached sequencer head and the base's applied seqTxn.
+            // On a primary lastTxn() alone is authoritative, but on an enterprise replica the
+            // downloader appends the on-disk txnlog behind the cached TableSequencerImpl's back and
+            // reconciles the cache only later (registerTable -> TableSequencerAPI.reload). In that
+            // window the WAL apply job consumes the new txns straight from the file and the refresh
+            // advances the watermark behind it, so comparing against the stale cache alone misread
+            // the transient catch-up as data loss and durably invalidated a healthy view (enterprise
+            // LiveViewReplicationTest replica restart, Azure build 264110). The applied head closes
+            // that hole: every locally-advanced watermark is gated by ensureBaseApplied, so at its
+            // publish the tracker's writerTxn already covered it, and writerTxn is monotonic and
+            // read after the watermark here - a locally-advanced watermark can therefore never
+            // read as ahead. A hydrate-restored watermark (the loss case this guard exists for) was
+            // never applied locally: writerTxn cannot exceed the durable txnlog head, so the guard
+            // still fires.
+            final long baseSeqLastTxn = Math.max(
+                    engine.getTableSequencerAPI().lastTxn(baseToken),
+                    engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn()
+            );
             if (lastProcessedSeqTxn > baseSeqLastTxn) {
                 LOG.error().$("live view is ahead of base table and cannot be synchronized [view=")
                         .$(instance.getLiveViewToken())
