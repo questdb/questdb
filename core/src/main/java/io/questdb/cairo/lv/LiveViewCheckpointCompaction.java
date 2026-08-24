@@ -49,10 +49,11 @@ import org.jetbrains.annotations.Nullable;
  * redirect. The drained segments then hold no live page and retire for the purge
  * job to reclaim.</p>
  *
- * <p>Compaction is a maintenance operation, not a per-commit one: it runs
- * occasionally and touches metadata proportional to the roots that name a drained
- * segment, so it allocates per call rather than pooling state. Every step is
- * best-effort, and what abandoning the candidate does depends on where the
+ * <p>A pass runs on the writer's {@link LiveViewCheckpointCompactionScratch},
+ * which owns every store, reader, reference and result it needs: the driver
+ * constructs none of them per call, and {@code end()} releases every mapping and
+ * every tracker-bound allocation before the worker moves to another view. Every
+ * step is best-effort, and what abandoning the candidate does depends on where the
  * failure landed: before the metadata commit point it unlinks the half-written
  * target and leaves the published generation byte-identical, while past that
  * point it keeps the target, because the committed generation already names
@@ -100,7 +101,8 @@ public final class LiveViewCheckpointCompaction {
         }
         final LiveViewCheckpointCompactionScratch scratch = writer.getCompactionScratch();
         scratch.begin(memoryTracker);
-        try (LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)) {
+        try {
+            final LiveViewCheckpointMetaStore metaStore = scratch.getMetaStore();
             metaStore.of(checkpointsDir);
             if (!metaStore.isValid()) {
                 return Result.NOTHING;
@@ -114,35 +116,26 @@ public final class LiveViewCheckpointCompaction {
             // Distinct live pages across every root: a page shared by many roots is
             // counted once here and repacked once, so the redirect stays shared.
             final long targetSegmentId;
-            try (
-                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
-                    LiveViewCheckpointTimelineReader timelineReader = new LiveViewCheckpointTimelineReader(configuration);
-                    LiveViewCheckpointRoot checkpointRoot = new LiveViewCheckpointRoot(configuration);
-                    LiveViewCheckpointFunctionDirectory functionDirectory = new LiveViewCheckpointFunctionDirectory(configuration);
-                    LiveViewCheckpointFunctionRoot functionRoot = new LiveViewCheckpointFunctionRoot(configuration);
-                    LiveViewCheckpointPartitionMapReader partitionReader = new LiveViewCheckpointPartitionMapReader(configuration);
-                    LiveViewCheckpointSegmentDirectoryReader segmentDirectory = new LiveViewCheckpointSegmentDirectoryReader(configuration)
-            ) {
+            final LiveViewCheckpointTimelineReader timelineReader = scratch.getTimelineReader();
+            final LiveViewCheckpointPartitionMapReader partitionReader = scratch.getPartitionReader();
+            final LiveViewCheckpointSegmentDirectoryReader segmentDirectory = scratch.getSegmentDirectory();
+            try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
                 timelineReader.of(checkpointsDir);
                 partitionReader.of(checkpointsDir);
                 segmentDirectory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
 
-                final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
-                final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
-                final LiveViewCheckpointStatePageRef scalarRef = new LiveViewCheckpointStatePageRef();
-                final LiveViewCheckpointPageRef partitionMapRoot = new LiveViewCheckpointPageRef();
                 scratch.collectLivePages(
                         timelineReader,
                         pin.getTimelineRootRef(),
                         checkpointsDir,
-                        checkpointRoot,
-                        functionDirectory,
-                        functionDirectoryRef,
-                        functionRoot,
-                        functionRootRef,
-                        scalarRef,
+                        scratch.getCheckpointRoot(),
+                        scratch.getFunctionDirectory(),
+                        scratch.getFunctionDirectoryRef(),
+                        scratch.getFunctionRoot(),
+                        scratch.getFunctionRootRef(),
+                        scratch.getScalarRef(),
                         partitionReader,
-                        partitionMapRoot
+                        scratch.getPartitionMapRoot()
                 );
 
                 // Select the sparsest referenced segments in catalogue order (oldest
@@ -152,51 +145,53 @@ public final class LiveViewCheckpointCompaction {
                 if (scratch.getSelectedSegmentCount() < minSourceSegments) {
                     return Result.NOTHING;
                 }
-                targetSegmentId = nextFreeSegmentId(configuration, checkpointsDir, superblock.nextSegmentId);
+                targetSegmentId = nextFreeSegmentId(configuration, scratch.getPathScratch(), checkpointsDir, superblock.nextSegmentId);
             }
 
-            try (LiveViewCheckpointDataStore dataStore = new LiveViewCheckpointDataStore(configuration, metaStore)) {
-                dataStore.of(checkpointsDir);
-                try (LiveViewCheckpointDataStore.Candidate candidate = dataStore.beginCandidate(scratch)) {
-                    final long targetBytes = candidate.repack(targetSegmentId, scratch);
-                    final LiveViewCheckpointCompactionPlan plan =
-                            scratch.ofPlan(targetSegmentId, targetBytes, generation);
-                    final LiveViewCheckpointTimelineStoreWriter.CompactionResult result =
-                            writer.publishCompaction(
-                                    checkpointsDir, definitionTxn, historyEpoch, lifecycleIdentity, primaryOwner, memoryTracker, plan
-                            );
-                    candidate.markPublished();
-                    LOG.info().$("compacted live view checkpoint timeline [dir=").$(checkpointsDir)
-                            .$(", sources=").$(scratch.getSelectedSegmentCount())
-                            .$(", pages=").$(plan.size())
-                            .$(", target=").$(targetSegmentId)
-                            .$(", targetBytes=").$(targetBytes)
-                            .$(", rootsRewritten=").$(result.getRootsRewritten())
-                            .$(", generation=").$(result.getGeneration()).I$();
-                    return new Result(
-                            true,
-                            result.getRootsRewritten(),
-                            targetSegmentId,
-                            result.getGeneration()
-                    );
-                }
+            final LiveViewCheckpointDataStore dataStore = scratch.getDataStore();
+            dataStore.of(checkpointsDir);
+            try (LiveViewCheckpointDataStore.Candidate candidate = dataStore.beginCandidate(scratch)) {
+                final long targetBytes = candidate.repack(targetSegmentId, scratch);
+                final LiveViewCheckpointCompactionPlan plan =
+                        scratch.ofPlan(targetSegmentId, targetBytes, generation);
+                final LiveViewCheckpointTimelineStoreWriter.CompactionResult result =
+                        writer.publishCompaction(
+                                checkpointsDir, definitionTxn, historyEpoch, lifecycleIdentity, primaryOwner, memoryTracker, plan
+                        );
+                candidate.markPublished();
+                LOG.info().$("compacted live view checkpoint timeline [dir=").$(checkpointsDir)
+                        .$(", sources=").$(scratch.getSelectedSegmentCount())
+                        .$(", pages=").$(plan.size())
+                        .$(", target=").$(targetSegmentId)
+                        .$(", targetBytes=").$(targetBytes)
+                        .$(", rootsRewritten=").$(result.getRootsRewritten())
+                        .$(", generation=").$(result.getGeneration()).I$();
+                return scratch.getResult().of(
+                        true,
+                        result.getRootsRewritten(),
+                        targetSegmentId,
+                        result.getGeneration()
+                );
             }
         } finally {
             scratch.end();
         }
     }
 
-    private static long nextFreeSegmentId(CairoConfiguration configuration, Path checkpointsDir, long candidate) {
-        try (Path path = new Path()) {
-            while (candidate < Long.MAX_VALUE) {
-                LiveViewCheckpointLayout.metaSegmentPath(path, checkpointsDir, candidate);
-                final boolean metaExists = configuration.getFilesFacade().exists(path.$());
-                LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, candidate);
-                if (!metaExists && !configuration.getFilesFacade().exists(path.$())) {
-                    return candidate;
-                }
-                candidate++;
+    private static long nextFreeSegmentId(
+            CairoConfiguration configuration,
+            Path path,
+            Path checkpointsDir,
+            long candidate
+    ) {
+        while (candidate < Long.MAX_VALUE) {
+            LiveViewCheckpointLayout.metaSegmentPath(path, checkpointsDir, candidate);
+            final boolean metaExists = configuration.getFilesFacade().exists(path.$());
+            LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, candidate);
+            if (!metaExists && !configuration.getFilesFacade().exists(path.$())) {
+                return candidate;
             }
+            candidate++;
         }
         throw CairoException.critical(0).put("live view checkpoint segment id exhausted");
     }
@@ -206,13 +201,13 @@ public final class LiveViewCheckpointCompaction {
      * qualified and every other field is unset.
      */
     public static final class Result {
-        static final Result NOTHING = new Result(false, 0, -1, -1);
-        private final long generation;
-        private final boolean published;
-        private final int rootsRewritten;
-        private final long targetSegmentId;
+        static final Result NOTHING = new Result().of(false, 0, -1, -1);
+        private long generation;
+        private boolean published;
+        private int rootsRewritten;
+        private long targetSegmentId;
 
-        Result(
+        Result of(
                 boolean published,
                 int rootsRewritten,
                 long targetSegmentId,
@@ -222,6 +217,7 @@ public final class LiveViewCheckpointCompaction {
             this.rootsRewritten = rootsRewritten;
             this.targetSegmentId = targetSegmentId;
             this.generation = generation;
+            return this;
         }
 
         public long getGeneration() {

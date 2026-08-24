@@ -33,6 +33,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -50,6 +51,9 @@ public class LiveViewNoGcSourceHygieneTest {
             "\\b(?:[A-Za-z_$][A-Za-z0-9_$]*\\.)*"
                     + "(?:[A-Za-z_$][A-Za-z0-9_$]*(?:Collection|Deque|List|Map|Queue|Set)"
                     + "|Collection|Deque|List|Map|Queue|Set)\\s*<"
+    );
+    private static final Pattern ENTRY_SET = Pattern.compile(
+            "\\.\\s*entrySet\\s*\\(\\s*\\)"
     );
     private static final Pattern ENUM_DECLARATION = Pattern.compile(
             "\\benum\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\b"
@@ -81,6 +85,15 @@ public class LiveViewNoGcSourceHygieneTest {
             "\\bnew\\s+(?:[A-Za-z_\\x24][A-Za-z0-9_\\x24]*\\.)*Path\\s*\\([^;]*?\\)\\s*\\.\\s*toString\\s*\\("
     );
     private static final Pattern PRIVATE_OR_STATIC = Pattern.compile("\\b(?:private|static)\\b");
+    /**
+     * Any construction of a class inside a publication entry point. A publication
+     * runs on shells its owner retains, so the body of one must not build a store,
+     * reader, writer, reference, list, result or path of its own.
+     */
+    private static final Pattern PUBLICATION_CONSTRUCTION = Pattern.compile(
+            "\\bnew\\s+(?:[A-Z][A-Za-z0-9_$]*(?:\\.[A-Z][A-Za-z0-9_$]*)*"
+                    + "|boolean|byte|char|double|float|int|long|short)\\s*[(<\\[]"
+    );
     private static final Pattern RECURRING_CALLBACK_COMMIT = Pattern.compile(
             "\\b(?:[Ff]enced[A-Za-z0-9_$]*[Cc]ommit|[Cc]ommit[A-Za-z0-9_$]*)\\s*\\([^)]*"
                     + "\\b(?:Callable|Consumer|Function|Runnable|Supplier)\\b",
@@ -154,6 +167,7 @@ public class LiveViewNoGcSourceHygieneTest {
             findBoxedCollectionTypes(sourceRoot, file, code, violations);
             findRecurringEnumValues(sourceRoot, file, code, enumTypes, violations);
             findPathToStringCalls(sourceRoot, file, code, violations);
+            findEntrySetIteration(sourceRoot, file, code, violations);
         }
 
         Assert.assertTrue(
@@ -287,6 +301,44 @@ public class LiveViewNoGcSourceHygieneTest {
         Assert.assertFalse(code.contains("fencedLiveViewCommit"));
     }
 
+    /**
+     * Every publication entry point runs on retained shells. The bodies below name
+     * what they use and construct nothing: a seal, a repair splice, a compaction, a
+     * truncate and a sweep each allocate no store, reader, writer, page reference,
+     * id list, timeline entry, result or path of their own.
+     */
+    @Test
+    public void testPublicationEntryPointsConstructNothing() throws IOException {
+        final Path sourceRoot = findSourceRoot();
+        final List<String> violations = new ArrayList<>();
+        assertMethodsConstructNothing(
+                sourceRoot,
+                sourceRoot.resolve("io/questdb/cairo/lv/LiveViewCheckpointTimelineStoreWriter.java"),
+                new String[]{
+                        "append0",
+                        "ensureDirectories",
+                        "persistRetirementQueue",
+                        "publishCompaction",
+                        "publishRepair",
+                        "publishTruncate",
+                        "skipPublishedSegmentIds",
+                        "sweep"
+                },
+                violations
+        );
+        assertMethodsConstructNothing(
+                sourceRoot,
+                sourceRoot.resolve("io/questdb/cairo/lv/LiveViewCheckpointCompaction.java"),
+                new String[]{"compact", "nextFreeSegmentId"},
+                violations
+        );
+        Assert.assertTrue(
+                "publication entry point construction:" + System.lineSeparator()
+                        + String.join(System.lineSeparator(), violations),
+                violations.isEmpty()
+        );
+    }
+
     @Test
     public void testScannerSelfCoverage() {
         assertBoxedCollectionDetected("Map<Long, Value> values;");
@@ -306,6 +358,14 @@ public class LiveViewNoGcSourceHygieneTest {
         assertNoBoxedCollectionDetected("LongList values;");
         assertNoBoxedCollectionDetected("IntList values;");
 
+        assertEntrySetDetected("for (Map.Entry<CharSequence, V> e : map.entrySet()) { }");
+        assertEntrySetDetected("map . entrySet ( ) ;");
+        assertNoEntrySetDetected("for (V v : map.values()) { }");
+        assertPublicationConstructionDetected("void publish() { final Path p = new Path(); }", "publish");
+        assertPublicationConstructionDetected("void publish() { return new Result(1); }", "publish");
+        assertPublicationConstructionDetected("void publish() { final int[] a = new int[4]; }", "publish");
+        assertPublicationConstructionDetected("void publish() { final ObjList<V> l = new ObjList<>(); }", "publish");
+        assertNoPublicationConstructionDetected("void publish() { shells.path.of(dir); }", "publish");
         assertRecurringEnumValuesDetected("enum Stage { VALUE } class C { void run() { Stage.values(); } }");
         assertRecurringEnumValuesDetected("enum stage { VALUE } class C { void run() { stage.values(); } }");
         assertNoRecurringEnumValuesDetected(
@@ -546,6 +606,120 @@ public class LiveViewNoGcSourceHygieneTest {
         assertNoRecurringCallbackDetected(
                 "class C { private static final Runnable SINGLETON = C::run; private static void run() { } }"
         );
+    }
+
+    private static void assertEntrySetDetected(String source) {
+        final List<String> violations = new ArrayList<>();
+        findEntrySetIteration(
+                Paths.get("."),
+                Paths.get("./Scanner.java"),
+                stripCommentsAndLiterals(source),
+                violations
+        );
+        Assert.assertFalse("expected an entrySet violation for: " + source, violations.isEmpty());
+    }
+
+    private static void assertNoEntrySetDetected(String source) {
+        final List<String> violations = new ArrayList<>();
+        findEntrySetIteration(
+                Paths.get("."),
+                Paths.get("./Scanner.java"),
+                stripCommentsAndLiterals(source),
+                violations
+        );
+        Assert.assertTrue("unexpected entrySet violation for: " + source, violations.isEmpty());
+    }
+
+    private static void assertPublicationConstructionDetected(String source, String methodName) {
+        final List<String> violations = new ArrayList<>();
+        findPublicationConstruction(
+                Paths.get("."),
+                Paths.get("./Scanner.java"),
+                stripCommentsAndLiterals("class C { " + source + " }"),
+                new String[]{methodName},
+                violations
+        );
+        Assert.assertFalse("expected a construction violation for: " + source, violations.isEmpty());
+    }
+
+    private static void assertNoPublicationConstructionDetected(String source, String methodName) {
+        final List<String> violations = new ArrayList<>();
+        findPublicationConstruction(
+                Paths.get("."),
+                Paths.get("./Scanner.java"),
+                stripCommentsAndLiterals("class C { " + source + " }"),
+                new String[]{methodName},
+                violations
+        );
+        Assert.assertTrue("unexpected construction violation for: " + source, violations.isEmpty());
+    }
+
+    private static void assertMethodsConstructNothing(
+            Path sourceRoot,
+            Path file,
+            String[] methodNames,
+            List<String> violations
+    ) throws IOException {
+        findPublicationConstruction(
+                sourceRoot,
+                file,
+                stripCommentsAndLiterals(Files.readString(file, StandardCharsets.UTF_8)),
+                methodNames,
+                violations
+        );
+    }
+
+    private static void findEntrySetIteration(
+            Path sourceRoot,
+            Path file,
+            String code,
+            List<String> violations
+    ) {
+        final Matcher matcher = ENTRY_SET.matcher(code);
+        while (matcher.find()) {
+            addViolation(
+                    sourceRoot,
+                    file,
+                    code,
+                    matcher.start(),
+                    "Map.Entry iteration allocates one wrapper per entry",
+                    violations
+            );
+        }
+    }
+
+    private static void findPublicationConstruction(
+            Path sourceRoot,
+            Path file,
+            String code,
+            String[] methodNames,
+            List<String> violations
+    ) {
+        final List<MethodRegion> methods = findMethodRegions(code, file);
+        for (int i = 0; i < methodNames.length; i++) {
+            final String methodName = methodNames[i];
+            int methodCount = 0;
+            for (int j = 0, n = methods.size(); j < n; j++) {
+                final MethodRegion method = methods.get(j);
+                if (!methodName.equals(method.name)) {
+                    continue;
+                }
+                methodCount++;
+                final Matcher construction = PUBLICATION_CONSTRUCTION.matcher(code)
+                        .region(method.openBrace, method.closeBrace + 1);
+                while (construction.find()) {
+                    addViolation(
+                            sourceRoot,
+                            file,
+                            code,
+                            construction.start(),
+                            "construction inside publication entry point " + methodName,
+                            violations
+                    );
+                }
+            }
+            Assert.assertTrue("missing scanned method " + methodName + " in " + file, methodCount > 0);
+        }
     }
 
     private static List<Path> buildManifest(Path sourceRoot) throws IOException {

@@ -65,6 +65,8 @@ public class LiveViewCheckpointDataStore implements Closeable {
     private final LiveViewCheckpointSegmentDirectoryEntry lookupEntry = new LiveViewCheckpointSegmentDirectoryEntry();
     private final LiveViewCheckpointMetaStore metaStore;
     private final LongList retirementEntries = new LongList();
+    private final LiveViewCheckpointRetirementQueueScratch retirementQueueScratch =
+            new LiveViewCheckpointRetirementQueueScratch();
     private final LongList retirementRemaining = new LongList();
     private final LiveViewCheckpointRetirementQueue.State retirementState =
             new LiveViewCheckpointRetirementQueue.State();
@@ -97,8 +99,21 @@ public class LiveViewCheckpointDataStore implements Closeable {
         assert candidateOwnershipCounts.size() == 0
                 : "live view checkpoint compaction candidates leaked: " + candidateOwnershipCounts.size();
         candidateOwnershipCounts.clear();
+        Misc.free(retirementQueueScratch);
         Misc.free(segmentDirectory);
         Misc.free(checkpointsDir);
+        isOpen = false;
+    }
+
+    /**
+     * Closes this binding and releases the catalogue mapping, keeping every shell
+     * so the store can be re-opened against the next view. A retained store must
+     * not hold a mapping into a file a later retire or compaction unlinks.
+     */
+    public void detach() {
+        segmentDirectory.detach();
+        retirementEntries.clear();
+        retirementRemaining.clear();
         isOpen = false;
     }
 
@@ -120,6 +135,7 @@ public class LiveViewCheckpointDataStore implements Closeable {
             segmentDirectory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
             final boolean queueMatchesGeneration = LiveViewCheckpointRetirementQueue.read(
                     configuration,
+                    retirementQueueScratch,
                     checkpointsDir,
                     retirementEntries,
                     retirementState
@@ -172,6 +188,7 @@ public class LiveViewCheckpointDataStore implements Closeable {
             }
             LiveViewCheckpointRetirementQueue.write(
                     configuration,
+                    retirementQueueScratch,
                     checkpointsDir,
                     retirementRemaining,
                     pin.getGeneration(),

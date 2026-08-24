@@ -32,6 +32,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -101,6 +102,16 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
         partitionMapWriter = new LiveViewCheckpointPartitionMapWriter(configuration, objectPool);
         resultFunctionRoot = new LiveViewCheckpointFunctionRoot(configuration);
         segmentWriter = new LiveViewCheckpointMetaSegmentWriter(configuration);
+    }
+
+    /**
+     * Binds {@code memoryTracker} to the staging arena for the next build, after
+     * freeing what the previous binding charged. The builder is shared across the
+     * views one refresh worker seals, so retained native capacity must never
+     * migrate from one view's tracker to another's.
+     */
+    public void bindMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        mutations.bind(memoryTracker);
     }
 
     @Override
@@ -279,6 +290,31 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
         functionIdentity = null;
         keySchema = null;
     }
+    /**
+     * Frees the staging arena against the tracker that acquired it and detaches
+     * that tracker, leaving the builder reusable by the next view.
+     */
+    public void releaseMemoryTracker() {
+        mutations.release();
+    }
+
+    /**
+     * Releases every mapping this build read and discards any in-flight segment,
+     * keeping the reader, writer and staging shells for the next build. The
+     * staging arena keeps its capacity, which belongs to the tracker bound by
+     * {@link #bindMemoryTracker}; {@link #releaseMemoryTracker} frees it.
+     */
+    public void detach() {
+        oldFunctionRoot.detach();
+        partitionMapReader.detach();
+        partitionMapWriter.detach();
+        resultFunctionRoot.detach();
+        segmentWriter.discard();
+        mutations.clear();
+        candidateSegmentUseCounts.clear();
+        segmentUseCounts.clear();
+    }
+
     public long getLastSegmentBytes() {
         return lastSegmentBytes;
     }

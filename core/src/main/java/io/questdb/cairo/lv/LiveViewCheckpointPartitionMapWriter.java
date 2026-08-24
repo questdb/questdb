@@ -139,6 +139,17 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
     }
 
     /**
+     * Releases every mapping and in-flight segment this build held while keeping
+     * the reader, writer and pooled node shells, so the next build reuses them
+     * without holding a mapping into a file a retire or compaction unlinks.
+     */
+    public void detach() {
+        reader.detach();
+        segmentWriter.discard();
+        releasedSegmentIds.clear();
+    }
+
+    /**
      * @return the segment of every published page the last build superseded, one
      * element per page, in no particular order. Empty when the build changed
      * nothing.

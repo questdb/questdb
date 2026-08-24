@@ -92,16 +92,30 @@ public final class LiveViewCheckpointCompactionScratch implements Closeable {
     private static final ArrayColumnTypes SEGMENT_VALUE_TYPES = new ArrayColumnTypes().add(ColumnType.LONG);
 
     private final LiveViewCheckpointDataStore.Candidate candidate;
+    private final LiveViewCheckpointRoot checkpointRoot;
     private final CairoConfiguration configuration;
+    private final LiveViewCheckpointDataStore dataStore;
+    private final LiveViewCheckpointFunctionDirectory functionDirectory;
+    private final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
+    private final LiveViewCheckpointFunctionRoot functionRoot;
+    private final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
     private final Map liveBytesBySegment;
     private final LivePagePartitionVisitor livePagePartitionVisitor = new LivePagePartitionVisitor();
     private final LivePageTimelineVisitor livePageTimelineVisitor = new LivePageTimelineVisitor();
+    private final LiveViewCheckpointMetaStore metaStore;
     private final Map pages;
+    private final LiveViewCheckpointPageRef partitionMapRoot = new LiveViewCheckpointPageRef();
+    private final LiveViewCheckpointPartitionMapReader partitionReader;
+    private final Path pathScratch;
     private final LiveViewCheckpointCompactionPlan plan = new LiveViewCheckpointCompactionPlan(this);
     private final LongIntHashMap readerIndexBySegment = new LongIntHashMap();
     private final ObjList<LiveViewCheckpointDataSegmentReader> readerPool = new ObjList<>();
+    private final LiveViewCheckpointCompaction.Result result = new LiveViewCheckpointCompaction.Result();
+    private final LiveViewCheckpointStatePageRef scalarRef = new LiveViewCheckpointStatePageRef();
+    private final LiveViewCheckpointSegmentDirectoryReader segmentDirectory;
     private final Map selectedSegments;
     private final SelectSegmentVisitor selectSegmentVisitor = new SelectSegmentVisitor();
+    private final LiveViewCheckpointTimelineReader timelineReader;
     private MapRecord currentPage;
     private MapRecordCursor pageCursor;
     private int readerCount;
@@ -123,7 +137,19 @@ public final class LiveViewCheckpointCompactionScratch implements Closeable {
             boolean ownsCandidate
     ) {
         this.configuration = configuration;
+        // Only the worker's own scratch drives a compaction pass. The compatibility
+        // scratch a repack candidate nests inside itself never opens a catalogue of
+        // its own, so it builds none of the driver's stores or readers.
         this.candidate = ownsCandidate ? new LiveViewCheckpointDataStore.Candidate(configuration) : null;
+        this.checkpointRoot = ownsCandidate ? new LiveViewCheckpointRoot(configuration) : null;
+        this.functionDirectory = ownsCandidate ? new LiveViewCheckpointFunctionDirectory(configuration) : null;
+        this.functionRoot = ownsCandidate ? new LiveViewCheckpointFunctionRoot(configuration) : null;
+        this.metaStore = ownsCandidate ? new LiveViewCheckpointMetaStore(configuration) : null;
+        this.partitionReader = ownsCandidate ? new LiveViewCheckpointPartitionMapReader(configuration) : null;
+        this.pathScratch = ownsCandidate ? new Path() : null;
+        this.segmentDirectory = ownsCandidate ? new LiveViewCheckpointSegmentDirectoryReader(configuration) : null;
+        this.timelineReader = ownsCandidate ? new LiveViewCheckpointTimelineReader(configuration) : null;
+        this.dataStore = ownsCandidate ? new LiveViewCheckpointDataStore(configuration, metaStore) : null;
         pages = MapFactory.createOrderedMap(configuration, PAGE_KEY_TYPES, PAGE_VALUE_TYPES, false);
         liveBytesBySegment = MapFactory.createUnorderedMap(
                 configuration,
@@ -161,6 +187,15 @@ public final class LiveViewCheckpointCompactionScratch implements Closeable {
     public void close() {
         end();
         Misc.freeObjList(readerPool);
+        Misc.free(checkpointRoot);
+        Misc.free(dataStore);
+        Misc.free(functionDirectory);
+        Misc.free(functionRoot);
+        Misc.free(metaStore);
+        Misc.free(partitionReader);
+        Misc.free(pathScratch);
+        Misc.free(segmentDirectory);
+        Misc.free(timelineReader);
         if (candidate != null) {
             candidate.closeReusableResources();
         }
@@ -179,10 +214,82 @@ public final class LiveViewCheckpointCompactionScratch implements Closeable {
         }
         closeReaders();
         closeNativeMaps();
+        // The pass's own shells stay; only what they mapped goes, so no compaction
+        // holds a mapping into a file the next retire or repair unlinks.
+        if (metaStore != null) {
+            checkpointRoot.detach();
+            dataStore.detach();
+            functionDirectory.detach();
+            functionRoot.detach();
+            metaStore.detach();
+            partitionReader.detach();
+            segmentDirectory.detach();
+            timelineReader.detach();
+        }
         currentPage = null;
         pageCursor = null;
         targetPageCount = 0;
         isActive = false;
+    }
+
+    LiveViewCheckpointRoot getCheckpointRoot() {
+        return checkpointRoot;
+    }
+
+    LiveViewCheckpointDataStore getDataStore() {
+        return dataStore;
+    }
+
+    LiveViewCheckpointFunctionDirectory getFunctionDirectory() {
+        return functionDirectory;
+    }
+
+    LiveViewCheckpointPageRef getFunctionDirectoryRef() {
+        return functionDirectoryRef;
+    }
+
+    LiveViewCheckpointFunctionRoot getFunctionRoot() {
+        return functionRoot;
+    }
+
+    LiveViewCheckpointPageRef getFunctionRootRef() {
+        return functionRootRef;
+    }
+
+    LiveViewCheckpointMetaStore getMetaStore() {
+        return metaStore;
+    }
+
+    LiveViewCheckpointPageRef getPartitionMapRoot() {
+        return partitionMapRoot;
+    }
+
+    LiveViewCheckpointPartitionMapReader getPartitionReader() {
+        return partitionReader;
+    }
+
+    Path getPathScratch() {
+        return pathScratch;
+    }
+
+    /**
+     * @return the reusable outcome shell of one pass. It stays valid until the
+     * same worker's next compaction, which is all the driver's caller reads it for.
+     */
+    LiveViewCheckpointCompaction.Result getResult() {
+        return result;
+    }
+
+    LiveViewCheckpointStatePageRef getScalarRef() {
+        return scalarRef;
+    }
+
+    LiveViewCheckpointSegmentDirectoryReader getSegmentDirectory() {
+        return segmentDirectory;
+    }
+
+    LiveViewCheckpointTimelineReader getTimelineReader() {
+        return timelineReader;
     }
 
     LiveViewCheckpointDataStore.Candidate acquireCandidate(@NotNull LiveViewCheckpointDataStore owner) {

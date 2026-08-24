@@ -43,26 +43,32 @@ public class LiveViewCheckpointRedirectRefsTest extends AbstractLiveViewTest {
             final Class<?> type = Class.forName(
                     "io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter$RootBuilders"
             );
-            final Method newRootBuilders = LiveViewCheckpointTimelineStoreWriter.class.getDeclaredMethod(
-                    "newRootBuilders",
+            final Method acquireShells = LiveViewCheckpointTimelineStoreWriter.class.getDeclaredMethod(
+                    "acquirePublicationShells",
                     MemoryTracker.class
             );
+            final Method releaseShells =
+                    LiveViewCheckpointTimelineStoreWriter.class.getDeclaredMethod("releasePublicationShells");
+            final Field rootsField = Class.forName(
+                    "io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter$PublicationScratch"
+            ).getDeclaredField("roots");
             final Field builderField = type.getDeclaredField("functionRootBuilder");
             final Method lookupCount = type.getDeclaredMethod("getRedirectRefWidthLookupCountForTest");
             final Method redirectRefs = type.getDeclaredMethod("redirectRefs", int.class);
-            final Method close = type.getDeclaredMethod("close");
-            newRootBuilders.setAccessible(true);
+            acquireShells.setAccessible(true);
+            releaseShells.setAccessible(true);
+            rootsField.setAccessible(true);
             builderField.setAccessible(true);
             lookupCount.setAccessible(true);
             redirectRefs.setAccessible(true);
-            close.setAccessible(true);
 
             try (
                     LiveViewCheckpointTimelineStoreWriter writer =
                             new LiveViewCheckpointTimelineStoreWriter(configuration);
                     Path dir = new Path()
             ) {
-                final Object roots = newRootBuilders.invoke(writer, new Object[]{null});
+                final Object shells = acquireShells.invoke(writer, new Object[]{null});
+                final Object roots = rootsField.get(shells);
                 try {
                     final LiveViewCheckpointFunctionRootBuilder builder =
                             (LiveViewCheckpointFunctionRootBuilder) builderField.get(roots);
@@ -121,7 +127,7 @@ public class LiveViewCheckpointRedirectRefsTest extends AbstractLiveViewTest {
                             ((Number) lookupCount.invoke(roots)).intValue()
                     );
                 } finally {
-                    close.invoke(roots);
+                    releaseShells.invoke(writer);
                 }
             }
         });

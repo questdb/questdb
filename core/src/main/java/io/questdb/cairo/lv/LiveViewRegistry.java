@@ -31,7 +31,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.SimpleReadWriteLock;
 
-import java.util.Map;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.function.Function;
 
@@ -43,6 +42,13 @@ import java.util.function.Function;
  * notification path and DDL invalidation paths. Both updates happen under the
  * per-base-table write lock so that refresh/invalidate readers never observe a
  * torn state.
+ * <p>
+ * Whole-registry readers walk {@link #allViews} instead of a map view. A
+ * {@code ConcurrentHashMap} iterator allocates one wrapper per step - and an
+ * {@code entrySet()} one allocates a {@code Map.Entry} per view on top - which
+ * the refresh pool's idle scan would charge to every sweep. Registration
+ * rebuilds the snapshot instead, so the cost lands on DDL, which is rare, and
+ * the recurring scan reads a plain {@link ObjList}.
  */
 public class LiveViewRegistry implements QuietCloseable {
     private final Function<CharSequence, DepList> createDepList = name -> new DepList();
@@ -50,6 +56,15 @@ public class LiveViewRegistry implements QuietCloseable {
     // Key is the base table name. Entries are never removed (grow-only, bounded by
     // distinct base tables that ever had a live view registered).
     private final ConcurrentHashMap<DepList> viewsByBaseTable = new ConcurrentHashMap<>(false);
+    /**
+     * Every registered instance, republished as a fresh list on each registration
+     * change. A reader takes the reference once and walks it without allocating;
+     * a rebuild never mutates a list a reader may already hold, so the snapshot
+     * a scan reads stays internally consistent even when a concurrent DDL
+     * replaces it. Its staleness window matches the weakly consistent map
+     * iterator it replaces.
+     */
+    private volatile ObjList<LiveViewInstance> allViews = new ObjList<>();
 
     @Override
     public void close() {
@@ -57,14 +72,16 @@ public class LiveViewRegistry implements QuietCloseable {
     }
 
     public void clear() {
-        for (Map.Entry<CharSequence, LiveViewInstance> entry : viewsByName.entrySet()) {
-            Misc.free(entry.getValue());
+        final ObjList<LiveViewInstance> views = allViews;
+        for (int i = 0, n = views.size(); i < n; i++) {
+            Misc.free(views.getQuick(i));
         }
         viewsByName.clear();
+        republishViews();
         for (DepList list : viewsByBaseTable.values()) {
-            ObjList<LiveViewInstance> views = list.lockForWrite();
+            ObjList<LiveViewInstance> baseViews = list.lockForWrite();
             try {
-                views.clear();
+                baseViews.clear();
             } finally {
                 list.unlockAfterWrite();
             }
@@ -80,8 +97,9 @@ public class LiveViewRegistry implements QuietCloseable {
      * (no concurrent turn can resume it).
      */
     public void discardSuspendedRepairs() {
-        for (LiveViewInstance instance : viewsByName.values()) {
-            instance.discardSuspendedRepair();
+        final ObjList<LiveViewInstance> views = allViews;
+        for (int i = 0, n = views.size(); i < n; i++) {
+            views.getQuick(i).discardSuspendedRepair();
         }
     }
 
@@ -93,8 +111,9 @@ public class LiveViewRegistry implements QuietCloseable {
      * stopped (no concurrent sweep turn).
      */
     public void freeSeedBaseReaders() {
-        for (LiveViewInstance instance : viewsByName.values()) {
-            instance.freeSeedBaseReader();
+        final ObjList<LiveViewInstance> views = allViews;
+        for (int i = 0, n = views.size(); i < n; i++) {
+            views.getQuick(i).freeSeedBaseReader();
         }
     }
 
@@ -109,7 +128,9 @@ public class LiveViewRegistry implements QuietCloseable {
      */
     public void getShardedViews(ObjList<LiveViewInstance> sink, int workerId, int workerCount) {
         sink.clear();
-        for (LiveViewInstance instance : viewsByName.values()) {
+        final ObjList<LiveViewInstance> views = allViews;
+        for (int i = 0, n = views.size(); i < n; i++) {
+            final LiveViewInstance instance = views.getQuick(i);
             if (workerCount <= 1 || Math.floorMod(instance.getLiveViewToken().getTableId(), workerCount) == workerId) {
                 sink.add(instance);
             }
@@ -125,9 +146,7 @@ public class LiveViewRegistry implements QuietCloseable {
      */
     public void getViews(ObjList<LiveViewInstance> sink) {
         sink.clear();
-        for (LiveViewInstance instance : viewsByName.values()) {
-            sink.add(instance);
-        }
+        sink.addAll(allViews);
     }
 
     /**
@@ -164,6 +183,7 @@ public class LiveViewRegistry implements QuietCloseable {
         } finally {
             list.unlockAfterWrite();
         }
+        republishViews();
     }
 
     /**
@@ -175,6 +195,7 @@ public class LiveViewRegistry implements QuietCloseable {
      */
     public void registerStubView(LiveViewInstance instance) {
         viewsByName.put(instance.getLiveViewToken().getTableName(), instance);
+        republishViews();
     }
 
     public LiveViewInstance removeView(CharSequence name) {
@@ -196,6 +217,9 @@ public class LiveViewRegistry implements QuietCloseable {
                     list.unlockAfterWrite();
                 }
             }
+        }
+        if (instance != null) {
+            republishViews();
         }
         return instance;
     }
@@ -231,6 +255,8 @@ public class LiveViewRegistry implements QuietCloseable {
             viewsByName.put(updatedToken.getTableName(), instance);
             return instance;
         }
+        // The snapshot holds instances rather than names, and a rename moves the
+        // same instance from one key to another, so it needs no republication.
         final DepList list = viewsByBaseTable.computeIfAbsent(definition.getBaseTableName(), createDepList);
         list.lockForWrite();
         try {
@@ -242,6 +268,20 @@ public class LiveViewRegistry implements QuietCloseable {
             list.unlockAfterWrite();
         }
         return instance;
+    }
+
+    /**
+     * Rebuilds the whole-registry snapshot from the name map. Registration,
+     * removal and teardown call it; each publishes a new list rather than
+     * mutating the one readers hold, so a scan already walking the previous
+     * snapshot finishes over a stable view.
+     */
+    private synchronized void republishViews() {
+        final ObjList<LiveViewInstance> rebuilt = new ObjList<>(viewsByName.size());
+        for (LiveViewInstance instance : viewsByName.values()) {
+            rebuilt.add(instance);
+        }
+        allViews = rebuilt;
     }
 
     private static class DepList {

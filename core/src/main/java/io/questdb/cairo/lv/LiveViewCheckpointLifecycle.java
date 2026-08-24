@@ -255,10 +255,12 @@ public final class LiveViewCheckpointLifecycle {
             long orphanUpperBound,
             boolean primaryOwner
     ) {
-        final CleanupResult result = new CleanupResult(protectedCeiling);
+        // Ordered before the scratch: a steady cadence seal reaches this with an
+        // upper bound the ceiling already covers, so the common path builds nothing.
         if (!primaryOwner || orphanUpperBound <= protectedCeiling) {
-            return new CleanupStats(0, 0, 0);
+            return CleanupStats.NONE;
         }
+        final CleanupResult result = new CleanupResult(protectedCeiling);
         try (Path path = new Path()) {
             purgeFinalOrphansInDir(
                     configuration.getFilesFacade(),

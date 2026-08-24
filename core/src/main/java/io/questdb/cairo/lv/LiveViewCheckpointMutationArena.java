@@ -78,6 +78,19 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         ordinals.setMemoryTracker(memoryTracker);
     }
 
+    /**
+     * Frees whatever the previous binding charged and binds {@code memoryTracker}
+     * for the next build. A builder shared across views must not carry retained
+     * capacity from one view's tracker into another's, so the release runs while
+     * the old tracker is still bound.
+     */
+    public void bind(@Nullable MemoryTracker memoryTracker) {
+        release();
+        bytes.setMemoryTracker(memoryTracker);
+        descriptors.setMemoryTracker(memoryTracker);
+        ordinals.setMemoryTracker(memoryTracker);
+    }
+
     public void clear() {
         if (bytes.getAppendOffset() > 0) {
             bytes.jumpTo(0);
@@ -93,6 +106,22 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         Misc.free(bytes);
         Misc.free(descriptors);
         Misc.free(ordinals);
+        size = 0;
+        sortedSize = 0;
+    }
+
+    /**
+     * Frees every native allocation against the tracker that acquired it and
+     * detaches that tracker. The arena stays reusable: the next
+     * {@link #bind(MemoryTracker)} re-acquires capacity under the new one.
+     */
+    public void release() {
+        bytes.clear();
+        bytes.setMemoryTracker(null);
+        descriptors.close();
+        descriptors.setMemoryTracker(null);
+        ordinals.close();
+        ordinals.setMemoryTracker(null);
         size = 0;
         sortedSize = 0;
     }

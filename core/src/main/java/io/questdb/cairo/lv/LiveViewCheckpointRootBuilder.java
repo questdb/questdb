@@ -28,12 +28,12 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
-import java.util.Arrays;
 
 /**
  * Builds a checkpoint root and sorted function directory. Unchanged functions
@@ -56,10 +56,18 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
     private long checkpointId;
     private final Path checkpointsDir = new Path();
     private long definitionTxn;
-    private byte[][] functionIdentities = new byte[8][];
+    private final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
+    private final LiveViewCheckpointByteArrayPool functionIdentityBytes = new LiveViewCheckpointByteArrayPool();
+    /**
+     * Identity image of every function staged since {@link #begin}, borrowed from
+     * {@link #functionIdentityBytes}. Both lists retain their shells across
+     * builds - a seal stages the same function set every time - so staging a
+     * function copies bytes rather than growing an array of them.
+     */
+    private final ObjList<byte[]> functionIdentities = new ObjList<>();
     private int functionCount;
     private final LiveViewCheckpointFunctionRoot functionRoot;
-    private LiveViewCheckpointPageRef[] functionRootRefs = new LiveViewCheckpointPageRef[8];
+    private final ObjList<LiveViewCheckpointPageRef> functionRootRefs = new ObjList<>();
     private boolean initialized;
     private long lastSegmentBytes;
     private long maxTimestamp;
@@ -81,11 +89,8 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
         LiveViewCheckpointMetadata.validateMetaRef(functionRootRef, false, "function root");
         functionRoot.of(checkpointsDir, functionRootRef);
         ensureFunctionCapacity(functionCount + 1);
-        functionIdentities[functionCount] = Arrays.copyOf(
-                functionRoot.getFunctionIdentity(),
-                functionRoot.getFunctionIdentity().length
-        );
-        this.functionRootRefs[functionCount] = new LiveViewCheckpointPageRef().of(
+        functionIdentities.setQuick(functionCount, functionIdentityBytes.copy(functionRoot.getFunctionIdentity()));
+        functionRootRefs.getQuick(functionCount).of(
                 functionRootRef.getSegmentId(), functionRootRef.getOffset(), functionRootRef.getLength()
         );
         functionCount++;
@@ -120,6 +125,7 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
         this.definitionTxn = definitionTxn;
         this.anchorRootRef.of(anchorRootRef.getSegmentId(), anchorRootRef.getOffset(), anchorRootRef.getLength());
         functionCount = 0;
+        functionIdentityBytes.reset();
         segmentIds.clear();
         if (!anchorRootRef.isNull()) {
             if (windowRoot.ofIfWindowRoot(checkpointsDir, anchorRootRef)) {
@@ -165,14 +171,16 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
         }
         sortFunctions();
         for (int i = 1; i < functionCount; i++) {
-            if (LiveViewCheckpointMetadata.compareBytes(functionIdentities[i - 1], functionIdentities[i]) == 0) {
+            if (LiveViewCheckpointMetadata.compareBytes(
+                    functionIdentities.getQuick(i - 1),
+                    functionIdentities.getQuick(i)
+            ) == 0) {
                 throw CairoException.critical(0).put("duplicate live view checkpoint function identity");
             }
         }
         // The root page and its function directory land here, so this segment is
         // part of the boundary's closure as much as the ones below it are.
         addSegmentId(metadataSegmentId);
-        final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
         LiveViewCheckpointFunctionDirectory.writeTo(
                 functionIdentities,
                 functionRootRefs,
@@ -201,6 +209,21 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
         Misc.free(checkpointsDir);
     }
 
+    /**
+     * Releases every mapping this build read and discards any in-flight segment,
+     * keeping the reader, writer and identity shells for the next build.
+     */
+    public void detach() {
+        anchorRoot.detach();
+        functionRoot.detach();
+        resultRoot.detach();
+        windowRoot.detach();
+        segmentWriter.discard();
+        initialized = false;
+        functionCount = 0;
+        segmentIds.clear();
+    }
+
     public void getReferencedSegmentIds(@NotNull LongList out) {
         out.clear();
         out.add(segmentIds);
@@ -227,12 +250,10 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
     }
 
     private void ensureFunctionCapacity(int capacity) {
-        if (capacity <= functionIdentities.length) {
-            return;
+        while (functionIdentities.size() < capacity) {
+            functionIdentities.add(null);
+            functionRootRefs.add(new LiveViewCheckpointPageRef());
         }
-        final int newCapacity = functionIdentities.length * 2;
-        functionIdentities = Arrays.copyOf(functionIdentities, newCapacity);
-        functionRootRefs = Arrays.copyOf(functionRootRefs, newCapacity);
     }
 
     private void ensureInitialized() {
@@ -243,16 +264,16 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
 
     private void sortFunctions() {
         for (int i = 1; i < functionCount; i++) {
-            final byte[] identity = functionIdentities[i];
-            final LiveViewCheckpointPageRef ref = functionRootRefs[i];
+            final byte[] identity = functionIdentities.getQuick(i);
+            final LiveViewCheckpointPageRef ref = functionRootRefs.getQuick(i);
             int j = i;
-            while (j > 0 && LiveViewCheckpointMetadata.compareBytes(functionIdentities[j - 1], identity) > 0) {
-                functionIdentities[j] = functionIdentities[j - 1];
-                functionRootRefs[j] = functionRootRefs[j - 1];
+            while (j > 0 && LiveViewCheckpointMetadata.compareBytes(functionIdentities.getQuick(j - 1), identity) > 0) {
+                functionIdentities.setQuick(j, functionIdentities.getQuick(j - 1));
+                functionRootRefs.setQuick(j, functionRootRefs.getQuick(j - 1));
                 j--;
             }
-            functionIdentities[j] = identity;
-            functionRootRefs[j] = ref;
+            functionIdentities.setQuick(j, identity);
+            functionRootRefs.setQuick(j, ref);
         }
     }
 }

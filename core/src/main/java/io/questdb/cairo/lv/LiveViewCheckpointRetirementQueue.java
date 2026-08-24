@@ -72,22 +72,23 @@ final class LiveViewCheckpointRetirementQueue {
 
     static void mergeAndWrite(
             @NotNull CairoConfiguration configuration,
+            @NotNull LiveViewCheckpointRetirementQueueScratch scratch,
             @Transient @NotNull Path checkpointsDir,
             @NotNull LongList additions,
             @NotNull LongList seed,
             long generation,
             long liveDataSegmentCount
     ) {
-        final LongList entries = new LongList();
-        final State state = new State();
-        if (!read(configuration, checkpointsDir, entries, state) || state.generation + 1 != generation) {
+        final LongList entries = scratch.entries;
+        final State state = scratch.state;
+        if (!read(configuration, scratch, checkpointsDir, entries, state) || state.generation + 1 != generation) {
             entries.clear();
             entries.add(seed);
         }
         for (int i = 0, n = additions.size(); i < n; i += ENTRY_STRIDE) {
             put(entries, additions, i);
         }
-        write(configuration, checkpointsDir, entries, generation, liveDataSegmentCount);
+        write(configuration, scratch, checkpointsDir, entries, generation, liveDataSegmentCount);
     }
 
     /**
@@ -95,6 +96,7 @@ final class LiveViewCheckpointRetirementQueue {
      */
     static boolean read(
             @NotNull CairoConfiguration configuration,
+            @NotNull LiveViewCheckpointRetirementQueueScratch scratch,
             @Transient @NotNull Path checkpointsDir,
             @NotNull LongList out,
             @NotNull State state
@@ -102,67 +104,67 @@ final class LiveViewCheckpointRetirementQueue {
         out.clear();
         state.clear();
         final FilesFacade ff = configuration.getFilesFacade();
-        try (Path path = new Path()) {
-            LiveViewCheckpointLayout.retirementQueuePath(path, checkpointsDir);
-            if (!ff.exists(path.$())) {
+        final Path path = scratch.path;
+        LiveViewCheckpointLayout.retirementQueuePath(path, checkpointsDir);
+        if (!ff.exists(path.$())) {
+            return false;
+        }
+        final long size = ff.length(path.$());
+        if (size < HEADER_SIZE + Integer.BYTES || size > Integer.MAX_VALUE) {
+            logInvalid(path, "size");
+            return false;
+        }
+        final MemoryMARW mem = scratch.mem;
+        try {
+            mem.of(ff, path.$(), size, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+            if (mem.getLong(0) != MAGIC || mem.getInt(FORMAT_VERSION_OFFSET) != FORMAT_VERSION) {
+                logInvalid(path, "magic or format");
                 return false;
             }
-            final long size = ff.length(path.$());
-            if (size < HEADER_SIZE + Integer.BYTES || size > Integer.MAX_VALUE) {
-                logInvalid(path, "size");
+            final int count = mem.getInt(COUNT_OFFSET);
+            final long generation = mem.getLong(GENERATION_OFFSET);
+            final long liveDataSegmentCount = mem.getLong(LIVE_DATA_SEGMENT_COUNT_OFFSET);
+            final long expectedSize = HEADER_SIZE + (long) count * ENTRY_STRIDE * Long.BYTES + Integer.BYTES;
+            if (count < 0 || count > MAX_ENTRY_COUNT || generation < 0
+                    || liveDataSegmentCount < 0 || expectedSize != size) {
+                logInvalid(path, "entry count");
                 return false;
             }
-            final MemoryMARW mem = Vm.getCMARWInstance();
-            try {
-                mem.of(ff, path.$(), size, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
-                if (mem.getLong(0) != MAGIC || mem.getInt(FORMAT_VERSION_OFFSET) != FORMAT_VERSION) {
-                    logInvalid(path, "magic or format");
-                    return false;
-                }
-                final int count = mem.getInt(COUNT_OFFSET);
-                final long generation = mem.getLong(GENERATION_OFFSET);
-                final long liveDataSegmentCount = mem.getLong(LIVE_DATA_SEGMENT_COUNT_OFFSET);
-                final long expectedSize = HEADER_SIZE + (long) count * ENTRY_STRIDE * Long.BYTES + Integer.BYTES;
-                if (count < 0 || count > MAX_ENTRY_COUNT || generation < 0
-                        || liveDataSegmentCount < 0 || expectedSize != size) {
-                    logInvalid(path, "entry count");
-                    return false;
-                }
-                final int crcOffset = (int) size - Integer.BYTES;
-                if (Zip.crc32(0, mem.addressOf(0), crcOffset) != mem.getInt(crcOffset)) {
-                    logInvalid(path, "checksum");
-                    return false;
-                }
-                long offset = HEADER_SIZE;
-                long previousSegmentId = -1;
-                for (int i = 0; i < count; i++) {
-                    final long segmentId = mem.getLong(offset);
-                    final long fileLength = mem.getLong(offset + Long.BYTES);
-                    final long retireGeneration = mem.getLong(offset + 2L * Long.BYTES);
-                    final long kind = mem.getLong(offset + 3L * Long.BYTES);
-                    if (segmentId <= previousSegmentId
-                            || fileLength <= 0
-                            || retireGeneration < 0
-                            || !isValidKind(kind)) {
-                        logInvalid(path, "entry payload");
-                        out.clear();
-                        return false;
-                    }
-                    out.add(segmentId, fileLength, retireGeneration, kind);
-                    previousSegmentId = segmentId;
-                    offset += ENTRY_STRIDE * Long.BYTES;
-                }
-                state.generation = generation;
-                state.liveDataSegmentCount = liveDataSegmentCount;
-                return true;
-            } finally {
-                mem.close(false);
+            final int crcOffset = (int) size - Integer.BYTES;
+            if (Zip.crc32(0, mem.addressOf(0), crcOffset) != mem.getInt(crcOffset)) {
+                logInvalid(path, "checksum");
+                return false;
             }
+            long offset = HEADER_SIZE;
+            long previousSegmentId = -1;
+            for (int i = 0; i < count; i++) {
+                final long segmentId = mem.getLong(offset);
+                final long fileLength = mem.getLong(offset + Long.BYTES);
+                final long retireGeneration = mem.getLong(offset + 2L * Long.BYTES);
+                final long kind = mem.getLong(offset + 3L * Long.BYTES);
+                if (segmentId <= previousSegmentId
+                        || fileLength <= 0
+                        || retireGeneration < 0
+                        || !isValidKind(kind)) {
+                    logInvalid(path, "entry payload");
+                    out.clear();
+                    return false;
+                }
+                out.add(segmentId, fileLength, retireGeneration, kind);
+                previousSegmentId = segmentId;
+                offset += ENTRY_STRIDE * Long.BYTES;
+            }
+            state.generation = generation;
+            state.liveDataSegmentCount = liveDataSegmentCount;
+            return true;
+        } finally {
+            mem.close(false);
         }
     }
 
     static void write(
             @NotNull CairoConfiguration configuration,
+            @NotNull LiveViewCheckpointRetirementQueueScratch scratch,
             @Transient @NotNull Path checkpointsDir,
             @NotNull LongList entries,
             long generation,
@@ -186,34 +188,34 @@ final class LiveViewCheckpointRetirementQueue {
         final FilesFacade ff = configuration.getFilesFacade();
         final int commitMode = configuration.getCommitMode();
         final long size = HEADER_SIZE + (long) entries.size() * Long.BYTES + Integer.BYTES;
-        try (Path finalPath = new Path(); Path tmpPath = new Path()) {
-            LiveViewCheckpointLayout.retirementQueuePath(finalPath, checkpointsDir);
-            LiveViewCheckpointLayout.retirementQueuePath(tmpPath, checkpointsDir).put(LiveViewCheckpointLayout.TMP_SUFFIX);
-            final MemoryMARW mem = Vm.getCMARWInstance();
-            try {
-                mem.of(ff, tmpPath.$(), size, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
-                mem.jumpTo(0);
-                mem.putLong(MAGIC);
-                mem.putInt(FORMAT_VERSION);
-                mem.putInt(entries.size() / ENTRY_STRIDE);
-                mem.putLong(generation);
-                mem.putLong(liveDataSegmentCount);
-                for (int i = 0, n = entries.size(); i < n; i++) {
-                    mem.putLong(entries.getQuick(i));
-                }
-                final int crc = Zip.crc32(0, mem.addressOf(0), (int) size - Integer.BYTES);
-                mem.putInt(crc);
-                if (commitMode != CommitMode.NOSYNC) {
-                    mem.sync(commitMode == CommitMode.ASYNC);
-                }
-            } finally {
-                mem.close(true, Vm.TRUNCATE_TO_POINTER);
+        final Path finalPath = scratch.finalPath;
+        final Path tmpPath = scratch.tmpPath;
+        LiveViewCheckpointLayout.retirementQueuePath(finalPath, checkpointsDir);
+        LiveViewCheckpointLayout.retirementQueuePath(tmpPath, checkpointsDir).put(LiveViewCheckpointLayout.TMP_SUFFIX);
+        final MemoryMARW mem = scratch.mem;
+        try {
+            mem.of(ff, tmpPath.$(), size, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+            mem.jumpTo(0);
+            mem.putLong(MAGIC);
+            mem.putInt(FORMAT_VERSION);
+            mem.putInt(entries.size() / ENTRY_STRIDE);
+            mem.putLong(generation);
+            mem.putLong(liveDataSegmentCount);
+            for (int i = 0, n = entries.size(); i < n; i++) {
+                mem.putLong(entries.getQuick(i));
             }
-            if (LiveViewCheckpointLayout.publishOverwrite(ff, tmpPath.$(), finalPath.$()) != Files.FILES_RENAME_OK) {
-                ff.removeQuiet(tmpPath.$());
-                throw CairoException.critical(ff.errno())
-                        .put("could not publish live view checkpoint retirement queue");
+            final int crc = Zip.crc32(0, mem.addressOf(0), (int) size - Integer.BYTES);
+            mem.putInt(crc);
+            if (commitMode != CommitMode.NOSYNC) {
+                mem.sync(commitMode == CommitMode.ASYNC);
             }
+        } finally {
+            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+        }
+        if (LiveViewCheckpointLayout.publishOverwrite(ff, tmpPath.$(), finalPath.$()) != Files.FILES_RENAME_OK) {
+            ff.removeQuiet(tmpPath.$());
+            throw CairoException.critical(ff.errno())
+                    .put("could not publish live view checkpoint retirement queue");
         }
     }
 

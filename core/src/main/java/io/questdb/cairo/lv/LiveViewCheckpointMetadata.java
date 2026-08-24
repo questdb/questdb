@@ -196,6 +196,24 @@ final class LiveViewCheckpointMetadata {
         return bytes;
     }
 
+    /**
+     * Reads {@code length} bytes into an array {@code pool} lends for the caller's
+     * current epoch, so a re-read of the same shape reuses the image the previous
+     * one filled instead of allocating another.
+     */
+    static byte[] readBytes(
+            LiveViewCheckpointMetaSegmentReader reader,
+            long offset,
+            int length,
+            LiveViewCheckpointByteArrayPool pool
+    ) {
+        final byte[] bytes = pool.next(length);
+        for (int i = 0; i < length; i++) {
+            bytes[i] = reader.getByte(offset + i);
+        }
+        return bytes;
+    }
+
     static void readMetaRef(LiveViewCheckpointMetaSegmentReader reader, long offset, LiveViewCheckpointPageRef out) {
         out.of(reader.getLong(offset), reader.getLong(offset + Long.BYTES), reader.getInt(offset + 2L * Long.BYTES));
     }

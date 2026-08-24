@@ -321,6 +321,23 @@ public class LiveViewCheckpointSegmentDirectoryWriter implements Closeable {
     }
 
     /**
+     * Drops every staged mutation, releases the reader's mappings and discards any
+     * in-flight segment, while keeping every shell for the next publication. A
+     * publication that failed part-way leaves nothing staged behind it.
+     */
+    public void detach() {
+        reader.detach();
+        segmentWriter.discard();
+        appliedSegmentIds.clear();
+        ownReleasedSegmentIds.clear();
+        releaseTally.clear();
+        retirementTransitions.clear();
+        staged.clear();
+        liveDataSegmentDelta = 0;
+        isBegun = false;
+    }
+
+    /**
      * @return byte size of the metadata segment the last publication wrote, or
      * {@code 0} when it staged no change and reused the prior root
      */

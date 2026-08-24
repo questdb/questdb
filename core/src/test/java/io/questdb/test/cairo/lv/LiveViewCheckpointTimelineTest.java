@@ -30,6 +30,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineWriter;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -622,16 +623,16 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
                     affected.add(e);
                 }
             }
-            final LiveViewCheckpointTimelineEntry[] reps = new LiveViewCheckpointTimelineEntry[affected.size()];
+            final ObjList<LiveViewCheckpointTimelineEntry> reps = new ObjList<>();
             for (int i = 0; i < affected.size(); i++) {
                 final long[] e = affected.get(i);
                 final LiveViewCheckpointTimelineEntry rep = new LiveViewCheckpointTimelineEntry();
                 fill(rep, e[0], e[1], true); // rewrite payload to the "spliced" function
-                reps[i] = rep;
+                reps.add(rep);
                 // Mirror the rewrite in the oracle.
                 oracleInsert(e[0], e[1], true);
             }
-            writer.splice(root, reps, reps.length, nextSegmentId++, tmpRoot);
+            writer.splice(root, reps, reps.size(), nextSegmentId++, tmpRoot);
             root.of(tmpRoot.getSegmentId(), tmpRoot.getOffset(), tmpRoot.getLength());
         }
 

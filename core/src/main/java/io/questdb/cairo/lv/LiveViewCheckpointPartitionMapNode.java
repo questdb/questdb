@@ -57,6 +57,17 @@ final class LiveViewCheckpointPartitionMapNode {
      */
     long sourceSegmentId = NO_SOURCE_SEGMENT_ID;
     LiveViewCheckpointStatePageRef[][] statePageRefs = new LiveViewCheckpointStatePageRef[0][];
+    /**
+     * Images the arena-free {@link #decode(LiveViewCheckpointMetaSegmentReader)}
+     * borrows for this node's current page. A seal probes the predecessor's map
+     * once per live key, so a fresh key, scalar and reference array per decoded
+     * entry would charge the whole live domain to every publication. Reset per
+     * decode, and owned by this node alone: what leaves it does so through
+     * {@link #copyEntryTo}, which copies into the caller's own flyweight.
+     */
+    private final LiveViewCheckpointByteArrayPool decodedBytes = new LiveViewCheckpointByteArrayPool();
+    private final LiveViewCheckpointPageRefPool decodedChildRefs = new LiveViewCheckpointPageRefPool();
+    private final LiveViewCheckpointStateRefArrayPool decodedStateRefs = new LiveViewCheckpointStateRefArrayPool();
     private int count;
     private boolean leaf;
 
@@ -135,6 +146,11 @@ final class LiveViewCheckpointPartitionMapNode {
         }
         count = 0;
         sourceSegmentId = NO_SOURCE_SEGMENT_ID;
+        if (arena == null) {
+            decodedBytes.reset();
+            decodedChildRefs.reset();
+            decodedStateRefs.reset();
+        }
         ensureCapacity(decodedCount);
         long offset = HEADER_SIZE;
         byte[] previousKey = null;
@@ -199,7 +215,7 @@ final class LiveViewCheckpointPartitionMapNode {
                 count++;
                 continue;
             }
-            final byte[] key = LiveViewCheckpointMetadata.readBytes(reader, offset, keyLength);
+            final byte[] key = LiveViewCheckpointMetadata.readBytes(reader, offset, keyLength, decodedBytes);
             offset += keyLength;
             if (previousKey != null && LiveViewCheckpointMetadata.compareBytes(previousKey, key) >= 0) {
                 throw LiveViewCheckpointMetadata.invalid("partition map keys not strictly increasing");
@@ -208,17 +224,19 @@ final class LiveViewCheckpointPartitionMapNode {
             keyArenas[i] = null;
             keyMutationIndexes[i] = -1;
             if (leaf) {
-                scalarStates[i] = LiveViewCheckpointMetadata.readBytes(reader, offset, scalarLength);
+                scalarStates[i] = LiveViewCheckpointMetadata.readBytes(reader, offset, scalarLength, decodedBytes);
                 offset += scalarLength;
-                final LiveViewCheckpointStatePageRef[] refs = new LiveViewCheckpointStatePageRef[refCount];
+                final LiveViewCheckpointStatePageRef[] refs = decodedStateRefs.next(refCount);
                 for (int r = 0; r < refCount; r++) {
-                    refs[r] = new LiveViewCheckpointStatePageRef().readFrom(reader, offset);
+                    refs[r].readFrom(reader, offset);
                     LiveViewCheckpointMetadata.validateStateRef(refs[r], false, "partition");
                     offset += LiveViewCheckpointStatePageRef.BYTES;
                 }
                 statePageRefs[i] = refs;
             } else {
-                final LiveViewCheckpointPageRef ref = new LiveViewCheckpointPageRef();
+                final LiveViewCheckpointPageRef ref = pageRefPool == null
+                        ? decodedChildRefs.next()
+                        : pageRefPool.next();
                 LiveViewCheckpointMetadata.readMetaRef(reader, offset, ref);
                 LiveViewCheckpointMetadata.validateMetaRef(ref, false, "partition child");
                 childRefs[i] = ref;
