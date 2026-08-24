@@ -336,8 +336,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
              * Whether the cleanup job frees disk space for this view's policy, in the same terms the job
              * itself uses: {@link RowExpiryUtil#isReclaimingPolicy}. A structural policy answers from its
              * encoding alone; a scalar one needs the predicate bound against the view's columns, so it
-             * borrows a compiler and the view's metadata. Anything that cannot be classified reports
-             * FILTER_ONLY, which is what the cleanup job does with it.
+             * borrows a compiler and the view's metadata. A view that went away under the snapshot reports
+             * FILTER_ONLY, the same verdict the cleanup job gives a policy it cannot classify. Any other
+             * failure to borrow is raised, so the column reports only a verdict it reached.
              */
             private String expireEnforcement(TableToken viewToken, CharSequence predicate) {
                 if (RowExpiryUtil.isStructuralPolicy(predicate)) {
@@ -350,10 +351,18 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     return compiler.isExpiryCleanupReclaiming(executionContext, viewMetadata, predicate)
                             ? RowExpiryUtil.ENFORCEMENT_FILTER_AND_RECLAIM
                             : RowExpiryUtil.ENFORCEMENT_FILTER_ONLY;
-                } catch (CairoException | TableReferenceOutOfDateException e) {
-                    // The view can be dropped, renamed or recreated between the token snapshot and this
-                    // lookup (tableDoesNotExist and a stale token respectively). Report what cleanup would do
-                    // with a policy it cannot classify rather than failing the whole catalogue query.
+                } catch (CairoException e) {
+                    // A borrow that fails because the metadata entry is locked or the compiler pool is
+                    // exhausted says nothing about the policy, so it travels on as the error it is. The view
+                    // itself can be dropped, renamed or recreated between the token snapshot and this
+                    // lookup; it holds no policy any more, so report what cleanup does with a policy it
+                    // cannot classify and let the catalogue query finish.
+                    if (!e.isTableDoesNotExist() && !e.isTableDropped()) {
+                        throw e;
+                    }
+                    return RowExpiryUtil.ENFORCEMENT_FILTER_ONLY;
+                } catch (TableReferenceOutOfDateException e) {
+                    // Stale token: the view was recreated under the same name since the snapshot.
                     return RowExpiryUtil.ENFORCEMENT_FILTER_ONLY;
                 }
             }
