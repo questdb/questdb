@@ -326,9 +326,9 @@ public class WorkerPoolBootFailureTest {
 
     /**
      * When start() stalls between running=true and started.countDown() (realistic on an OOM mid-launch:
-     * the worker thread is spawned and looping, but the start latch never counts down), halt(long) must
-     * STILL signal worker.halt() for every worker before it clears and frees freeOnExit. Otherwise a
-     * worker keeps looping on RUNNING against freed resources - a use-after-free plus orphan-thread leak.
+     * the worker thread is spawned and looping, but the start latch never counts down), a bounded halt
+     * must still signal worker.halt() for every worker before it returns incomplete. It must retain
+     * freeOnExit until a later attempt observes both latches complete and finishes cleanup.
      */
     @Test
     public void testStartLatchTimeoutStillHaltsEveryWorker() throws Exception {
@@ -361,10 +361,8 @@ public class WorkerPoolBootFailureTest {
             return true;
         });
 
-        // Track that freeOnExit is released by halt(): a worker still looping after halt against a
-        // freed resource is the use-after-free this guards.
-        final AtomicBoolean resourceFreed = new AtomicBoolean(false);
-        pool.freeOnExit(closeableJob(() -> resourceFreed.set(true)));
+        final AtomicLong resourceCloseCount = new AtomicLong();
+        pool.freeOnExit(closeableJob(resourceCloseCount::incrementAndGet));
 
         // Stall start() in the running=true / started-not-counted-down window: the workers are
         // already spawned and looping, but the start latch is held open until we release it.
@@ -392,11 +390,17 @@ public class WorkerPoolBootFailureTest {
             }
             Assert.assertTrue("the workers must be running their assigned job", jobTicks.get() > 0);
 
-            // halt(long) takes the start-latch-timeout branch (started never counted down). It must
-            // still signal every worker, so the loops exit promptly.
-            pool.halt(TimeUnit.MILLISECONDS.toNanos(200));
-
-            Assert.assertTrue("halt() must free freeOnExit", resourceFreed.get());
+            // The bounded halt takes the start-latch-timeout branch (started never counted down). It
+            // must still signal every worker, but retain owned resources for a later retry.
+            Assert.assertFalse(
+                    "the first bounded halt must report incomplete while start() holds its latch",
+                    pool.haltWithin(TimeUnit.MILLISECONDS.toNanos(200))
+            );
+            Assert.assertEquals(
+                    "an incomplete bounded halt must retain freeOnExit",
+                    0,
+                    resourceCloseCount.get()
+            );
 
             // After halt the workers must STOP ticking. Sample, wait well past the worker sleep
             // cadence, sample again: a halted worker leaves the count stable; an un-halted worker
@@ -406,13 +410,24 @@ public class WorkerPoolBootFailureTest {
             final long settled = jobTicks.get();
             Assert.assertEquals(
                     "every worker must be halted on the start-latch-timeout branch; a still-ticking "
-                            + "count means a worker is looping on RUNNING against freed resources",
+                            + "count means a worker is still looping after the incomplete halt",
                     afterHalt, settled);
+
+            releaseStart.countDown();
+            starter.join(TimeUnit.SECONDS.toMillis(10));
+            Assert.assertFalse("start() must return after its gate is released", starter.isAlive());
+            Assert.assertTrue(
+                    "the bounded retry must complete after start() publishes its latch",
+                    pool.haltWithin(TimeUnit.SECONDS.toNanos(10))
+            );
+            Assert.assertEquals("the successful retry must close freeOnExit exactly once", 1, resourceCloseCount.get());
         } finally {
             releaseStart.countDown();
             starter.join(TimeUnit.SECONDS.toMillis(10));
             pool.halt();
         }
+        Assert.assertFalse("pool starter thread leaked", starter.isAlive());
+        Assert.assertEquals("final idempotent halt must not close freeOnExit twice", 1, resourceCloseCount.get());
     }
 
     /**
