@@ -570,6 +570,31 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    private static boolean hasMasterNullingJoinAfter(IQueryModel model, int tableIndex) {
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        final int n = joinModels.size();
+        final IntList ordered = model.getOrderedJoinModels();
+        if (ordered.size() == n) {
+            boolean isTableSeen = false;
+            for (int i = 0; i < n; i++) {
+                final int modelIndex = ordered.getQuick(i);
+                if (isTableSeen && isMasterNullingJoinType(joinModels.getQuick(modelIndex).getJoinType())) {
+                    return true;
+                }
+                if (modelIndex == tableIndex) {
+                    isTableSeen = true;
+                }
+            }
+            return false;
+        }
+        for (int i = tableIndex + 1; i < n; i++) {
+            if (isMasterNullingJoinType(joinModels.getQuick(i).getJoinType())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean hasNestedUnionAll(IQueryModel model) {
         for (IQueryModel u = model.getNestedModel(); u != null; u = u.getNestedModel()) {
             if (u.getUnionModel() != null && u.getSetOperationType() == IQueryModel.SET_OPERATION_UNION_ALL) {
@@ -1787,7 +1812,8 @@ public class SqlOptimiser implements Mutable {
         JoinContext jc;
         boolean canMovePredicate = joinBarriers.excludes(joinModel.getJoinType());
         //the switch code below assumes expression are simple column references
-        if (literalCollector.functionCount > 0) {
+        if (literalCollector.functionCount > 0
+                && hasUnsupportedFunctionOrOperationInEquals(node, aSize, bSize)) {
             if (canMovePredicate) {
                 parent.addParsedWhereNode(node, innerPredicate);
             } else {
@@ -3262,8 +3288,8 @@ public class SqlOptimiser implements Mutable {
      * keyed lookup; this method restores that behavior for the pushed-down case.
      * <p>
      * Only a constant pinned to the parent side of an equi-join propagates to the slave (mirroring
-     * {@link #addTransitiveFilters}), so this is safe for outer joins - it never removes unmatched
-     * master rows.
+     * {@link #addTransitiveFilters}). If a later join NULL-extends that parent, only a statically
+     * non-NULL literal may propagate because a runtime constant can evaluate to NULL.
      */
     private void deriveTransitiveFiltersFromPushedPredicate(IQueryModel nested, ExpressionNode node) throws SqlException {
         // transitivity of equals applies only to a single "column = constant" equality, and only a
@@ -3272,7 +3298,13 @@ public class SqlOptimiser implements Mutable {
             return;
         }
         traverseNamesAndIndices(nested, node);
-        if (literalCollector.functionCount > 0 || literalCollector.nullCount > 0) {
+        if (literalCollector.nullCount > 0
+                || (literalCollector.functionCount > 0
+                        && hasUnsupportedFunctionOrOperationInEquals(
+                                node,
+                                literalCollectorAIndexes.size(),
+                                literalCollectorBIndexes.size()
+                        ))) {
             return;
         }
 
@@ -3298,6 +3330,9 @@ public class SqlOptimiser implements Mutable {
         // the table pinned by the constant must not itself be outer/asof joined, mirroring the guard
         // in analyseEquals()
         if (joinBarriers.contains(nested.getJoinModels().getQuick(index).getJoinType())) {
+            return;
+        }
+        if (constNode.type != CONSTANT && hasMasterNullingJoinAfter(nested, index)) {
             return;
         }
 
@@ -5001,6 +5036,28 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
+    private boolean hasUnsupportedFunctionOrOperationInEquals(
+            ExpressionNode node,
+            int lhsColumnCount,
+            int rhsColumnCount
+    ) {
+        if (lhsColumnCount == 1
+                && rhsColumnCount == 0
+                && node.lhs != null
+                && node.lhs.type == LITERAL
+                && node.rhs != null) {
+            return !isEffectivelyConstantExpression(node.rhs);
+        }
+        if (lhsColumnCount == 0
+                && rhsColumnCount == 1
+                && node.rhs != null
+                && node.rhs.type == LITERAL
+                && node.lhs != null) {
+            return !isEffectivelyConstantExpression(node.lhs);
+        }
+        return true;
+    }
+
     private void hoistLateralCountWhereClause(
             IQueryModel baseModel,
             IQueryModel translatingModel,
@@ -5242,7 +5299,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private boolean isEffectivelyConstantExpression(ExpressionNode node) {
-        sqlNodeStack.clear();
+        sqlNodeStack2.clear();
         while (node != null) {
             // Cast over a constant or bind variable is itself constant per query,
             // so accept BIND_VARIABLE leaves and the "cast" FUNCTION token. The
@@ -5253,24 +5310,23 @@ public class SqlOptimiser implements Mutable {
                     && node.type != CONSTANT
                     && node.type != BIND_VARIABLE
                     && !(node.type == FUNCTION && (functionParser.getFunctionFactoryCache().isRuntimeConstant(node.token) || SqlKeywords.isCastKeyword(node.token)))) {
+                sqlNodeStack2.clear();
                 return false;
             }
 
             if (node.lhs != null) {
-                sqlNodeStack.push(node.lhs);
+                sqlNodeStack2.push(node.lhs);
             }
             for (int i = 0, n = node.args.size(); i < n; i++) {
-                sqlNodeStack.push(node.args.getQuick(i));
+                sqlNodeStack2.push(node.args.getQuick(i));
             }
 
             if (node.rhs != null) {
                 node = node.rhs;
+            } else if (!sqlNodeStack2.isEmpty()) {
+                node = sqlNodeStack2.poll();
             } else {
-                if (!sqlNodeStack.isEmpty()) {
-                    node = this.sqlNodeStack.poll();
-                } else {
-                    node = null;
-                }
+                node = null;
             }
         }
 

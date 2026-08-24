@@ -170,6 +170,7 @@ import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.nanotime.StationaryNanosClock;
@@ -4308,6 +4309,155 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerJoinIntArithmeticBindFilterPushedThroughView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE int_a (id INT, v INT)");
+            execute("CREATE TABLE int_b (id INT, v INT)");
+            bindVariableService.clear();
+            bindVariableService.setInt("id", 0);
+            final String query = """
+                    SELECT * FROM (
+                        SELECT a.id AS k, a.v AS av, b.v AS bv
+                        FROM int_a a
+                        JOIN int_b b ON b.id = a.id
+                    )
+                    WHERE (:id::INT + 1) = k
+                    """;
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Hash\n            Async Filter workers: 1\n              filter: id=:id::int+1")
+                    .returns("k\tav\tbv\n");
+
+            execute("INSERT INTO int_a VALUES (1, 10), (2, 20)");
+            execute("INSERT INTO int_b VALUES (1, 30), (2, 40)");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("k\tav\tbv\n1\t10\t30\n");
+
+            bindVariableService.setInt("id", 1);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("k\tav\tbv\n2\t20\t40\n");
+        });
+    }
+
+    @Test
+    public void testInnerJoinUuidCastBindFilterPushedIntoGroupByCte() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (order_id UUID, order_type SYMBOL, volume DOUBLE)");
+            bindVariableService.clear();
+            bindVariableService.setStr("id", "11111111-2222-3333-4444-555555555555");
+            assertQuery("""
+                    WITH child_order_agg AS (
+                        SELECT order_id, sum(volume) AS child_volume
+                        FROM orders
+                        WHERE order_type = 'child'
+                        GROUP BY order_id
+                    )
+                    SELECT o.order_id, o.volume AS parent_volume, a.child_volume
+                    FROM orders o
+                    JOIN child_order_agg a ON o.order_id = a.order_id
+                    WHERE o.order_id = :id::UUID
+                      AND o.order_type = 'parent'
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("filter: (order_type='child' and order_id=:id::string::uuid)")
+                    .returns("order_id\tparent_volume\tchild_volume\n");
+        });
+    }
+
+    @Test
+    public void testInnerJoinUuidCastFilterPushedIntoGroupByCte() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (order_id UUID, order_type SYMBOL, volume DOUBLE)");
+            final String query = """
+                    WITH child_order_agg AS (
+                        SELECT order_id, sum(volume) AS child_volume
+                        FROM orders
+                        WHERE order_type = 'child'
+                        GROUP BY order_id
+                    )
+                    SELECT o.order_id, o.volume AS parent_volume, a.child_volume
+                    FROM orders o
+                    JOIN child_order_agg a ON o.order_id = a.order_id
+                    WHERE o.order_id = '11111111-2222-3333-4444-555555555555'::UUID
+                      AND o.order_type = 'parent'
+                    """;
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("filter: (order_type='child' and order_id='11111111-2222-3333-4444-555555555555')")
+                    .returns("order_id\tparent_volume\tchild_volume\n");
+        });
+    }
+
+    @Test
+    public void testInnerJoinUuidCastFilterPushedIntoGroupByCteReturnsCorrectRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (order_id UUID, order_type SYMBOL, volume DOUBLE)");
+            execute("""
+                    INSERT INTO orders VALUES
+                    ('11111111-2222-3333-4444-555555555555', 'parent', 100.0),
+                    ('11111111-2222-3333-4444-555555555555', 'child', 40.0),
+                    ('11111111-2222-3333-4444-555555555555', 'child', 60.0),
+                    ('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', 'child', 7.0)
+                    """);
+            assertQuery("""
+                    WITH child_order_agg AS (
+                        SELECT order_id, sum(volume) AS child_volume
+                        FROM orders
+                        WHERE order_type = 'child'
+                        GROUP BY order_id
+                    )
+                    SELECT o.order_id, o.volume AS parent_volume, a.child_volume
+                    FROM orders o
+                    JOIN child_order_agg a ON o.order_id = a.order_id
+                    WHERE o.order_id = '11111111-2222-3333-4444-555555555555'::UUID
+                      AND o.order_type = 'parent'
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            order_id	parent_volume	child_volume
+                            11111111-2222-3333-4444-555555555555	100.0	100.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerJoinVolatileUuidFilterIsNotPropagated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE uuid_a (order_id UUID, v INT)");
+            execute("CREATE TABLE uuid_b (order_id UUID, v INT)");
+            assertQuery("""
+                    SELECT *
+                    FROM uuid_a a
+                    JOIN uuid_b b ON b.order_id = a.order_id
+                    WHERE a.order_id = rnd_uuid4()
+                    """)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: b.order_id=a.order_id
+                                    Async Filter workers: 1
+                                      filter: order_id=rnd_uuid4()
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: uuid_a
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: uuid_b
+                            """);
+        });
+    }
+
+    @Test
     public void testIntersect1() throws Exception {
         assertQuery("select * from a intersect select * from a")
                 .ddl("create table a ( i int, s string);")
@@ -6502,6 +6652,59 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Row backward scan
                                 Frame backward scan on: tab
                         """);
+    }
+
+    @Test
+    public void testOuterJoinNullableBindFilterThroughView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT)");
+            execute("CREATE TABLE b (id INT)");
+            execute("CREATE TABLE c (id INT)");
+            execute("INSERT INTO b VALUES (5)");
+            bindVariableService.clear();
+            bindVariableService.setInt("id", Numbers.INT_NULL);
+
+            final ObjList<String> joins = new ObjList<>(4);
+            joins.add("RIGHT OUTER JOIN");
+            joins.add("FULL OUTER JOIN");
+            for (int i = 0; i < joins.size(); i++) {
+                final String join = joins.getQuick(i);
+                assertQuery("SELECT * FROM (SELECT a.id AS k, b.id AS bid FROM a " + join
+                        + " b ON b.id = a.id) WHERE k = :id::INT")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("k\tbid\nnull\t5\n");
+
+                assertQuery("SELECT * FROM (SELECT a.id AS k, c.id AS cid, b.id AS bid FROM a"
+                        + " JOIN c ON c.id = a.id " + join + " b ON b.id = a.id) WHERE k = :id::INT")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("k\tcid\tbid\nnull\tnull\t5\n");
+            }
+
+            execute("INSERT INTO a VALUES (5)");
+            bindVariableService.setInt("id", 5);
+            joins.add("JOIN");
+            joins.add("LEFT OUTER JOIN");
+            for (int i = 0; i < joins.size(); i++) {
+                final String join = joins.getQuick(i);
+                assertQuery("SELECT * FROM (SELECT a.id AS k, b.id AS bid FROM a " + join
+                        + " b ON b.id = a.id) WHERE k = :id::INT")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("k\tbid\n5\t5\n");
+            }
+
+            for (int i = 0; i < 2; i++) {
+                final String join = joins.getQuick(i);
+                assertQuery("SELECT * FROM (SELECT a.id AS k, b.id AS bid FROM a " + join
+                        + " b ON b.id = a.id) WHERE k = 5")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Hash\n                Async JIT Filter workers: 1\n                  filter: id=5")
+                        .returns("k\tbid\n5\t5\n");
+            }
+        });
     }
 
     @Test

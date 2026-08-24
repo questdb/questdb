@@ -30,6 +30,8 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 
 public class TableReferenceOutOfDateException extends RuntimeException implements FlyweightMessageContainer {
+    private static final String partitionFormatPrefix =
+            "cached query plan cannot be used because table partition format has changed [table=";
     private static final String prefix = "cached query plan cannot be used because table schema has changed [table=";
     private final StringSink message = (StringSink) new StringSink().put(prefix);
 
@@ -78,6 +80,13 @@ public class TableReferenceOutOfDateException extends RuntimeException implement
         ex.message.put(tableToken.getTableName())
                 .put("', expectedSeqTxn=").put(expectedTxn)
                 .put(", actualSeqTxn=").put(actualTxn).put(']');
+        return ex;
+    }
+
+    public static TableReferenceOutOfDateException ofPartitionFormatChange(TableToken tableToken) {
+        TableReferenceOutOfDateException ex = new TableReferenceOutOfDateException();
+        ex.message.clear();
+        ex.message.put(partitionFormatPrefix).put(tableToken.getTableName()).put(']');
         return ex;
     }
 

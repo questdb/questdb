@@ -31,6 +31,7 @@ import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
@@ -48,15 +49,6 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
     @Test
     public void testRowGroupPruningSurvivesEmptyMetadataCacheWindow() throws Exception {
-        // Regression for the parquet pruning probe
-        // (AbstractPartitionFrameCursorFactory#hasParquetFormatPartitions). The table
-        // token is resolved from the synchronously loaded registry, but the metadata
-        // cache hydrates lazily (async at startup, or after a clearCache()). The probe
-        // must hydrate the table on demand before reading the cache; otherwise it sees
-        // the table as missing, returns false, and row-group pruning is silently skipped
-        // during the hydration window. Pruning is an optimization, not a correctness
-        // feature, so the regression does NOT change query results - it can only be
-        // caught by asserting on the pruning signal (rowGroupsSkipped).
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -77,17 +69,11 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.clearCache();
             }
-            // Precondition: the table really is absent from the cache. getTable() reads
-            // the map without hydrating, so it stays null until the pruning probe
-            // hydrates on demand.
             final TableToken token = engine.getTableTokenIfExists("x");
             try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                 Assert.assertNull(metadataRO.getTable(token));
             }
 
-            // The filtered query must still skip row groups: hasParquetFormatPartitions()
-            // hydrates the table on demand, so pruning is applied even though the cache
-            // started empty. Without the on-demand hydrate this assertion fails (0 skipped).
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQuery("SELECT val FROM x WHERE val = -991 ORDER BY ts DESC")
                     .noLeakCheck()
@@ -3200,6 +3186,62 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNativePlanInvalidatedAfterParquetConversion() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT x::VARCHAR, timestamp_sequence('2024-01-01', 100_000)
+                    FROM long_sequence(5000)
+                    """);
+            execute("INSERT INTO x VALUES ('5001', '2024-01-02T02:00:00.000000Z')");
+
+            try (RecordCursorFactory factory = select("SELECT val FROM x WHERE val = '-1'")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertFalse(cursor.hasNext());
+                }
+
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail("expected cached native plan to be invalidated");
+                } catch (TableReferenceOutOfDateException ignored) {
+                }
+            }
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = '-1'")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testNativePlanRemainsValidAfterNativePartitionAdded() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES ('match', '2024-01-01T00:00:00.000000Z')");
+
+            try (RecordCursorFactory factory = select("SELECT val FROM x WHERE val = 'match'")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertFalse(cursor.hasNext());
+                }
+
+                execute("INSERT INTO x VALUES ('match', '2024-01-02T00:00:00.000000Z')");
+
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNullColumnPruning() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -3627,6 +3669,66 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                             null
                             """);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testParquetPlanInvalidatedAfterNativeConversion() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT x::VARCHAR, timestamp_sequence('2024-01-01', 100_000)
+                    FROM long_sequence(5000)
+                    """);
+            execute("INSERT INTO x VALUES ('5001', '2024-01-02T02:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            try (RecordCursorFactory factory = select("SELECT val FROM x WHERE val = '-1'")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertFalse(cursor.hasNext());
+                }
+
+                execute("ALTER TABLE x CONVERT PARTITION TO NATIVE WHERE ts >= 0");
+
+                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail("expected cached parquet plan to be invalidated");
+                } catch (TableReferenceOutOfDateException ignored) {
+                }
+            }
+
+            assertQuery("SELECT val FROM x WHERE val = '-1'")
+                    .noLeakCheck()
+                    .returns("val\n");
+        });
+    }
+
+    @Test
+    public void testParquetPlanRemainsValidAfterAnotherParquetConversion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('match', '2024-01-01T00:00:00.000000Z'),
+                    ('miss', '2024-01-02T00:00:00.000000Z'),
+                    ('active', '2024-01-03T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01' WITH (bloom_filter_columns = 'val')");
+
+            try (RecordCursorFactory factory = select("SELECT val FROM x WHERE val = 'match'")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertFalse(cursor.hasNext());
+                }
+
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-02' WITH (bloom_filter_columns = 'val')");
+
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
         });
     }
 

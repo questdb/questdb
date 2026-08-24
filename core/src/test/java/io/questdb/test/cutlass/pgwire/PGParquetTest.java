@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
+import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -40,6 +41,50 @@ public class PGParquetTest extends BasePGTest {
         super.setUp();
         node1.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 13);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+    }
+
+    @Test
+    public void testNativePlanCacheRecompilesAfterParquetConversion() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "CREATE TABLE x (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY"
+            )) {
+                Assert.assertFalse(ps.execute());
+            }
+            try (PreparedStatement ps = connection.prepareStatement(
+                    """
+                            INSERT INTO x
+                            SELECT x::VARCHAR, timestamp_sequence('2024-01-01', 100_000)
+                            FROM long_sequence(5000)
+                            """
+            )) {
+                Assert.assertFalse(ps.execute());
+            }
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "INSERT INTO x VALUES ('5001', '2024-01-02T02:00:00.000000Z')"
+            )) {
+                Assert.assertFalse(ps.execute());
+            }
+
+            final String query = "SELECT val FROM x WHERE val = '-1'";
+            final String expected = "val[VARCHAR]\n";
+            try (PreparedStatement ps = connection.prepareStatement(query); ResultSet rs = ps.executeQuery()) {
+                assertResultSet(expected, sink, rs);
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')"
+            )) {
+                Assert.assertFalse(ps.execute());
+            }
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            try (PreparedStatement ps = connection.prepareStatement(query); ResultSet rs = ps.executeQuery()) {
+                sink.clear();
+                assertResultSet(expected, sink, rs);
+            }
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
     }
 
     @Test
