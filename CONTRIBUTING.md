@@ -412,7 +412,25 @@ So paste an ignore entry only for a line whose file is settled and whose value
 will not change. For a false positive that recurs, or one in a file that anyone
 is still changing, add an allowlist to `.gitleaks.toml` instead. It matches
 content rather than position, so none of the three cases above can shift the
-finding out from under it:
+finding out from under it. Match the placeholder value itself, not the line it
+sits on: the default target is the secret gitleaks extracted, so a substituted
+value stops matching and the finding comes back.
+
+```toml
+[[rules]]
+id = "generic-api-key"
+  [[rules.allowlists]]
+  description = "why this is not a secret"
+  regexes = ['''dGhlIHNhbXBsZSBub25jZQ==''']
+```
+
+That form is line- and path-independent, and it has to be updated whenever the
+placeholder legitimately changes — which is the point, because the change then
+gets a fresh decision rather than a silent pass.
+
+Reach for `regexTarget = "line"` only where there is no stable value to match —
+the rule fires on a different string each time, or the placeholder itself keeps
+changing — and know what it costs:
 
 ```toml
 [[rules]]
@@ -423,25 +441,10 @@ id = "generic-api-key"
   regexes = ['''Sec-WebSocket-Key''']
 ```
 
-`regexTarget = "line"` matches the whole line, so this trades a line number for
-a piece of content and keeps the blind spot an ignore entry has: it silences
-whatever that rule reports on any line carrying `Sec-WebSocket-Key`, a real
-credential later written there included. For a line that could later hold a real
-value, drop `regexTarget` and match the placeholder value itself instead. The
-default target is the secret gitleaks extracted, so a substituted value stops
-matching and the finding comes back:
-
-```toml
-[[rules]]
-id = "generic-api-key"
-  [[rules.allowlists]]
-  description = "why this is not a secret"
-  regexes = ['''dGhlIHNhbXBsZSBub25jZQ==''']
-```
-
-That form is line-independent too, and it has to be updated whenever the
-placeholder legitimately changes — which is the point, because the change then
-gets a fresh decision rather than a silent pass.
+That matches the whole line, so it trades a line number for a piece of content
+but keeps the blind spot an ignore entry has: it silences whatever that rule
+reports on any line carrying `Sec-WebSocket-Key`, a real credential later
+written there included.
 
 The `id` must name an existing default rule exactly. `[extend]` disables
 gitleaks' rule validation, so a misspelled id is accepted in silence: it defines
@@ -470,9 +473,11 @@ is the first thing that reads the code:
   without reading anything.
 - The action reads only the first 30 commits of a pull request, so on a longer
   branch it never scans commit 31 onwards.
-- The scan skips merge commits. Content that exists only in a merge commit —
-  a conflict resolution, typically — is never read on the pull request, and the
-  squash-merge folds it into the commit that lands on `master`.
+- The scan walks only your branch's first-parent line, and skips merge commits
+  on it. So nothing reachable only through a merge's second parent is read on
+  the pull request: not a conflict resolution written into the merge commit, and
+  not any commit on a side branch you merged into your branch. The squash-merge
+  folds all of it into the commit that lands on `master`.
 
 ## Branching
 

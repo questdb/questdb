@@ -43,9 +43,11 @@
 # squashed diff. A secret-shaped line added in one commit and removed in a later
 # one still fails the check, and editing the file does not clear it. The scan
 # skips fork pull requests, which do not receive the license secret; reads only
-# a pull request's first 30 commits; and skips merge commits, so a secret
-# introduced by a conflict resolution is not read on the pull request. The push
-# scan of master covers all three.
+# a pull request's first 30 commits; and walks only the branch's first-parent
+# line, so nothing reachable only through a merge's second parent is read on the
+# pull request -- neither a conflict resolution written into the merge commit nor
+# any commit on a side branch merged into the branch. The push scan of master
+# covers all three.
 #
 # This file previously carried four-part entries from PR #6800. They named
 # commits that never reached master, both files they pointed at have since moved
