@@ -64,7 +64,7 @@ import org.junit.Test;
  * maintains; the one such case known today, LONG256, is pinned in {@link #MUST_REJECT} instead.
  * <p>
  * Mutation-checked: reverting the PARTITION BY key check for either KEEP mode, the keep-column type
- * check, or the LONG256 rejection makes this test fail.
+ * check, the LONG256 rejection, or the compile probe KEEP LATEST runs makes this test fail.
  */
 public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
 
@@ -105,6 +105,18 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
             "KEEP LATEST PARTITION BY k",
             "KEEP LATEST ON ts PARTITION BY k",
             "KEEP LATEST PARTITION BY k, sym",
+            // key types the generated LATEST ON may not take
+            "KEEP LATEST PARTITION BY d",
+            "KEEP LATEST PARTITION BY bin",
+            "KEEP LATEST PARTITION BY arr",
+            // a key whose unquoted name is a SQL keyword, in both modes that take a key list
+            "KEEP LATEST PARTITION BY end",
+            "KEEP HIGHEST v PARTITION BY end",
+            "KEEP LATEST PARTITION BY \"end\"",
+            "KEEP HIGHEST v PARTITION BY \"end\"",
+            // a keep column of a type the bare form cannot rank
+            "KEEP HIGHEST d PARTITION BY k",
+            "KEEP HIGHEST arr PARTITION BY k",
             // scalar and window WHEN predicates
             "WHEN v < 2.0",
             "WHEN v IS NULL",
@@ -207,18 +219,22 @@ public class RowExpiryPolicyAcceptanceTest extends AbstractCairoTest {
         execute("""
                 CREATE TABLE base (
                     k SYMBOL, sym SYMBOL, v DOUBLE, i INT, l LONG, s STRING, vc VARCHAR, c CHAR,
-                    l256 LONG256, b BOOLEAN, u UUID, dt DATE, "my val" DOUBLE, ts2 TIMESTAMP, ts TIMESTAMP
+                    l256 LONG256, b BOOLEAN, u UUID, dt DATE, "my val" DOUBLE, d DECIMAL(10, 2),
+                    bin BINARY, arr DOUBLE[], "end" SYMBOL, ts2 TIMESTAMP, ts TIMESTAMP
                 ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
         execute("""
                 INSERT INTO base VALUES
                 ('A', 'X', 1.0, 1, 1, 'a', 'a', 'a', '0x01', true, '11111111-1111-1111-1111-111111111111',
-                 '2024-01-01', 1.0, '2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                 '2024-01-01', 1.0, 1.5::DECIMAL(10, 2), null, ARRAY[1.0, 2.0], 'E1',
+                 '2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
                 ('A', 'X', 3.0, 3, 3, 'c', 'c', 'c', '0x03', false, '33333333-3333-3333-3333-333333333333',
-                 '2024-01-03', 3.0, '2024-01-03T00:00:00.000000Z', '2024-01-02T00:00:00.000000Z'),
+                 '2024-01-03', 3.0, 3.5::DECIMAL(10, 2), null, ARRAY[3.0, 4.0], 'E3',
+                 '2024-01-03T00:00:00.000000Z', '2024-01-02T00:00:00.000000Z'),
                 ('B', 'Y', 2.0, 2, 2, 'b', 'b', 'b', '0x02', true, '22222222-2222-2222-2222-222222222222',
-                 '2024-01-02', 2.0, '2024-01-02T00:00:00.000000Z', '2024-01-03T00:00:00.000000Z'),
+                 '2024-01-02', 2.0, 2.5::DECIMAL(10, 2), null, ARRAY[2.0, 3.0], 'E2',
+                 '2024-01-02T00:00:00.000000Z', '2024-01-03T00:00:00.000000Z'),
                 ('C', 'Z', null, null, null, null, null, null, null, false, null, null, null, null,
-                 '2024-01-04T00:00:00.000000Z')""");
+                 null, null, null, null, '2024-01-04T00:00:00.000000Z')""");
         drainWalAndMatViewQueues();
     }
 

@@ -6746,20 +6746,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     .$safe(createTableOp.getTableName()).I$();
         }
         final ExpiryValidationResult validationResult;
-        if (RowExpiryUtil.isKeepLatest(predicate)) {
-            validateKeepLatestColumns(selectMetadata, predicate, pos);
-            validationResult = ExpiryValidationResult.MONOTONIC;
-        } else if (RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate)) {
-            rejectKeepColumnCollision(selectMetadata, pos);
-            if (RowExpiryUtil.isKeepBy(predicate)) {
-                validateKeepByColumn(selectMetadata, predicate, pos);
-            }
-            // Validate by compiling the projection-CASE keep query against the view's defining SELECT (the
-            // view does not exist yet); this validates the window predicate, its columns and types.
-            validateWindowPolicy(executionContext, "(" + createTableOp.getSelectText() + ")", tsName(selectMetadata), predicate, pos);
-            validationResult = RowExpiryUtil.isKeepBy(predicate)
-                    ? ExpiryValidationResult.MONOTONIC
-                    : ExpiryValidationResult.NON_MONOTONIC;
+        if (RowExpiryUtil.isStructuralPolicy(predicate)) {
+            // The view does not exist yet, so the probe reads its defining SELECT.
+            validationResult = validateStructuralExpiryPolicy(
+                    executionContext,
+                    "(" + createTableOp.getSelectText() + ")",
+                    selectMetadata,
+                    predicate,
+                    pos
+            );
         } else {
             validationResult = validateCreateExpiryPredicate(executionContext, createTableOp, selectMetadata);
         }
@@ -6800,19 +6795,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int position
     ) throws SqlException {
         // The mat-view target check (and the aggregating-view advisory) is handled for ALL modes by the
-        // caller (alterTableSetExpire); this only resolves the relative policy's columns.
-        if (RowExpiryUtil.isKeepLatest(predicate)) {
-            validateKeepLatestColumns(tableMetadata, predicate, position);
-            return ExpiryValidationResult.MONOTONIC;
-        }
-        rejectKeepColumnCollision(tableMetadata, position);
-        if (RowExpiryUtil.isKeepBy(predicate)) {
-            validateKeepByColumn(tableMetadata, predicate, position);
-        }
-        validateWindowPolicy(executionContext, "\"" + tableToken.getTableName() + "\"", tsName(tableMetadata), predicate, position);
-        return RowExpiryUtil.isKeepBy(predicate)
-                ? ExpiryValidationResult.MONOTONIC
-                : ExpiryValidationResult.NON_MONOTONIC;
+        // caller (alterTableSetExpire); this only resolves the relative policy against the view.
+        return validateStructuralExpiryPolicy(
+                executionContext,
+                RowExpiryUtil.quoteIdentifier(tableToken.getTableName()),
+                tableMetadata,
+                predicate,
+                position
+        );
     }
 
     /**
@@ -6875,24 +6865,69 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Validates a window/keep-by policy by compiling (and opening) the projection-CASE keep query against
-     * {@code source} (the view's defining SELECT, parenthesised, at CREATE; the view name at ALTER). Surfaces
-     * any compile/bind error (bad column, type, window syntax) as a clear "invalid EXPIRE ROWS policy".
+     * Validates a structural EXPIRE ROWS policy - KEEP LATEST, KEEP [N] HIGHEST/LOWEST, or a window WHEN -
+     * against {@code metadata}, then compiles the query a read of the policied object runs.
      * <p>
-     * {@code LIMIT 0} keeps the probe cheap: a window over the whole view would otherwise have to run at DDL
-     * time. It also means no row is evaluated, so a per-row implicit cast cannot surface here - the keep
-     * column's type is checked up front instead, by {@link #validateKeepByColumn}.
+     * Every mode ends at the same compile probe. Resolving the policy's column names answers half the
+     * question: {@link SqlParser} splices the stored policy text into a generated query, and that query is
+     * stricter than name resolution. It refuses a KEEP LATEST key of a type LATEST ON has no support for, a
+     * key whose unquoted name is a SQL keyword, a keep column with no usable {@code max()}. A policy that
+     * passes DDL and then fails to compile leaves the view unreadable for every query, {@code count()}
+     * included, until {@code DROP EXPIRE}, and reports an error naming a clause its author never wrote.
+     *
+     * @param source what the probe selects from: the view's defining SELECT, parenthesised, at CREATE (the
+     *               view does not exist yet); the quoted view name at ALTER
      */
-    private void validateWindowPolicy(
+    private ExpiryValidationResult validateStructuralExpiryPolicy(
+            SqlExecutionContext executionContext,
+            String source,
+            RecordMetadata metadata,
+            String predicate,
+            int position
+    ) throws SqlException {
+        if (RowExpiryUtil.isKeepLatest(predicate)) {
+            validateKeepLatestColumns(metadata, predicate, position);
+        } else {
+            rejectKeepColumnCollision(metadata, position);
+            if (RowExpiryUtil.isKeepBy(predicate)) {
+                validateKeepByColumn(metadata, predicate, position);
+            }
+        }
+        probeExpiryPolicyRead(executionContext, source, tsName(metadata), predicate, position);
+        return RowExpiryUtil.isWindow(predicate)
+                ? ExpiryValidationResult.NON_MONOTONIC
+                : ExpiryValidationResult.MONOTONIC;
+    }
+
+    /**
+     * Compiles (and opens) the query a read of a policied object runs for a structural policy, spelled the
+     * way {@link SqlParser} rewrites a reference to the view: a {@code LATEST ON} sub-query for KEEP LATEST,
+     * a projection-CASE keep query for KEEP HIGHEST/LOWEST and window WHEN. Any compile or bind error - an
+     * unknown column, a key type or spelling the rewrite cannot use, window syntax - surfaces as a clear
+     * "invalid EXPIRE ROWS policy".
+     * <p>
+     * {@code LIMIT 0} keeps the probe cheap: ranking a whole view, or scanning it for the latest row per
+     * key, would otherwise run at DDL time. It also means no row is evaluated, so a per-row implicit cast
+     * cannot surface here - the keep column's type is checked up front instead, by
+     * {@link #validateKeepByColumn}.
+     */
+    private void probeExpiryPolicyRead(
             SqlExecutionContext executionContext,
             String source,
             CharSequence designatedTs,
             String predicate,
             int position
     ) throws SqlException {
-        final String windowPred = RowExpiryUtil.windowPredicate(predicate, designatedTs);
-        final String sql = "SELECT * FROM (SELECT *, CASE WHEN (" + windowPred + ") THEN false ELSE true END "
-                + RowExpiryUtil.KEEP_COLUMN + " FROM " + source + ") WHERE " + RowExpiryUtil.KEEP_COLUMN + " LIMIT 0";
+        final String sql;
+        if (RowExpiryUtil.isKeepLatest(predicate)) {
+            sql = "SELECT * FROM (SELECT * FROM " + source + " LATEST ON "
+                    + RowExpiryUtil.quoteIdentifier(designatedTs) + " PARTITION BY "
+                    + RowExpiryUtil.keepLatestKeys(predicate) + ") LIMIT 0";
+        } else {
+            final String windowPred = RowExpiryUtil.windowPredicate(predicate, designatedTs);
+            sql = "SELECT * FROM (SELECT *, CASE WHEN (" + windowPred + ") THEN false ELSE true END "
+                    + RowExpiryUtil.KEEP_COLUMN + " FROM " + source + ") WHERE " + RowExpiryUtil.KEEP_COLUMN + " LIMIT 0";
+        }
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
                 // Open the cursor so column references and types are fully resolved.
