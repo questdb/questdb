@@ -559,6 +559,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                                 column.getAst(),
                                 queryModel,
                                 columnModel,
+                                columnName,
                                 baseTableName,
                                 baseTableMetadata,
                                 passthroughColumnNames
@@ -758,6 +759,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             @Nullable ExpressionNode columnNode,
             @Nullable IQueryModel queryModel,
             @NotNull CreateTableColumnModel columnModel,
+            @NotNull CharSequence outputColumnName,
             @NotNull CharSequence baseTableName,
             @NotNull TableMetadata baseTableMetadata,
             @NotNull ObjList<String> passthroughColumnNames
@@ -769,6 +771,13 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         if (columnIndex < 0
                 || !ColumnType.isSymbol(baseTableMetadata.getColumnType(columnIndex))
                 || !baseTableMetadata.isColumnIndexed(columnIndex)) {
+            return;
+        }
+        // One index per indexed base column, on the output column that passthroughColumnNames holds for it.
+        // A view may project the same base column more than once (SELECT k, k AS k2 ...), and the index
+        // belongs to the first of those projections. A covering list resolves its column names through the
+        // same map, so both halves of an inherited index describe one projection.
+        if (!Chars.equalsNc(outputColumnName, passthroughColumnNames.getQuick(columnIndex))) {
             return;
         }
 
@@ -786,9 +795,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         coveringColumnWriterIndices.getQuick(i)
                 );
                 if (coveringColumnIndex > -1) {
-                    final String outputColumnName = passthroughColumnNames.getQuick(coveringColumnIndex);
-                    if (outputColumnName != null) {
-                        columnModel.addCoveringColumnName(outputColumnName, columnNode.position);
+                    final String coveringOutputColumnName = passthroughColumnNames.getQuick(coveringColumnIndex);
+                    if (coveringOutputColumnName != null) {
+                        columnModel.addCoveringColumnName(coveringOutputColumnName, columnNode.position);
                     }
                 }
             }

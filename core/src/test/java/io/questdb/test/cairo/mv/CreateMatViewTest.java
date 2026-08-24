@@ -1457,6 +1457,24 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewWithIndexInheritedOncePerBaseColumn() throws Exception {
+        // A passthrough view inherits an indexed base SYMBOL column's index. When the view projects that
+        // base column more than once, the index goes to the first projection and the copies stay plain.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (k SYMBOL INDEX CAPACITY 512, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT k, k AS k2, v, ts FROM src)");
+            drainWalAndMatViewQueues();
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                assertTrue(metadata.isColumnIndexed(metadata.getColumnIndex("k")));
+                assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("k2")));
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewWithInvalidVolume() throws Exception {
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
