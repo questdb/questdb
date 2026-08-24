@@ -1898,6 +1898,54 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidatedViewDefersInsteadOfBurningItsCadence() throws Exception {
+        // A sweep that gives up without doing any work is a deferral, and a deferral retries on the
+        // one-tick backoff, capped at the view's own CLEANUP EVERY. An invalid view is one such state: it
+        // refreshes again once its base is back, and reclaims from the next retry.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(JAN_10);
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                    ('C', 3.0, '2024-01-03T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("""
+                    CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)
+                    EXPIRE ROWS WHEN ts < '2024-01-02T00:00:00.000000Z' CLEANUP EVERY 1h""");
+            drainWalAndMatViewQueues();
+            engine.getMetadataCache().hydrateAllTables();
+
+            final MatViewState state = engine.getMatViewStateStore().getViewState(engine.verifyTableName("mv"));
+            Assert.assertNotNull("mat view must have a refresh state", state);
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                state.markAsInvalid("test");
+                try {
+                    Assert.assertFalse("the sweep must skip an invalid view", job.runNow());
+                } finally {
+                    state.markAsValid();
+                }
+                assertQuery("SELECT count() p FROM table_partitions('mv')")
+                        .noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
+
+                // Inside the one-tick retry gap: the view is valid again, but it is not time yet.
+                setCurrentMicros(JAN_10 + 999_999L);
+                Assert.assertFalse(job.runNow());
+                assertQuery("SELECT count() p FROM table_partitions('mv')")
+                        .noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
+
+                // One global tick later, and 59 minutes before the next CLEANUP EVERY would come round.
+                setCurrentMicros(JAN_10 + 1_000_000L);
+                Assert.assertTrue("a skipped sweep must retry on the backoff, not a full cadence", job.runNow());
+            }
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() p FROM table_partitions('mv')")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
+        });
+    }
+
+    @Test
     public void testRepeatedCleanupFailuresBackOffExponentially() throws Exception {
         // A persistently failing cleanup must not re-run its full sweep on every 1-second global
         // tick: each failure doubles the per-table retry gap (1s, 2s, 4s, ... capped at 10 minutes),

@@ -217,7 +217,13 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         final MatViewState viewState = engine.getMatViewStateStore().getViewState(tableToken);
         if (viewState != null) {
             if (viewState.isDropped() || viewState.isPendingInvalidation() || viewState.isInvalid()) {
-                return false; // view being torn down / not in a refreshable state; skip
+                // The view is being torn down, or is not in a refreshable state. Two of the three states
+                // pass on their own - an invalidated view refreshes again once its base is back, a pending
+                // invalidation resolves within a refresh cycle - so this counts as a deferral, like the
+                // busy-lock branch below, and the sweep retries on the backoff. A deferral's retry gap is
+                // capped at the view's own CLEANUP EVERY.
+                isLastCleanupDeferred = true;
+                return false;
             }
             if (!viewState.tryLock()) {
                 isLastCleanupDeferred = true;
