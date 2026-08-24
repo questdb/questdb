@@ -344,11 +344,43 @@ row count written - the post-dedup `mergeRows`, not the pre-dedup ceiling, where
 every branch that copies nothing (JOIN, MAKE-PLAIN, KEEP in `executeCompositePlan`, DROP) correctly has
 no such call. No missing or double-counted increment found - the bench's numbers can be trusted.
 
-**Open question: compaction shows no measurable effect in any of the five scenarios**, at any of the four
-settings the ladder sweeps (off, on, on+hot-cooldown, max.pieces down to 10) - `amp` and `dead%` come out
-bit-for-bit identical within each scenario regardless. Not yet root-caused; could be the bench's short
-virtual runtime never giving `runCompaction`'s cooldown/age rules real purchase, or a genuine gap in how
-compaction is wired into this ingestion pattern.
+**Compaction showed no measurable effect at first - root cause was a test-harness bug, not a compaction
+defect.** `Overrides.setProperty` (`core/src/test/java/io/questdb/test/cairo/Overrides.java`) kept a
+single shared `changed` flag, overwritten rather than accumulated on every call:
+`changed = !Chars.equalsNc(value, existing)`. `applyCompactionSettings()` calls
+`setProperty(MAX_PIECES, ...)` then `setProperty(COOLDOWN, ...)` in that order; across the `max.pieces`
+sweep, cooldown stays `"0"` unchanged the whole time, so its call is always a same-value no-op that runs
+LAST and overwrites `changed` back to `false` - silently discarding the real `MAX_PIECES` change the
+call just before it made. `Overrides.getConfiguration` only rebuilds the live `CairoConfiguration` when
+`changed` is `true`, so `cairo.partition.compaction.max.pieces` stayed stuck at whatever it was the last
+time BOTH calls in one `applyCompactionSettings()` invocation happened to register a real change (1000,
+then later `Integer.MAX_VALUE`) - the 50/20/10 sweep values were computed and matched against
+thresholds on paper (traced with temporary logging in `wouldBreachCompactionThresholds` and
+`shouldAssembleFreshPartitionVersion`) but never actually reached the running engine. Confirmed directly:
+one folder's piece count grew to 617 identically whether `max.pieces` was 1000, 50, 20 or 10.
+
+Fixed by accumulating instead of overwriting: `changed = changed || !Chars.equalsNc(value, existing)`
+(and the same for the property-removal branch). This is a general correctness fix to shared test
+infrastructure - any test that calls `setProperty` more than once per "batch" before the config is next
+read, where a later call happens to be a same-value no-op, was silently losing an earlier real change.
+Verified against `O3CompositePartitionTest`, `O3PartitionPreSplitTest`, `O3PartitionCompactionTest` (71
+tests, the same 2 pre-existing failures as always, 0 regressions).
+
+With the fix, `processCompositePartition`'s proactive rewrite-on-breach
+(`TableWriter.wouldBreachCompactionThresholds` / `O3PartitionJob.assembleFreshPartitionVersion`, called
+from inside every composite-partition commit, not from `housekeep`'s separate `runCompaction`) works
+exactly as designed: piece count stays bounded near the configured cap instead of growing unbounded, and
+compaction shows the real trade-off its own code comments always described - copying to reclaim dead
+space costs additional physical writes, so amp rises sharply as the cap tightens while dead% collapses
+toward 0:
+
+| scenario | baseline (no cap) | pieces≤50 | pieces≤20 | pieces≤10 |
+|---|---|---|---|---|
+| random-order | 2.2 / 26.7% | 8.0 / 4.3% | 16.8 / 3.6% | 41.7 / 0.6% |
+| catch-up | 1.2 / 5.3% | 5.9 / 2.4% | 13.2 / 2.4% | 24.3 / 0.0% |
+| slightly-out-of-order | 1.7 / 17.2% | 4.8 / 2.1% | 9.1 / 1.0% | 16.9 / 0.5% |
+| in-order | 1.0 / 0.0% | 1.0 / 0.0% | 1.0 / 0.0% | 1.0 / 0.0% |
+| multi-writer | 1.2 / 5.6% | 8.4 / 3.0% | 21.0 / 0.0% | 41.7 / ~0.0% |
 
 ## Working notes
 

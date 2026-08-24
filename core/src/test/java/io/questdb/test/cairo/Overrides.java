@@ -179,9 +179,9 @@ public class Overrides {
                 }
             }
             properties.setProperty(propertyPath, value);
-            changed = !Chars.equalsNc(value, existing);
+            changed = changed || !Chars.equalsNc(value, existing);
         } else {
-            changed = properties.remove(propertyPath) != null;
+            changed = changed || properties.remove(propertyPath) != null;
         }
     }
 
