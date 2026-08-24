@@ -120,6 +120,109 @@ public class O3CompositeMergeStrategyTest {
     }
 
     @Test
+    public void testAppendExtendsTheTailPieceOnATieWhenCommitCannotDedup() {
+        // Every incoming row rounds to the tail piece's own tsHi - the shape a writer producing many rows
+        // per second, one commit per second, leaves behind. Outside dedup that tie needs no comparison, so
+        // it is left for APPEND instead of forcing a MERGE that would rewrite the whole piece to reorder
+        // nothing.
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 50);
+        withTimestamps(new long[]{199, 199, 199}, addr -> {
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 2, 0, 50, false);
+            Assert.assertEquals(0, plan.appendActionIndex);
+            Assert.assertEquals(1, plan.actions.size());
+            Assert.assertEquals("APPEND(p=0, o3=[0,2])", plan.actions.getQuick(0).toString());
+        });
+    }
+
+    @Test
+    public void testTailTieStillMergesUnderDedup() {
+        // Same shape as testAppendExtendsTheTailPieceOnATieWhenCommitCannotDedup, but this commit can
+        // collide with an existing row and needs the key comparison MERGE runs - so the tie is still
+        // claimed and the piece still rewrites, exactly as before this optimisation existed.
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 50);
+        withTimestamps(new long[]{199, 199, 199}, addr -> {
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 2, 0, 50, true);
+            Assert.assertEquals(-1, plan.appendActionIndex);
+            Assert.assertEquals(1, plan.actions.size());
+            Assert.assertEquals("MERGE(p=0, o3=[0,2])", plan.actions.getQuick(0).toString());
+        });
+    }
+
+    @Test
+    public void testAppendStillFiresOnATieToASinglePointTailPiece() {
+        // The tail piece may already be a single point in time - built by an earlier tie of its own.
+        // Growing the ONE piece a table ever has at its tail can never found a competing piece at that
+        // same instant, so the tsLo == tsHi exception below does not apply to the tail: its ties are
+        // always spared and left for APPEND.
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 199, 199, 0, 5);
+        withTimestamps(new long[]{199, 199}, addr -> {
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 1, 0, 5, false);
+            Assert.assertEquals(0, plan.appendActionIndex);
+            Assert.assertEquals(1, plan.actions.size());
+            Assert.assertEquals("APPEND(p=0, o3=[0,1])", plan.actions.getQuick(0).toString());
+        });
+    }
+
+    @Test
+    public void testTieOnAnEarlierPieceFoundsItsOwnPieceInsteadOfMerging() {
+        // The batch ties an EARLIER, non-degenerate piece's tsHi rather than the tail's. That piece owns
+        // none of the files' tail, so there is nowhere to append to - but outside dedup the tie still
+        // needs no comparison, so it is spared from the piece's own claim and left to found its own tiny
+        // piece in the gap instead of a full rewrite of the earlier piece.
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 50);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 400, 499, 0, 60);
+        withTimestamps(new long[]{199}, addr -> {
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 0, 0, NO_APPEND, false);
+            Assert.assertEquals(-1, plan.appendActionIndex);
+            Assert.assertEquals(3, plan.actions.size());
+            Assert.assertEquals("KEEP(p=0)", plan.actions.getQuick(0).toString());
+            Assert.assertEquals("NEW_PIECE(o3=[0,0])", plan.actions.getQuick(1).toString());
+            Assert.assertEquals("KEEP(p=1)", plan.actions.getQuick(2).toString());
+        });
+    }
+
+    @Test
+    public void testRepeatedTieOnAnEarlierPieceMergesIntoTheSinglePointPieceInsteadOfFoundingAnother() {
+        // A second commit ties the SAME earlier instant a first one already carved into its own
+        // single-point piece. Sparing it again would found a second piece at that exact instant, which
+        // nothing distinguishes from the first - so a single-point piece keeps claiming its own ties and
+        // grows in place via an ordinary, cheap MERGE instead of ever letting two pieces share a timestamp.
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 50);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 199, 199, 1000, 1);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 400, 499, 0, 60);
+        withTimestamps(new long[]{199}, addr -> {
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 0, 0, NO_APPEND, false);
+            Assert.assertEquals(-1, plan.appendActionIndex);
+            Assert.assertEquals(3, plan.actions.size());
+            Assert.assertEquals("KEEP(p=0)", plan.actions.getQuick(0).toString());
+            Assert.assertEquals("MERGE(p=1, o3=[0,0])", plan.actions.getQuick(1).toString());
+            Assert.assertEquals("KEEP(p=2)", plan.actions.getQuick(2).toString());
+        });
+    }
+
+    @Test
+    public void testTieOnAnEarlierPieceStillMergesUnderDedup() {
+        // Same shape as testTieOnAnEarlierPieceFoundsItsOwnPieceInsteadOfMerging, but this commit can
+        // collide with an existing row and needs the key comparison MERGE runs - so the tie is still
+        // claimed by the piece it touches, exactly as before this optimisation existed.
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 100, 199, 0, 50);
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 400, 499, 0, 60);
+        withTimestamps(new long[]{199}, addr -> {
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 0, 0, NO_APPEND, true);
+            Assert.assertEquals(-1, plan.appendActionIndex);
+            Assert.assertEquals(2, plan.actions.size());
+            Assert.assertEquals("MERGE(p=0, o3=[0,0])", plan.actions.getQuick(0).toString());
+            Assert.assertEquals("KEEP(p=1)", plan.actions.getQuick(1).toString());
+        });
+    }
+
+    @Test
     public void testAppendExtendsTheTailPieceAroundAHeadGapToo() {
         // The worked example: a batch with rows both below the floor and above the tail in the SAME commit.
         // The head rows still found their own piece - APPEND only ever concerns the tail - while the tail
@@ -413,7 +516,8 @@ public class O3CompositeMergeStrategyTest {
 
     /**
      * {@link O3CompositeMergeStrategy#computeActions}, with {@link #NO_APPEND} disabling the tail-extension
-     * optimisation for tests not about it.
+     * optimisation for tests not about it, and {@code commitMayDedup=true} - the conservative, pre-existing
+     * behaviour - for tests not about the dedup-free tail-tie optimisation either.
      */
     private static O3CompositeMergeStrategy.Plan computeActions(
             LongList bounds, long sortedTimestampsAddr, long srcOooLo, long srcOooHi, long smallPieceThreshold
@@ -429,8 +533,20 @@ public class O3CompositeMergeStrategyTest {
             long smallPieceThreshold,
             long physicalRows
     ) {
+        return computeActions(bounds, sortedTimestampsAddr, srcOooLo, srcOooHi, smallPieceThreshold, physicalRows, true);
+    }
+
+    private static O3CompositeMergeStrategy.Plan computeActions(
+            LongList bounds,
+            long sortedTimestampsAddr,
+            long srcOooLo,
+            long srcOooHi,
+            long smallPieceThreshold,
+            long physicalRows,
+            boolean commitMayDedup
+    ) {
         return O3CompositeMergeStrategy.computeActions(
-                bounds, sortedTimestampsAddr, srcOooLo, srcOooHi, smallPieceThreshold, physicalRows,
+                bounds, sortedTimestampsAddr, srcOooLo, srcOooHi, smallPieceThreshold, physicalRows, commitMayDedup,
                 new O3CompositeMergeStrategy.Plan()
         );
     }

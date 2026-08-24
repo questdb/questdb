@@ -53,9 +53,10 @@ import io.questdb.std.ObjList;
  *     two, or above the last. It is written at the shared files' tail as a new piece under its own
  *     {@code tsLo}. One action type covers all three, which is why the design deletes both
  *     a batch below the first piece and a batch above the last are the same action.</li>
- *     <li>{@link ActionType#APPEND} - the batch slice falls above the last piece, and that piece already
- *     owns the tail of the files and claims no O3 row of its own. Rather than found a new piece next to
- *     it, the batch is written right after it and the piece's own {@code tsHi} and {@code rowCount} grow
+ *     <li>{@link ActionType#APPEND} - the batch slice falls above the last piece, or (outside dedup) only
+ *     ties its {@code tsHi}, and that piece already owns the tail of the files and claims no O3 row of its
+ *     own. Rather than found a new piece next to it, the batch is written right after it and the piece's
+ *     own {@code tsHi} and {@code rowCount} grow
  *     to cover it - the two pieces were always going to be one contiguous run, so nothing distinguished
  *     them to begin with. At most one per plan, since only the last piece can own the tail.</li>
  * </ul>
@@ -146,6 +147,23 @@ public class O3CompositeMergeStrategy {
      *                             only to test whether the last piece owns the shared files' tail; pass a
      *                             value no piece can reach (e.g. {@link Long#MAX_VALUE}) to disable
      *                             {@link ActionType#APPEND} entirely
+     * @param commitMayDedup       whether this commit's rows can collide with an existing row and need a key
+     *                             comparison to resolve it. When {@code false}, a batch row that only TIES a
+     *                             piece's {@code tsHi} (rounds to the same tick, say the same second, as its
+     *                             last row) needs no such comparison, so it is spared from that piece's claim
+     *                             instead of forcing a {@link ActionType#MERGE} that would rewrite the piece
+     *                             to reorder nothing - EXCEPT when the piece is a single point in time
+     *                             ({@code tsLo == tsHi}): sparing it there would found a second piece at the
+     *                             exact same instant, so it stays claimed and merges, growing that one piece
+     *                             in place instead. A spared tie on the LAST piece is left for
+     *                             {@link ActionType#APPEND}, which extends it in place with no piece founded
+     *                             at all - the {@code tsLo == tsHi} exception does not apply there, since
+     *                             growing the one piece a table ever has at its tail can never produce a
+     *                             second one to collide with. A spared tie on an EARLIER piece has nowhere to
+     *                             append to; it is left unclaimed for the next piece's own gap and claim
+     *                             checks to resolve, exactly like ordinary gap data - which is what naturally
+     *                             merges a repeat tie into the single-point piece a first one already founded,
+     *                             rather than founding another next to it
      * @param plan                 output, reused across calls: {@code plan.actions} is reset and
      *                             repopulated so its {@code size()} IS the action count, and
      *                             {@code plan.appendActionIndex} is set to the {@link ActionType#APPEND}
@@ -159,6 +177,7 @@ public class O3CompositeMergeStrategy {
             long srcOooHi,
             long smallPieceThreshold,
             long physicalRows,
+            boolean commitMayDedup,
             Plan plan
     ) {
         final int pieceCount = bounds.size() / LONGS_PER_BOUND;
@@ -184,21 +203,31 @@ public class O3CompositeMergeStrategy {
                 }
             }
 
-            // Rows inside this piece's data range.
+            // Rows inside this piece's data range. A tie at this piece's own tsHi is spared from the claim
+            // under commitMayDedup=false, UNLESS the piece is a single point in time (tsLo == tsHi): sparing
+            // it there would found a second piece at that same exact instant, which nothing distinguishes
+            // from the first - so a single-point piece keeps claiming its own ties and merges them in place
+            // instead. The last piece is exempt from that exception: growing the one piece a table ever has
+            // at its tail can never produce a second one to collide with, so its ties are always spared and
+            // left for the APPEND check below, single point or not.
+            final boolean isLastPiece = p == pieceCount - 1;
+            final boolean spareTie = !commitMayDedup && tsHi != Numbers.LONG_NULL && (isLastPiece || tsLo < tsHi);
             final long claimHi = tsHi == Numbers.LONG_NULL
                     ? (p + 1 < pieceCount ? findLastBelow(sortedTimestampsAddr, o3, srcOooHi, getTsLo(bounds, p + 1)) : srcOooHi)
-                    : lastAtOrBelow(sortedTimestampsAddr, o3, srcOooHi, tsHi);
+                    : lastAtOrBelow(sortedTimestampsAddr, o3, srcOooHi, spareTie ? tsHi - 1 : tsHi);
             if (claimHi >= o3) {
                 actionAt(plan.actions, actionCount++).setMerge(p, o3, claimHi);
                 o3 = claimHi + 1;
-            } else if (p == pieceCount - 1
+            } else if (isLastPiece
                     && o3 <= srcOooHi
                     && getRowOffset(bounds, p) + getRowCount(bounds, p) == physicalRows) {
-                // This piece claims none of the batch itself - tsHi's use of lastAtOrBelow already
-                // guarantees every remaining O3 row sits strictly above it, which is also what keeps this
-                // safe under DEDUP: duplicates need equal timestamps, and there are none - and it owns the
-                // shared files' tail, so everything left in the batch extends it in place instead of
-                // founding a new piece next to it.
+                // This piece claims none of the batch itself: under commitMayDedup, tsHi's use of
+                // lastAtOrBelow already guarantees every remaining O3 row sits strictly above it, which is
+                // what keeps this safe under DEDUP - duplicates need equal timestamps, and there are none.
+                // Under !commitMayDedup, spareTie let a tie at tsHi through unclaimed too, safe because
+                // nothing needs deduplicating against it - either way it owns the shared files' tail, so
+                // everything left in the batch extends it in place instead of founding a new piece next to
+                // it.
                 plan.appendActionIndex = actionCount;
                 actionAt(plan.actions, actionCount++).setAppend(p, o3, srcOooHi);
                 o3 = srcOooHi + 1;

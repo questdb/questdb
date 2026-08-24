@@ -299,6 +299,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 srcOooHi,
                 minPieceRows,
                 physicalRows,
+                tableWriter.isCommitDedupMode(),
                 plan
         );
     }

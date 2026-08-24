@@ -253,6 +253,239 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
     }
 
     /**
+     * A writer that rounds its timestamps to the second (or the minute) sends many rows sharing one
+     * timestamp, one commit at a time. Every commit after the first TIES the partition's own {@code tsHi}
+     * instead of landing strictly above it, and with no DEDUP key on the table there is nothing to compare
+     * a tie against - so each commit should extend the one existing piece in place, exactly as a strictly
+     * chronological batch already does in {@link #testChronologicalAppendRewritesNothing}. Regression test
+     * for the composite planner instead forcing every such commit through a MERGE, rewriting the whole
+     * partition again for each one: seconds' worth of ties compounded into a piece count and a dead-row
+     * count that both grew without bound.
+     */
+    @Test
+    public void testChronologicalTiesAppendInsteadOfMerging() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // A later day, so 2020-02-03 is never the active partition and every insert into it - even the
+            // very first one - goes through the composite dispatch, exactly like the rows chronologically
+            // arrive from a real writer rather than through the plain in-order append fast path.
+            execute("INSERT INTO x SELECT x::INT + 90000, timestamp_sequence('2020-02-06', 60*1000000L)" +
+                    " ts FROM long_sequence(1)");
+            drainWalQueue();
+
+            // Three seconds, three separate commits each, five rows a commit: within a second every commit
+            // TIES the one before it; across seconds each commit still lands strictly above the last.
+            int i = 0;
+            for (int second = 0; second < 3; second++) {
+                for (int commit = 0; commit < 3; commit++) {
+                    execute("INSERT INTO x SELECT " + i + " + x::INT," +
+                            " timestamp_sequence('2020-02-03T10:00:0" + second + "', 0) ts FROM long_sequence(5)");
+                    i += 5;
+                    drainWalQueue();
+                }
+            }
+            final int totalRows = i;
+
+            final TableToken xt = engine.verifyTableName("x");
+            Assert.assertFalse("the composite write suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertFalse("same-second commits with no dedup key should never leave the partition composite",
+                        reader.getTxFile().isPartitionComposite(0));
+                Assert.assertEquals(1, reader.getGeometry().getPieceCount(0));
+                // Every commit tiled onto the one piece, so there is no dead space: every file row is live.
+                Assert.assertEquals(totalRows, reader.getTxFile().getPartitionSize(0));
+                Assert.assertEquals(totalRows, reader.getPartitionPhysicalRowCount(0));
+            }
+
+            assertQuery("SELECT count() c FROM x WHERE ts < '2020-02-04'")
+                    .noRandomAccess().expectSize().returns("c\n" + totalRows + "\n");
+            assertQuery("SELECT count() c FROM x WHERE ts = '2020-02-03T10:00:00.000000'")
+                    .noRandomAccess().expectSize().returns("c\n15\n");
+            assertQuery("SELECT count() c FROM x WHERE ts = '2020-02-03T10:00:02.000000'")
+                    .noRandomAccess().expectSize().returns("c\n15\n");
+        });
+    }
+
+    /**
+     * The same tie-avoids-merge idea as {@link #testChronologicalTiesAppendInsteadOfMerging}, but the tie
+     * lands on an EARLIER piece instead of the tail's. That piece owns none of the files' tail, so there is
+     * nowhere to append to in place - but outside dedup the tie still needs no key comparison, so it should
+     * be spared from the piece's own claim rather than force a full rewrite of it. A first tie founds its
+     * own single-point piece in the gap; a second tie at the very same instant must NOT found a second one
+     * at that instant too - it merges into the one the first tie already founded.
+     */
+    @Test
+    public void testTieOnAnEarlierPieceFoundsThenMergesASinglePointPiece() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // A later day, so 2020-02-03 is never the active partition and every insert into it goes
+            // through the composite dispatch.
+            execute("INSERT INTO x SELECT x::INT + 90000, timestamp_sequence('2020-02-06', 60*1000000L)" +
+                    " ts FROM long_sequence(1)");
+            drainWalQueue();
+
+            // A wide chronological base, followed by a narrow backfill landing in the middle: this carves
+            // the day into a KEPT head piece, a MERGED piece where the backfill landed, and a KEPT tail
+            // piece - the same shape testBackdatedInsertMergesOnlyWhereItLands builds and verifies in full.
+            execute("INSERT INTO x SELECT x::INT, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                    " FROM long_sequence(5760)");
+            drainWalQueue();
+            execute("INSERT INTO x SELECT x::INT + 70000, timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts" +
+                    " FROM long_sequence(200)");
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            final long tieTs;
+            final int pieceCountBefore;
+            final long deadRowsBefore;
+            try (TableReader reader = engine.getReader(xt)) {
+                final PartitionGeometry geometry = reader.getGeometry();
+                pieceCountBefore = geometry.getPieceCount(0);
+                Assert.assertTrue("the backfill should have cut the day into pieces", pieceCountBefore > 1);
+                // The KEPT head piece: untouched by the backfill, so it should span real hours, not a
+                // single instant.
+                final long headTsLo = geometry.getPieceTimestampLo(0, 0);
+                final long headTsHi = geometry.getPieceTimestampHi(0, 0);
+                Assert.assertTrue("the head piece should span a real range, not a single instant", headTsLo < headTsHi);
+                tieTs = headTsHi;
+                deadRowsBefore = reader.getPartitionPhysicalRowCount(0) - reader.getTxFile().getPartitionSize(0);
+            }
+
+            // A commit that ties the HEAD piece's own tsHi.
+            execute("INSERT INTO x SELECT (-1)::INT, " + tieTs + "::TIMESTAMP FROM long_sequence(1)");
+            drainWalQueue();
+
+            final int pieceCountAfterFirstTie;
+            try (TableReader reader = engine.getReader(xt)) {
+                final PartitionGeometry geometry = reader.getGeometry();
+                pieceCountAfterFirstTie = geometry.getPieceCount(0);
+                Assert.assertEquals("the tie should found exactly one new piece",
+                        pieceCountBefore + 1, pieceCountAfterFirstTie);
+                final long deadRowsAfter = reader.getPartitionPhysicalRowCount(0) - reader.getTxFile().getPartitionSize(0);
+                Assert.assertEquals("the head piece should not have been rewritten", deadRowsBefore, deadRowsAfter);
+            }
+
+            // A second commit ties the SAME instant again.
+            execute("INSERT INTO x SELECT (-2)::INT, " + tieTs + "::TIMESTAMP FROM long_sequence(1)");
+            drainWalQueue();
+
+            try (TableReader reader = engine.getReader(xt)) {
+                final PartitionGeometry geometry = reader.getGeometry();
+                Assert.assertEquals(
+                        "a repeat tie should merge into the existing single-point piece, not found another",
+                        pieceCountAfterFirstTie, geometry.getPieceCount(0));
+                final long deadRowsAfter = reader.getPartitionPhysicalRowCount(0) - reader.getTxFile().getPartitionSize(0);
+                // The single-point piece held exactly the first tie's one row; merging the second tie into
+                // it makes that one row dead and nothing else - the head piece is still untouched.
+                Assert.assertEquals(deadRowsBefore + 1, deadRowsAfter);
+
+                assertNoPieceSharesBoundsWithAnother(geometry, 0);
+            }
+
+            assertQuery("SELECT count() c FROM x WHERE ts = " + tieTs + "::TIMESTAMP")
+                    .noRandomAccess().expectSize().returns("c\n3\n");
+        });
+    }
+
+    /**
+     * FAILING TEST - reproduces a correctness gap left by the tie-avoids-merge optimisation
+     * ({@link #testTieOnAnEarlierPieceFoundsThenMergesASinglePointPiece}): a directory can end up with two
+     * TOUCHING pieces - a real piece ending at {@code V} and a single-point piece {@code [V,V]} right after
+     * it - built while DEDUP was off. Turning DEDUP on afterwards and writing a row at {@code V} does not
+     * see both of them.
+     * <p>
+     * {@link io.questdb.cairo.O3CompositeMergeStrategy#computeActions} walks pieces in order and gives each
+     * O3 row to the FIRST piece whose range claims it. A row at {@code V} is claimed by the earlier, real
+     * piece (its own {@code tsHi}), which is placed at the tail as one {@code MERGE} action. That merge's
+     * dedup pass ({@code O3PartitionJob#executeCompositePlan}'s {@code MERGE} case, {@code getDedupRows})
+     * compares the incoming row only against THAT piece's own {@code [pieceLo, pieceHi)} rows - it never
+     * reads the second, single-point piece at the very same instant, because {@code computeActions} already
+     * advanced its O3 cursor past every row at {@code V} before that piece's own turn in the loop. The
+     * single-point piece is left an untouched {@code KEEP}, its row never compared to the incoming one.
+     * <p>
+     * With a DEDUP key of {@code (ts)} alone, that means the table can hold two DIFFERENT rows at the SAME
+     * timestamp after a write that was supposed to keep at most one - the single-point piece's row survives
+     * as an invisible duplicate no later dedup commit will ever detect either, since every future commit at
+     * {@code V} will keep resolving to the SAME earlier piece first, never the sibling sitting right behind
+     * it.
+     */
+    @Test
+    public void testDedupMissesADuplicateInATouchingSinglePointPiece() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // A later day, so 2020-02-03 is never the active partition and every insert into it goes
+            // through the composite dispatch.
+            execute("INSERT INTO x SELECT x::INT + 90000, timestamp_sequence('2020-02-06', 60*1000000L)" +
+                    " ts FROM long_sequence(1)");
+            drainWalQueue();
+
+            // A wide chronological base, followed by a narrow backfill landing in the middle: this carves
+            // the day into a KEPT head piece, a MERGED piece where the backfill landed, and a KEPT tail
+            // piece - the same shape testBackdatedInsertMergesOnlyWhereItLands builds and verifies in full.
+            execute("INSERT INTO x SELECT x::INT, timestamp_sequence('2020-02-03', 15*1000000L) ts" +
+                    " FROM long_sequence(5760)");
+            drainWalQueue();
+            execute("INSERT INTO x SELECT x::INT + 70000, timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) ts" +
+                    " FROM long_sequence(200)");
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            final long tieTs;
+            try (TableReader reader = engine.getReader(xt)) {
+                final PartitionGeometry geometry = reader.getGeometry();
+                Assert.assertTrue("the backfill should have cut the day into pieces: " + describePieces(reader, 0),
+                        geometry.getPieceCount(0) > 1);
+                final long headTsLo = geometry.getPieceTimestampLo(0, 0);
+                final long headTsHi = geometry.getPieceTimestampHi(0, 0);
+                Assert.assertTrue("the head piece should span a real range, not a single instant: " + describePieces(reader, 0),
+                        headTsLo < headTsHi);
+                tieTs = headTsHi;
+            }
+
+            // Still no DEDUP key: this tie is spared from the head piece's claim (see
+            // testTieOnAnEarlierPieceFoundsThenMergesASinglePointPiece) and founds a TOUCHING single-point
+            // piece [tieTs, tieTs] right after the head piece - both now hold one row apiece at tieTs.
+            execute("INSERT INTO x SELECT (-1)::INT, " + tieTs + "::TIMESTAMP FROM long_sequence(1)");
+            drainWalQueue();
+
+            assertQuery("SELECT count() c FROM x WHERE ts = " + tieTs + "::TIMESTAMP")
+                    .noRandomAccess().expectSize().returns("c\n2\n");
+
+            // Turn DEDUP on: from here on, at most one row per ts should ever survive a commit that
+            // touches an existing one.
+            execute("ALTER TABLE x DEDUP ENABLE UPSERT KEYS(ts)");
+            drainWalQueue();
+
+            // A dedup commit landing exactly on tieTs. Under a correct implementation this should be seen
+            // as a duplicate of BOTH existing rows at tieTs (the head piece's own last row and the
+            // single-point piece's row) and replace them, leaving exactly one row at tieTs.
+            execute("INSERT INTO x SELECT (-2)::INT, " + tieTs + "::TIMESTAMP FROM long_sequence(1)");
+            drainWalQueue();
+
+            final TableToken xtAfterDedup = engine.verifyTableName("x");
+            Assert.assertFalse("the dedup commit suspended the table",
+                    engine.getTableSequencerAPI().isSuspended(xtAfterDedup));
+
+            // FAILS today: a ts-only DEDUP key promises at most one row per timestamp, but the table ends
+            // up with two - the new row (-2) and the single-point piece's stale, never-compared row (-1).
+            assertQuery("SELECT count() c FROM x WHERE ts = " + tieTs + "::TIMESTAMP")
+                    .noRandomAccess().expectSize().returns("c\n1\n");
+            assertQuery("SELECT i FROM x WHERE ts = " + tieTs + "::TIMESTAMP")
+                    .returns("i\n-2\n");
+        });
+    }
+
+    /**
      * A day is built into a composite partition, the table is TRUNCATEd, and the same day is built into a
      * composite partition again from nothing - each round's backdated batches submitted without a drain
      * between them, so {@code ApplyWal2TableJob} replays them as ONE bundled WAL transaction block, letting
@@ -1238,5 +1471,43 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
                 "SELECT * FROM x" + where,
                 LOG
         );
+    }
+
+    /**
+     * No two pieces of one directory should ever describe the exact same instant - that would make them
+     * indistinguishable to a caller resolving a timestamp to a piece, and defeats the point of sparing a
+     * tie in the first place: it exists so a REPEAT tie merges into the piece the first one founded rather
+     * than founding a competing one right next to it.
+     */
+    private static String describePieces(TableReader reader, int partitionIndex) {
+        final PartitionGeometry geometry = reader.getGeometry();
+        final StringBuilder sink = new StringBuilder("pieces=[");
+        for (int p = 0, n = geometry.getPieceCount(partitionIndex); p < n; p++) {
+            if (p > 0) {
+                sink.append(", ");
+            }
+            sink.append(p).append(":[")
+                    .append(geometry.getPieceTimestampLo(partitionIndex, p)).append("..")
+                    .append(geometry.getPieceTimestampHi(partitionIndex, p)).append("]@")
+                    .append(geometry.getPieceRowOffset(partitionIndex, p)).append('+')
+                    .append(geometry.getPieceRowCount(partitionIndex, p));
+        }
+        return sink.append("] E=").append(geometry.getE(partitionIndex)).toString();
+    }
+
+    private static void assertNoPieceSharesBoundsWithAnother(PartitionGeometry geometry, int partitionIndex) {
+        final int pieceCount = geometry.getPieceCount(partitionIndex);
+        for (int a = 0; a < pieceCount; a++) {
+            final long aLo = geometry.getPieceTimestampLo(partitionIndex, a);
+            final long aHi = geometry.getPieceTimestampHi(partitionIndex, a);
+            for (int b = a + 1; b < pieceCount; b++) {
+                final long bLo = geometry.getPieceTimestampLo(partitionIndex, b);
+                final long bHi = geometry.getPieceTimestampHi(partitionIndex, b);
+                Assert.assertFalse(
+                        "pieces " + a + " and " + b + " share identical bounds [" + aLo + "," + aHi + "]",
+                        aLo == bLo && aHi == bHi
+                );
+            }
+        }
     }
 }
