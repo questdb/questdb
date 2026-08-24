@@ -21211,6 +21211,40 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testShowCreateLiveViewCachedFactoryAfterViewRecreated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            drainWalQueue();
+
+            try (RecordCursorFactory factory = select("SHOW CREATE LIVE VIEW lv")) {
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .returns("ddl\n" +
+                                "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY START FROM NOW AS (\n" +
+                                "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base\n" +
+                                ");\n");
+
+                execute("DROP LIVE VIEW lv");
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 2s START FROM NOW AS " +
+                        "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+                drainWalQueue();
+
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .returns("ddl\n" +
+                                "CREATE LIVE VIEW 'lv' FLUSH EVERY 2s IN MEMORY 2s PARTITION BY DAY START FROM NOW AS (\n" +
+                                "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base\n" +
+                                ");\n");
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRejectExplicitPartitionByNone() throws Exception {
         // Regression: the parser sentinel for "PARTITION BY omitted" used to be
         // PartitionBy.NONE — the same value the user-facing grammar produces for
