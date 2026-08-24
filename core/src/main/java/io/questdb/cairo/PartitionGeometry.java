@@ -113,6 +113,7 @@ public class PartitionGeometry implements Closeable, Mutable {
     private int pendingRec = NO_PARTITION;
     private FilesFacade ff;
     private PartitionGeometryFile geometryFile;
+    private int memoryTag;
     private int partitionBy;
     /**
      * Longs of {@link #pieces} no resolved directory points at any more. A directory update writes its
@@ -331,12 +332,18 @@ public class PartitionGeometry implements Closeable, Mutable {
                 || pieceLong(res, 0, PIECE_ROW_OFFSET) > 0;
     }
 
-    public PartitionGeometry of(FilesFacade ff, TxReader txReader, String tableRoot, int timestampType, int partitionBy) {
+    /**
+     * {@code memoryTag} should name the caller's own subsystem - {@code NATIVE_TABLE_READER} for a
+     * {@link TableReader}, {@code NATIVE_TABLE_WRITER} for a {@link TxWriter}, {@code NATIVE_O3} for a
+     * job-scoped consumer - so the scratch buffer this resolves into is attributed to whoever holds it.
+     */
+    public PartitionGeometry of(FilesFacade ff, TxReader txReader, String tableRoot, int timestampType, int partitionBy, int memoryTag) {
         this.ff = ff;
         this.txReader = txReader;
         this.tableRoot = tableRoot;
         this.timestampType = timestampType;
         this.partitionBy = partitionBy;
+        this.memoryTag = memoryTag;
         discard();
         return this;
     }
@@ -438,7 +445,7 @@ public class PartitionGeometry implements Closeable, Mutable {
         final int slot = findResolved(partitionTimestamp, nameTxn);
         assert slot > -1 : "publish of an unresolved directory";
         if (geometryFile == null) {
-            geometryFile = new PartitionGeometryFile();
+            geometryFile = new PartitionGeometryFile(memoryTag);
         }
         final int count = (int) resolved.getQuick(slot + RES_PIECE_COUNT);
         final int lo = (int) resolved.getQuick(slot + RES_PIECE_LO);
@@ -591,7 +598,7 @@ public class PartitionGeometry implements Closeable, Mutable {
 
     private int readInto(int slot, long partitionTimestamp, long nameTxn, long ref) {
         if (geometryFile == null) {
-            geometryFile = new PartitionGeometryFile();
+            geometryFile = new PartitionGeometryFile(memoryTag);
         }
         final Path path = Path.getThreadLocal(tableRoot);
         TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn);

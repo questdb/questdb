@@ -343,7 +343,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 txReader,
                 pathToTable.toString(),
                 tableWriter.getMetadata().getTimestampType(),
-                tableWriter.getPartitionBy()
+                tableWriter.getPartitionBy(),
+                MemoryTag.NATIVE_O3
         );
 
         // A replace-range commit's own last partition is excluded: it is the one place merge-append still

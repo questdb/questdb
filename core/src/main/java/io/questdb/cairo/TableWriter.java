@@ -1782,14 +1782,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
         boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
-        // Compact BEFORE squash, not after. squashPartitionForce folds classic split sibling directories
-        // together by reading each source with frameFactory.openRO(..., partitionRowCount) - live rows,
-        // assuming an ordinary, non-composite directory. A sibling that is itself composite (merge-append
-        // pieces, dead space, out-of-order rows) would be read wrong by squash too, and once squash has
-        // merged that wrong reading into the target, compacting afterward cannot recover it - the
-        // corruption is already baked into the merged directory's bytes. Compacting partitionIndex first
-        // makes it an ordinary directory before squash ever reads it.
-        compactPartitionForConversion(partitionIndex);
+        // squashSplitPartitions now compacts every composite target and source it touches before reading
+        // it (see compactPartitionToPlain), so squashPartitionForce below is safe on its own whenever it
+        // actually has siblings to fold. This call stays because that condition can fail: a logical
+        // partition with no split siblings never enters squashSplitPartitions at all, and if that one
+        // directory is itself composite, produceParquetFromNative still needs it plain before it can map
+        // each column file as one flat [0, liveRows) range from byte 0.
+        compactPartitionToPlain(partitionIndex, "parquet conversion");
         squashPartitionForce(partitionIndex);
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         int newPartitionDirLen = 0;
@@ -2464,7 +2463,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Built afresh rather than trimmed out of `path`, which a caller may be holding mid-use.
             try (Path root = new Path()) {
                 root.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                partitionGeometry = new PartitionGeometry().of(ff, txWriter, root.toString(), timestampType, partitionBy);
+                partitionGeometry = new PartitionGeometry().of(ff, txWriter, root.toString(), timestampType, partitionBy, MemoryTag.NATIVE_TABLE_WRITER);
             }
         }
         return partitionGeometry;
@@ -5342,27 +5341,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Forces a composite partition into its ordinary, single-piece-at-row-0 shape before an operation
-     * that cannot tolerate dead space or a piece starting above file row 0. CONVERT PARTITION TO PARQUET
-     * is the only caller today: {@code produceParquetFromNative} maps each column file as one flat
-     * {@code [0, liveRows)} range from byte 0, which is only correct for an ordinary partition.
+     * that cannot tolerate dead space or a piece starting above file row 0. Two callers need this today:
+     * CONVERT PARTITION TO PARQUET, because {@code produceParquetFromNative} maps each column file as one
+     * flat {@code [0, liveRows)} range from byte 0; and {@link #squashSplitPartitions(int, int, int, boolean)},
+     * because it reads and writes each target and source the same way, through
+     * {@code frameFactory.openRO}/{@code openRW} sized to {@code partitionRowCount} (live rows) starting
+     * at file row 0. Both are only correct for an ordinary partition - a composite one read that way
+     * either pulls in dead space or misses a piece a merge-append relocated to the tail.
      * <p>
      * Unlike the opportunistic pass {@link #runCompaction} runs from {@code housekeep}, this ignores every
-     * budget (row, join, time): conversion needs the partition compacted NOW, in this transaction, not
+     * budget (row, join, time): the caller needs the partition compacted NOW, in this transaction, not
      * eventually over several commits. JOIN
      * runs first and is free; REWRITE, when JOIN alone cannot finish the job, copies the partition's live
      * rows into a fresh directory - the same shape {@link #squashPartitionForce} already gives a classic
      * split partition, just for pieces instead of sibling directories. MOVE-TAIL is deliberately never
-     * allowed here: this caller needs {@code partitionIndex} ITSELF to end up plain, and MOVE-TAIL would
-     * leave a new sibling partition behind as a side effect instead - the wrong shape for a caller about
-     * to convert one specific directory to parquet.
+     * allowed here: the caller needs {@code partitionIndex} ITSELF to end up plain, and MOVE-TAIL would
+     * leave a new sibling partition behind as a side effect instead - the wrong shape when the caller is
+     * about to read or fold that one specific directory as a whole.
+     *
+     * @param reason short label folded into the exception message if compaction cannot make progress
      */
-    private void compactPartitionForConversion(int partitionIndex) {
+    private void compactPartitionToPlain(int partitionIndex, String reason) {
         final PartitionGeometry geometry = getGeometry();
         while (geometry.isComposite(partitionIndex)) {
             if (compactPhysicalPartition(partitionIndex, true, false, Long.MAX_VALUE) == COMPACTION_NONE) {
                 final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
                 throw CairoException.critical(0)
-                        .put("cannot compact composite partition ahead of parquet conversion [table=").put(tableToken.getTableName())
+                        .put("cannot compact composite partition ahead of ").put(reason)
+                        .put(" [table=").put(tableToken.getTableName())
                         .put(", partition=").put(formatPartitionForTimestamp(partitionTs, txWriter.getPartitionNameTxn(partitionIndex)))
                         .put(']');
             }
@@ -5381,15 +5387,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * fallback for everything else, copies every live row into a fresh directory and puts the old one on
      * the remove-candidate list.
      * <p>
-     * TRIM-FILES (PARTITION_COMPACTION.md Sec.5) is not implemented - see PARTITION_COMPACTION_state.md
-     * for why - so a MAKE-PLAIN'd partition's files stay at their old, now-oversized length; only REWRITE
-     * (a later pass, once this one is no longer composite and MAKE-PLAIN cannot pick it again) actually
-     * shortens anything, by copying into a fresh directory. Nothing JOIN, MOVE-TAIL or REWRITE do writes
-     * below {@code E} or shortens any file, which is why none of the three needs a reader check: new rows
-     * only ever go into a directory no committed {@code _txn} has ever named, and a directory REWRITE
-     * retires is unlinked by the ordinary purge, under its own check. MAKE-PLAIN is the one exception - it
-     * is the only one of the four that changes what a PINNED reader's own, already-resolved geometry
-     * record means, so it is the only one gated on {@link #txnScoreboard}.
+     * TRIM-FILES (PARTITION_COMPACTION.md Sec.5) folds into MAKE-PLAIN's own commit - see
+     * {@link #makePartitionPlain}'s javadoc for why physically shortening the files needs no reader wait
+     * beyond the one MAKE-PLAIN already does. Nothing JOIN, MOVE-TAIL or REWRITE do writes below
+     * {@code E} or shortens any file, which is why none of the three needs a reader check: new rows only
+     * ever go into a directory no committed {@code _txn} has ever named, and a directory REWRITE retires
+     * is unlinked by the ordinary purge, under its own check. MAKE-PLAIN is the one exception among the
+     * four that changes what a PINNED reader's own, already-resolved geometry record means, so it is the
+     * one gated on {@link #txnScoreboard}.
      *
      * @return {@link #COMPACTION_NONE}, {@link #COMPACTION_JOINED}, {@link #COMPACTION_MOVED_TAIL},
      * {@link #COMPACTION_MADE_PLAIN} or {@link #COMPACTION_REWRITTEN}
@@ -8524,9 +8529,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * {@link PartitionGeometry#getE} falls back to the live row count directly. Dropping the geometry
      * pointer - {@link #NO_GEOMETRY_REF} - and leaving {@code _txn}'s own row count untouched (it was
      * already the live count, {@code E} was the only thing composite about this shape) IS lowering
-     * {@code E} to the row count; there is no separate field to write. No bytes move and no file
-     * shortens - that is TRIM-FILES's job, not implemented in this pass (see
-     * PARTITION_COMPACTION_state.md) - so unlike TRIM-FILES this needs no SECOND reader wait of its own.
+     * {@code E} to the row count; there is no separate field to write.
+     * <p>
+     * TRIM-FILES (physically shortening every column file down to the live row count) folds into this
+     * SAME commit rather than needing a second, later reader wait of its own: a reader only ever maps a
+     * column up to the row count its own resolved view reports (see {@code TableReader#mappedRowCount} -
+     * {@code E} while still composite, the live row count once plain), never up to the file's raw byte
+     * length. The scoreboard check above already rules out every reader that could still resolve this
+     * partition as composite (and therefore still map it up to the old, larger {@code E}); every reader
+     * from this commit onward - including one that opens for the first time an instant after this method
+     * returns - resolves the now-plain shape and never maps past the live row count regardless of how
+     * large the file physically still is. Shortening the file to that same boundary right here cannot
+     * shrink it out from under any mapping a live reader depends on.
      *
      * @return true if the partition was made plain this call; false if a reader still resolves the
      * geometry record this shape came from - the caller's own decline/backoff bookkeeping (same path any
@@ -8545,17 +8559,111 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
         final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         final long liveRows = txWriter.getPartitionSize(partitionIndex);
         final long deadRows = geometry.getE(partitionIndex) - liveRows;
         txWriter.setPartitionGeometryRef(partitionTs, NO_GEOMETRY_REF);
         LOG.info().$("compacting composite partition, MAKE-PLAIN: dropping dead space above the single" +
                         " piece at row 0 [table=").$(tableToken)
-                .$(", dir=").$(formatPartitionForTimestamp(partitionTs, txWriter.getPartitionNameTxn(partitionIndex)))
+                .$(", dir=").$(formatPartitionForTimestamp(partitionTs, partitionNameTxn))
                 .$(", liveRows=").$(liveRows)
                 .$(", deadRows=").$(deadRows)
                 .I$();
         commitTxWriterAndPublishPendingPostingSealPurges();
+        // Best-effort and strictly after the commit above: the partition is already correctly plain and
+        // durable regardless of whether this succeeds. A failure here (or a crash before it even runs)
+        // leaves some dead bytes physically in place - wasted disk, nothing more - since nothing ever
+        // reads past liveRows for a plain partition. POSTING index files (.pk/.pv) are deliberately left
+        // untouched: their size tracks seal/generation history, not the partition's live row count, and
+        // they already reclaim old generations through PostingSealPurgeJob independently of this.
+        try {
+            trimPartitionFiles(partitionTs, partitionNameTxn, liveRows);
+        } catch (Throwable th) {
+            LOG.error().$("TRIM-FILES failed after MAKE-PLAIN, dead space left in place [table=").$(tableToken)
+                    .$(", dir=").$(formatPartitionForTimestamp(partitionTs, partitionNameTxn))
+                    .$(", e=").$(th)
+                    .I$();
+        }
         return true;
+    }
+
+    /**
+     * TRIM-FILES (PARTITION_COMPACTION.md Sec.5): shortens every real column's primary file - and, for a
+     * var-size column, its aux file too - down to exactly {@code liveRows} worth of bytes. Called only
+     * from {@link #makePartitionPlain}, strictly after that method's own commit lands - see its javadoc
+     * for why no separate reader wait is needed here.
+     */
+    private void trimPartitionFiles(long partitionTs, long partitionNameTxn, long liveRows) {
+        path.trimTo(pathSize);
+        setPathForNativePartition(path, timestampType, partitionBy, partitionTs, partitionNameTxn);
+        final int plen = path.size();
+        try {
+            for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                final int columnType = metadata.getColumnType(colIdx);
+                if (columnType <= 0) {
+                    continue;
+                }
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTs, colIdx);
+                if (columnTop == -1) {
+                    // Column added after this partition - no file exists here at all.
+                    continue;
+                }
+                final long columnRows = liveRows - columnTop;
+                if (columnRows <= 0) {
+                    // Row-less in this partition (added after every live row here, columnTop == liveRows) -
+                    // nothing to shorten.
+                    continue;
+                }
+                final CharSequence colName = metadata.getColumnName(colIdx);
+                final long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTs, colIdx);
+                if (ColumnType.isVarSize(columnType)) {
+                    final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                    final long auxFd = openRW(ff, iFile(path.trimTo(plen), colName, colNameTxn), LOG, configuration.getWriterFileOpenOpts());
+                    try {
+                        // The data file's target length depends on reading the aux file's own (still
+                        // untrimmed) entry for the last live row, so aux trims only after that read.
+                        final long targetDataBytes = driver.getDataVectorSizeAtFromFd(ff, auxFd, columnRows - 1);
+                        trimFileTo(auxFd, driver.getAuxVectorSize(columnRows));
+                        final long dataFd = openRW(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG, configuration.getWriterFileOpenOpts());
+                        try {
+                            trimFileTo(dataFd, targetDataBytes);
+                        } finally {
+                            ff.close(dataFd);
+                        }
+                    } finally {
+                        ff.close(auxFd);
+                    }
+                } else {
+                    final long dataFd = openRW(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG, configuration.getWriterFileOpenOpts());
+                    try {
+                        trimFileTo(dataFd, columnRows << ColumnType.pow2SizeOf(columnType));
+                    } finally {
+                        ff.close(dataFd);
+                    }
+                }
+            }
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
+    /**
+     * Shortens an open file to exactly {@code targetBytes}, or does nothing if it is already that size or
+     * smaller. Never grows a file: an undersized file here is a pre-existing bug elsewhere, not something
+     * for a trim step to paper over by extending it.
+     */
+    private void trimFileTo(long fd, long targetBytes) {
+        final long currentBytes = ff.length(fd);
+        if (currentBytes <= targetBytes) {
+            return;
+        }
+        if (!ff.truncate(fd, targetBytes)) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not trim file [path=").put(path)
+                    .put(", from=").put(currentBytes)
+                    .put(", to=").put(targetBytes)
+                    .put(']');
+        }
     }
 
     /**
@@ -8719,9 +8827,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Unlike REWRITE, the front's {@code E} is deliberately left unchanged here - its remaining dead space
      * (the old tail pieces' abandoned bytes, still counted in {@code E}) is what {@link #makePartitionPlain}
      * reclaims later, in its own transaction, once no reader still resolves the geometry record this
-     * commit is about to publish. TRIM-FILES, the reference's OTHER in-place-shrink step - which would
-     * additionally cut the front's files down to their now-true length - is not implemented in this pass;
-     * see PARTITION_COMPACTION_state.md for why.
+     * commit is about to publish - {@code makePartitionPlain} is also where TRIM-FILES then cuts the
+     * front's files down to their now-true length, in that same later transaction.
      *
      * @return {@link #COMPACTION_NONE} or {@link #COMPACTION_MOVED_TAIL}
      */
@@ -14698,10 +14805,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long targetPartition = Long.MIN_VALUE;
         boolean copyTargetFrame = false;
+        final PartitionGeometry geometry = getGeometry();
 
-        // Move targetPartitionIndex to the first unlocked partition in the range
+        // Move targetPartitionIndex to the first unlocked partition in the range. Composite partitions
+        // are read and written as one flat frame from file row 0 sized to live rows - wrong for one that
+        // holds dead space or a piece a merge-append relocated to the tail - so the opportunistic pass
+        // leaves them for compaction to resolve on its own rather than picking one as a target. A forced
+        // squash (detachPartition, parquet conversion) still needs exactly one plain directory when it
+        // returns, so it compacts a composite target instead of skipping it - see below.
         int targetPartitionIndex = partitionIndexLo;
         for (int n = partitionIndexHi - 1; targetPartitionIndex < n; targetPartitionIndex++) {
+            if (!force && geometry.isComposite(targetPartitionIndex)) {
+                continue;
+            }
             boolean canOverwrite = canSquashOverwritePartitionTail(targetPartitionIndex);
             if (canOverwrite || force) {
                 targetPartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex);
@@ -14721,6 +14837,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
+        if (!force && geometry.isComposite(targetPartitionIndex + 1)) {
+            // The very next sibling is composite and this pass cannot fold across it (see the loop
+            // below) - nothing would actually squash, so return before opening any frame or committing
+            // a no-op transaction. A later pass folds it once compaction has made it plain.
+            return;
+        }
+
+        // The target and every source below get read/written as one contiguous frame sized to
+        // partitionRowCount (live rows) starting at file row 0 - only correct for an ordinary partition.
+        // See compactPartitionToPlain's javadoc. The selection loop above already keeps a composite
+        // partition out of targetPartitionIndex except under force, so this only ever does real work
+        // for a forced squash.
+        if (force) {
+            compactPartitionToPlain(targetPartitionIndex, "squash");
+        }
         long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
         setPathForNativePartition(path, timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
         final long originalSize = txWriter.getPartitionRowCountByTimestamp(targetPartition);
@@ -14762,6 +14893,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     targetFrame.getRowCount()
             );
             for (int i = 0; i < squashCount; i++) {
+                if (geometry.isComposite(targetPartitionIndex + 1)) {
+                    if (!force) {
+                        // Stop rather than skip: a later sibling folded into target across this one
+                        // would land target's rows ahead of this still-standing partition's, even though
+                        // this one covers the earlier time range. Leave the whole remaining run for
+                        // compaction to resolve this partition first, then a later squash pass to fold.
+                        break;
+                    }
+                    compactPartitionToPlain(targetPartitionIndex + 1, "squash");
+                }
                 long sourcePartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex + 1);
 
                 other.trimTo(pathSize);

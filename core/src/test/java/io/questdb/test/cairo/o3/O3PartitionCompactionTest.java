@@ -50,17 +50,18 @@ import org.junit.Test;
  * reference repo calls a "folder" - one directory, one {@code _txn} entry, one {@code _geometry}
  * chain. See PARTITION_COMPACTION_state.md for the corrections this port required.
  * <p>
- * JOIN, MOVE-TAIL, MAKE-PLAIN and REWRITE are implemented (PARTITION_COMPACTION.md Sec.9 steps 0, 1, 2,
- * 3, 4, 5). MOVE-TAIL is ported onto this branch's classic-split machinery (a new sibling
+ * JOIN, MOVE-TAIL, MAKE-PLAIN, TRIM-FILES and REWRITE are all implemented (PARTITION_COMPACTION.md Sec.9
+ * steps 0, 1, 2, 3, 4, 5). MOVE-TAIL is ported onto this branch's classic-split machinery (a new sibling
  * {@code attachedPartitions} entry for the tail) rather than the reference's hardlink/{@code partitionTop}
- * scheme - see PARTITION_COMPACTION_state.md. MAKE-PLAIN reclaims a MOVE-TAIL'd front's leftover dead
- * space in place, gated on the same {@link io.questdb.cairo.TxnScoreboard} reader check REWRITE never
- * needs (it only ever appends). TRIM-FILES (also step 4, the file-shortening half of the reference's
- * in-place reclaim) is not implemented: a MAKE-PLAIN'd partition's files stay at their old, now-oversized
- * length until a later REWRITE copies it into a fresh, right-sized directory. REWRITE itself needs no
- * reader gate at all: it copies into a brand-new directory and leaves the old one for the ordinary purge
- * to remove once no reader still needs it, so a pinned reader's data stays correct with nothing to wait
- * for - see {@link #testRewriteLeavesAPinnedReadersDataIntact}.
+ * scheme. MAKE-PLAIN reclaims a MOVE-TAIL'd front's leftover dead space in place, gated on the same
+ * {@link io.questdb.cairo.TxnScoreboard} reader check REWRITE never needs (it only ever appends).
+ * TRIM-FILES (also step 4, the file-shortening half of the reference's in-place reclaim) folds into that
+ * same MAKE-PLAIN commit rather than needing a reader wait of its own - a reader only ever maps a column
+ * up to the row count its own resolved view reports, never up to the file's raw byte length, so nothing
+ * live can still depend on the file's old, larger size once MAKE-PLAIN's own check has cleared. REWRITE
+ * itself needs no reader gate at all: it copies into a brand-new directory and leaves the old one for the
+ * ordinary purge to remove once no reader still needs it, so a pinned reader's data stays correct with
+ * nothing to wait for - see {@link #testRewriteLeavesAPinnedReadersDataIntact}.
  * <p>
  * JOIN has no dedicated test of its own here. {@code O3PartitionJob} folds list-and-file-adjacent pieces
  * INLINE, as part of the same commit that creates them (PARTITION_COMPACTION_state.md's "JOIN, inlined"),
@@ -164,8 +165,10 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      * MAKE-PLAIN's own success path: a successful MOVE-TAIL is immediately followed, in the same
      * housekeeping pass, by an attempt at MAKE-PLAIN on the front it just left behind - the front is
      * exactly MAKE-PLAIN's own eligible shape (one piece, row 0, dead space above it), and with no reader
-     * in the way there is nothing to wait for. No bytes copied, {@code nameTxn} unchanged, proof this is
-     * bookkeeping and not a REWRITE in disguise.
+     * in the way there is nothing to wait for. {@code nameTxn} unchanged is proof this is bookkeeping and
+     * not a REWRITE in disguise; TRIM-FILES then physically shortens the front's files down to the live
+     * row count in that same commit (see {@code TableWriter#makePartitionPlain}'s javadoc for why no
+     * second reader wait is needed for that).
      */
     @Test
     public void testMakePlainReclaimsAMoveTailedFrontsDeadSpace() throws Exception {
@@ -187,6 +190,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
 
             final String expected = fingerprintOfDay("x", "2024-01-01");
             final long frontNameTxnBefore = frontNameTxnOfDay("x", "2024-01-01");
+            final long diskBefore = diskSizeOfDay("x", "2024-01-01");
 
             enableCompaction();
             runCompactionPasses("x");
@@ -206,6 +210,73 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                     frontNameTxnOfDay("x", "2024-01-01")
             );
             Assert.assertEquals("MAKE-PLAIN changed the data", expected, fingerprintOfDay("x", "2024-01-01"));
+            final long diskAfter = diskSizeOfDay("x", "2024-01-01");
+            Assert.assertTrue(
+                    "TRIM-FILES did not shrink the front's files after MAKE-PLAIN [diskBefore=" + diskBefore +
+                            ", diskAfter=" + diskAfter + ']',
+                    diskAfter < diskBefore
+            );
+        });
+    }
+
+    /**
+     * Same shape and trigger as {@link #testMakePlainReclaimsAMoveTailedFrontsDeadSpace}, but with a
+     * var-size column in the mix: TRIM-FILES has to shorten both the aux (offset) file and the data file
+     * for it, and the data file's target length depends on reading an entry out of the aux file before
+     * that file is itself shortened - the two-file coordination the fixed-column-only fixture above
+     * cannot exercise.
+     */
+    @Test
+    public void testMakePlainTrimsVarSizeColumnFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+
+            execute("create table y as (select cast(x as int) i, ('v' || x) s," +
+                    " timestamp_sequence('2024-01-01', 1000000L) ts from long_sequence(20000))" +
+                    " timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            for (int i = 0; i < 3; i++) {
+                execute("insert into y select cast(x as int) + 500000 i, ('b' || x) s," +
+                        " timestamp_sequence('2024-01-01T05:00:00', 1000000L) ts from long_sequence(200)");
+                drainWalQueue();
+            }
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, "2");
+
+            final String expected = fingerprintOfDayVarSize("y", "2024-01-01");
+            final long diskBefore = diskSizeOfDay("y", "2024-01-01");
+
+            enableCompaction();
+            for (int i = 0; i < 6; i++) {
+                execute("insert into y (i, s, ts) select cast(x as int) + 800000, null," +
+                        " timestamp_sequence('" + nextPassDay() + "', 60*1000000L) from long_sequence(2)");
+                drainWalQueue();
+            }
+            engine.releaseInactive();
+
+            Assert.assertFalse(
+                    "MAKE-PLAIN did not follow MOVE-TAIL in the same housekeeping pass",
+                    isComposite("y", "2024-01-01")
+            );
+            Assert.assertEquals(
+                    "MAKE-PLAIN did not reclaim the dead space MOVE-TAIL left above the front's one piece",
+                    0,
+                    deadRowsOfDay("y", "2024-01-01")
+            );
+            final long diskAfter = diskSizeOfDay("y", "2024-01-01");
+            Assert.assertTrue(
+                    "TRIM-FILES did not shrink the front's var-size column files after MAKE-PLAIN" +
+                            " [diskBefore=" + diskBefore + ", diskAfter=" + diskAfter + ']',
+                    diskAfter < diskBefore
+            );
+            Assert.assertEquals(
+                    "TRIM-FILES corrupted the var-size column's data",
+                    expected,
+                    fingerprintOfDayVarSize("y", "2024-01-01")
+            );
         });
     }
 
@@ -709,6 +780,25 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             }
         }
         return count + "/" + sum;
+    }
+
+    /** Same as {@link #fingerprintOfDay}, but also covers a var-size {@code s} column. */
+    private static String fingerprintOfDayVarSize(String table, String day) throws Exception {
+        final String sql = "select i, s from " + table + " where ts in '" + day + "'";
+        long count = 0;
+        long intSum = 0;
+        long strLenSum = 0;
+        try (RecordCursorFactory f = select(sql)) {
+            try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                while (c.hasNext()) {
+                    count++;
+                    intSum += c.getRecord().getInt(0);
+                    final CharSequence s = c.getRecord().getStrA(1);
+                    strLenSum += s == null ? 0 : s.length();
+                }
+            }
+        }
+        return count + "/" + intSum + "/" + strLenSum;
     }
 
     /** The {@code nameTxn} of the day's OWN (first, front) partition - unchanged by MOVE-TAIL. */

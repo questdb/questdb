@@ -50,7 +50,7 @@ Four ways to reclaim a folder's waste, cheapest first:
 | **JOIN** | merges pieces already adjacent in the files into one piece; copies nothing | no |
 | **MOVE-TAIL** | copies only the messy tail pieces into a new sibling folder, leaving the clean front untouched | no |
 | **MAKE-PLAIN** | lowers `E` to the row count so the folder stops being composite; no bytes move | yes |
-| **TRIM-FILES** | shortens every column and index file down to the live size, giving the dead bytes back to the filesystem | yes, a second, later wait |
+| **TRIM-FILES** | shortens every column file down to the live size, giving the dead bytes back to the filesystem | folds into MAKE-PLAIN's own check on this branch - see below |
 | **REWRITE** | copies every live row into a fresh folder and deletes the old one | no (the delete has its own check) |
 
 Two pieces can only be merged (JOIN) or copied together (MOVE-TAIL, REWRITE) if they are neighbours in
@@ -65,35 +65,36 @@ wherever the data happens to sit in the files.
   tail, MOVE-TAIL splits the tail off into its own folder rather than recopying the whole thing.
 - Otherwise, REWRITE copies everything live into a fresh folder.
 - A folder already reduced to one piece at row 0, with real dead space above it, needs none of the
-  above - only MAKE-PLAIN, and later TRIM-FILES.
+  above - only MAKE-PLAIN (which also does TRIM-FILES's job on this branch - see below).
 
 ### What MOVE-TAIL leaves behind
 
 MOVE-TAIL leaves the old folder **still composite**: one piece at row 0, `E` unchanged, dead space
-above it. It is not cleaned up by copying again - it is cleaned up by waiting for readers, in two
-separate steps:
+above it. It is not cleaned up by copying again - it is cleaned up by waiting for readers:
 
 ```
 MOVE-TAIL commits at T1
       |
       |  wait: no reader below T1        <- readers may still see the pieces MOVE-TAIL removed
       v
-MAKE-PLAIN commits at T2  (E -> row count, folder becomes a plain partition)
-      |
-      |  wait: no reader below T2        <- readers may have mapped the old, larger E
-      v
-TRIM-FILES  (cut every column and index file down to the live size)
+MAKE-PLAIN + TRIM-FILES commit at T2  (E -> row count, folder becomes plain; files cut to that same size)
 ```
 
-The two waits cannot be collapsed into one: a reader that opened between MAKE-PLAIN and TRIM-FILES
-still has the old, larger `E` mapped even though it only reads up to the row count, and shortening the
-files under it would leave it mapped past the end of a file.
+A general design where a reader maps a column up to the *file's own byte length* would need a second,
+later wait here: a reader that opened between "E -> row count" and "cut the files" would still have the
+old, larger length mapped, and shortening the files under it would leave it mapped past the end of a
+file. This branch's readers never do that - a reader maps a column up to the row count its *own
+resolved view* reports (`E` while still composite, the live row count once plain - see
+`TableReader#mappedRowCount`), never up to the file's raw length. Once the check above clears, no
+reader - old or new - can ever again resolve this folder as composite, so none can ever again map past
+the live row count, regardless of how large the files still physically are. That is what lets
+TRIM-FILES fold into the very same commit and check.
 
 ## Reader safety, the general principle
 
 No compaction step ever writes below `E` (dangerously, into bytes a live reader might resolve): live
 rows are always moved to a fresh location first (which nothing has ever pointed at, so it is safe to
 write to without asking), and only afterward is `E` itself lowered or a file shortened - both pure
-bookkeeping moves, gated on a check that no reader still needs the old state. Shortening a file is
-riskier than merely leaving space marked dead, which is why it is split into its own step (TRIM-FILES)
-with its own, later check.
+bookkeeping moves, gated on a check that no reader still needs the old state. On this branch, MAKE-PLAIN
+and TRIM-FILES share that one check (see above); a design whose readers map by the file's raw byte
+length instead of by row count would need TRIM-FILES to run as its own, later-checked step instead.

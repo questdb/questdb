@@ -588,7 +588,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // in the same call - and trimming it under them truncates the directory name.
             try (Path root = new Path()) {
                 root.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                partitionGeometry = new PartitionGeometry().of(ff, txFile, root.toString(), timestampType, partitionBy);
+                partitionGeometry = new PartitionGeometry().of(ff, txFile, root.toString(), timestampType, partitionBy, MemoryTag.NATIVE_TABLE_READER);
             }
         }
         return partitionGeometry;

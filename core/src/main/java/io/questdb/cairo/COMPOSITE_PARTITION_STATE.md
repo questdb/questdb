@@ -50,6 +50,7 @@ inside `PartitionGeometry`, the planner, the executor and the two frame cursors 
 | 16 | Interval scan over a composite partition | **BUILT** - `CompositeTimestampFinder` |
 | 17 | `ALTER TABLE ... ALTER COLUMN TYPE` over a composite partition | **BUILT** - the conversion spans `E` |
 | 18 | `UPDATE` over a composite partition | **BUILT** - collect/merge two-phase rewrite, physical-row addressed |
+| 19 | Partition SPLIT-squash over a composite target/source | **BUILT** - opportunistic squash leaves them alone, forced squash compacts first, see below |
 
 With the flag off - the default - nothing above is reachable and the tree behaves exactly as master.
 
@@ -215,6 +216,34 @@ appendOffsetRowCount -= columnTop;
 
 A row below a column's top is not in that column's file, so the top is the gap between the row a caller
 names and the row the file holds - and the column is what knows it. Nothing a level up reasons about them.
+
+### Squash reads a directory as one flat frame, so a composite one is neither its source nor its target
+
+`squashSplitPartitions` folds SPLIT sibling directories of one logical partition together by reading
+each one - target and every source - through `frameFactory.openRO`/`openRW` sized to
+`getPartitionRowCountByTimestamp` (live rows) and starting at file row 0. That is only correct for an
+ordinary partition: a composite sibling can hold dead space below that row count, or a piece a
+merge-append relocated to the tail, either of which the flat read gets wrong. This runs from
+`housekeep()` after every commit, so any sibling a merge-append just made composite is exactly the
+directory most likely to sit next in the squash queue.
+
+The opportunistic pass (`force=false`, the one `housekeep()` runs) never picks a composite partition as
+target and stops - does not skip past - the first composite partition it meets among the sources: it
+leaves the whole remaining run for `runCompaction` (which `housekeep()` calls right after squash) to
+resolve, and a later commit's squash picks up where this one left off once compaction has made it
+plain. Skipping over one instead of stopping was tried and rejected - a later, still-plain sibling
+folded into target across a composite one in between would land target's rows ahead of that
+partition's in `attachedPartitions`, even though it covers the earlier time range.
+
+A forced squash (`force=true` - `detachPartition`, `convertPartitionNativeToParquet`) cannot leave
+anything behind: both need exactly one plain directory when squash returns, the first because it
+asserts the logical partition squashed to one entry before detaching it, the second because
+`produceParquetFromNative` maps the result as one flat range too. So `force=true` keeps the old
+behaviour instead: `compactPartitionToPlain(partitionIndex, "squash")` forces a composite target or
+source plain before it is read, reusing the helper `convertPartitionNativeToParquet` already carried
+for its own target under the name `compactPartitionForConversion`. MOVE-TAIL stays disallowed there for
+the reason it always was, since a fresh sibling appearing mid-squash would shift the index range the
+loop is iterating over.
 
 ## Var-size columns
 
