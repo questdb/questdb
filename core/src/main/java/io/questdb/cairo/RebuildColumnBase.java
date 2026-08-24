@@ -231,7 +231,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                     // resolver from, so it opens its own. A rebuild's unit is the DIRECTORY, and only the
                     // geometry knows how far a COMPOSITE one's files reach.
                     try (PartitionGeometry geometry = new PartitionGeometry().of(
-                            ff, txReader, path.trimTo(rootLen).toString(), metadata.getTimestampType(), partitionBy)
+                            ff, txReader, path.trimTo(rootLen).toString(), metadata.getTimestampType(), partitionBy, MemoryTag.NATIVE_TABLE_READER)
                     ) {
                         // Resolve partition timestamp if partition name specified
                         if (partitionName != null) {
