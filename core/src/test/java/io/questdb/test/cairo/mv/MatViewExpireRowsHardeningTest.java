@@ -31,6 +31,7 @@ import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -2179,6 +2180,53 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             // The sweep finishes the teardown the drop could not.
             Assert.assertTrue("the sweep's unlock must close the dropped state", state.isClosed());
             Assert.assertFalse("the dropped state must not hold a cursor factory", hasParkedFactory(state));
+        });
+    }
+
+    @Test
+    public void testCleanupDeliversAnInvalidationPublishedDuringItsHold() throws Exception {
+        // An invalidation publishes its marker BEFORE trying the view lock and returns when it loses the
+        // race, so the holder that kept the lock owes it a post-release marker read -- the contract
+        // MatViewRefreshJob#finalizeAndUnlock states. The sweep holds that lock for its whole run, so a
+        // release that skips the read drops the request: the view keeps reporting itself valid while it
+        // serves stale rows, and no later sweep recovers it (the isPendingInvalidation() pre-check returns
+        // before tryLock(), so the sweep never reaches its unlock again).
+        //
+        // The sequencer barrier fires inside the sweep's fenced REPLACE_RANGE commit, which is inside the
+        // hold, so the invalidation can be published there deterministically.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("""
+                    insert into base values
+                    ('OLD', 1.0, '2024-01-05T00:00:00.000000Z'),
+                    ('NEW', 3.0, '2024-01-20T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when v < 2");
+            drainWalAndMatViewQueues();
+
+            final TableToken token = engine.verifyTableName("mv");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(token);
+            Assert.assertNotNull("mat view must have a refresh state", state);
+
+            final boolean[] isPublishedUnderLock = {false};
+            engine.getTableSequencerAPI().setTestNextTxnIfLastTxnBarrier(() -> {
+                isPublishedUnderLock[0] = state.isLocked();
+                engine.getMatViewStateStore().enqueueInvalidate(token, "base is gone");
+                // Drains the queued INVALIDATE: it publishes its marker, loses tryLock() to this sweep and
+                // returns, leaving the wake-up to the sweep's unlock.
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 0)) {
+                    refreshJob.run();
+                }
+            });
+
+            Assert.assertTrue("the sweep must reclaim the wholly-expired partition", runCleanup("mv"));
+            Assert.assertTrue("the invalidation must have published while the sweep held the lock", isPublishedUnderLock[0]);
+
+            drainWalAndMatViewQueues();
+            Assert.assertTrue("the sweep's unlock must deliver the deferred invalidation", state.isInvalid());
+            Assert.assertFalse("the delivered invalidation must not stay pending", state.isPendingInvalidation());
+            assertQuery("select view_status from materialized_views() where view_name = 'mv'")
+                    .noRandomAccess().noLeakCheck().returns("view_status\ninvalid\n");
         });
     }
 

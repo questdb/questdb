@@ -25,7 +25,9 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -214,7 +216,8 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // replicated transactions all reach the view without it, and the per-commit sequencer gate in
         // commitWithFence is what makes reclamation safe against them. If a refresh holds the lock we DEFER to
         // a later sweep (cleanup is idempotent, and runSerially retries a deferred sweep on the backoff).
-        final MatViewState viewState = engine.getMatViewStateStore().getViewState(tableToken);
+        final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
+        final MatViewState viewState = matViewStateStore.getViewState(tableToken);
         if (viewState != null) {
             if (viewState.isDropped() || viewState.isPendingInvalidation() || viewState.isInvalid()) {
                 // The view is being torn down, or is not in a refreshable state. Two of the three states
@@ -233,12 +236,27 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             try {
                 return cleanupTable0(tableToken, predicate);
             } finally {
-                viewState.unlock();
-                // The per-view lock is also what a concurrent drop/close of the state contends on: their own
-                // free attempt fails while this sweep holds the lock, so whoever releases the lock owns the
-                // free. Both refresh and cleanup pair every unlock with these two calls.
-                viewState.tryCloseIfDropped();
-                viewState.tryCloseIfClosed();
+                // The sweep is a lock-holder like any refresh, so its unlock goes through
+                // MatViewRefreshJob#finalizeAndUnlock. An invalidation or a REFRESH ... FULL publishes its
+                // intent BEFORE trying the lock and returns when it loses the race, relying on whoever holds
+                // the lock to read that marker after releasing it; releasing the lock directly drops the
+                // request and leaves the view reporting itself valid while it serves stale rows. The finalize
+                // also performs the tryCloseIf* pair the per-view lock guards: a concurrent drop or close of
+                // the state fails its own free attempt while this sweep holds the lock, so whoever releases
+                // the lock owns the free.
+                //
+                // shouldIncrementRefreshSeq is false: the sweep reclaims storage rather than refreshing data,
+                // so it must not suppress a timer refresh. A wake enqueue can throw, and the sweep's physical
+                // work is already committed by then, so log rather than fail the sweep -- the store's retry
+                // flags keep the deferred facets discoverable by the next refresh-job tick.
+                try {
+                    MatViewRefreshJob.finalizeAndUnlock(engine, matViewStateStore, tableToken, viewState, false);
+                } catch (Throwable th) {
+                    LOG.error().$("could not deliver deferred materialized view work after row-expiry cleanup [view=")
+                            .$safe(tableToken.getTableName())
+                            .$(", ex=").$(th)
+                            .I$();
+                }
             }
         }
         // No view state (materialized views disabled, so no policied views exist in practice): there is no
