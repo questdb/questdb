@@ -241,7 +241,8 @@ mvn test -P local-client
 
 This will:
 1. Build the client from `java-questdb-client/` first
-2. Use the locally built client (version `1.0.1-SNAPSHOT`) for server tests
+2. Use the locally built client (the `-SNAPSHOT` version declared by the
+   submodule) for server tests
 
 ### IntelliJ IDEA setup
 
