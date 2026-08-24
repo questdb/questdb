@@ -5356,38 +5356,50 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "timestamp_sequence('2024-01-01T04:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(1_440)");
             sqlExecutionContext.setParallelWindowJoinEnabled(false);
 
+            // Each shape pins the route before it pins the count. assertIndexRebuildCount() can only see
+            // WindowJoinFastRecordCursorFactory, which is the factory for all four cursors, and every shape
+            // expects the same count of 5 - so a routing change that collapsed these onto one cursor would
+            // leave the counts green and silently drop three cursors from coverage. The factory picks the
+            // cursor from exactly three fields - vectorized, includePrevailing and whether a join filter
+            // survived - and toPlan() renders all three, so the plan attributes pin the cursor exactly.
+            // toPlan() emits "join filter:" only when joinFilter != null, so the no-filter shapes pin its
+            // ABSENCE: assertsPlanContaining is positive-only, and without the negative half a routing
+            // change that attached a join filter would leave them green on a different cursor. Both plan
+            // assertions are terminal on the builder, so the negative one needs its own statement.
+
             // Non-vectorized cursor, EXCLUDE PREVAILING (WindowJoinFastRecordCursor). sum(p.x + t.m) reads
             // master column t.m -> non-vectorized; EXCLUDE + no join filter routes here.
-            assertIndexRebuildCount(
-                    "SELECT t.ts, sum(p.x + t.m) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
-                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING",
-                    5
-            );
+            final String excludeNoFilter = "SELECT t.ts, sum(p.x + t.m) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
+            assertQuery(excludeNoFilter).noLeakCheck().assertsPlanContaining("vectorized: false", "(exclude prevailing)");
+            assertQuery(excludeNoFilter).noLeakCheck().assertsPlanNotContaining("join filter:");
+            assertIndexRebuildCount(excludeNoFilter, 5);
 
             // Non-vectorized cursor, INCLUDE PREVAILING, no join filter (WindowJoinWithPrevailingFastRecordCursor).
-            assertIndexRebuildCount(
-                    "SELECT t.ts, sum(p.x + t.m) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
-                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING",
-                    5
-            );
+            final String includeNoFilter = "SELECT t.ts, sum(p.x + t.m) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING";
+            assertQuery(includeNoFilter).noLeakCheck().assertsPlanContaining("vectorized: false", "(include prevailing)");
+            assertQuery(includeNoFilter).noLeakCheck().assertsPlanNotContaining("join filter:");
+            assertIndexRebuildCount(includeNoFilter, 5);
 
             // Non-vectorized cursor, INCLUDE PREVAILING, WITH a join filter
             // (WindowJoinWithPrevailingAndJoinFilterFastRecordCursor). The extra ON predicate p.x > -1 (always
             // true, non-constant) is the join filter -> non-vectorized; it keeps every slave row, so the index
-            // behavior is unchanged.
-            assertIndexRebuildCount(
-                    "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) AND p.x > -1 " +
-                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING",
-                    5
-            );
+            // behavior is unchanged. The plan pin also asserts the filter stayed a JOIN filter: pushing it into
+            // the slave scan would route this shape to the no-filter cursor above.
+            final String includeWithFilter = "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) AND p.x > -1 " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING";
+            assertQuery(includeWithFilter).noLeakCheck()
+                    .assertsPlanContaining("vectorized: false", "(include prevailing)", "join filter:");
+            assertIndexRebuildCount(includeWithFilter, 5);
 
             // Same join filter, EXCLUDE PREVAILING: routes back to WindowJoinFastRecordCursor, which applies
             // the join filter inline. Pins that the join-filter path shares the same gate.
-            assertIndexRebuildCount(
-                    "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) AND p.x > -1 " +
-                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING",
-                    5
-            );
+            final String excludeWithFilter = "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) AND p.x > -1 " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
+            assertQuery(excludeWithFilter).noLeakCheck()
+                    .assertsPlanContaining("vectorized: false", "(exclude prevailing)", "join filter:");
+            assertIndexRebuildCount(excludeWithFilter, 5);
         });
     }
 
@@ -5475,41 +5487,41 @@ public class WindowJoinTest extends AbstractCairoTest {
             // All four keyed cursors carry their own copy of the gate. The levers that pick each one
             // are the ones documented on testWindowJoinKeyedIndexAmortizationNonVectorized. Two
             // rebuilds: one per master group. Crediting the last indexed row instead gives 480.
+            // Every shape expects the same count of 2 and shares one factory class, so each one pins
+            // its route through the plan attributes before it pins the count.
 
             // Vectorized, EXCLUDE PREVAILING.
-            assertIndexRebuildCount(
-                    "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
-                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING",
-                    2
-            );
+            final String vectExclude = "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
+            assertQuery(vectExclude).noLeakCheck().assertsPlanContaining("vectorized: true", "(exclude prevailing)");
+            assertIndexRebuildCount(vectExclude, 2);
 
             // Vectorized, INCLUDE PREVAILING.
-            assertIndexRebuildCount(
-                    "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
-                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING",
-                    2
-            );
+            final String vectInclude = "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING";
+            assertQuery(vectInclude).noLeakCheck().assertsPlanContaining("vectorized: true", "(include prevailing)");
+            assertIndexRebuildCount(vectInclude, 2);
 
             // Non-vectorized, EXCLUDE PREVAILING (sum reads master column t.m).
-            assertIndexRebuildCount(
-                    "SELECT t.ts, sum(p.x + t.m) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
-                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING",
-                    2
-            );
+            final String excludeNoFilter = "SELECT t.ts, sum(p.x + t.m) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
+            assertQuery(excludeNoFilter).noLeakCheck().assertsPlanContaining("vectorized: false", "(exclude prevailing)");
+            assertQuery(excludeNoFilter).noLeakCheck().assertsPlanNotContaining("join filter:");
+            assertIndexRebuildCount(excludeNoFilter, 2);
 
             // Non-vectorized, INCLUDE PREVAILING, no join filter.
-            assertIndexRebuildCount(
-                    "SELECT t.ts, sum(p.x + t.m) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
-                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING",
-                    2
-            );
+            final String includeNoFilter = "SELECT t.ts, sum(p.x + t.m) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING";
+            assertQuery(includeNoFilter).noLeakCheck().assertsPlanContaining("vectorized: false", "(include prevailing)");
+            assertQuery(includeNoFilter).noLeakCheck().assertsPlanNotContaining("join filter:");
+            assertIndexRebuildCount(includeNoFilter, 2);
 
             // Non-vectorized, INCLUDE PREVAILING, with a join filter.
-            assertIndexRebuildCount(
-                    "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) AND p.x > -1 " +
-                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING",
-                    2
-            );
+            final String includeWithFilter = "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) AND p.x > -1 " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING";
+            assertQuery(includeWithFilter).noLeakCheck()
+                    .assertsPlanContaining("vectorized: false", "(include prevailing)", "join filter:");
+            assertIndexRebuildCount(includeWithFilter, 2);
         });
     }
 
@@ -6746,6 +6758,10 @@ public class WindowJoinTest extends AbstractCairoTest {
             for (int i = 0; i < queries.length; i++) {
                 final String query = queries[i];
                 sqlExecutionContext.setParallelWindowJoinEnabled(false);
+                // The bug is parallel-only, so the differential is worthless unless the two arms really
+                // took different routes. Pin each arm's factory, or a gate change turns this into the
+                // single-threaded path compared against itself.
+                assertWindowJoinParallelism(query, false);
                 sink.clear();
                 printSql(query, sink);
                 final String expected = sink.toString();
@@ -6754,6 +6770,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                 assertNonVacuousOracle(query, expected);
 
                 sqlExecutionContext.setParallelWindowJoinEnabled(true);
+                assertWindowJoinParallelism(query, true);
                 sink.clear();
                 printSql(query, sink);
                 TestUtils.assertEquals(query, expected, sink);

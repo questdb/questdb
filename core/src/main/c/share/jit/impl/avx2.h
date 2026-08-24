@@ -287,7 +287,9 @@ namespace questdb::avx2 {
         c.vpand(lhs_copy, lhs_copy, sign_mask); // abs(lhs - rhs)
         float eps[8] = {FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON};
         Mem epsilon = c.new_const(ConstPoolScope::kLocal, &eps, 32);
-        c.vcmpps(dst, lhs_copy, epsilon, CmpImm::kLT);
+        // kLE is the ordered "abs(lhs - rhs) <= FLOAT_EPSILON", inclusive to match Numbers.equals().
+        // Ordered, so a NaN difference stays false here and the nans mask below decides it.
+        c.vcmpps(dst, lhs_copy, epsilon, CmpImm::kLE);
         c.vpor(dst, dst, nans);
         return dst;
     }
@@ -304,7 +306,9 @@ namespace questdb::avx2 {
         c.vpand(lhs_copy, lhs_copy, sign_mask); // abs(lhs - rhs)
         double eps[4] = {DOUBLE_EPSILON, DOUBLE_EPSILON, DOUBLE_EPSILON, DOUBLE_EPSILON};
         Mem epsilon = c.new_const(ConstPoolScope::kLocal, &eps, 32);
-        c.vcmppd(dst, lhs_copy, epsilon, CmpImm::kLT);
+        // kLE is the ordered "abs(lhs - rhs) <= DOUBLE_EPSILON", inclusive to match Numbers.equals().
+        // Ordered, so a NaN difference stays false here and the nans mask below decides it.
+        c.vcmppd(dst, lhs_copy, epsilon, CmpImm::kLE);
         c.vpor(dst, dst, nans);
         return dst;
     }

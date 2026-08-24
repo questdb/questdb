@@ -24,8 +24,6 @@
 
 package io.questdb.test.griffin.engine.table;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -34,8 +32,9 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.jit.JitUtil;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.FaultInjectedException;
+import io.questdb.test.tools.FaultInjectingConfiguration;
+import io.questdb.test.tools.FaultInjectingConfiguration.FaultMethod;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -63,13 +62,16 @@ public class AsyncFilterLimitAdviceLeakTest extends AbstractCairoTest {
         // could not see this one. getSqlParallelFilterPreTouchThreshold() is read inside
         // AsyncFilterAtom's constructor, i.e. after the function exists and before the factory
         // returns holding it.
-        assertNoLeakOnFault(SqlJitMode.JIT_MODE_DISABLED, FaultPoint.PRE_TOUCH_THRESHOLD);
+        assertNoLeakOnFault(SqlJitMode.JIT_MODE_DISABLED, FaultMethod.SQL_PARALLEL_FILTER_PRE_TOUCH_THRESHOLD);
     }
 
     @Test
     public void testJitConstructorFailureFreesLimitAdviceFunction() throws Exception {
         Assume.assumeTrue(JitUtil.isJitSupported());
-        assertNoLeakOnFault(SqlJitMode.JIT_MODE_ENABLED, FaultPoint.JIT_BIND_VAR_MEMORY);
+        // getSqlJitBindVarsMemoryPageSize() is read by AsyncJitFilteredRecordCursorFactory's
+        // constructor to size the bind variable memory, i.e. after the generator has built the LIMIT
+        // advice function and before the factory returns holding it.
+        assertNoLeakOnFault(SqlJitMode.JIT_MODE_ENABLED, FaultMethod.SQL_JIT_BIND_VARS_MEMORY_PAGE_SIZE);
     }
 
     @Test
@@ -113,10 +115,12 @@ public class AsyncFilterLimitAdviceLeakTest extends AbstractCairoTest {
         });
     }
 
-    private void assertNoLeakOnFault(int jitMode, FaultPoint faultPoint) throws Exception {
+    private void assertNoLeakOnFault(int jitMode, FaultMethod faultMethod) throws Exception {
         final String query = "SELECT * FROM x WHERE i > 0 "
                 + "LIMIT alloc_ts('2024-01-01T00:00:00.000000Z'::timestamp)::long";
-        final FaultInjectingConfiguration config = new FaultInjectingConfiguration(configuration, faultPoint);
+        // The engine and the DDL below read configuration too, so the fault starts disarmed.
+        final FaultInjectingConfiguration config =
+                new FaultInjectingConfiguration(configuration, faultMethod, null, false);
         TestUtils.assertMemoryLeak(() -> {
             try (
                     CairoEngine faultEngine = new CairoEngine(config);
@@ -130,48 +134,15 @@ public class AsyncFilterLimitAdviceLeakTest extends AbstractCairoTest {
                 // Armed only around select(): each fault getter is read once, inside the factory
                 // constructor, which is after the generator has already built the LIMIT advice
                 // function and before the factory returns holding it.
-                config.isArmed = true;
+                config.setArmed(true);
                 try (RecordCursorFactory ignored = faultEngine.select(query, context)) {
                     Assert.fail("expected the injected fault");
                 } catch (FaultInjectedException expected) {
                     // The generator must have freed the LIMIT advice function on the way out.
                 } finally {
-                    config.isArmed = false;
+                    config.setArmed(false);
                 }
             }
         });
-    }
-
-    private static class FaultInjectingConfiguration extends CairoConfigurationWrapper {
-        private final FaultPoint faultPoint;
-        private volatile boolean isArmed;
-
-        private FaultInjectingConfiguration(@NotNull CairoConfiguration delegate, FaultPoint faultPoint) {
-            super(delegate);
-            this.faultPoint = faultPoint;
-        }
-
-        @Override
-        public int getSqlJitBindVarsMemoryPageSize() {
-            if (isArmed && faultPoint == FaultPoint.JIT_BIND_VAR_MEMORY) {
-                throw new FaultInjectedException();
-            }
-            return super.getSqlJitBindVarsMemoryPageSize();
-        }
-
-        @Override
-        public double getSqlParallelFilterPreTouchThreshold() {
-            if (isArmed && faultPoint == FaultPoint.PRE_TOUCH_THRESHOLD) {
-                throw new FaultInjectedException();
-            }
-            return super.getSqlParallelFilterPreTouchThreshold();
-        }
-    }
-
-    private enum FaultPoint {
-        // Read by AsyncJitFilteredRecordCursorFactory's constructor to size the bind variable memory.
-        JIT_BIND_VAR_MEMORY,
-        // Read by AsyncFilterAtom's constructor, which the non-JIT factory's constructor invokes.
-        PRE_TOUCH_THRESHOLD
     }
 }

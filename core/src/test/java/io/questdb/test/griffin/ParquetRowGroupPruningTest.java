@@ -46,6 +46,12 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class ParquetRowGroupPruningTest extends AbstractCairoTest {
+    // Rows createRepeatedFloatPartialParquet() writes into the parquet partition. The value is large
+    // enough that the compiled filter runs its AVX2 loop rather than handling everything in the
+    // scalar tail - a tiny table leaves jit/impl/avx2.h out of the picture entirely, which is the
+    // one code path the tolerance-boundary witnesses exist to cover.
+    private static final int REPEATED_FLOAT_ROW_COUNT = 1_000;
+
     @Before
     public void setUp() {
         ParquetRowGroupFilter.resetRowGroupsSkipped();
@@ -5731,9 +5737,11 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         //
         // These kept rows sit exactly on the strict/inclusive filter boundary (in real arithmetic no
         // negative value is within DOUBLE_TOLERANCE of a positive 1e-10 bound; only the rounding of
-        // Numbers.equals keeps them), so the assertQuery(...).returns(...) battery -- which runs a
-        // JIT/strict-filter pass that drops boundary rows -- is not a stable oracle here. Disable JIT
-        // and drive the query through printSql so the inclusive Java filter is the one that runs.
+        // Numbers.equals keeps them), so only the inclusive Java filter keeps them and the compiled
+        // JIT filter would drop them. Disabling the JIT below is what makes the oracle stable, and it
+        // covers the assertQuery(...).returns(...) battery too: AbstractCairoTest.assertQuery() hands
+        // QueryAssertion this very sqlExecutionContext, and QueryAssertion never touches the JIT mode,
+        // so every pass the builder runs -- including the second cursor pass -- runs the Java filter.
         //
         // Switch the mode on the execution context, NOT with setProperty(). setProperty() does not
         // even switch this test: setUp() primes the shared context before the body runs, and
@@ -5999,44 +6007,70 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFloatColumnStrictOpCertifiesAgainstCompiledF32Filter() throws Exception {
-        // The engine has THREE row-level filters, not two, and isRowKept modelled only the first
-        // two: Numbers.equals (inclusive, f64), the compiled filter's double_cmp_epsilon (strict,
-        // f64) and its float_cmp_epsilon (strict, f32). A FLOAT column compared against a bound
-        // that IS exactly a float never widens, so the whole comparison - the subtraction, its
-        // absolute value and the tolerance test - happens at f32, and two things move: FLOAT_EPSILON
-        // is (float) DOUBLE_TOLERANCE, i.e. slightly LARGER than 1e-10, and rounding the difference
-        // to f32 can carry it across the tolerance.
+    public void testFloatColumnInclusiveOpCertifiesAgainstCompiledF32Filter() throws Exception {
+        // The engine has THREE row-level filters, not two, and isRowKept models only the two that
+        // compare at DOUBLE width. The third is the compiled filter's f32 arm, which a FLOAT column
+        // runs whenever the bound IS exactly a float and the comparison never widens: the
+        // subtraction, its absolute value and the tolerance test all happen at single precision, and
+        // the tolerance itself is FLOAT_EPSILON = (float) DOUBLE_TOLERANCE, i.e.
+        // 1.000000013351432e-10 - a shade LARGER than the 1e-10 the other two use. So the f32 arm
+        // has a wider equality band and keeps rows they drop. Pruning is an unconditional drop that
+        // no later filter can undo, so a bound certified against the f64 pair alone lands on such a
+        // row and the group holding it goes away before any filter runs.
         //
-        // Here 2^-33 is the bound and the row is 1.6415322226515094e-11, both exactly floats. Their
-        // f64 difference is 9.999999960041972e-11, which both f64 filters call EQUAL, so "c6 < bound"
-        // drops the row on either of them. The same subtraction at f32 rounds UP to exactly
-        // FLOAT_EPSILON, and the test is strict, so the compiled f32 filter calls them UNEQUAL and
-        // KEEPS the row. Certifying against the f64 pair alone let the pushed bound land exactly on
-        // the row, and "<" prunes on min >= bound, so the row group went away before any filter ran.
+        // The INCLUSIVE ops are where that shows. All three comparators read their epsilon
+        // inclusively (Numbers.equals is "|l - r| <= tolerance"; float_cmp_epsilon and
+        // double_cmp_epsilon are "epsilon >= |lhs - rhs|" - x86 ucomiss/setae, aarch64 fcmp/cset GE,
+        // avx2 vcmpps kLE), so the two tolerances are the only thing left between them, and a row
+        // that lands between 1e-10 and FLOAT_EPSILON is EQUAL to the bound for the f32 arm and
+        // UNEQUAL for the f64 pair. "c6 >= bound" and "c6 <= bound" then keep it on one and drop it
+        // on the other.
+        //
+        // THIS TEST PINS THE INCLUSIVE COMPARATOR ITSELF, so it reddens on any build whose
+        // libquestdb still carries the STRICT comparator - i.e. on every checkout until the
+        // "Build and Push Release CXX Libraries" workflow rebuilds and pushes the committed
+        // binaries under core/src/main/resources/io/questdb/bin/, since no Maven profile compiles
+        // core/src/main/c/. That failure mode is "comparator semantics not rebuilt yet", NOT a
+        // pruning bug: tn and tp agree in both worlds, so no row is lost either way. The pruning
+        // property is pinned separately and binary-independently by
+        // testFloatColumnPushdownMatchesNativeUnderEitherComparator.
         //
         // Two oracles, because they fail for different reasons. The ROW assertions are the
         // user-visible half: the row survives on the all-native table and must survive on the
         // partially-parquet one. They deliberately carry no ORDER BY - projecting or ordering by a
         // column the filter does not read turns on parquet late materialization, which leaves the
         // unread column's address at 0, makes the frame report column tops, and drops the query onto
-        // the Java f64 filter, which discards the row for its own (separate, pre-existing) reason.
+        // the Java f64 filter, which discards the row for its own (separate) reason.
         // getRowGroupsSkipped() is the portable half: it reports the pruning decision itself, so it
         // reddens on a host that runs no compiled filter at all, where the rows cannot.
         assertMemoryLeak(() -> {
-            createBoundarySaturatedPartialParquetTyped("FLOAT", "1.6415322226515094e-11", "100.0");
+            // ">=": the row is BELOW the bound, so the plain comparison drops it and only the
+            // equality decides. Their f64 distance is 1.000000013351432e-10, just past
+            // DOUBLE_TOLERANCE, so the f64 pair calls them unequal and drops the row; the same
+            // subtraction at f32 is exactly FLOAT_EPSILON, which the inclusive f32 test calls equal,
+            // so the compiled f32 filter KEEPS it. The row is the row group's max, so a bound
+            // certified without the f32 arm prunes the group.
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "1.641532049179162e-11", "-100.0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertNativeMatchesPartialParquetUnordered("c6 < 1.1641532182693481e-10", "c6\n1.6415322E-11\n");
+            assertNativeMatchesPartialParquetUnordered("c6 >= 1.1641532182693481e-10", "c6\n1.641532E-11\n");
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
 
-            // The mirror image on ">": the bound is below the row, the two DOUBLE-width filters call
-            // them equal and drop it, the f32 one keeps it, so this group must survive too.
+            // The mirror image on "<=": the row is ABOVE the bound by the same f64 distance, and it
+            // is the row group's min.
             execute("DROP TABLE tn");
             execute("DROP TABLE tp");
-            createBoundarySaturatedPartialParquetTyped("FLOAT", "1.1641532182693481e-10", "-100.0");
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "1.1641532182693481e-10", "100.0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertNativeMatchesPartialParquetUnordered("c6 > 1.6415322226515094e-11", "c6\n1.1641532E-10\n");
+            assertNativeMatchesPartialParquetUnordered("c6 <= 1.641532049179162e-11", "c6\n1.1641532E-10\n");
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            // The STRICT ops (LT/GT) are NOT pinned here, and deliberately so. They spell
+            // "!isEq && ...", so a WIDER isEq makes the model NARROWER - the opposite direction from
+            // the two cases above - and the model therefore reads the comparator strictly on those
+            // arms so that "!isEq" covers both readings. Their answer at this boundary depends on
+            // which libquestdb is on the classpath, so no literal expectation is valid for them;
+            // testFloatColumnPushdownMatchesNativeUnderEitherComparator asserts the property that
+            // IS binary-independent - parquet returns exactly what the native table returns.
 
             // A bound clear of the band still prunes: the extra filter only widens the certification
             // band by about one f32 ulp, it does not disable pushdown.
@@ -6048,6 +6082,173 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertNativeMatchesPartialParquet("c6 > 100.0", "c6\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testFloatColumnPushdownMatchesNativeUnderEitherComparator() throws Exception {
+        // THE INVARIANT: ParquetRowGroupFilter's certification model must contain every comparator
+        // the SHIPPED BINARY might carry, not only the one the C++ sources describe.
+        //
+        // ParquetRowGroupFilter is Java and ships the instant it merges. The native comparators do
+        // not: no Maven profile compiles core/src/main/c/, so a checkout runs the committed
+        // libquestdb under core/src/main/resources/io/questdb/bin/ until the "Build and Push Release
+        // CXX Libraries" workflow rebuilds it. float_cmp_epsilon / double_cmp_epsilon are therefore
+        // STRICT ("epsilon > |lhs - rhs|") on one side of that rebuild and INCLUSIVE ("epsilon >=")
+        // on the other, and BOTH are reachable.
+        //
+        // Inclusiveness is not uniformly conservative for the model. The arms that spell
+        // "isEq || ..." (LE, GE, EQ) get WIDER as isEq widens - safe. The arms that spell
+        // "!isEq && ..." (LT, GT) get NARROWER - and a narrower model certifies bounds it should
+        // have rejected, so the pruner drops a row group the running filter would have kept a row
+        // from. Pruning runs before any row filter and nothing downstream can undo it, so that is
+        // silent data loss, not a wrong-looking number. The model therefore reads the comparator
+        // STRICTLY on LT/GT and INCLUSIVELY on LE/GE/EQ: the union contains both.
+        //
+        // Three witnesses, each of which prunes a group under an inclusive-everywhere model running
+        // against the strict committed binary. The oracle is DIFFERENTIAL rather than a literal
+        // expectation, because the answer itself is comparator-dependent - under the strict binary
+        // the compiled filter keeps the row, under the inclusive one it drops it - while
+        // "parquet returns what native returns" is true in both worlds and is exactly the property
+        // pruning may never break. getRowGroupsSkipped() is the second oracle, and it is what keeps
+        // this test from passing vacuously: the model is pure Java, so its decision does not move
+        // with the binary, and an inclusive-everywhere model pushes a bound that prunes these groups
+        // - "assertEquals(0, getRowGroupsSkipped())" reddens on that model under EITHER binary,
+        // while the differential half can only redden on the one that keeps the row.
+        //
+        // The fixture holds REPEATED_FLOAT_ROW_COUNT rows in the parquet partition rather than one,
+        // so the compiled filter's AVX2 loop actually runs - a tiny table is handled entirely by the
+        // scalar tail and leaves jit/impl/avx2.h out of the picture.
+        assertMemoryLeak(() -> {
+            // The guard that stops the differential half from passing by comparing nothing to
+            // nothing. Every site below answers with either the whole repeated block or nothing at
+            // all, and WHICH of the two moves with the comparator the binary carries - so no single
+            // site can pin a count. The SUM over the comparator-dependent sites pins an EXACT one,
+            // because the total is BIMODAL: these fixtures sit exactly ON the tolerance boundary,
+            // and the LT/GT arms ("!isEq && ...") and the LE/GE arms ("isEq || ...") are mirror
+            // images across it. A comparator that calls that distance UNEQUAL feeds the LT/GT
+            // family and starves the LE/GE pair; one that calls it EQUAL does the reverse. Exactly
+            // one family bears rows under any given binary, so only two totals are reachable:
+            //
+            //   STRICT    -> 4 * REPEATED_FLOAT_ROW_COUNT - witnesses 1, 2, 4 and 5 each answer
+            //                with the whole repeated block, the LE/GE pair with nothing.
+            //   INCLUSIVE -> 2 * REPEATED_FLOAT_ROW_COUNT - the two families swap.
+            //
+            // Witness 3 ("c6 < 2e-10") is the LT/GT site missing from that first count, and it is
+            // silent under BOTH comparators by construction, not by regression: 2e-10 is not
+            // exactly a float, so that predicate widens to f64 rather than running the f32 arm, and
+            // at f64 the distance is 9.99999986648568e-11 - just INSIDE DOUBLE_TOLERANCE - so both
+            // comparators call the pair equal and "!isEq" drops the row either way. It still earns
+            // its place: its tn-vs-tp differential and its getRowGroupsSkipped() == 0 pin that the
+            // Java model declined to prune the group holding that row.
+            //
+            // Any other total means a site silently stopped bearing rows - exactly the data loss
+            // this test exists to catch, and what a bare "> 0" check here would have hidden.
+            // assertPartialParquetMatchesNativeUnderEitherComparator() returns the count and
+            // separately pins that the compiled filter really ran.
+            int comparatorDependentRows = 0;
+
+            // Witness 1: "c6 < 1e-10" with a row at 0.0f. The pivot 1e-10 - 1e-10 is exactly 0.0, so
+            // an inclusive-everywhere model certifies the bound 0.0f on step 0 and FILTER_OP_LT then
+            // prunes every group with min >= 0.0f. The strict comparator keeps that row:
+            // |0.0f - (float) 1e-10| is exactly FLOAT_EPSILON, which a strict test calls UNEQUAL,
+            // and 0.0f < (float) 1e-10.
+            createRepeatedFloatPartialParquet("0.0", "100.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            comparatorDependentRows += assertPartialParquetMatchesNativeUnderEitherComparator("c6 < 1e-10");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            // Witness 2: the exact mirror. "c6 > -1e-10" pivots on -1e-10 + 1e-10 == 0.0 and
+            // certifies the same bound 0.0f, which FILTER_OP_GT uses to prune every group with
+            // max <= 0.0f.
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createRepeatedFloatPartialParquet("0.0", "-100.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            comparatorDependentRows += assertPartialParquetMatchesNativeUnderEitherComparator("c6 > -1e-10");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            // Witness 3: "c6 < 2e-10" with a row at (float) 1e-10. Its tn-vs-tp differential is
+            // INERT under both comparators: 2e-10 is not exactly representable as a float, so the
+            // comparison widens to f64, where the distance is 9.99999986648568e-11 - just INSIDE
+            // DOUBLE_TOLERANCE - so both comparators call the pair equal and "!isEq" drops the row
+            // either way. The row-group counter below is this site's real and only oracle: an
+            // inclusive-everywhere model certifies (float) 1e-10 as the bound and prunes the group
+            // holding that very row, so "assertEquals(0, getRowGroupsSkipped())" reddens on that
+            // model under EITHER binary.
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createRepeatedFloatPartialParquet("1e-10", "100.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            comparatorDependentRows += assertPartialParquetMatchesNativeUnderEitherComparator("c6 < 2e-10");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            // Two more of the same class, moved here out of
+            // testFloatColumnInclusiveOpCertifiesAgainstCompiledF32Filter, where they used to carry
+            // a literal expectation that only the inclusive binary satisfies.
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createRepeatedFloatPartialParquet("1.6415322226515094e-11", "100.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            comparatorDependentRows += assertPartialParquetMatchesNativeUnderEitherComparator("c6 < 1.1641532182693481e-10");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createRepeatedFloatPartialParquet("1.1641532182693481e-10", "-100.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            comparatorDependentRows += assertPartialParquetMatchesNativeUnderEitherComparator("c6 > 1.6415322226515094e-11");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            // The two predicates that testFloatColumnInclusiveOpCertifiesAgainstCompiledF32Filter
+            // pins with a literal, repeated here differentially. That test reddens on the ALL-NATIVE
+            // table whenever the binary still carries the strict comparator, so its tp assertion is
+            // never reached; these two prove that tp agrees with tn there anyway - i.e. that its
+            // failure really is "comparator semantics not rebuilt yet" and not a lost row group.
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createRepeatedFloatPartialParquet("1.641532049179162e-11", "-100.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            comparatorDependentRows += assertPartialParquetMatchesNativeUnderEitherComparator("c6 >= 1.1641532182693481e-10");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createRepeatedFloatPartialParquet("1.1641532182693481e-10", "100.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            comparatorDependentRows += assertPartialParquetMatchesNativeUnderEitherComparator("c6 <= 1.641532049179162e-11");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            Assert.assertTrue(
+                    "the comparator-dependent sites must total " + (4 * REPEATED_FLOAT_ROW_COUNT)
+                            + " under the STRICT comparator (witnesses 1, 2, 4 and 5 bear the whole"
+                            + " repeated block, the LE/GE pair bears nothing) or "
+                            + (2 * REPEATED_FLOAT_ROW_COUNT) + " under the INCLUSIVE one (the two"
+                            + " families swap); any other total means a site silently stopped"
+                            + " bearing rows [total=" + comparatorDependentRows + "]",
+                    comparatorDependentRows == 4 * REPEATED_FLOAT_ROW_COUNT
+                            || comparatorDependentRows == 2 * REPEATED_FLOAT_ROW_COUNT
+            );
+
+            // The union model costs a handful of declined pushdowns at near-zero / near-tolerance
+            // bounds and nothing anywhere else. A bound clear of the band still prunes on the very
+            // arms the model tightened, so LT/GT pushdown is not disabled, only deferred.
+            //
+            // These last two sites are EMPTY under either comparator by construction - the table
+            // holds only 1.0f and 100.0f, and neither "< 1.0" nor "> 100.0" can match either of
+            // them - so their tn-vs-tp comparison really is empty-vs-empty and proves nothing on its
+            // own. That is deliberate: what they exist to pin is the pruning SIGNAL, and
+            // getRowGroupsSkipped() > 0 is a genuine binary-independent oracle for it. They are
+            // excluded from comparatorDependentRows for exactly that reason.
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createRepeatedFloatPartialParquet("1.0", "100.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            Assert.assertEquals(0, assertPartialParquetMatchesNativeUnderEitherComparator("c6 < 1.0"));
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            Assert.assertEquals(0, assertPartialParquetMatchesNativeUnderEitherComparator("c6 > 100.0"));
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -6243,21 +6444,23 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     private void assertDoubleColumnNearToleranceMagnitudePushdownNotFalsePruned() throws Exception {
+        // getRowGroupsSkipped() counts cumulatively until resetRowGroupsSkipped() zeroes it, so the
+        // extra cursor passes the assertQuery(...) battery runs cannot flip either counter verdict:
+        // a declined pushdown adds nothing on any pass, and a firing one only adds more.
         assertMemoryLeak(() -> {
-            final StringSink sink = new StringSink();
-
             // GE: pre-fix pushes nextDown(0.0) and prunes the -1e-30 group; the fix declines the pushdown.
             createBoundarySaturatedPartialParquetTyped("DOUBLE", "-1e-30", "5.0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            printSql("SELECT c6 FROM tp WHERE c6 >= 1e-10 ORDER BY ts", sink);
-            TestUtils.assertEquals("c6\n-1.0E-30\n5.0\n", sink);
+            assertQuery("SELECT c6 FROM tp WHERE c6 >= 1e-10 ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("c6\n-1.0E-30\n5.0\n");
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
 
             // EQ collapses the same way: the BETWEEN lo = nextDown(1e-10 - DOUBLE_TOLERANCE) = nextDown(0.0).
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            sink.clear();
-            printSql("SELECT c6 FROM tp WHERE c6 = 1e-10 ORDER BY ts", sink);
-            TestUtils.assertEquals("c6\n-1.0E-30\n", sink);
+            assertQuery("SELECT c6 FROM tp WHERE c6 = 1e-10 ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("c6\n-1.0E-30\n");
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
 
             execute("DROP TABLE tn");
@@ -6266,9 +6469,9 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             // LE mirrors GE: "c6 <= -1e-10" keeps 1e-30; pre-fix prunes on "min > nextUp(0.0)".
             createBoundarySaturatedPartialParquetTyped("DOUBLE", "1e-30", "-5.0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            sink.clear();
-            printSql("SELECT c6 FROM tp WHERE c6 <= -1e-10 ORDER BY ts", sink);
-            TestUtils.assertEquals("c6\n1.0E-30\n-5.0\n", sink);
+            assertQuery("SELECT c6 FROM tp WHERE c6 <= -1e-10 ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("c6\n1.0E-30\n-5.0\n");
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
 
             // A bound a clear tolerance away from zero still prunes a group that lies wholly outside it.
@@ -6276,9 +6479,9 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("DROP TABLE tp");
             createBoundarySaturatedPartialParquetTyped("DOUBLE", "-1e-30", "5.0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            sink.clear();
-            printSql("SELECT c6 FROM tp WHERE c6 >= 1.0 ORDER BY ts", sink);
-            TestUtils.assertEquals("c6\n5.0\n", sink);
+            assertQuery("SELECT c6 FROM tp WHERE c6 >= 1.0 ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("c6\n5.0\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -6351,9 +6554,9 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createBoundarySaturatedPartialParquetTyped("FLOAT", "1.0", "2.0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            sink.clear();
-            printSql("SELECT c6 FROM tp WHERE c6 >= 1e40 ORDER BY ts", sink);
-            TestUtils.assertEquals("c6\n", sink);
+            assertQuery("SELECT c6 FROM tp WHERE c6 >= 1e40 ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("c6\n");
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
         });
     }
@@ -6448,6 +6651,100 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                 .returns(expected);
     }
 
+    // Asserts that the partially-parquet table returns exactly what the all-native table returns,
+    // WITHOUT pinning what that is, and RETURNS the row count the two agreed on so the caller can
+    // prove the comparison was not empty-vs-empty. The fluent assertQuery(...).returns(...) form
+    // cannot be used for these predicates: they sit exactly on the floating-point tolerance boundary,
+    // where the answer depends on whether the libquestdb on the classpath carries the STRICT
+    // float_cmp_epsilon (the committed binaries) or the INCLUSIVE one (the C++ sources, once the CXX
+    // workflow rebuilds them). Only one of the two literals could ever be written, so a literal
+    // expectation pins the comparator instead of the pruning - and the pruning is what row-group
+    // pushdown may never get wrong. tn == tp is true under both comparators and is false exactly when
+    // a row group holding a matching row was pruned.
+    //
+    // Parity on its own is not an oracle - two empty sinks match - so this helper adds two guards
+    // that are themselves comparator-independent:
+    //
+    // 1. usesCompiledFilter() pins that the COMPILED filter really ran on both arms. Every witness's
+    //    premise is "the f32 compiled arm keeps a row the f64 pair drops"; if the shape ever stopped
+    //    compiling, both arms would run the Java filter, whose answer does not move with the binary,
+    //    and the differential would compare one Java answer to another and prove nothing.
+    // 2. The row count pins the SHAPE of the answer. createRepeatedFloatPartialParquet() writes one
+    //    repeated value into the parquet partition and a single far-off value into the native one, so
+    //    the only answers these predicates can have are "the whole repeated block" or "nothing at
+    //    all". Anything in between is a row group half-lost, under either comparator.
+    //
+    // Neither guard can pin a row count outright, because the answer legitimately MOVES with the
+    // comparator. The caller closes that gap: testFloatColumnPushdownMatchesNativeUnderEitherComparator
+    // sums the counts its comparator-dependent sites return and asserts an EXACT total: either
+    // 4 * REPEATED_FLOAT_ROW_COUNT under the STRICT comparator or 2 * REPEATED_FLOAT_ROW_COUNT under
+    // the INCLUSIVE one. Only those two totals are reachable under BOTH binaries because FOUR of the
+    // five LT/GT witnesses bear rows exactly when the LE/GE pair does not. The fifth ("c6 < 2e-10")
+    // bears rows under neither, because its bound is not exactly representable as a float, so the
+    // comparison widens to f64 and lands INSIDE DOUBLE_TOLERANCE rather than on the f32 boundary.
+    //
+    // No ORDER BY, deliberately, and the projection reads only the filtered column: ordering or
+    // projecting by a column the filter does not read turns on parquet late materialization, which
+    // leaves the unread column's address at 0, makes the frame report column tops and drops the
+    // query onto the Java filter - which would defeat guard 1 above. Both tables hold two partitions
+    // with distinct timestamps, so the scan order is deterministic without one.
+    private int assertPartialParquetMatchesNativeUnderEitherComparator(String whereClause) throws Exception {
+        final StringSink nativeSink = new StringSink();
+        final int nativeRows = printCompiledFilterQuery("SELECT c6 FROM tn WHERE " + whereClause, nativeSink);
+        final StringSink parquetSink = new StringSink();
+        printCompiledFilterQuery("SELECT c6 FROM tp WHERE " + whereClause, parquetSink);
+        TestUtils.assertEquals(
+                "row group pruning changed the result of: " + whereClause,
+                nativeSink,
+                parquetSink
+        );
+        Assert.assertTrue(
+                "the all-native table answered with a partial repeated block, so the fixture no longer"
+                        + " bounds the answer to 0 or " + REPEATED_FLOAT_ROW_COUNT + " rows [rows=" + nativeRows
+                        + "] for: " + whereClause,
+                nativeRows == 0 || nativeRows == REPEATED_FLOAT_ROW_COUNT
+        );
+        return nativeRows;
+    }
+
+    // Runs a query with the compiled filter pinned ON, prints it into sink and returns the number of
+    // DATA rows printed - CursorPrinter emits a header line first, so the row count is one less than
+    // the number of newlines.
+    private int printCompiledFilterQuery(String query, StringSink sink) throws Exception {
+        try (RecordCursorFactory factory = select(query)) {
+            Assert.assertTrue(
+                    "the compiled filter did not run, so this query no longer exercises the native"
+                            + " comparator: " + query,
+                    factory.usesCompiledFilter()
+            );
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                CursorPrinter.println(cursor, factory.getMetadata(), sink);
+            }
+        }
+        int newlines = 0;
+        for (int i = 0, n = sink.length(); i < n; i++) {
+            if (sink.charAt(i) == '\n') {
+                newlines++;
+            }
+        }
+        return Math.max(0, newlines - 1);
+    }
+
+    // Builds the FLOAT pair the tolerance-boundary pruning tests need: tn all native, tp with its
+    // first partition converted to parquet, both holding REPEATED_FLOAT_ROW_COUNT copies of
+    // parquetValue on 2024-01-01 and one nativeValue row on 2024-01-02. The repeated value makes the
+    // row group's min and max the boundary value itself.
+    private void createRepeatedFloatPartialParquet(String parquetValue, String nativeValue) throws Exception {
+        execute("CREATE TABLE tn (c6 FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE tp (c6 FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        final String rows = " SELECT " + parquetValue + "::FLOAT, timestamp_sequence('2024-01-01', 1_000)"
+                + " FROM long_sequence(" + REPEATED_FLOAT_ROW_COUNT + ")";
+        execute("INSERT INTO tn" + rows);
+        execute("INSERT INTO tp" + rows);
+        execute("INSERT INTO tn VALUES (" + nativeValue + ", '2024-01-02T00:00:00.000000Z')");
+        execute("INSERT INTO tp VALUES (" + nativeValue + ", '2024-01-02T00:00:00.000000Z')");
+        execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+    }
 
     private void assertHasParquetPartitions(String tableName, boolean expected) {
         TableToken tableToken = engine.verifyTableName(tableName);

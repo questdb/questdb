@@ -26,12 +26,10 @@ package io.questdb.test.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.griffin.PlanSink;
@@ -47,8 +45,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.FaultInjectedException;
+import io.questdb.test.tools.FaultInjectingConfiguration;
+import io.questdb.test.tools.FaultInjectingConfiguration.FaultMethod;
 import io.questdb.test.tools.NativeFilter;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -120,7 +119,8 @@ public class AsyncWindowJoinFactoryConstructorTest extends AbstractCairoTest {
     private static void assertConstructorFailureIsClean(boolean fast, FaultPoint faultPoint) throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            final CairoConfiguration configuration = new FaultInjectingConfiguration(engine.getConfiguration(), faultPoint);
+            final CairoConfiguration configuration =
+                    new FaultInjectingConfiguration(engine.getConfiguration(), faultPoint.faultMethod, faultPoint);
             // Base factories and the join metadata are built with the real config and stay the caller's
             // responsibility on a ctor throw, exactly as in SqlCodeGenerator.
             final RecordCursorFactory masterFactory = baseFactory("master");
@@ -374,13 +374,20 @@ public class AsyncWindowJoinFactoryConstructorTest extends AbstractCairoTest {
     private enum FaultPoint {
         // Read by the AsyncWindowJoin(Fast)Atom constructor (WindowJoinTimeFrameHelper build), after it
         // has adopted the owner/per-worker filters.
-        ATOM,
+        ATOM(FaultMethod.SQL_AS_OF_JOIN_LOOK_AHEAD),
         // Raised by the slave factory the AsyncWindowJoinRecordCursor constructor reads its metadata
         // from. It runs last, so the frame sequence is live and only the factory ctor can release it.
-        CURSOR,
+        // CountingSlaveFactory raises it, so no configuration getter backs this one - hence NONE.
+        CURSOR(FaultMethod.NONE),
         // Read by the PageFrameSequence constructor, which owns the atom by then and closes it on its
         // own failure path.
-        FRAME_SEQUENCE
+        FRAME_SEQUENCE(FaultMethod.CIRCUIT_BREAKER_CONFIGURATION);
+
+        private final FaultMethod faultMethod;
+
+        FaultPoint(FaultMethod faultMethod) {
+            this.faultMethod = faultMethod;
+        }
     }
 
     /**
@@ -429,31 +436,6 @@ public class AsyncWindowJoinFactoryConstructorTest extends AbstractCairoTest {
         @Override
         public void toPlan(PlanSink sink) {
             delegate.toPlan(sink);
-        }
-    }
-
-    private static class FaultInjectingConfiguration extends CairoConfigurationWrapper {
-        private final FaultPoint faultPoint;
-
-        private FaultInjectingConfiguration(CairoConfiguration delegate, FaultPoint faultPoint) {
-            super(delegate);
-            this.faultPoint = faultPoint;
-        }
-
-        @Override
-        public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-            if (faultPoint == FaultPoint.FRAME_SEQUENCE) {
-                throw new FaultInjectedException(faultPoint);
-            }
-            return super.getCircuitBreakerConfiguration();
-        }
-
-        @Override
-        public int getSqlAsOfJoinLookAhead() {
-            if (faultPoint == FaultPoint.ATOM) {
-                throw new FaultInjectedException(faultPoint);
-            }
-            return super.getSqlAsOfJoinLookAhead();
         }
     }
 }

@@ -809,7 +809,8 @@ namespace questdb::x86 {
         return r.as<Gp>();
     }
 
-    // (isnan(lhs) && isnan(rhs) || fabs(l - r) < 0.0000000001);
+    // (isnan(lhs) && isnan(rhs) || fabs(l - r) <= 0.0000000001);
+    // The tolerance test is INCLUSIVE, matching Numbers.equals() ("Math.abs(l - r) <= DOUBLE_TOLERANCE").
     inline Gp double_cmp_epsilon(Compiler &c, const Vec &xmm0, const Vec &xmm1, double epsilon, bool eq) {
         c.comment("double_cmp_epsilon_start");
         int64_t nans[] = {0x7fffffffffffffff, 0x7fffffffffffffff}; // double NaN
@@ -846,10 +847,14 @@ namespace questdb::x86 {
         c.movsd(rhs, d);
         c.xor_(r, r);
         c.ucomisd(rhs, lhs);
+        // ucomisd sets CF=1 when rhs < lhs and when the operands are unordered, CF=0 when
+        // rhs > lhs and when rhs == lhs. setae (CF==0) is therefore "epsilon >= |diff|",
+        // the inclusive test, and it still answers false on a NaN diff. setb (CF==1) is its
+        // exact complement and still answers true on a NaN diff, as double_ne_epsilon needs.
         if (eq) {
-            c.seta(r.r8_lo());
+            c.setae(r.r8_lo());
         } else {
-            c.setbe(r.r8_lo());
+            c.setb(r.r8_lo());
         }
         c.bind(l_exit);
         c.comment("double_cmp_epsilon_stop");
@@ -900,10 +905,12 @@ namespace questdb::x86 {
         c.movss(rhs, d);
         c.xor_(r, r);
         c.ucomiss(rhs, lhs);
+        // As in double_cmp_epsilon: setae (CF==0) is the inclusive "epsilon >= |diff|" and
+        // setb (CF==1) its exact complement; both keep the unordered (NaN) answers unchanged.
         if (eq) {
-            c.seta(r.r8_lo());
+            c.setae(r.r8_lo());
         } else {
-            c.setbe(r.r8_lo());
+            c.setb(r.r8_lo());
         }
         c.bind(l_exit);
         c.comment("float_cmp_epsilon_stop");

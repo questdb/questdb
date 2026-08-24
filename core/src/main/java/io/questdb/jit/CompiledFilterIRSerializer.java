@@ -132,6 +132,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static final int INSTRUCTION_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
     // Maximum number of labels supported by the backend (must match LabelArray::MAX_LABELS in x86.h)
     private static final int MAX_LABELS = 8;
+    // What hasUnharmonisedOperandWidths() adds to the type code of a narrow-int IMM before it
+    // pushes it, so isUnharmonisedPairing() can tell an immediate from a column read of the same
+    // width. Type codes run 0 (I1_TYPE) to 9 (VARCHAR_HEADER_TYPE), so 16 collides with none of
+    // them and stays clear of UNDEFINED_CODE (-1) as well. See isWideLaneUnharmonisedPairing.
+    private static final int NARROW_IMM_WIDTH_OFFSET = 16;
     // Absent-key marker for the arithmetic type caches. UNDEFINED_CODE is a cacheable answer, so it
     // cannot double as the miss value.
     private static final int NOT_CACHED = Integer.MIN_VALUE;
@@ -1410,17 +1415,37 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
-     * Asserts that no binary operator in a finished wide-lane IR stream mixes a 4-byte and an
-     * 8-byte integer operand.
+     * Asserts that no binary operator in a finished wide-lane IR stream leaves an integer operand
+     * pairing that the four-lane loop neither receives already harmonised nor harmonises itself.
      * <p>
      * The four-lane backend loads a 4-byte column as four packed i32 in the low half of the
-     * register while an 8-byte column spans all four 64-bit lanes, so an unharmonised pairing
-     * compares against adjacent rows. {@code avx2::convert()} widens the i32 side of an i32-with-i64
-     * and an i32-with-f64 pairing, so a miss no longer reaches a user as wrong rows - but the
-     * frontend still owns the answer, because only it knows which width the JAVA filter reads at,
-     * and the two must agree. This assert stays the tripwire that turns a miss into a test failure
-     * rather than a silent reliance on the backstop. Integer-to-float pairings are excluded:
-     * {@code convert()} handles them outright.
+     * register while an 8-byte column spans all four 64-bit lanes, so an operand pairing nothing
+     * harmonises compares against adjacent rows. Two pairings reach that state, for opposite
+     * reasons:
+     * <ul>
+     * <li>an i8 or i16 operand beside an i64 one. {@code avx2::convert()} carries no arm for
+     * either width, so the pairing falls through to the terminal
+     * {@code lhs.dtype() != rhs.dtype()} decline at {@code jit/avx2.h:786-788} and the filter
+     * loses its compiled backend to the Java one.</li>
+     * <li>a narrow-int IMMEDIATE beside an i64 operand. {@code convert()} does sign-extend the i32
+     * side here, but only the frontend knows which width the JAVA filter reads at, and an
+     * immediate has no width of its own - the frontend picks it. A narrow immediate beside an i64
+     * is therefore the frontend disagreeing with itself rather than a conversion for the backend
+     * to make, and this assert is what turned {@code QueryFuzzTest}'s
+     * {@code (i64 114763L)(i32 446488L)(-)} into a test failure instead of a silent reliance on
+     * the backstop. See {@code CompiledFilterRegressionTest#testNarrowConstOperandOfLongArithWidensAndMatchesJava}.</li>
+     * </ul>
+     * A narrow COLUMN or bind-variable read beside an i64 is neither. {@code avx2::read_mem} loads
+     * an i32 column into the low 128 bits ({@code jit/avx2.h:362}, {@code :398}) precisely so
+     * {@code convert()}'s i32-with-i64 arm can {@code sx_i64} it ({@code jit/avx2.h:675-679},
+     * {@code :693-697}), and {@code compiler.cpp:378} runs WIDE_LANE at four lanes unconditionally,
+     * which is the lane count those arms gate on. A column also carries the same value at either
+     * width, so the Java filter and the backend agree without the frontend choosing anything.
+     * {@code serializeUntypedNumber} emits exactly that shape - an INT-range constant at I8
+     * against a 4-byte MEM - for a predicate whose local {@link TypesObserver} is mixed-size, which
+     * {@code testWideLaneNarrowColumnAgainstWidenedImmIsHarmonised} drives straight through
+     * {@link #serialize}. Integer-to-float pairings stay excluded: {@code convert()} handles them
+     * outright.
      * <p>
      * Runs under {@code -ea} only, so it costs nothing in production.
      */
@@ -1442,10 +1467,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * <p>
      * The two callers ask different questions of the same walk:
      * <ul>
-     * <li>{@code isWideLane} - the four-lane loop, where {@code convert()} does promote. Only a
-     * narrow-int-with-i64 pairing counts, and it counts because the FRONTEND owns which width the
-     * Java filter reads at; the backend's promotion is a backstop, not the answer. This half runs
-     * under an assert.</li>
+     * <li>{@code isWideLane} - the four-lane loop, where {@code convert()} does promote an i32.
+     * Two narrow-with-i64 pairings still count: an i8 or i16 operand, which {@code convert()} has
+     * no arm for at any lane count, and a narrow-int IMMEDIATE, which counts because the FRONTEND
+     * owns which width the Java filter reads at and an immediate has no width of its own. A narrow
+     * COLUMN read does not count - the backend's {@code sx_i64} is the designed load path for it,
+     * and it carries the same value at either width. This half runs under an assert. See
+     * {@link #isWideLaneUnharmonisedPairing}.</li>
      * <li>otherwise - the single-size loop at a lane narrower than eight bytes, where the backend
      * declines rather than promotes and the filter would fall back to the Java one. Any byte-width
      * mismatch counts. {@link #getExecHint} demotes such a filter to {@link #EXEC_HINT_SCALAR}
@@ -1480,9 +1508,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     return false;
                 case VAR:
                 case MEM:
-                case IMM:
                     pushType(memory.getInt(offset + Integer.BYTES));
                     break;
+                case IMM: {
+                    // A narrow-int immediate rides with NARROW_IMM_WIDTH_OFFSET added to its type
+                    // code, so isWideLaneUnharmonisedPairing() can separate it from a column read
+                    // of the same width. Only the wide-lane half reads the marker; laneTypeCode()
+                    // strips it everywhere a width is what the walk needs.
+                    final int typeCode = memory.getInt(offset + Integer.BYTES);
+                    pushType(isNarrowIntTypeCode(typeCode) ? typeCode + NARROW_IMM_WIDTH_OFFSET : typeCode);
+                    break;
+                }
                 case SX_I64:
                     popType();
                     pushType(I8_TYPE);
@@ -1530,8 +1566,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     }
                     final boolean isComparison = opCode == EQ || opCode == NE || opCode == LT
                             || opCode == LE || opCode == GT || opCode == GE;
-                    // A comparison yields a lane mask, not a value of either operand's width.
-                    pushType(isComparison ? UNDEFINED_CODE : Math.max(lhsType, rhsType));
+                    // A comparison yields a lane mask, not a value of either operand's width. An
+                    // arithmetic result keeps a width but drops the immediate marker: whatever the
+                    // frontend chose for the operands, what the operator leaves behind is a value
+                    // the BACKEND computed, and convert() widens it exactly as it widens a column
+                    // read. Dropping the marker can only remove a report, never invent one.
+                    pushType(isComparison ? UNDEFINED_CODE : Math.max(laneTypeCode(lhsType), laneTypeCode(rhsType)));
                     break;
                 }
                 default:
@@ -1550,13 +1590,55 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      */
     private static boolean isUnharmonisedPairing(int lhsType, int rhsType, boolean isWideLane) {
         if (isWideLane) {
-            return (isNarrowIntTypeCode(lhsType) && rhsType == I8_TYPE)
-                    || (isNarrowIntTypeCode(rhsType) && lhsType == I8_TYPE);
+            return isWideLaneUnharmonisedPairing(lhsType, rhsType)
+                    || isWideLaneUnharmonisedPairing(rhsType, lhsType);
         }
-        final int lhsSize = TypesObserver.typeSizeBytes(lhsType);
-        final int rhsSize = TypesObserver.typeSizeBytes(rhsType);
+        // The single-size half asks only about byte widths, so the immediate marker comes off
+        // first: typeSizeBytes() answers 0 for a marked code, and a zero size means "skip", which
+        // would take every narrow immediate out of this half's reach.
+        final int lhsSize = TypesObserver.typeSizeBytes(laneTypeCode(lhsType));
+        final int rhsSize = TypesObserver.typeSizeBytes(laneTypeCode(rhsType));
         // A zero size is UNDEFINED_CODE - a comparison mask, or a value this walk stopped tracking.
         return lhsSize != 0 && rhsSize != 0 && lhsSize != rhsSize;
+    }
+
+    /**
+     * Reports whether {@code narrowEntry} is a narrow operand the FOUR-LANE loop leaves
+     * unharmonised beside the i64 operand {@code wideEntry}. Callers ask it both ways round, so
+     * this arm handles one direction only.
+     * <p>
+     * An i8 or i16 operand qualifies whatever produced it: {@code avx2::convert()} has no arm for
+     * either width, so the pairing reaches the terminal {@code lhs.dtype() != rhs.dtype()} decline
+     * at {@code jit/avx2.h:786-788} and the filter falls back to the Java one.
+     * <p>
+     * An i32 operand qualifies only when it is an IMMEDIATE. {@code convert()}'s i32-with-i64 arm
+     * sign-extends the i32 side ({@code jit/avx2.h:675-679}, {@code :693-697}) and
+     * {@code compiler.cpp:378} runs WIDE_LANE at the four lanes those arms gate on, so the backend
+     * closes the gap either way - but an immediate carries no width of its own, and the frontend
+     * that picked one for it is the only party that knows which width the Java filter reads at. A
+     * column or bind-variable read has a width the Java filter reads at too, and sign extension
+     * preserves its value, so the two agree with nothing for the frontend to decide.
+     */
+    private static boolean isWideLaneUnharmonisedPairing(int narrowEntry, int wideEntry) {
+        if (laneTypeCode(wideEntry) != I8_TYPE) {
+            return false;
+        }
+        final int narrowType = laneTypeCode(narrowEntry);
+        if (narrowType == I1_TYPE || narrowType == I2_TYPE) {
+            return true;
+        }
+        return narrowType == I4_TYPE && narrowEntry >= NARROW_IMM_WIDTH_OFFSET;
+    }
+
+    /**
+     * Strips the {@link #NARROW_IMM_WIDTH_OFFSET} marker a narrow-int IMM rides with, leaving the
+     * plain type code every width comparison needs. Every other entry - {@link #UNDEFINED_CODE}
+     * included - passes through untouched, because {@link #hasUnharmonisedOperandWidths} adds the
+     * offset only to I1_TYPE, I2_TYPE and I4_TYPE, and {@link #ensureOnlyVarSizeHeaderChecks}
+     * pushes every operand unmarked.
+     */
+    private static int laneTypeCode(int stackEntry) {
+        return stackEntry >= NARROW_IMM_WIDTH_OFFSET ? stackEntry - NARROW_IMM_WIDTH_OFFSET : stackEntry;
     }
 
     /**

@@ -4797,6 +4797,176 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNarrowIntColumnVsExactToleranceBoundConstant() throws Exception {
+        // The Java filter and the compiled one carry the same tolerance AND the same INCLUSIVE
+        // reading of it: Numbers.equals is "Math.abs(l - r) <= DOUBLE_TOLERANCE"
+        // (Numbers.java:843/:847) and the native double_cmp_epsilon / float_cmp_epsilon are
+        // "epsilon >= |lhs - rhs|" on every backend - x86 ucomisd/setae (jit/impl/x86.h), aarch64
+        // fcmp/cset GE (jit/impl/aarch64.h) and the AVX2 pair's vcmppd/vcmpps with CmpImm::kLE
+        // (jit/impl/avx2.h). This test pins the one point where that inclusiveness is the only thing
+        // separating the two answers: a bound spelled exactly DOUBLE_TOLERANCE away from a stored
+        // value. Everywhere else the same arithmetic closes the tolerance band on both sides and the
+        // two agree regardless.
+        //
+        // The native comparators were STRICT until this change, and every assertion below reddens if
+        // any of the six sites reverts. Reverting also needs the committed per-platform binaries
+        // under core/src/main/resources/io/questdb/bin/ rebuilt by the "Build and Push Release CXX
+        // Libraries" workflow, since CI runs those and not a local build; the C++ sources alone do
+        // not move CI.
+        //
+        // Only four of the six operators ever depended on it. "<=" and ">" combine the plain
+        // comparison with the epsilon test in the direction that already covers the boundary row, so
+        // they agreed under the strict comparator too; they are asserted here to catch a change that
+        // breaks THEM while fixing the other four.
+        //
+        // The fixture holds 1_000 rows rather than a handful ON PURPOSE. The compiled filter runs
+        // its AVX2 loop only once there are whole vectors to fill and handles the remainder with the
+        // scalar tail, so a two-row table exercises jit/impl/x86.h in BOTH JIT modes and never
+        // reaches jit/impl/avx2.h at all. Counts, not row lists, keep the expectations readable:
+        // rows 1..500 hold 0 and sit exactly on the bound, rows 501..1_000 hold 5, so 500 and 1_000
+        // name the two halves unambiguously.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE zt AS (
+                      SELECT
+                        (case when x <= 500 then 0 else 5 end)::byte b,
+                        (case when x <= 500 then 0 else 5 end)::short s,
+                        (case when x <= 500 then 0 else 5 end)::int i,
+                        (case when x <= 500 then 0 else 5 end)::long l,
+                        (case when x <= 500 then 0 else 5 end)::float f,
+                        (case when x <= 500 then 0 else 5 end)::double d,
+                        timestamp_sequence(0, 1_000_000) k
+                      FROM long_sequence(1_000)
+                    ) TIMESTAMP(k)""");
+
+            // BYTE and SHORT are the pair this PR newly reaches: serializeNumber's I1 / I2 arms parse
+            // an integer and throw on a fractional token, so these shapes used to decline JIT
+            // compilation outright and both engines ran the Java filter. The narrow-int widening
+            // compiles them now, and they land on a comparator that agrees.
+            // Under the strict comparator the four moving operators answered 500 / 500 / 0 / 1_000.
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE b < 1e-10", "count\n0\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE b <= 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE b > 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE b >= 1e-10", "count\n1000\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE b = 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE b <> 1e-10", "count\n500\n");
+
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE s < 1e-10", "count\n0\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE s <= 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE s > 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE s >= 1e-10", "count\n1000\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE s = 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE s <> 1e-10", "count\n500\n");
+
+            // INT, LONG, FLOAT and DOUBLE reached the comparator on base as well and disagreed there
+            // identically, so these close a PRE-EXISTING divergence rather than a regression this PR
+            // introduced. They are pinned here rather than in a separate test because they share the
+            // single comparator this change moves: a fix that reached only the narrow ints would
+            // leave every one of them open.
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE i < 1e-10", "count\n0\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE i <= 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE i > 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE i >= 1e-10", "count\n1000\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE i = 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE i <> 1e-10", "count\n500\n");
+
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE l < 1e-10", "count\n0\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE l <= 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE l > 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE l >= 1e-10", "count\n1000\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE l = 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE l <> 1e-10", "count\n500\n");
+
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE f < 1e-10", "count\n0\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE f <= 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE f > 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE f >= 1e-10", "count\n1000\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE f = 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE f <> 1e-10", "count\n500\n");
+
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE d < 1e-10", "count\n0\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE d <= 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE d > 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE d >= 1e-10", "count\n1000\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE d = 1e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE d <> 1e-10", "count\n500\n");
+
+            // The arithmetic spellings take a different marking path - maybeWidenCmpConstOperand
+            // widens only the constant - and land on the same comparator, so they agree too. A fix
+            // that declined JIT for the leaf shape alone would have left these open.
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE b + 0 >= 1e-10", "count\n1000\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE -s <= -1e-10", "count\n1000\n");
+
+            // Controls: the boundary is the ONLY point the inclusive comparator moved. A bound half a
+            // tolerance inside the band, and one half a tolerance outside it, answered the same under
+            // the strict comparator and still do - so this change did not widen or narrow the band
+            // itself, it only closed its edge.
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE b < 5e-11", "count\n0\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE b >= 5e-11", "count\n1000\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE b = 5e-11", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE b <> 5e-11", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE i < 1.5e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE i >= 1.5e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE i = 1.5e-10", "count\n0\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM zt WHERE i <> 1.5e-10", "count\n1000\n");
+            // ... and the same bound against a BYTE / SHORT column is not compiled at all:
+            // isNarrowIntCmpWideningConst widens only when an integer falls in the band round the
+            // bound, and 1.5e-10 leaves none there, so serializeNumber's I1 / I2 arms reject the
+            // fractional token. Both engines run the Java filter.
+            assertJitMatchesJava("SELECT count() FROM zt WHERE b < 1.5e-10", false, "count\n500\n");
+            assertJitMatchesJava("SELECT count() FROM zt WHERE s >= 1.5e-10", false, "count\n500\n");
+        });
+    }
+
+    @Test
+    public void testIntColumnVsFloatToleranceBoundConstantStillDivergesOnF32Width() throws Exception {
+        // The SURVIVING half of the tolerance asymmetry, which the inclusive comparators do NOT
+        // close: FLOAT_EPSILON is (float) DOUBLE_TOLERANCE (consts.h), i.e. 1.000000013351432e-10, a
+        // shade LARGER than the 1e-10 the Java filter uses. An INT leaf compared against a fractional
+        // bound falls through serializeNumber's I4 arm to a 32-bit float bound and runs the compiled
+        // filter's f32 arm, so the two filters carry two different tolerances and disagree wherever a
+        // value lands between them. That is pre-existing and independent of this change.
+        //
+        // What the inclusive comparators DID move is which single point falls in that gap. The strict
+        // f32 test disagreed with Java at |row - bound| == DOUBLE_TOLERANCE, the bound a query
+        // realistically spells ("col >= 1e-10"); the inclusive one agrees there - see
+        // testNarrowIntColumnVsExactToleranceBoundConstant - and disagrees instead at
+        // |row - bound| == FLOAT_EPSILON, reachable only by spelling out the float representation of
+        // the tolerance in full. The count of disagreeing points is unchanged; the one that remains
+        // is far harder to write by accident.
+        //
+        // This is also the test that covers the two f32 sites of the change (x86 float_cmp_epsilon,
+        // AVX2 cmp_eq_float). The fixture holds 1_000 rows so the AVX2 loop runs: a small table is
+        // handled entirely by the scalar tail and would leave jit/impl/avx2.h untested.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE ft AS (
+                      SELECT
+                        (case when x <= 500 then 0 else 5 end)::int i,
+                        timestamp_sequence(0, 1_000_000) k
+                      FROM long_sequence(1_000)
+                    ) TIMESTAMP(k)""");
+
+            // 1.000000013351432e-10 IS (float) 1e-10 exactly, so |0 - bound| at f32 width is exactly
+            // FLOAT_EPSILON and the inclusive f32 test calls the 500 zero rows EQUAL to the bound. At
+            // f64 width the same distance exceeds DOUBLE_TOLERANCE, so the Java filter calls them
+            // UNEQUAL. Both answers are pinned.
+            assertJitDivergesFromJavaAtF32ToleranceBound(
+                    "SELECT count() FROM ft WHERE i < 1.000000013351432e-10", "count\n500\n", "count\n0\n");
+            assertJitDivergesFromJavaAtF32ToleranceBound(
+                    "SELECT count() FROM ft WHERE i >= 1.000000013351432e-10", "count\n500\n", "count\n1000\n");
+            assertJitDivergesFromJavaAtF32ToleranceBound(
+                    "SELECT count() FROM ft WHERE i = 1.000000013351432e-10", "count\n0\n", "count\n500\n");
+            assertJitDivergesFromJavaAtF32ToleranceBound(
+                    "SELECT count() FROM ft WHERE i <> 1.000000013351432e-10", "count\n1000\n", "count\n500\n");
+            // "<=" and ">" cover the boundary rows through the plain comparison in the same direction
+            // as the epsilon test, so they agree at this bound as they do at 1e-10.
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM ft WHERE i <= 1.000000013351432e-10", "count\n500\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM ft WHERE i > 1.000000013351432e-10", "count\n500\n");
+        });
+    }
+
+    @Test
     public void testFloatWithLongOperandVsConstantWithNoExactFloat() throws Exception {
         // A FLOAT leaf whose arithmetic has a LONG operand: QuestDB resolves "f + l" to
         // AddDoubleFunctionFactory (LONG has no FLOAT overload), so the Java filter computes the sum
@@ -8003,6 +8173,71 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 TestUtils.assertEquals(
                         "JIT vs Java result mismatch [scalarMode=" + (i == 0) + "] for query: " + query,
                         javaSink,
+                        jit
+                );
+            }
+        } finally {
+            sqlExecutionContext.setJitMode(callerJitMode);
+        }
+    }
+
+    /**
+     * Pins a query whose Java and compiled filters DISAGREE because they compare at DIFFERENT
+     * TOLERANCES, not because they read the same tolerance differently. {@code FLOAT_EPSILON} is
+     * {@code (float) DOUBLE_TOLERANCE} (consts.h), a shade larger than the {@code 1e-10} the Java
+     * filter uses, so a shape that runs the compiled filter's f32 arm - an INT leaf against a
+     * fractional bound, via {@code serializeNumber}'s I4 arm - answers differently for any value
+     * that lands between the two. Both answers are recorded, so the divergence is visible rather
+     * than merely absent from the suite.
+     * <p>
+     * This is separate from, and untouched by, the inclusive-vs-strict question: the native
+     * comparators now read their epsilon inclusively and agree with {@code Numbers.equals} wherever
+     * the two tolerances coincide (see
+     * {@link #testNarrowIntColumnVsExactToleranceBoundConstant}).
+     * <p>
+     * The method also insists the two answers really differ, so the pin cannot outlive the
+     * limitation: narrowing {@code FLOAT_EPSILON} to the f64 tolerance, or declining JIT compilation
+     * for the shape, reddens every site here and forces the expectations to be revisited instead of
+     * leaving a stale record of a divergence that no longer exists.
+     * <p>
+     * FORCE_SCALAR and the vectorized mode are asserted separately, since the two backends carry
+     * their own copy of the comparator ({@code jit/impl/x86.h} and {@code jit/impl/avx2.h}) and a
+     * divergence could in principle live in one and not the other.
+     */
+    private void assertJitDivergesFromJavaAtF32ToleranceBound(
+            CharSequence query,
+            CharSequence javaExpected,
+            CharSequence jitExpected
+    ) throws SqlException {
+        Assert.assertFalse(
+                "site claims a divergence but pins the same rows for both filters: " + query,
+                Chars.equals(javaExpected, jitExpected)
+        );
+        final int callerJitMode = sqlExecutionContext.getJitMode();
+        try {
+            final StringSink javaSink = new StringSink();
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            try (RecordCursorFactory factory = select(query)) {
+                Assert.assertFalse("JIT was enabled for query: " + query, factory.usesCompiledFilter());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    CursorPrinter.println(cursor, factory.getMetadata(), javaSink);
+                }
+            }
+            TestUtils.assertEquals("Java filter result mismatch for query: " + query, javaExpected, javaSink);
+
+            final int[] jitModes = {SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED};
+            for (int i = 0; i < jitModes.length; i++) {
+                final StringSink jit = new StringSink();
+                sqlExecutionContext.setJitMode(jitModes[i]);
+                try (RecordCursorFactory factory = select(query)) {
+                    Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        CursorPrinter.println(cursor, factory.getMetadata(), jit);
+                    }
+                }
+                TestUtils.assertEquals(
+                        "compiled filter result mismatch [scalarMode=" + (i == 0) + "] for query: " + query,
+                        jitExpected,
                         jit
                 );
             }

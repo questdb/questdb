@@ -688,7 +688,8 @@ namespace questdb::aarch64 {
         }
     }
 
-    // fabs(l - r) < epsilon, with special handling for infinities
+    // fabs(l - r) <= epsilon, with special handling for infinities.
+    // The tolerance test is INCLUSIVE, matching Numbers.equals() ("Math.abs(l - r) <= DOUBLE_TOLERANCE").
     inline Gp double_cmp_epsilon(Compiler &c, const Vec &xmm0, const Vec &xmm1, double epsilon, bool eq) {
         Label l_nan = c.new_label();
         Label l_exit = c.new_label();
@@ -727,10 +728,14 @@ namespace questdb::aarch64 {
         Mem eps_mem = c.new_double_const(ConstPoolScope::kLocal, epsilon);
         c.ldr(rhs, eps_mem);
         c.fcmp(rhs, lhs);
+        // fcmp writes NZCV = 0110 when rhs == lhs, 0010 when rhs > lhs, 1000 when rhs < lhs and
+        // 0011 when either operand is NaN. kGE is N==V, so it holds for "equal" and "greater" and
+        // fails for NaN (N=0, V=1): that is "epsilon >= |diff|", inclusive, NaN-safe. kLT is N!=V,
+        // its exact complement, and still answers true for NaN as double_ne_epsilon needs.
         if (eq) {
-            c.cset(r, CondCode::kGT);   // epsilon > |diff| => GT (ordered greater, false for NaN)
+            c.cset(r, CondCode::kGE);   // epsilon >= |diff| => GE (ordered, false for NaN)
         } else {
-            c.cset(r, CondCode::kLE);   // !(epsilon > |diff|) => LE (ordered less or equal, true for NaN)
+            c.cset(r, CondCode::kLT);   // !(epsilon >= |diff|) => LT (true for NaN)
         }
         c.bind(l_exit);
         return r;
@@ -779,10 +784,12 @@ namespace questdb::aarch64 {
         Mem eps_mem = c.new_float_const(ConstPoolScope::kLocal, epsilon);
         c.ldr(rhs, eps_mem);
         c.fcmp(rhs, lhs);
+        // As in double_cmp_epsilon: kGE (N==V) is the inclusive "epsilon >= |diff|" and kLT
+        // (N!=V) its exact complement; both keep the unordered (NaN) answers unchanged.
         if (eq) {
-            c.cset(r, CondCode::kGT);   // ordered greater (false for NaN)
+            c.cset(r, CondCode::kGE);   // epsilon >= |diff| (false for NaN)
         } else {
-            c.cset(r, CondCode::kLE);   // ordered less or equal (true for NaN)
+            c.cset(r, CondCode::kLT);   // !(epsilon >= |diff|) (true for NaN)
         }
         c.bind(l_exit);
         return r;

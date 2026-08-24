@@ -25,10 +25,8 @@
 package io.questdb.test.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
@@ -42,8 +40,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.FaultInjectedException;
+import io.questdb.test.tools.FaultInjectingConfiguration;
+import io.questdb.test.tools.FaultInjectingConfiguration.FaultMethod;
 import io.questdb.test.tools.NativeFilter;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -103,7 +102,8 @@ public class AsyncFilterFactoryConstructorTest extends AbstractCairoTest {
     private static void assertConstructorFailureIsClean(boolean isJit, FaultPoint faultPoint) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            final CairoConfiguration configuration = new FaultInjectingConfiguration(engine.getConfiguration(), faultPoint);
+            final CairoConfiguration configuration =
+                    new FaultInjectingConfiguration(engine.getConfiguration(), faultPoint.faultMethod, faultPoint);
             final RecordCursorFactory base = select("SELECT * FROM x");
             // Owned by the caller, exactly as in SqlCodeGenerator: the constructor must not close any
             // of these, on either the success or the failure path.
@@ -218,44 +218,17 @@ public class AsyncFilterFactoryConstructorTest extends AbstractCairoTest {
     private enum FaultPoint {
         // Read by the factory constructor to size the JIT bind variable memory, i.e. after the cursors
         // are built and before anything takes the per-worker filters over.
-        BIND_VAR_MEMORY,
+        BIND_VAR_MEMORY(FaultMethod.SQL_JIT_BIND_VARS_MEMORY_PAGE_SIZE),
         // Read by the AsyncFilterAtom constructor, which has already taken the per-worker filters.
-        ATOM,
+        ATOM(FaultMethod.SQL_PARALLEL_FILTER_PRE_TOUCH_THRESHOLD),
         // Read by the PageFrameSequence constructor, which owns the atom by then and closes it on its
         // own failure path.
-        FRAME_SEQUENCE
-    }
+        FRAME_SEQUENCE(FaultMethod.CIRCUIT_BREAKER_CONFIGURATION);
 
-    private static class FaultInjectingConfiguration extends CairoConfigurationWrapper {
-        private final FaultPoint faultPoint;
+        private final FaultMethod faultMethod;
 
-        private FaultInjectingConfiguration(CairoConfiguration delegate, FaultPoint faultPoint) {
-            super(delegate);
-            this.faultPoint = faultPoint;
-        }
-
-        @Override
-        public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-            if (faultPoint == FaultPoint.FRAME_SEQUENCE) {
-                throw new FaultInjectedException(faultPoint);
-            }
-            return super.getCircuitBreakerConfiguration();
-        }
-
-        @Override
-        public int getSqlJitBindVarsMemoryPageSize() {
-            if (faultPoint == FaultPoint.BIND_VAR_MEMORY) {
-                throw new FaultInjectedException(faultPoint);
-            }
-            return super.getSqlJitBindVarsMemoryPageSize();
-        }
-
-        @Override
-        public double getSqlParallelFilterPreTouchThreshold() {
-            if (faultPoint == FaultPoint.ATOM) {
-                throw new FaultInjectedException(faultPoint);
-            }
-            return super.getSqlParallelFilterPreTouchThreshold();
+        FaultPoint(FaultMethod faultMethod) {
+            this.faultMethod = faultMethod;
         }
     }
 }

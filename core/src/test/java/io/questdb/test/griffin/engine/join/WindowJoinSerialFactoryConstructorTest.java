@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.Function;
@@ -47,6 +46,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.FaultInjectedException;
+import io.questdb.test.tools.FaultInjectingConfiguration;
+import io.questdb.test.tools.FaultInjectingConfiguration.FaultMethod;
 import io.questdb.test.tools.NativeFilter;
 import org.junit.Assert;
 import org.junit.Test;
@@ -133,7 +134,10 @@ public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
     private static void assertConstructorFailureLeavesBasesToCaller(boolean fast, boolean allVectorized, boolean includePrevailing, boolean withJoinFilter) throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            final CairoConfiguration configuration = new FaultInjectingConfiguration(engine.getConfiguration());
+            // getSqlAsOfJoinLookAhead() faults inside the cursor constructor, the last thing both
+            // factory constructors build, so the throw reaches the catch with every adopted handle live.
+            final CairoConfiguration configuration =
+                    new FaultInjectingConfiguration(engine.getConfiguration(), FaultMethod.SQL_AS_OF_JOIN_LOOK_AHEAD, null);
             final CountingFactory masterFactory = new CountingFactory(baseFactory("master"));
             final CountingFactory slaveFactory = new CountingFactory(baseFactory("slave"));
             final JoinRecordMetadata joinMetadata = new JoinRecordMetadata(engine.getConfiguration(), 0);
@@ -318,20 +322,4 @@ public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
             base.toPlan(sink);
         }
     }
-
-    /**
-     * Fails inside the cursor constructor, the last thing both factory constructors build, so the
-     * throw reaches the catch with every adopted handle live.
-     */
-    private static class FaultInjectingConfiguration extends CairoConfigurationWrapper {
-        private FaultInjectingConfiguration(CairoConfiguration delegate) {
-            super(delegate);
-        }
-
-        @Override
-        public int getSqlAsOfJoinLookAhead() {
-            throw new FaultInjectedException();
-        }
-    }
-
 }

@@ -24,16 +24,15 @@
 
 package io.questdb.test.griffin.engine.join;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.FaultInjectedException;
+import io.questdb.test.tools.FaultInjectingConfiguration;
+import io.questdb.test.tools.FaultInjectingConfiguration.FaultMethod;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -74,7 +73,9 @@ public class WindowJoinStolenFilterLeakTest extends AbstractCairoTest {
     }
 
     private void assertNoLeakOnFault(String query) throws Exception {
-        final FaultInjectingConfiguration config = new FaultInjectingConfiguration(configuration);
+        // The engine and the DDL below read configuration too, so the fault starts disarmed.
+        final FaultInjectingConfiguration config =
+                new FaultInjectingConfiguration(configuration, FaultMethod.SQL_SMALL_PAGE_FRAME_MIN_ROWS, null, false);
         TestUtils.assertMemoryLeak(() -> {
             try (
                     CairoEngine faultEngine = new CairoEngine(config);
@@ -86,31 +87,15 @@ public class WindowJoinStolenFilterLeakTest extends AbstractCairoTest {
                 faultEngine.execute("INSERT INTO trades VALUES ('a', 100.0, '2022-01-01T00:00:00.000000Z'), ('b', 200.0, '2022-01-01T00:01:00.000000Z');", context);
                 faultEngine.execute("INSERT INTO prices VALUES ('a', 1.0, '2022-01-01T00:00:00.000000Z'), ('b', 2.0, '2022-01-01T00:01:00.000000Z');", context);
 
-                config.armed = true;
+                config.setArmed(true);
                 try (RecordCursorFactory ignored = faultEngine.select(query, context)) {
                     Assert.fail("expected the injected fault");
                 } catch (FaultInjectedException expected) {
                     // The generator must have freed the four stolen handles on the way out.
                 } finally {
-                    config.armed = false;
+                    config.setArmed(false);
                 }
             }
         });
-    }
-
-    private static class FaultInjectingConfiguration extends CairoConfigurationWrapper {
-        private volatile boolean armed;
-
-        private FaultInjectingConfiguration(@NotNull CairoConfiguration delegate) {
-            super(delegate);
-        }
-
-        @Override
-        public int getSqlSmallPageFrameMinRows() {
-            if (armed) {
-                throw new FaultInjectedException();
-            }
-            return super.getSqlSmallPageFrameMinRows();
-        }
     }
 }

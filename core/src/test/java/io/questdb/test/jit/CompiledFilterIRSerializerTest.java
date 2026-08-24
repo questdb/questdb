@@ -3356,25 +3356,111 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 putIrInstruction(ir, RET, 0, 0);
                 assertUnharmonisedWidthWalk("(mask) > (i64 imm)", false);
 
-                // The wide-lane half, in both directions and at all three narrow widths. This is
-                // the branch the assert at areWideLaneWidthsHarmonised() runs under -ea and no
-                // test reached directly: avx2::sx_i64 widens an i32 lane into the low 128 bits, so
-                // a narrow int beside an i64 is the one pairing the four-lane loop cannot leave as
-                // it found it.
+                // The wide-lane half, in both operand orders. This is the branch the assert at
+                // areWideLaneWidthsHarmonised() runs under -ea and no test reached directly. It
+                // answers by PROVENANCE as well as by width, so the
+                // narrow side comes in two spellings below - a column read and an immediate - and
+                // the two get opposite answers at i32.
+                //
+                // An i8 or i16 operand is unharmonised whichever produced it: avx2::convert()
+                // carries no arm for either width, so the pairing falls through to the terminal
+                // lhs.dtype() != rhs.dtype() decline at jit/avx2.h:786-788 and the four-lane loop
+                // drops the compiled filter rather than widening.
+                for (int narrowType : new int[]{I1_TYPE, I2_TYPE}) {
+                    ir.truncate();
+                    putIrInstruction(ir, MEM, narrowType, 0);
+                    putIrInstruction(ir, IMM, I8_TYPE, 0);
+                    putIrInstruction(ir, GT, 0, 0);
+                    putIrInstruction(ir, RET, 0, 0);
+                    assertUnharmonisedWidthWalkForLaneMode("(narrow col " + narrowType + ") > (i64 imm), four lanes", true, true);
+                    ir.truncate();
+                    putIrInstruction(ir, IMM, I8_TYPE, 0);
+                    putIrInstruction(ir, MEM, narrowType, 0);
+                    putIrInstruction(ir, GT, 0, 0);
+                    putIrInstruction(ir, RET, 0, 0);
+                    assertUnharmonisedWidthWalkForLaneMode("(i64 imm) > (narrow col " + narrowType + "), four lanes", true, true);
+                }
+
+                // An i32 COLUMN beside an i64 is harmonised, and this is the pairing the assert
+                // used to report over a stream serializeUntypedNumber emits on purpose - see
+                // testWideLaneNarrowColumnAgainstWidenedImmIsHarmonised, which drives it through
+                // serialize(). avx2::read_mem loads an i32 column into the low 128 bits
+                // (jit/avx2.h:362, :398) exactly so convert()'s i32-with-i64 arm can sx_i64 it
+                // (jit/avx2.h:675-679, :693-697), and compiler.cpp:378 runs WIDE_LANE at the four
+                // lanes those arms gate on. A column carries the same value at either width, so
+                // nothing is left for the frontend to choose.
+                ir.truncate();
+                putIrInstruction(ir, MEM, I4_TYPE, 0);
+                putIrInstruction(ir, IMM, I8_TYPE, 0);
+                putIrInstruction(ir, GT, 0, 0);
+                putIrInstruction(ir, RET, 0, 0);
+                assertUnharmonisedWidthWalkForLaneMode("(i32 col) > (i64 imm), four lanes", true, false);
+                ir.truncate();
+                putIrInstruction(ir, IMM, I8_TYPE, 0);
+                putIrInstruction(ir, MEM, I4_TYPE, 0);
+                putIrInstruction(ir, GT, 0, 0);
+                putIrInstruction(ir, RET, 0, 0);
+                assertUnharmonisedWidthWalkForLaneMode("(i64 imm) > (i32 col), four lanes", true, false);
+                // A bind variable reads at its own width for the same reason a column does.
+                ir.truncate();
+                putIrInstruction(ir, VAR, I4_TYPE, 0);
+                putIrInstruction(ir, IMM, I8_TYPE, 0);
+                putIrInstruction(ir, GT, 0, 0);
+                putIrInstruction(ir, RET, 0, 0);
+                assertUnharmonisedWidthWalkForLaneMode("(i32 var) > (i64 imm), four lanes", true, false);
+
+                // An i32 IMMEDIATE beside an i64 is NOT harmonised, and the four-lane sx_i64 is
+                // beside the point: an immediate has no width of its own, the frontend picked one,
+                // and only the frontend knows which width the JAVA filter reads at. Both directions
+                // and all three narrow widths, since the marker rides on the type code.
                 for (int narrowType : new int[]{I1_TYPE, I2_TYPE, I4_TYPE}) {
                     ir.truncate();
-                    putIrInstruction(ir, MEM, narrowType, 0);
+                    putIrInstruction(ir, IMM, narrowType, 0);
                     putIrInstruction(ir, IMM, I8_TYPE, 0);
                     putIrInstruction(ir, GT, 0, 0);
                     putIrInstruction(ir, RET, 0, 0);
-                    assertUnharmonisedWidthWalkForLaneMode("(narrow " + narrowType + ") > (i64 imm), four lanes", true, true);
+                    assertUnharmonisedWidthWalkForLaneMode("(narrow imm " + narrowType + ") > (i64 imm), four lanes", true, true);
                     ir.truncate();
                     putIrInstruction(ir, IMM, I8_TYPE, 0);
-                    putIrInstruction(ir, MEM, narrowType, 0);
+                    putIrInstruction(ir, IMM, narrowType, 0);
                     putIrInstruction(ir, GT, 0, 0);
                     putIrInstruction(ir, RET, 0, 0);
-                    assertUnharmonisedWidthWalkForLaneMode("(i64 imm) > (narrow " + narrowType + "), four lanes", true, true);
+                    assertUnharmonisedWidthWalkForLaneMode("(i64 imm) > (narrow imm " + narrowType + "), four lanes", true, true);
                 }
+
+                // The exact stream QueryFuzzTest#testQueryFuzz reddened on, byte for byte:
+                // "446_488 - 114_763L" reached the backend as (i64 114763L)(i32 446488L)(-)
+                // because the predicate-wide observer typed the narrow half down. That is the
+                // defect this assert was added for, and it is an immediate against an immediate,
+                // so the provenance split above leaves it reported. See
+                // CompiledFilterRegressionTest#testNarrowConstOperandOfLongArithWidensAndMatchesJava.
+                ir.truncate();
+                putIrInstruction(ir, IMM, I8_TYPE, 114_763);
+                putIrInstruction(ir, IMM, I4_TYPE, 446_488);
+                putIrInstruction(ir, SUB, 0, 0);
+                putIrInstruction(ir, RET, 0, 0);
+                assertUnharmonisedWidthWalkForLaneMode("(i64 114763L) - (i32 446488L), four lanes", true, true);
+
+                // ... and the same subtraction with the narrow half at I8, which is what the fix
+                // that test pins emits. Nothing left to report.
+                ir.truncate();
+                putIrInstruction(ir, IMM, I8_TYPE, 114_763);
+                putIrInstruction(ir, IMM, I8_TYPE, 446_488);
+                putIrInstruction(ir, SUB, 0, 0);
+                putIrInstruction(ir, RET, 0, 0);
+                assertUnharmonisedWidthWalkForLaneMode("(i64 114763L) - (i64 446488L), four lanes", true, false);
+
+                // An arithmetic RESULT is a value the BACKEND computed, so it loses the immediate
+                // marker even where an operand carried one: `anint + 1` is an i32 the four-lane
+                // convert() sign-extends exactly as it sign-extends the column read it came from.
+                ir.truncate();
+                putIrInstruction(ir, IMM, I4_TYPE, 1);
+                putIrInstruction(ir, MEM, I4_TYPE, 0);
+                putIrInstruction(ir, ADD, 0, 0);
+                putIrInstruction(ir, IMM, I8_TYPE, 7);
+                putIrInstruction(ir, EQ, 0, 0);
+                putIrInstruction(ir, RET, 0, 0);
+                assertUnharmonisedWidthWalkForLaneMode("(i32 anint + i32 1) = (i64 7L), four lanes", true, false);
 
                 // ... and the pairing the two halves disagree about, which is what makes the
                 // wide-lane branch a branch rather than a copy: an (f32, i64) pairing is a byte
@@ -3395,6 +3481,85 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 // buffer.
                 serializer.clear();
             }
+        });
+    }
+
+    @Test
+    public void testWideLaneNarrowColumnAgainstWidenedImmIsHarmonised() throws Exception {
+        assertMemoryLeak(() -> {
+            // serializeUntypedNumber emits an INT-range constant at I8 as soon as the predicate's
+            // LOCAL TypesObserver has seen an eight-byte source and carries no float. A NOT-wrapped
+            // conjunction of a narrow and a wide comparison is ONE such predicate - a boolean
+            // operator under a NOT does not open a new one - so `not (anint = 7 and along = 8)`
+            // reaches the operator as (i64 7L)(i32 anint)(=). Beside a conjunct that emits an
+            // SX_I64 the filter takes the WIDE_LANE hint, and the wide-lane half of
+            // hasUnharmonisedOperandWidths() used to call EVERY narrow-int-with-i64 pairing
+            // unharmonised, so serialize()'s areWideLaneWidthsHarmonised() assert threw a bare
+            // AssertionError - the frame reads io.questdb.jit.CompiledFilterIRSerializer.serialize
+            // - out of a stream the backend handles.
+            //
+            // It handles it because avx2::read_mem loads an i32 column into the low 128 bits
+            // (jit/avx2.h:362, :398) precisely so convert()'s i32-with-i64 arm can sx_i64 it
+            // (jit/avx2.h:675-679, :693-697), and compiler.cpp:378 runs WIDE_LANE at the four lanes
+            // those arms gate on. Sign extension preserves the column's value and maps INT_NULL
+            // onto LONG_NULL, so the Java filter reading `anint = 7` at int width and the backend
+            // reading it at i64 answer alike - there was nothing for the frontend to choose, which
+            // is what separates this pairing from the narrow IMMEDIATE the assert exists to report.
+            //
+            // No SQL reaches it: SqlOptimiser#optimiseBooleanNot pushes a NOT through AND and OR
+            // unconditionally (SqlOptimiser.java:6361-6373) on every model's WHERE clause before
+            // code generation, so EXPLAIN of the same filter reads "(anint<along and (anint!=7 or
+            // along!=8))" - two single-width predicates. serialize() below is the entry point that
+            // skips that rewrite, which is what made the assert reachable from this harness and
+            // only from it.
+            String expr = "along > anint and not (anint = 7 and along = 8)";
+            int options = serialize(expr, false, false, true);
+            assertIR(expr,
+                    "(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+
+            // The OR spelling of the same NOT, and the conjunct order reversed - the walk reads the
+            // stream, so where in it the SX_I64 falls must not matter.
+            expr = "along > anint and not (anint > 7 or along = 8)";
+            options = serialize(expr, false, false, true);
+            assertIR(expr,
+                    "(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(>)(||)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+
+            expr = "not (anint = 7 and along = 8) and along > anint";
+            options = serialize(expr, false, false, true);
+            assertIR(expr,
+                    "(i32 anint)(sx_i64)(i64 along)(>)(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(=)(&&)(!)(&&)(ret)");
+            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+
+            // The narrow side as an arithmetic RESULT rather than a bare column read. `anint + 1`
+            // runs at INT width on both sides - AddIntFunction on the Java one, int32_add on the
+            // four-lane loop - and convert() sign-extends the i32 result for the comparison exactly
+            // as it would the column it came from.
+            expr = "along > anint and not (anint + 1 = 7 and along = 8)";
+            options = serialize(expr, false, false, true);
+            assertIR(expr,
+                    "(i64 8L)(i64 along)(=)(i64 7L)(i32 1L)(i32 anint)(+)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+
+            // Control: an out-of-INT-range bound makes the comparison a genuinely 64-bit one, and
+            // the frontend answers with an SX_I64 of its own rather than leaving the width to the
+            // backend. The shape the assert never had to report, beside the ones it used to.
+            expr = "along > anint and not (anint = 5_000_000_000 and along = 8)";
+            options = serialize(expr, false, false, true);
+            assertIR(expr,
+                    "(i64 8L)(i64 along)(=)(i64 5000000000L)(i32 anint)(sx_i64)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+
+            // Control on the other side: without the NOT each conjunct is its own predicate, the
+            // local observer sees INT alone, and serializeUntypedNumber keeps the constant at I4.
+            // Same columns, same comparisons, no widened immediate - this is what every SQL
+            // spelling of the filter above actually serializes to.
+            expr = "along > anint and (anint = 7 and along = 8)";
+            options = serialize(expr, false, false, true);
+            assertIR(expr,
+                    "(i64 8L)(i64 along)(=)(i32 7L)(i32 anint)(=)(&&)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
         });
     }
 
@@ -3421,7 +3586,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     // carries the expectation instead - hence a name of its own rather than an overload the reader
     // has to count arguments to tell apart. true is the argument the assert at
     // areWideLaneWidthsHarmonised() passes - the four-lane loop, where avx2::convert() DOES promote
-    // and only a narrow-int-with-i64 pairing counts.
+    // an i32, so only two narrow-with-i64 pairings still count: an i8 or i16 operand, which
+    // convert() has no arm for at any lane count, and a narrow-int IMMEDIATE, whose width the
+    // frontend picked rather than read off a column.
     private static void assertUnharmonisedWidthWalkForLaneMode(String message, boolean isWideLane, boolean expected) throws Exception {
         final Method walk = CompiledFilterIRSerializer.class
                 .getDeclaredMethod("hasUnharmonisedOperandWidths", boolean.class);

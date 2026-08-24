@@ -438,6 +438,88 @@ an F8 key; a constant sub-expression operand (`f * (1.0 / 3.0)`) is not a consta
 has to be extended as well, or an exactly-representable bound drops the predicate out of the
 vectorized loop entirely.
 
+### The tolerance boundary
+
+Both filters read the floating-point tolerance INCLUSIVELY in the sources, and agree.
+`Numbers.equals` is `Math.abs(l - r) <= DOUBLE_TOLERANCE`; the native `double_cmp_epsilon` and
+`float_cmp_epsilon` are `epsilon >= |lhs - rhs|` on all three backends - `ucomisd`/`ucomiss` with `setae`/`setb` in
+`jit/impl/x86.h`, `fcmp` with `cset GE`/`cset LT` in `jit/impl/aarch64.h`, and `vcmppd`/`vcmpps`
+with `CmpImm::kLE` in `jit/impl/avx2.h`. On both x86 and aarch64 the chosen condition code is the
+one that stays FALSE on unordered operands, so a NaN difference still compares "not equal" and the
+`ne` arm still answers true for it; AVX2's `kLE` is likewise the ordered predicate, with the
+separate `nans` mask deciding the both-NaN case.
+
+The comparators used to be STRICT (`epsilon > |lhs - rhs|`), which made the compiled filter select
+different rows from the Java one at exactly `|row - bound| == 1e-10`, on `<`, `>=`, `=` and `<>`.
+That divergence had always been reachable for INT, LONG, FLOAT and DOUBLE; BYTE and SHORT reached it
+only once the narrow-int widening began compiling them, because `serializeNumber`'s I1 / I2 arms
+parse an integer and used to decline a fractional bound outright. Making the comparators inclusive
+closed it for every column type at once.
+`CompiledFilterRegressionTest.testNarrowIntColumnVsExactToleranceBoundConstant` pins the agreement
+for all six types across all six operators, on a 1_000-row fixture so the AVX2 loop actually runs -
+a small table is handled entirely by the scalar tail and leaves `jit/impl/avx2.h` untested.
+
+Two consequences worth knowing:
+
+- **No Maven profile compiles the C++.** `mvn test` runs whatever binary is on the classpath:
+  `bin-local/` when a local `cmake --build` has produced one, otherwise the committed
+  `core/src/main/resources/io/questdb/bin/<os>-<arch>/`. A fresh CI checkout has no `bin-local`, so
+  CI tests the COMMITTED binaries. Any change to `core/src/main/c/` is invisible to CI until the
+  `Build and Push Release CXX Libraries` workflow rebuilds and pushes all five platform targets.
+- **The parquet row-group pushdown models these comparators, and has to contain EVERY comparator
+  the shipped binary might carry - not only the one the sources describe.** This is the durable
+  lesson of the change and the thing to get right before touching
+  `ParquetRowGroupFilter.isRowKept` or `isRowKeptByCompiledFloatFilter` again.
+
+  `ParquetRowGroupFilter` certifies a pushed bound by asking whether ANY row filter keeps the first
+  row the pruner would drop, so the model must be an OVER-approximation of every filter that can
+  run. `ParquetRowGroupFilter` is Java and ships the instant it merges; the comparators do not,
+  because nothing in the Maven build compiles the C++ (previous bullet). So between merging a
+  comparator change and dispatching the rebuild workflow, an inclusive model would run against a
+  strict compiled filter - and inclusiveness is **not** uniformly conservative:
+
+  | arm | spelling | widest model | why |
+  |---|---|---|---|
+  | `OP_LE`, `OP_GE`, `OP_EQ` | `isEq \|\| ...` | **inclusive** equality | a wider `isEq` widens the model |
+  | `OP_LT`, `OP_GT` | `!isEq && ...` | **strict** equality | a wider `isEq` NARROWS the model |
+
+  Get the second row wrong and the model UNDER-approximates: it reports "dropped" for a row the
+  running filter keeps, the row group is pruned before any filter sees it, and the query silently
+  returns fewer rows. Three reachable witnesses at the time of writing: `WHERE floatcol < 1e-10` and
+  `WHERE floatcol > -1e-10` (both certify the bound `0.0f`, which `FILTER_OP_LT`/`GT` then use to
+  prune every group the strict comparator would have kept a row from), and `WHERE floatcol < 2e-10`
+  (the f32 arm alone).
+
+  So the model carries BOTH readings and picks the wider per arm: `Numbers.equals` /
+  `isFloatEqAtSinglePrecision` for the eq-including arms, an `isEqStrict` /
+  `isFloatEqStrictAtSinglePrecision` for the eq-excluding ones. The union contains the strict
+  comparator and the inclusive one, so it is correct before and after the rebuild and the merge
+  order stops mattering. It costs a handful of declined pushdowns at near-zero / near-tolerance
+  bounds, where pushdown was already marginal.
+  `ParquetRowGroupPruningTest.testFloatColumnInclusiveOpCertifiesAgainstCompiledF32Filter` and
+  `testFloatColumnPushdownMatchesNativeUnderEitherComparator` are the regression tests; the second
+  pins the three witnesses and passes against the committed binary and a rebuilt one alike.
+
+  **Where that invariant stops.** Only the FLOAT bound arm carries
+  `isRowKeptByCompiledFloatFilter`. The integral stats path - `integralBound` /
+  `tryPutIntFromDouble`, taken by INT, BYTE and SHORT - models the DOUBLE-width filters alone, and
+  that is deliberate. The f32 arm is reachable from an integral column (`serializeNumber` pairs an
+  I4 leaf with an F4 bound, so `anint < 1.5` compiles to `(f32 1.5D)(i32 anint)(<)`), but leaving it
+  unmodelled makes the pruner agree with the JAVA filter, which drops those rows too; only the f32
+  arm keeps them, and there it is the side that disagrees with every other filter QuestDB runs. The
+  divergence window is one open interval about 4.8e-18 wide per sign and needs a row group whose
+  integral max (resp. min) is exactly 0, so no workload reaches it. Widening the integral arm to the
+  f32 comparator would move the pruner toward a filter the Java one contradicts - the wrong
+  direction.
+
+One difference survives and is unrelated to inclusiveness: `FLOAT_EPSILON` is
+`(float) DOUBLE_TOLERANCE`, i.e. `1.000000013351432e-10`, slightly larger than the `1e-10` the Java
+filter uses. Any shape that runs the compiled filter's f32 arm - an INT leaf against a fractional
+bound, via `serializeNumber`'s I4 arm - therefore still disagrees with the Java filter for a value
+that lands between the two tolerances.
+`CompiledFilterRegressionTest.testIntColumnVsFloatToleranceBoundConstantStillDivergesOnF32Width`
+pins it.
+
 ### Constant reassociation
 
 `ExpressionNode.reassociateConstants` regroups a constant pair only when
