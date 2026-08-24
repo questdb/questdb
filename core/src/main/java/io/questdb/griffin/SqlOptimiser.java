@@ -3300,11 +3300,11 @@ public class SqlOptimiser implements Mutable {
         traverseNamesAndIndices(nested, node);
         if (literalCollector.nullCount > 0
                 || (literalCollector.functionCount > 0
-                        && hasUnsupportedFunctionOrOperationInEquals(
-                                node,
-                                literalCollectorAIndexes.size(),
-                                literalCollectorBIndexes.size()
-                        ))) {
+                && hasUnsupportedFunctionOrOperationInEquals(
+                node,
+                literalCollectorAIndexes.size(),
+                literalCollectorBIndexes.size()
+        ))) {
             return;
         }
 
