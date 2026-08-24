@@ -51,6 +51,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.Rows;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.io.Closeable;
@@ -554,6 +555,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private void buildAddressCache() {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
+            if (frameCount >= Rows.MAX_SAFE_PARTITION_INDEX) {
+                throw CairoException.nonCritical()
+                        .put("too many page frames for a single query [limit=").put(Rows.MAX_SAFE_PARTITION_INDEX)
+                        .put("]; reduce the scanned range or raise cairo.sql.page.frame.max.rows");
+            }
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameAddressCache.add(frameCount++, frame);
         }
