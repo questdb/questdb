@@ -1465,6 +1465,35 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHasParquetPartitionsFlagFollowsReaderSnapshotCopy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            final TableToken tableToken = engine.verifyTableName("x");
+            try (TableReader sourceReader = engine.getReader(tableToken)) {
+                Assert.assertTrue(sourceReader.hasParquetPartitions());
+
+                execute("ALTER TABLE x CONVERT PARTITION TO NATIVE WHERE ts >= 0");
+                Assert.assertTrue(sourceReader.hasParquetPartitions());
+
+                try (TableReader snapshotCopy = engine.getReaderAtTxn(sourceReader, sqlExecutionContext)) {
+                    Assert.assertTrue(snapshotCopy.hasParquetPartitions());
+                }
+            }
+
+            try (TableReader latestReader = engine.getReader(tableToken)) {
+                Assert.assertFalse(latestReader.hasParquetPartitions());
+            }
+        });
+    }
+
+    @Test
     public void testHasParquetPartitionsFlagAfterDetachPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -5211,6 +5240,9 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
     private void assertHasParquetPartitions(String tableName, boolean expected) {
         TableToken tableToken = engine.verifyTableName(tableName);
+        try (TableReader tableReader = engine.getReader(tableToken)) {
+            Assert.assertEquals(expected, tableReader.hasParquetPartitions());
+        }
         try (MetadataCacheReader reader = engine.getMetadataCache().readLock()) {
             CairoTable table = reader.getTable(tableToken);
             Assert.assertNotNull(table);
