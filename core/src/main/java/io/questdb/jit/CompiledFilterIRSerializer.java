@@ -1131,12 +1131,37 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         memory.putLong(0L); // payload.hi unused
     }
 
-    private void rejectSymbol(final CharSequence token, int position) throws SqlException {
-        // >, >=, < and <= for symbols should use string and not int value comparison
-        // since string is not supported in JIT, we reject it here and allow code generator to fall back to non-JIT implementation
-        if (predicateContext.columnType == ColumnType.SYMBOL) {
-            throw SqlException.position(position)
-                    .put("operator: ").put(token).put(" is not supported for SYMBOL type");
+    /**
+     * Rejects an ordering comparison ({@code <}, {@code <=}, {@code >},
+     * {@code >=}) whose Java semantics the backends cannot reproduce on the
+     * lane the IR gives the column. Throwing here makes
+     * {@link io.questdb.griffin.SqlCodeGenerator} fall back to the Java filter,
+     * which evaluates the predicate correctly.
+     * <p>
+     * SYMBOL compares the symbol strings, while the IR only carries the int
+     * key. CHAR compares chars as unsigned 16-bit values and drops
+     * {@link Numbers#CHAR_NULL} rows, while the backends sign-extend the 16-bit
+     * lane and mask nulls for 32- and 64-bit lanes only. IPv4 goes through
+     * {@link Numbers#lessThanIPv4(int, int, boolean)}, which compares unsigned
+     * and keeps a row when both sides are {@link Numbers#IPv4_NULL}, while the
+     * backends emit a signed i32 compare. UUID and LONG128 compare the string
+     * representations in Java, while the backends carry no 128-bit ordering
+     * comparator at all - the i128 lane falls through the comparator's
+     * {@code default: __builtin_unreachable()} and crashes the JVM.
+     */
+    private void rejectOrderingComparison(final CharSequence token, int position) throws SqlException {
+        final short tag = ColumnType.tagOf(predicateContext.columnType);
+        switch (tag) {
+            case ColumnType.SYMBOL:
+            case ColumnType.CHAR:
+            case ColumnType.IPv4:
+            case ColumnType.UUID:
+            case ColumnType.LONG128:
+                throw SqlException.position(position)
+                        .put("operator: ").put(token).put(" is not supported for ")
+                        .put(ColumnType.nameOf(tag)).put(" type");
+            default:
+                break;
         }
     }
 
@@ -1222,7 +1247,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (predicateContext.columnType == ColumnType.SYMBOL) {
-            serializeSymbolConstant(offset, position, token);
+            serializeSymbolConstant(offset, position, token, negated);
             return;
         }
 
@@ -1603,22 +1628,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
         if (Chars.equals(token, "<")) {
-            rejectSymbol(token, position);
+            rejectOrderingComparison(token, position);
             putOperator(LT);
             return;
         }
         if (Chars.equals(token, "<=")) {
-            rejectSymbol(token, position);
+            rejectOrderingComparison(token, position);
             putOperator(LE);
             return;
         }
         if (Chars.equals(token, ">")) {
-            rejectSymbol(token, position);
+            rejectOrderingComparison(token, position);
             putOperator(GT);
             return;
         }
         if (Chars.equals(token, ">=")) {
-            rejectSymbol(token, position);
+            rejectOrderingComparison(token, position);
             putOperator(GE);
             return;
         }
@@ -1735,16 +1760,32 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeSymbolConstant(long offset, int position, final CharSequence token) throws SqlException {
+    /**
+     * Emits the symbol key for a constant compared against a SYMBOL column.
+     * {@code negated} carries the unary minus that the parser splits off an
+     * unquoted negative numeric literal: {@code sy = -5} reaches this method as
+     * the bare token {@code "5"}, so the key has to be resolved against the
+     * signed spelling {@code "-5"} - the same string the Java filter compares
+     * the symbol value against.
+     */
+    private void serializeSymbolConstant(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
         final int len = token.length();
-        CharSequence symbol = token;
+        final CharSequence symbol;
+        sink.clear();
+        if (negated) {
+            sink.put('-');
+        }
         if (Chars.isQuoted(token)) {
             if (len < 3) {
                 throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
             }
-            sink.clear();
-            Chars.unescape(symbol, 1, len - 1, '\'', sink);
+            Chars.unescape(token, 1, len - 1, '\'', sink);
             symbol = sink;
+        } else if (negated) {
+            sink.put(token);
+            symbol = sink;
+        } else {
+            symbol = token;
         }
 
         if (predicateContext.symbolTable == null || predicateContext.symbolColumnIndex == -1) {

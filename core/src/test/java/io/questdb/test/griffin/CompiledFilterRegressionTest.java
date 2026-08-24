@@ -105,12 +105,51 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testChar() throws Exception {
-        final String query = "x where ch > 'A' and ch < 'Z'";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_char() ch" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNotNull(query, ddl);
+        assertMemoryLeak(() -> {
+            execute(ddl);
+            // Equality still compiles: the IR compares the raw 16-bit lane, which
+            // matches EqCharCharFunctionFactory.
+            assertQueryNotNullNoLeakCheck("x where ch = 'A' or ch = 'Z'");
+            // Ordering falls back to the Java filter - see rejectOrderingComparison().
+            assertJitMatchesJava("x where ch > 'A' and ch < 'Z'", false);
+        });
+    }
+
+    @Test
+    public void testCharOrderingFallsBackToJavaFilter() throws Exception {
+        // https://github.com/questdb/questdb/issues/7549
+        // The backends sign-extend the 16-bit lane and mask nulls for 32- and
+        // 64-bit lanes only, so a CHAR ordering comparison kept the CHAR_NULL
+        // rows that LtCharFunctionFactory drops, and ordered chars at or above
+        // 0x8000 as negative. Ordering now falls back to the Java filter.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (c CHAR, c2 CHAR, k TIMESTAMP) TIMESTAMP(k)");
+            execute(
+                    "INSERT INTO x VALUES " +
+                            "('a', 'b', 0), " +
+                            "(null, 'b', 1), " +
+                            "('a', null, 2), " +
+                            "(null, null, 3), " +
+                            "(cast(65535 AS CHAR), 'b', 4)"
+            );
+
+            assertJitMatchesJava("x WHERE c >= c", false);
+            assertJitMatchesJava("x WHERE c > c2", false);
+            assertJitMatchesJava("x WHERE c < c2", false);
+            assertJitMatchesJava("x WHERE c <= c2", false);
+            assertJitMatchesJava("x WHERE c > 'A'", false);
+
+            // Equality compares the raw lane and still matches Java, so it keeps compiling.
+            assertJitMatchesJava("x WHERE c = 'a'", true);
+            assertJitMatchesJava("x WHERE c != 'a'", true);
+            // Unrelated pre-existing fallback: serializeNull() has no CHAR arm,
+            // the 16-bit lane is only nullable for geohashes.
+            assertJitMatchesJava("x WHERE c = null", false);
+        });
     }
 
     @Test
@@ -1061,6 +1100,39 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4OrderingFallsBackToJavaFilter() throws Exception {
+        // https://github.com/questdb/questdb/issues/7547
+        // The backends emitted a signed i32 compare, while Numbers.lessThanIPv4()
+        // compares unsigned and keeps a row when both sides are IPv4_NULL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ip IPv4, ip2 IPv4, k TIMESTAMP) TIMESTAMP(k)");
+            execute(
+                    "INSERT INTO x VALUES " +
+                            "('255.255.255.255', '10.0.0.1', 0), " +
+                            "('10.0.0.1', '255.255.255.255', 1), " +
+                            "(null, '10.0.0.1', 2), " +
+                            "('10.0.0.1', null, 3), " +
+                            "(null, null, 4)"
+            );
+
+            assertJitMatchesJava("x WHERE ip > ip2", false);
+            assertJitMatchesJava("x WHERE ip >= ip2", false);
+            assertJitMatchesJava("x WHERE ip < ip2", false);
+            assertJitMatchesJava("x WHERE ip <= ip2", false);
+            assertJitMatchesJava("x WHERE null <= ip", false);
+            // Already fell back before this change - serializeConstant() has no
+            // IPv4 arm for a quoted literal, so only column-vs-column ordering
+            // ever reached the backends.
+            assertJitMatchesJava("x WHERE ip > '128.0.0.0'", false);
+
+            // Equality agrees with the Java filter, so it keeps compiling.
+            assertJitMatchesJava("x WHERE ip = ip2", true);
+            assertJitMatchesJava("x WHERE ip != ip2", true);
+            assertJitMatchesJava("x WHERE ip = null", true);
+        });
+    }
+
+    @Test
     public void testNarrowIntArithUnderLongWithFloat() throws Exception {
         // A narrow INT arithmetic subtree (c8 * -776782) that overflows int32
         // and feeds a LONG-width multiply diverged between the JIT and the Java
@@ -1376,6 +1448,25 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolNegativeNumericConstant() throws Exception {
+        // https://github.com/questdb/questdb/issues/7548
+        // The parser splits `-5` into a unary minus over the token "5", and the
+        // SYMBOL arm of the constant serializer used to drop the sign, resolving
+        // the key of '5' instead of '-5'.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sy SYMBOL, k TIMESTAMP) TIMESTAMP(k)");
+            execute("INSERT INTO x VALUES ('5', 0), ('-5', 1), (null, 2)");
+
+            assertJitMatchesJava("x WHERE sy = -5", true);
+            assertJitMatchesJava("x WHERE sy != -5", true);
+            assertJitMatchesJava("x WHERE sy = '-5'", true);
+            assertJitMatchesJava("x WHERE sy = 5", true);
+            // Deferred (not yet in the symbol table) negative constant.
+            assertJitMatchesJava("x WHERE sy = -42", true);
+        });
+    }
+
+    @Test
     public void testSymbolNull() throws Exception {
         final String query = "x where sym <> null";
         final String ddl = "create table x as " +
@@ -1469,6 +1560,41 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withEqualityOperator()
                 .withAnyOf("null");
         assertGeneratedQueryNullable(ddl, gen);
+    }
+
+    @Test
+    public void testUuidOrderingFallsBackToJavaFilter() throws Exception {
+        // https://github.com/questdb/questdb/issues/7546
+        // An i128 lane reached the backends' ordering comparators, whose
+        // data_type_t switch ends in `default: __builtin_unreachable()`, and the
+        // resulting jump-table overrun killed the JVM with SIGSEGV at
+        // filter-compile time - no data needed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (uu UUID, u2 UUID, k TIMESTAMP) TIMESTAMP(k)");
+
+            // Empty table: the crash used to happen before a single row was read.
+            assertJitMatchesJava("SELECT count() FROM x WHERE uu > u2", false);
+
+            execute(
+                    "INSERT INTO x VALUES " +
+                            "('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', 0), " +
+                            "('ffffffff-ffff-ffff-ffff-ffffffffffff', '22222222-2222-2222-2222-222222222222', 1), " +
+                            "(null, '22222222-2222-2222-2222-222222222222', 2), " +
+                            "('11111111-1111-1111-1111-111111111111', null, 3), " +
+                            "(null, null, 4)"
+            );
+
+            assertJitMatchesJava("x WHERE uu > u2", false);
+            assertJitMatchesJava("x WHERE uu >= u2", false);
+            assertJitMatchesJava("x WHERE uu < u2", false);
+            assertJitMatchesJava("x WHERE uu <= u2", false);
+            assertJitMatchesJava("x WHERE uu > '22222222-2222-2222-2222-222222222222'", false);
+
+            // Equality has a real i128 comparator in both backends, so it keeps compiling.
+            assertJitMatchesJava("x WHERE uu = u2", true);
+            assertJitMatchesJava("x WHERE uu != u2", true);
+            assertJitMatchesJava("x WHERE uu = '11111111-1111-1111-1111-111111111111'", true);
+        });
     }
 
     @Test

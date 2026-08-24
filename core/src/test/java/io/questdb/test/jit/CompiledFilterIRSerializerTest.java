@@ -43,6 +43,7 @@ import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -59,6 +60,8 @@ import static io.questdb.jit.CompiledFilterIRSerializer.*;
 public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     private static final String KNOWN_SYMBOL_1 = "ABC";
     private static final String KNOWN_SYMBOL_2 = "DEF";
+    // Appended after KNOWN_SYMBOL_1, so it holds key 1 in the asymbol column.
+    private static final String KNOWN_SYMBOL_NEGATIVE_NUMBER = "-5";
     private static final String UNKNOWN_SYMBOL = "XYZ";
 
     private static ObjList<Function> bindVarFunctions;
@@ -117,6 +120,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             TableWriter.Row row = writer.newRow();
             row.putSym(writer.getColumnIndex("asymbol"), KNOWN_SYMBOL_1);
             row.putSym(writer.getColumnIndex("anothersymbol"), KNOWN_SYMBOL_2);
+            row.append();
+            row = writer.newRow();
+            row.putSym(writer.getColumnIndex("asymbol"), KNOWN_SYMBOL_NEGATIVE_NUMBER);
             row.append();
             writer.commit();
         }
@@ -426,24 +432,26 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testConstantTypes() throws Exception {
+        // The last element is the operator: UUID only reaches the IR through an
+        // equality comparison, ordering comparisons on it are declined.
         final String[][] columns = new String[][]{
-                {"abyte", "i8", "1", "1L", "i8"},
-                {"abyte", "i8", "-1", "-1L", "i8"},
-                {"ashort", "i16", "1", "1L", "i16"},
-                {"ashort", "i16", "-1", "-1L", "i16"},
-                {"anint", "i32", "1", "1L", "i32"},
-                {"anint", "i32", "1.5", "1.5D", "f32"},
-                {"anint", "i32", "-1", "-1L", "i32"},
-                {"along", "i64", "1", "1L", "i64"},
-                {"along", "i64", "1.5", "1.5D", "f64"},
-                {"along", "i64", "-1", "-1L", "i64"},
-                {"auuid", "i128", "'00000000-0000-0000-0000-000000000000'", "0 0L", "i128"},
-                {"afloat", "f32", "1", "1L", "i32"},
-                {"afloat", "f32", "1.5", "1.5D", "f32"},
-                {"afloat", "f32", "-1", "-1L", "i32"},
-                {"adouble", "f64", "1", "1L", "i64"},
-                {"adouble", "f64", "1.5", "1.5D", "f64"},
-                {"adouble", "f64", "-1", "-1L", "i64"},
+                {"abyte", "i8", "1", "1L", "i8", ">"},
+                {"abyte", "i8", "-1", "-1L", "i8", ">"},
+                {"ashort", "i16", "1", "1L", "i16", ">"},
+                {"ashort", "i16", "-1", "-1L", "i16", ">"},
+                {"anint", "i32", "1", "1L", "i32", ">"},
+                {"anint", "i32", "1.5", "1.5D", "f32", ">"},
+                {"anint", "i32", "-1", "-1L", "i32", ">"},
+                {"along", "i64", "1", "1L", "i64", ">"},
+                {"along", "i64", "1.5", "1.5D", "f64", ">"},
+                {"along", "i64", "-1", "-1L", "i64", ">"},
+                {"auuid", "i128", "'00000000-0000-0000-0000-000000000000'", "0 0L", "i128", "="},
+                {"afloat", "f32", "1", "1L", "i32", ">"},
+                {"afloat", "f32", "1.5", "1.5D", "f32", ">"},
+                {"afloat", "f32", "-1", "-1L", "i32", ">"},
+                {"adouble", "f64", "1", "1L", "i64", ">"},
+                {"adouble", "f64", "1.5", "1.5D", "f64", ">"},
+                {"adouble", "f64", "-1", "-1L", "i64", ">"},
         };
 
         for (String[] col : columns) {
@@ -452,8 +460,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             final String constStr = col[2];
             final String constValue = col[3];
             final String constType = col[4];
-            serialize(colName + " > " + constStr);
-            assertIR("different results for " + colName, "(" + constType + " " + constValue + ")(" + colType + " " + colName + ")(>)(ret)");
+            final String operator = col[5];
+            serialize(colName + " " + operator + " " + constStr);
+            assertIR("different results for " + colName, "(" + constType + " " + constValue + ")(" + colType + " " + colName + ")(" + operator + ")(ret)");
         }
     }
 
@@ -753,6 +762,25 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public void testNegatedColumn() throws Exception {
         serialize("-ashort > 0");
         assertIR("(i16 0L)(i16 ashort)(neg)(>)(ret)");
+    }
+
+    @Test
+    public void testNegativeNumericSymbolConstant() throws Exception {
+        // https://github.com/questdb/questdb/issues/7548
+        // The parser splits `-5` into a unary minus over the token "5"; the key
+        // has to resolve against the signed spelling, so these emit the key of
+        // '-5' (1), not the key of '5' (which the table does not hold).
+        serialize("asymbol = -5");
+        assertIR("(i32 1L)(i32 asymbol)(=)(ret)");
+        serialize("asymbol <> -5");
+        assertIR("(i32 1L)(i32 asymbol)(<>)(ret)");
+        serialize("asymbol = '-5'");
+        assertIR("(i32 1L)(i32 asymbol)(=)(ret)");
+
+        // '5' is not in the symbol table, so it becomes a deferred bind variable
+        // rather than borrowing the key of '-5'.
+        serialize("asymbol = 5");
+        assertIR("(i32 :0)(i32 asymbol)(=)(ret)");
     }
 
     @Test
@@ -1150,6 +1178,12 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         serialize("along = 'x'");
     }
 
+    @Test
+    public void testUnsupportedCharOrdering() throws Exception {
+        // https://github.com/questdb/questdb/issues/7549
+        assertOrderingComparisonRejected("achar", "CHAR");
+    }
+
     @Test(expected = SqlException.class)
     public void testUnsupportedColumnType1() throws Exception {
         serialize("astring = 'a'");
@@ -1208,6 +1242,18 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test(expected = SqlException.class)
     public void testUnsupportedInvalidGeoHashConstant() throws Exception {
         serialize("ageolong = ##11211");
+    }
+
+    @Test
+    public void testUnsupportedIPv4Ordering() throws Exception {
+        // https://github.com/questdb/questdb/issues/7547
+        assertOrderingComparisonRejected("anipv4", "IPv4");
+    }
+
+    @Test
+    public void testUnsupportedLong128Ordering() throws Exception {
+        // https://github.com/questdb/questdb/issues/7546
+        assertOrderingComparisonRejected("along128", "LONG128");
     }
 
     @Test(expected = SqlException.class)
@@ -1315,6 +1361,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         serialize("asymbol >= anint");
     }
 
+    @Test
+    public void testUnsupportedSymbolOrdering() throws Exception {
+        assertOrderingComparisonRejected("asymbol", "SYMBOL");
+    }
+
     @Test(expected = SqlException.class)
     public void testUnsupportedTrueConstantInNumericContext() throws Exception {
         serialize("along = true");
@@ -1328,6 +1379,12 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test(expected = SqlException.class)
     public void testUnsupportedUuidConstantInNumericContext() throws Exception {
         serialize("along = '11111111-1111-1111-1111-111111111111'");
+    }
+
+    @Test
+    public void testUnsupportedUuidOrdering() throws Exception {
+        // https://github.com/questdb/questdb/issues/7546
+        assertOrderingComparisonRejected("auuid", "UUID");
     }
 
     @Test(expected = SqlException.class)
@@ -1404,6 +1461,22 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     private void assertOptionsSize(String msg, int options, int expectedSize) {
         int size = 1 << ((options >> 1) & 0b111);
         Assert.assertEquals(msg, expectedSize, size);
+    }
+
+    private void assertOrderingComparisonRejected(String column, String typeName) throws Exception {
+        final String[] operators = {"<", "<=", ">", ">="};
+        for (String operator : operators) {
+            final String filter = column + " " + operator + " " + column;
+            try {
+                serialize(filter);
+                Assert.fail("expected JIT compilation to be declined for: " + filter);
+            } catch (SqlException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "operator: " + operator + " is not supported for " + typeName + " type"
+                );
+            }
+        }
     }
 
     private int serialize(CharSequence seq, boolean scalar, boolean debug, boolean nullChecks) throws SqlException {
