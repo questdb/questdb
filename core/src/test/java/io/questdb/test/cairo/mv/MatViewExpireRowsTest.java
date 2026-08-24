@@ -50,10 +50,12 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.Job;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -1462,6 +1464,32 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     .noLeakCheck().returns("dedup\n1\n");
             assertQuery("SELECT count() c FROM mv_keep")
                     .noRandomAccess().expectSize().noLeakCheck().returns("c\n1\n");
+        });
+    }
+
+    @Test
+    public void testExpireRowsClauseHandsTheBoundaryTokenToTheTail() throws Exception {
+        // The clause body ends at IN VOLUME, and the tail parses that IN VOLUME itself, so the capture has
+        // to hand back the boundary token and not the one it read past it. Every mode's body reaches the
+        // same tail, so all three spellings are checked. The volume is not configured, so the statement
+        // fails either way; what the assertion pins is which half of the clause the parser is looking at.
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String[] clauses = {
+                    "KEEP LATEST PARTITION BY k",
+                    "KEEP HIGHEST v PARTITION BY k",
+                    "WHEN v < 2.0"
+            };
+            for (String clause : clauses) {
+                try {
+                    execute("CREATE MATERIALIZED VIEW mvv AS (SELECT * FROM base) EXPIRE ROWS "
+                            + clause + " IN VOLUME 'vol1'");
+                    Assert.fail("expected a volume failure for: " + clause);
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "volume alias is not allowed [alias=vol1]");
+                }
+            }
         });
     }
 

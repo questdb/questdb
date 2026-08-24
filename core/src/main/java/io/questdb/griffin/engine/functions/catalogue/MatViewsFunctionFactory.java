@@ -337,8 +337,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
              * itself uses: {@link RowExpiryUtil#isReclaimingPolicy}. A structural policy answers from its
              * encoding alone; a scalar one needs the predicate bound against the view's columns, so it
              * borrows a compiler and the view's metadata. A view that went away under the snapshot reports
-             * FILTER_ONLY, the same verdict the cleanup job gives a policy it cannot classify. Any other
-             * failure to borrow is raised, so the column reports only a verdict it reached.
+             * FILTER_ONLY, the same verdict the cleanup job gives a policy it cannot classify. This method
+             * lets any other borrow failure travel on, so the column reports only a verdict it reached.
              */
             private String expireEnforcement(TableToken viewToken, CharSequence predicate) {
                 if (RowExpiryUtil.isStructuralPolicy(predicate)) {

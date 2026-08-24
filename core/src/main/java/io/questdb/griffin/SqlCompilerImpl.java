@@ -6906,10 +6906,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * unknown column, a key type or spelling the rewrite cannot use, window syntax - surfaces as a clear
      * "invalid EXPIRE ROWS policy".
      * <p>
-     * {@code LIMIT 0} keeps the probe cheap: ranking a whole view, or scanning it for the latest row per
-     * key, would otherwise run at DDL time. It also means no row is evaluated, so a per-row implicit cast
-     * cannot surface here - the keep column's type is checked up front instead, by
-     * {@link #validateKeepByColumn}.
+     * The probe compiles and opens, and stops there. {@code LIMIT 0} bounds it, but the bound alone does not
+     * make it free: {@code LimitRecordCursor.toTop()} passes the zero row count down as
+     * {@code skipRows(0, 0)}, and the latest-by cursors that back a multi-key or non-SYMBOL
+     * {@code KEEP LATEST} build their whole result there rather than treating a zero count as nothing to do.
+     * A DDL statement therefore reads no rows only while nothing advances the cursor.
+     * <p>
+     * No row is evaluated, so a per-row implicit cast cannot surface here - the keep column's type is
+     * checked up front instead, by {@link #validateKeepByColumn}.
      */
     private void probeExpiryPolicyRead(
             SqlExecutionContext executionContext,
@@ -6930,16 +6934,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
-                // Open the cursor so column references and types are fully resolved.
-                try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                    cursor.hasNext();
+                // Opening the cursor resolves column references and types that compilation leaves until a
+                // reader is held. Nothing advances it: a latest-by cursor computes its result in the first
+                // hasNext(), and asking for one row of a policy probe is a full backward scan of the view.
+                //noinspection EmptyTryBlock
+                try (RecordCursor ignored = factory.getCursor(executionContext)) {
+                    // empty
                 }
             }
         } catch (SqlException | CairoException | ImplicitCastException e) {
             // ImplicitCastException extends RuntimeException, not CairoException: a raw WHEN window
             // predicate can still cast per row, and it must read as an invalid policy, not as an ICE.
+            //
+            // walRecoverable, like the dependent-view rejections in alterTableSetExpire: OperationExecutor
+            // recompiles a stored SET EXPIRE at WAL apply, so this probe runs again there. A plain
+            // SqlException at apply suspends the table, and a borrow that fails under load reaches this
+            // catch the same way a bad policy does. Skipping the ALTER keeps a transient failure from
+            // taking the table down; the statement-time caller reads the message either way.
             final String reason = reasonOf(e);
-            throw SqlException.$(position, "invalid EXPIRE ROWS policy: ").put(reason);
+            throw SqlException.walRecoverable(position).put("invalid EXPIRE ROWS policy: ").put(reason);
         }
     }
 
@@ -6954,7 +6967,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * ({@code <col> < max(<col>) OVER (...)}), which only the types of {@link RowExpiryUtil#isKeepExtremeType}
      * support; the top-N form orders by the column instead, so it accepts any comparable type. Checking the
      * type here is what keeps a text-ish keep column from defining a view whose every read throws an implicit
-     * cast error - the {@code LIMIT 0} probe in {@link #validateWindowPolicy} evaluates no row and so cannot
+     * cast error - the {@code LIMIT 0} probe in {@link #probeExpiryPolicyRead} evaluates no row and so cannot
      * see it. It also catches LONG256, which the probe accepts because its cast to LONG succeeds, silently
      * ranking rows by the low 64 bits. Every PARTITION BY key must resolve too: the parser captures that list
      * as raw text and {@link RowExpiryUtil#buildKeepByPredicate} drops it into {@code OVER (PARTITION BY ...)}

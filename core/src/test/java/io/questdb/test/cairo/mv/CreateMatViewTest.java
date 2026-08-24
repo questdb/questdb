@@ -1468,7 +1468,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
-                assertTrue(metadata.isColumnIndexed(metadata.getColumnIndex("k")));
+                final int k = metadata.getColumnIndex("k");
+                assertTrue(metadata.isColumnIndexed(k));
+                assertEquals(512, metadata.getIndexValueBlockCapacity(k));
                 assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("k2")));
             }
         });

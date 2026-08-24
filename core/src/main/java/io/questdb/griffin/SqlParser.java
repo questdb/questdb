@@ -605,6 +605,10 @@ public class SqlParser {
                 }
                 if (depth == 0) {
                     final int tokPos = lexer.lastTokenPosition();
+                    // The lexer hands out one shared sequence for word tokens, so the lookahead inside
+                    // expireRowsClauseBoundary moves what tok reads. Copy it first: tok is the token the
+                    // caller parses next, and for IN VOLUME / DEDUP UPSERT that is the half the tail needs.
+                    tok = GenericLexer.immutableOf(tok);
                     final int boundary = expireRowsClauseBoundary(lexer, tok, inCreateTable);
                     if (boundary != EXPIRE_BOUNDARY_NONE) {
                         predicateEnd = tokPos;
@@ -676,6 +680,7 @@ public class SqlParser {
                 break;
             }
             final int tokPos = lexer.lastTokenPosition();
+            tok = GenericLexer.immutableOf(tok);
             final int boundary = expireRowsClauseBoundary(lexer, tok, inCreateTable);
             if (boundary != EXPIRE_BOUNDARY_NONE) {
                 end = tokPos;
@@ -1715,10 +1720,12 @@ public class SqlParser {
      * that body: it either ends it (CLEANUP starts the cadence sub-clause; WITH / IN VOLUME / DEDUP UPSERT
      * belong to the CREATE TABLE tail) or is content of it.
      * <p>
-     * Every word that can end the body is also a legal column name, so each is a boundary only in the pair
-     * the grammar continues with, confirmed by one token of lookahead. The lookahead token goes
-     * back to the lexer either way: a confirmed boundary is re-read by the clause tail, a rejected one is
-     * body content the capture loop must still see.
+     * Three of the four words are ambiguous where they appear, so each is a boundary only in the pair the
+     * grammar continues with, confirmed by one token of lookahead: {@code CLEANUP} and {@code DEDUP} are
+     * legal column names, and {@code IN} is also how a predicate spells {@code <col> IN (...)}. {@code WITH}
+     * is a reserved keyword whose tail is an open-ended parameter list, so it ends the body on its own. The
+     * lookahead token goes back to the lexer either way: a confirmed boundary is re-read by the clause tail,
+     * a rejected one is body content the capture loop must still see.
      * <p>
      * The {@code WHEN <predicate>} capture and the {@code PARTITION BY <columns>} capture both come here,
      * so a column named {@code cleanup} or {@code dedup} reads the same way in every mode, and CREATE and
@@ -1813,6 +1820,17 @@ public class SqlParser {
         return Chars.equals(tok, ')') || Chars.equals(tok, ',');
     }
 
+    private boolean isIncludePrevailing(GenericLexer lexer, CharSequence tok) throws SqlException {
+        if (isIncludeKeyword(tok)) {
+            tok = tok(lexer, "'prevailing'");
+            if (isPrevailingKeyword(tok)) {
+                return true;
+            }
+            throw SqlException.$(lexer.lastTokenPosition(), "'prevailing' expected");
+        }
+        return false;
+    }
+
     /**
      * Reports whether the token after the one just read is {@code keyword}, and hands it back to the lexer
      * so the caller sees it again. {@code keyword} is lower case.
@@ -1825,17 +1843,6 @@ public class SqlParser {
         final boolean isKeyword = Chars.equalsLowerCaseAscii(next, keyword);
         lexer.unparseLast();
         return isKeyword;
-    }
-
-    private boolean isIncludePrevailing(GenericLexer lexer, CharSequence tok) throws SqlException {
-        if (isIncludeKeyword(tok)) {
-            tok = tok(lexer, "'prevailing'");
-            if (isPrevailingKeyword(tok)) {
-                return true;
-            }
-            throw SqlException.$(lexer.lastTokenPosition(), "'prevailing' expected");
-        }
-        return false;
     }
 
     private boolean isUnboundedPreceding(GenericLexer lexer, CharSequence tok) throws SqlException {

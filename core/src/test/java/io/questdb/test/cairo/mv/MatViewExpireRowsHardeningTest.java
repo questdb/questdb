@@ -1946,6 +1946,47 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExpireEnforcementRaisesWhatItCannotClassify() throws Exception {
+        // expire_enforcement classifies a scalar policy by borrowing the view's metadata and a compiler.
+        // FILTER_ONLY is the answer for a view that went away under the catalogue's token snapshot. A
+        // borrow that fails for any other reason knows nothing about the policy, so it travels on: a
+        // locked metadata entry has to read as an error and not as "this view reclaims no disk".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('A', 1.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("""
+                    CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)
+                    EXPIRE ROWS WHEN v < 2.0""");
+            drainWalAndMatViewQueues();
+            engine.getMetadataCache().hydrateAllTables();
+
+            assertQuery("SELECT view_name, expire_enforcement FROM materialized_views()")
+                    .noRandomAccess().noLeakCheck()
+                    .returns("view_name\texpire_enforcement\nmv\tFILTER_AND_RECLAIM\n");
+
+            final TableToken viewToken = engine.verifyTableName("mv");
+            Assert.assertTrue("could not lock the view's metadata", engine.lockReadersAndMetadata(viewToken));
+            try {
+                printSql("SELECT view_name, expire_enforcement FROM materialized_views()");
+                Assert.fail("a metadata borrow that failed must not report an enforcement verdict");
+            } catch (CairoException e) {
+                Assert.assertFalse(
+                        "reported a verdict it never reached: " + e.getFlyweightMessage(),
+                        Chars.contains(e.getFlyweightMessage(), RowExpiryUtil.ENFORCEMENT_FILTER_ONLY)
+                );
+            } finally {
+                engine.unlockReadersAndMetadata(viewToken);
+            }
+
+            // the lock is the whole story: the column answers again once it is released
+            assertQuery("SELECT view_name, expire_enforcement FROM materialized_views()")
+                    .noRandomAccess().noLeakCheck()
+                    .returns("view_name\texpire_enforcement\nmv\tFILTER_AND_RECLAIM\n");
+        });
+    }
+
+    @Test
     public void testRepeatedCleanupFailuresBackOffExponentially() throws Exception {
         // A persistently failing cleanup must not re-run its full sweep on every 1-second global
         // tick: each failure doubles the per-table retry gap (1s, 2s, 4s, ... capped at 10 minutes),
