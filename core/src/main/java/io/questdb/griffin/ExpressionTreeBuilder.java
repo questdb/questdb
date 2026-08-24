@@ -92,6 +92,12 @@ public final class ExpressionTreeBuilder implements ExpressionParserListener {
         this.argStackBottom = argStackBottomStack.notEmpty() ? argStackBottomStack.pop() : 0;
     }
 
+    // Unwinds pushNestedExpr(). Unlike popArgStackBottom() it leaves subQueryBlockDepth alone,
+    // because pushNestedExpr() never raised it.
+    void popNestedExpr() {
+        argStackBottom = argStackBottomStack.notEmpty() ? argStackBottomStack.pop() : 0;
+    }
+
     // Brackets a join ON-clause parse: raises the arg-stack floor so the reentrant parse
     // cannot poll the enclosing expression's operands, and blocks ON-clause sub-queries
     // (unsupported) even when an outer model is in scope. Leaves the current model in place.
@@ -108,6 +114,15 @@ public final class ExpressionTreeBuilder implements ExpressionParserListener {
         argStackBottomStack.push(argStackBottom);
         argStackBottom = argStack.size();
         this.model = model;
+    }
+
+    // Brackets a nested expression parse that may legitimately contain a sub-query, such as an
+    // aggregate's FILTER (WHERE ...) condition. Raises the arg-stack floor the way
+    // pushArgStackBottom() does, but leaves sub-queries enabled so a QUERY node still reaches
+    // addExpressionModel() and its model still gets optimised.
+    void pushNestedExpr() {
+        argStackBottomStack.push(argStackBottom);
+        argStackBottom = argStack.size();
     }
 
     void reset() {
