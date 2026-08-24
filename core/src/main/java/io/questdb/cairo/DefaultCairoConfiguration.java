@@ -776,6 +776,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionCompactionCheckInterval() {
+        return 120_000;
+    }
+
+    @Override
     public long getPartitionCompactionCooldown() {
         return 10 * Micros.MINUTE_MICROS;
     }

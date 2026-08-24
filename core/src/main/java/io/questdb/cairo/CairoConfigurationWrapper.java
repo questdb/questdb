@@ -759,6 +759,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionCompactionCheckInterval() {
+        return getDelegate().getPartitionCompactionCheckInterval();
+    }
+
+    @Override
     public long getPartitionCompactionCooldown() {
         return getDelegate().getPartitionCompactionCooldown();
     }

@@ -1401,6 +1401,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
 
+    /**
+     * Decides update-vs-rewrite for a Parquet partition touched by an O3 commit, applies it via
+     * {@link #processParquetPartition0}, then finishes the O3-commit-specific bookkeeping (error
+     * count, done latch, partition-update counter) that coordinates this partition task with the
+     * rest of the parallel O3 commit.
+     * <p>
+     * {@link #processParquetPartition0} is shared with {@link TableWriter#compactParquetPartition},
+     * an idle-triggered standalone rewrite that runs outside any O3 commit and must not touch that
+     * bookkeeping — this method is the O3-commit-only wrapper around the shared kernel.
+     */
     public static void processParquetPartition(
             Path pathToTable,
             int timestampType,
@@ -1419,6 +1429,73 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             O3Basket o3Basket,
             long newPartitionSize,
             long oldPartitionSize
+    ) {
+        try {
+            processParquetPartition0(
+                    pathToTable,
+                    timestampType,
+                    partitionBy,
+                    oooColumns,
+                    srcOooLo,
+                    srcOooHi,
+                    partitionTimestamp,
+                    sortedTimestampsAddr,
+                    tableWriter,
+                    srcNameTxn,
+                    txn,
+                    partitionUpdateSinkAddr,
+                    dedupColSinkAddr,
+                    o3TimestampMin,
+                    o3Basket,
+                    newPartitionSize,
+                    oldPartitionSize,
+                    false
+            );
+        } catch (Throwable th) {
+            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
+        } finally {
+            tableWriter.o3CountDownDoneLatch();
+            tableWriter.o3ClockDownPartitionUpdateCount();
+        }
+    }
+
+    /**
+     * Decides update-vs-rewrite for a Parquet partition and applies it: decodes the existing row
+     * groups, computes a merge plan against the O3 range {@code [srcOooLo, srcOooHi]} (which may be
+     * empty), and either updates the existing {@code .parquet} file in place or rewrites it into a
+     * fresh txn-named directory.
+     * <p>
+     * {@code forceRewrite} lets a caller with no O3 data of its own (an empty range, {@code
+     * srcOooLo > srcOooHi}) force the rewrite branch regardless of the dead-space heuristics below —
+     * used by {@link TableWriter#compactParquetPartition} to reclaim dead row groups from an idle
+     * partition. With a non-empty range (the normal O3-commit caller, {@link
+     * #processParquetPartition}), {@code forceRewrite} is always {@code false} and every computed
+     * value here is identical to before this method was split out of it.
+     * <p>
+     * This method does not touch the O3-commit-only bookkeeping ({@code o3ErrorCount}, the done
+     * latch, the partition-update counter) — callers own that. On error it rethrows after
+     * best-effort recovery (truncating a failed in-place update back to its pre-merge size, or
+     * removing a failed rewrite's new directory), so every caller decides for itself how to react.
+     */
+    static void processParquetPartition0(
+            Path pathToTable,
+            int timestampType,
+            int partitionBy,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            long srcOooLo,
+            long srcOooHi,
+            long partitionTimestamp,
+            long sortedTimestampsAddr,
+            TableWriter tableWriter,
+            long srcNameTxn,
+            long txn,
+            long partitionUpdateSinkAddr,
+            long dedupColSinkAddr,
+            long o3TimestampMin,
+            O3Basket o3Basket,
+            long newPartitionSize,
+            long oldPartitionSize,
+            boolean forceRewrite
     ) {
         // Number of rows to insert from the O3 segment into this partition.
         final TableRecordMetadata tableWriterMetadata = tableWriter.getMetadata();
@@ -1551,7 +1628,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // mode, untouched row groups would retain the old column layout while
                 // the footer schema uses the new target schema, producing a malformed
                 // Parquet file.
-                isRewrite = hasSchemaChange
+                isRewrite = forceRewrite
+                        || hasSchemaChange
                         || rowGroupCount == 1
                         || hasCoalescableTie
                         || (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
@@ -1738,8 +1816,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // Coalesce boundary ties only for dedup commits; must match the
                         // hasCoalescableTie rewrite gate above so a coalesced multi-group
                         // MERGE is never emitted in update mode (which cannot drop the
-                        // absorbed row groups).
-                        isCommitDedup
+                        // absorbed row groups). Also gated on a non-empty O3 range: a coalesced
+                        // tie is only meaningful when there is O3 data that might land on the
+                        // shared boundary timestamp (see forceRewrite callers, e.g.
+                        // TableWriter#compactParquetPartition, which pass an empty range).
+                        isCommitDedup && srcOooLo <= srcOooHi
                 );
 
                 // Execute merge actions.
@@ -1961,8 +2042,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 path.of(pathToTable);
                 setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
                 try {
-                    // Swallow any error (openRW throws on an FS fault): o3BumpErrorCount
-                    // below must still run to suspend the table. A failed truncate leaves
+                    // Swallow any error (openRW throws on an FS fault): the rethrow below
+                    // must still happen so the caller can react (e.g. suspend the table
+                    // for an O3 commit). A failed truncate leaves
                     // the failed update's appended bytes as a dead tail past the committed
                     // parquetSize, which is harmless -- the committed _txn size is unchanged,
                     // so readers ignore it and the next update overwrites it.
@@ -1989,7 +2071,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
                     try {
                         // Make the leftover _pm tail durable, but swallow any error:
-                        // o3BumpErrorCount below must still run to suspend the table.
+                        // the rethrow below must still happen so the caller can react.
                         // fsyncAndClose closes the fd even on failure (no leak), and a
                         // non-durable dead tail is harmless -- the next update rewrites it.
                         long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
@@ -2004,7 +2086,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
             }
             // Rewrite mode: original is intact, new dir already removed by the inner catch.
-            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
+            // This kernel does not own the O3-commit-only error bookkeeping (o3ErrorCount) --
+            // rethrow so every caller (the O3-commit wrapper above, or TableWriter#compactParquetPartition)
+            // decides for itself how to react.
+            throw th;
         } finally {
             // Release the reader's native handle (which borrows from the mmap) before munmap.
             // See ParquetMetaFileReader lifecycle contract.
@@ -2030,10 +2115,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(isRewrite ? 0 : 1, 0));
             Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
             Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, fileSize); // update parquet partition file size
-
-
-            tableWriter.o3CountDownDoneLatch();
-            tableWriter.o3ClockDownPartitionUpdateCount();
         }
     }
 

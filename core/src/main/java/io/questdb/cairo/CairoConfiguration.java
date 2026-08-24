@@ -491,6 +491,14 @@ public interface CairoConfiguration {
     int getParquetExportVersion();
 
     /**
+     * How often {@link io.questdb.cairo.PartitionCompactionScanJob} sweeps every table for idle
+     * composite or Parquet-format partitions, in milliseconds. Independent of
+     * {@link #getPartitionCompactionIdleTimeout()}: this is the scan cadence, that is the age threshold
+     * a partition must clear before the sweep (or the per-commit age rule) will act on it.
+     */
+    long getPartitionCompactionCheckInterval();
+
+    /**
      * How long a folder compaction has just touched is left alone, in microseconds.
      */
     long getPartitionCompactionCooldown();

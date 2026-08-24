@@ -1608,6 +1608,104 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Idle-triggered rewrite of a Parquet-format partition: reclaims dead row groups left behind
+     * by in-place O3 updates (see {@link O3PartitionJob#processParquetPartition}) without waiting
+     * for the next O3 commit to trip the update-vs-rewrite ratio.
+     * <p>
+     * Reuses {@link O3PartitionJob#processParquetPartition0} with an empty O3 range and {@code
+     * forceRewrite=true}, which degenerates {@link O3ParquetMergeStrategy#computeMergeActions} to a
+     * plain {@code COPY_ROW_GROUP_SLICE} per existing row group: every live row group is copied into
+     * a fresh {@code .parquet} file in a new txn-named directory, dropping the dead space. Row count
+     * is unchanged (no O3 rows are merged in), so this only ever shrinks the file.
+     * <p>
+     * Runs synchronously on the writer's own thread with exclusive access (called directly when
+     * the writer is idle, or applied from the async command queue via {@link #tick()} when it was
+     * busy) — unlike a background-merge design, there is no snapshot-then-swap window, so no
+     * staleness/generation check is needed.
+     */
+    public void compactParquetPartition(long partitionTimestamp) {
+        assert metadata.getTimestampIndex() > -1;
+        assert PartitionBy.isPartitioned(partitionBy);
+
+        if (inTransaction()) {
+            assert !tableToken.isWal();
+            LOG.info()
+                    .$("committing open transaction before compacting parquet partition [table=")
+                    .$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .I$();
+            commit();
+        }
+
+        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (partitionIndex < 0) {
+            formatPartitionForTimestamp(partitionTimestamp, -1);
+            throw CairoException.nonCritical().put("cannot compact partition, partition does not exist [table=").put(tableToken.getTableName())
+                    .put(", partition=").put(utf8Sink).put(']');
+        }
+
+        if (!txWriter.isPartitionParquet(partitionIndex)) {
+            // Nothing to compact: dead row groups only accumulate in Parquet-format partitions.
+            return;
+        }
+
+        final long srcNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        final long partitionRowCount = txWriter.getPartitionSize(partitionIndex);
+        final long txn = getTxn();
+
+        final O3Basket o3Basket = o3BasketPool.next();
+        o3Basket.checkCapacity(configuration, columnCount, indexCount);
+
+        final long sinkAddr = Unsafe.malloc((long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, MemoryTag.NATIVE_TABLE_WRITER);
+        final long newParquetFileSize;
+        try {
+            O3PartitionJob.processParquetPartition0(
+                    path.trimTo(pathSize),
+                    timestampType,
+                    partitionBy,
+                    null, // no O3 columns: empty range below, nothing is ever read from this
+                    0L, // srcOooLo
+                    -1L, // srcOooHi: an empty range forces every action to COPY_ROW_GROUP_SLICE
+                    partitionTimestamp,
+                    0L, // sortedTimestampsAddr: unused for an empty O3 range
+                    this,
+                    srcNameTxn,
+                    txn,
+                    sinkAddr,
+                    0L, // dedupColSinkAddr: no dedup, nothing to merge
+                    0L, // o3TimestampMin: unused by this call, only relayed into the discarded sink
+                    o3Basket,
+                    partitionRowCount, // newPartitionSize: unchanged, no O3 rows are merged in
+                    partitionRowCount, // oldPartitionSize
+                    true // forceRewrite
+            );
+            newParquetFileSize = Unsafe.getLong(sinkAddr + 7 * Long.BYTES);
+        } finally {
+            Unsafe.free(sinkAddr, (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, MemoryTag.NATIVE_TABLE_WRITER);
+            path.trimTo(pathSize);
+        }
+
+        columnVersionWriter.commit();
+        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, partitionRowCount);
+        txWriter.setPartitionParquetFormat(partitionTimestamp, newParquetFileSize);
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        // The rewrite copies every column from row 0 into the new file (see
+        // O3PartitionJob#processParquetPartition0's rewrite branch), so no column has a top.
+        zeroColumnTopsAfterFullMaterialization(partitionTimestamp, partitionRowCount, true);
+        txWriter.bumpPartitionTableVersion();
+        commitTxWriter();
+
+        // Post-commit: the rewrite is logically complete. Deleting the old directory is
+        // best-effort cleanup and must not roll back the committed transaction.
+        try {
+            safeDeletePartitionDir(partitionTimestamp, srcNameTxn);
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        }
+    }
+
+    /**
      * Compacts {@code partitionIndex} into an ordinary, single-piece partition if it is currently
      * COMPOSITE. Stays inside the CALLER's transaction rather than committing one of its own
      */
@@ -1619,9 +1717,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean rewritten = compactPartition0(partitionIndex);
         if (rewritten && isActivePartition) {
             // A REWRITE retires the directory columns[] is currently mapped against - see runCompaction's
-            // own javadoc for the identical requirement on its own REWRITE/MOVE-TAIL outcomes.
+            // own javadoc for the identical requirement on its own REWRITE/MOVE-TAIL outcomes. But that
+            // reopen also frees and recreates every POSTING indexer (closeActivePartition ->
+            // freeIndexers), discarding the freshly rebuilt, not-yet-committed chain
+            // compactPartition0's own seal just staged on the OLD indexer objects - the writer's generic
+            // pre-commit publish loop (denseIndexers in syncColumns) only ever sees whatever indexer
+            // object is live AT COMMIT TIME, so the rebuild would be silently replaced by the fresh,
+            // unrebuilt one the reopen just created. Reseal against the reopened columns so the object the
+            // eventual commit publishes from is the one carrying the compacted directory's real state.
             closeActivePartition(false);
             openLastPartition();
+            final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
+            try {
+                if (sealPostingIndexForPartition(partitionTs, false)) {
+                    restorePostingIndexersToLastPartition();
+                }
+            } catch (Throwable e) {
+                LOG.critical().$("compaction succeeded but posting-index reseal failed `").$(e).$('`').$();
+                distressed = true;
+                throw e;
+            }
         }
         return rewritten;
     }
@@ -14670,6 +14785,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         assert partitionIndexHi >= 0 && partitionIndexHi <= txWriter.getPartitionCount() && partitionIndexLo >= 0;
+
+        // A composite partition anywhere in the range - source or target - is unsafe to fold here: this
+        // squash reads each source through a plain, contiguous frameFactory.openRO(..., partitionRowCount)
+        // and appends it into the target with FrameAlgebra.append, neither of which understands a
+        // directory whose live rows are scattered across non-adjacent pieces (see
+        // PARTITION_COMPACTION.md's "Compaction is not squash"). Only the TARGET's own composite state is
+        // repaired afterward (its geometry ref is cleared once the append has physically extended past
+        // it); a composite SOURCE folded in this way would corrupt the merged directory silently. Skip the
+        // whole squash and let a later pass retry once compaction has resolved every partition in range.
+        for (int i = partitionIndexLo; i < partitionIndexHi; i++) {
+            if (txWriter.isPartitionComposite(i)) {
+                LOG.info().$("skipping partition squash, partition is composite [table=").$(tableToken)
+                        .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(i))
+                        .I$();
+                return;
+            }
+        }
 
         long targetPartition = Long.MIN_VALUE;
         boolean copyTargetFrame = false;
