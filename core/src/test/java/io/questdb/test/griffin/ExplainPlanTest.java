@@ -4345,6 +4345,24 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerJoinRuntimeConstantFilterPushedDown() throws Exception {
+        assertQuery("""
+                SELECT *
+                FROM rc_a a
+                JOIN rc_b b ON b.ts = a.ts
+                WHERE a.ts = now()
+                """)
+                .ddl(
+                        "CREATE TABLE rc_a (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY",
+                        "CREATE TABLE rc_b (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY"
+                )
+                .noRandomAccess()
+                .timestamp("ts")
+                .withPlanContaining("Interval forward scan on: rc_a", "Interval forward scan on: rc_b")
+                .returns("ts\tv\tts1\tv1\n");
+    }
+
+    @Test
     public void testInnerJoinUuidCastBindFilterPushedIntoGroupByCte() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (order_id UUID, order_type SYMBOL, volume DOUBLE)");
@@ -6660,9 +6678,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("CREATE TABLE a (id INT)");
             execute("CREATE TABLE b (id INT)");
             execute("CREATE TABLE c (id INT)");
+            execute("CREATE TABLE d (x INT, k INT)");
+            execute("CREATE TABLE e (y INT)");
+            execute("CREATE TABLE f (k INT)");
+            execute("CREATE TABLE g (k INT)");
             execute("INSERT INTO b VALUES (5)");
+            execute("INSERT INTO d VALUES (10, 1)");
+            execute("INSERT INTO e VALUES (5), (100)");
+            execute("INSERT INTO f VALUES (1)");
+            execute("INSERT INTO g VALUES (1)");
             bindVariableService.clear();
             bindVariableService.setInt("id", Numbers.INT_NULL);
+            bindVariableService.setInt("v", Numbers.INT_NULL);
 
             final ObjList<String> joins = new ObjList<>(4);
             joins.add("RIGHT OUTER JOIN");
@@ -6680,6 +6707,24 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .noRandomAccess()
                         .returns("k\tcid\tbid\nnull\tnull\t5\n");
+
+                assertQuery("""
+                        SELECT *
+                        FROM (
+                            SELECT a.x, b.y, c.k AS ck, d.k AS dk
+                            FROM d a
+                            %s e b ON a.x > b.y
+                            JOIN f c ON c.k = a.k
+                            JOIN g d ON d.k = c.k
+                        )
+                        WHERE ck = :v::INT
+                        ORDER BY y
+                        """.formatted(join))
+                        .noLeakCheck()
+                        .returns("""
+                                x\ty\tck\tdk
+                                null\t100\tnull\tnull
+                                """);
             }
 
             execute("INSERT INTO a VALUES (5)");
