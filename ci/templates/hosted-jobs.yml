@@ -144,16 +144,20 @@ jobs:
     steps:
       - template: steps.yml
 
-  # macOS aarch64 on the self-hosted "m1" pool.
-  # Azure has no GA arm64 macOS hosted image -- that preview is paused -- so a
-  # self-hosted pool is the only way to test the architecture we actually ship.
-  # Requires the m1 agents to be online; the job queues until one picks it up.
+  # macOS aarch64 on the "GitHub-hosted Agents" pool (Apple Silicon).
+  # The regular Microsoft-hosted macOS images (macOS-14/15/26) are Intel x64;
+  # the arm64 preview of those is paused. Apple Silicon is therefore only
+  # reachable through this pool, which bills per minute (pay-as-you-go) rather
+  # than consuming a parallel job. Standard spec is 3 vCPU / 7 GB.
+  # The self-hosted "m1" pool is not an option here: it is not authorised for
+  # the "questdb" project that runs these pipelines.
   - job: macos_aarch64
     workspace:
       clean: all
     displayName: "on macos-aarch64"
     pool:
-      name: "m1"
+      name: "GitHub-hosted Agents"
+      vmImage: "macos-26-arm64"
     timeoutInMinutes: 60
     condition: ne(variables['System.PullRequest.IsFork'], 'true')
     variables:
@@ -167,7 +171,7 @@ jobs:
       TEST_REACTOR_ARGS: "-pl core -am"
       WEB_CONSOLE_PROFILE: ""
       os: macOS
-      poolName: "m1"
+      poolName: "GitHub-hosted Agents"
       jdk: "1.25"
       testset: "all"
       # Start with the cairo shard; widen once the pool is proven green.
@@ -180,7 +184,7 @@ jobs:
       # GitHub Actions but Intel on Azure's hosted images, so never infer the
       # architecture from a pool or image label -- assert it.
       # steps.yml keys JDK activation off the hetzner-* pool names, so none of
-      # those fire for "m1"; resolve JAVA_HOME from the agent instead.
+      # those fire here; resolve JAVA_HOME from the agent instead.
       - bash: |
           set -eu
           echo "arch  : $(uname -m)"
@@ -190,7 +194,15 @@ jobs:
             echo "ERROR: expected arm64, got $(uname -m)"
             exit 1
           fi
-          JAVA_PATH="$(/usr/libexec/java_home -v 25)"
+          JAVA_PATH="${JAVA_HOME_25_ARM64:-}"
+          if [ -z "$JAVA_PATH" ]; then
+            JAVA_PATH="$(/usr/libexec/java_home -v 25 2>/dev/null || true)"
+          fi
+          if [ -z "$JAVA_PATH" ]; then
+            echo "ERROR: no JDK 25 on the image; available:"
+            /usr/libexec/java_home -V 2>&1 || true
+            exit 1
+          fi
           echo "JAVA_HOME: $JAVA_PATH"
           echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
           echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
