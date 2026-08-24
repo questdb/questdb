@@ -3,8 +3,9 @@ jobs:
     displayName: "on"
     strategy:
       matrix:
-        # macOS legs run on Apple Silicon: the plain macOS-14/15/26 Azure
-        # images are Intel x64. Shard layout is unchanged from the amd64 legs.
+        # macOS legs run on Apple Silicon: the plain macOS-14/15/26 Azure images
+        # are Intel x64, and x86-64 macOS is not a supported platform - aarch64 is
+        # the only macOS build we ship. Shard layout is unchanged from those legs.
         mac-griffin-base:
           # griffin base package only; subpackages run in mac-griffin-sub,
           # fuzz tests in mac-griffin-fuzz. Splitting the single griffin shard

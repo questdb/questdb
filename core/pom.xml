@@ -611,21 +611,13 @@
                 <jemalloc.so>libjemalloc.so</jemalloc.so>
             </properties>
         </profile>
-        <profile>
-            <id>platform-osx-x86-64</id>
-            <activation>
-                <os>
-                    <family>Mac</family>
-                    <arch>amd64</arch>
-                </os>
-            </activation>
-            <properties>
-                <archive.name>${project.version}-rt-osx-x86-64</archive.name>
-                <runtime.name>questdb-${project.version}-rt-osx-x86-64</runtime.name>
-                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
-                <platform.dir.name>darwin-x86-64</platform.dir.name>
-            </properties>
-        </profile>
+        <!--
+        There is deliberately no platform-osx-x86-64 profile: x86-64 (Intel) macOS is not a
+        supported platform. No CI job builds or tests it, so no darwin-x86-64 native library
+        is committed or shipped, and there is no rt-osx-x86-64 runtime archive to assemble.
+        A local source build still works on Intel macOS - CMake and Cargo produce host
+        binaries that io.questdb.std.Os picks up from the dev resource paths.
+        -->
         <profile>
             <id>platform-osx-aarch64</id>
             <activation>

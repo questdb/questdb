@@ -8,7 +8,8 @@ on:
 # It splits the building process into 3 build jobs:
 # 1. build-macos-aarch64 - Builds native libraries for MacOS ARM (aarch64).
 #    It uses a native runner, because cross compilation on MacOS is complicated.
-#    MacOS x64 (darwin-x86-64) is no longer built: the hosted Intel images are deprecated.
+#    MacOS x64 (darwin-x86-64) is not a supported platform: no CI job builds or tests it,
+#    so no darwin-x86-64 binary is committed or shipped.
 # 2. build-others - Builds native libraries for x64 Linux, ARM Linux and Windows.
 #    It uses cross-compilation for ARM Linux and Windows.
 #

@@ -46,26 +46,24 @@ steps:
   - bash: |
       set -eux
       git submodule update --init --recursive java-questdb-client
-      # Currently unreachable: no macOS legs remain in hosted-jobs.yml, because the
-      # Azure-hosted macOS images are Intel (x86-64) and macOS 14 is deprecated.
-      # Kept so macOS can be restored if an aarch64 hosted image becomes available.
-      # On aarch64 the CMake path uses neither nasm nor asmlib, and cmake/clang ship
-      # with the image; nasm is only needed on x86-64, which still assembles asmlib.
-      if [ "$(uname -m)" = "x86_64" ] && ! command -v nasm >/dev/null 2>&1; then
-        brew install nasm
+      # macOS legs run on Apple Silicon (macOS-15-arm64 in hosted-jobs.yml); x86-64
+      # (Intel) macOS is not a supported platform, so there is no x86-64 branch here.
+      # steps.yml already asserts arm64; this is the second guard, so an image swap
+      # back to Intel fails here rather than producing an unshippable binary. On
+      # aarch64 the CMake path uses neither nasm nor asmlib, and cmake/clang ship
+      # with the image, so there is nothing to brew install.
+      if [ "$(uname -m)" != "arm64" ]; then
+        echo "ERROR: expected an arm64 macOS agent, got $(uname -m); x86-64 macOS is not supported"
+        exit 1
       fi
       export JAVA_HOME="${JAVA_HOME:-${JAVA_HOME_25_ARM64:-${JAVA_HOME_25_X64:-$(/usr/libexec/java_home)}}}"
       export MACOSX_DEPLOYMENT_TARGET=13.0
       cd java-questdb-client/core
       cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
       cmake --build cmake-build-release --config Release --parallel
-      case "$(uname -m)" in
-        arm64|aarch64) plat=darwin-aarch64 ;;
-        *)             plat=darwin-x86-64 ;;
-      esac
-      mkdir -p "src/main/resources/io/questdb/client/bin/$plat"
+      mkdir -p src/main/resources/io/questdb/client/bin/darwin-aarch64
       cp target/classes/io/questdb/client/bin-local/libquestdb.dylib \
-         "src/main/resources/io/questdb/client/bin/$plat/libquestdb.dylib"
+         src/main/resources/io/questdb/client/bin/darwin-aarch64/libquestdb.dylib
     displayName: "Build client native library (local-client, macOS)"
     condition: and(contains(variables['CLIENT_PROFILE'], 'local-client'), eq(variables['os'], 'macOS'))
 

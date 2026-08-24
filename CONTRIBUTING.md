@@ -107,7 +107,11 @@ you wish to understand how our maintainers work together, you can refer to
 
 ## Requirements
 
-- Operating system - **x86-64 or ARM64**: Windows, Linux, FreeBSD, and macOS
+- Operating system - **x86-64 or ARM64**: Windows, Linux, FreeBSD, and macOS.
+  macOS is **ARM64 only**: QuestDB neither builds, tests nor ships native
+  libraries for x86-64 (Intel) macOS, and the jar contains no `darwin-x86-64`
+  binary. On an Intel Mac you have to build the C/C++ and Rust libraries from
+  source yourself.
 - Java 17 64-bit (strict requirement — no earlier, no later)
 - Maven 3 (latest version recommended; from your package manager on Linux/macOS
   ([Homebrew](https://github.com/Homebrew/brew)) or
@@ -116,7 +120,10 @@ you wish to understand how our maintainers work together, you can refer to
 
 **Note for Apple Silicon (ARM64) users:** Most tests will run normally. However,
 JIT-related tests are x86-64 only and will be skipped on ARM. If you are contributing
-to JIT functionality, use an x86-64 machine or run an x86-64 JDK under Rosetta emulation.
+to JIT functionality, use an x86-64 Linux or Windows machine. An x86-64 JDK under
+Rosetta needs `darwin-x86-64` native libraries, which are not shipped in the jar, so
+that route additionally requires building the C/C++ and Rust libraries from source in
+the same x86-64 environment.
 
 ## Local environment
 
