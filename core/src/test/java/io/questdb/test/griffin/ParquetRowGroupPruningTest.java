@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -3263,7 +3264,14 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testNativePlanRemainsValidAfterNativePartitionAdded() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES ('match', '2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO x VALUES ('match', '2024-01-02T00:00:00.000000Z')");
+
+            final TableToken tableToken = engine.getTableTokenIfExists("x");
+            final long partitionTableVersion;
+            try (TableReader reader = engine.getReader(tableToken)) {
+                Assert.assertFalse(reader.hasParquetPartitions());
+                partitionTableVersion = reader.getTxFile().getPartitionTableVersion();
+            }
 
             try (RecordCursorFactory factory = select("SELECT val FROM x WHERE val = 'match'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -3271,7 +3279,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     Assert.assertFalse(cursor.hasNext());
                 }
 
-                execute("INSERT INTO x VALUES ('match', '2024-01-02T00:00:00.000000Z')");
+                execute("INSERT INTO x VALUES ('match', '2024-01-01T00:00:00.000000Z')");
+
+                try (TableReader reader = engine.getReader(tableToken)) {
+                    Assert.assertFalse(reader.hasParquetPartitions());
+                    Assert.assertNotEquals(partitionTableVersion, reader.getTxFile().getPartitionTableVersion());
+                }
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue(cursor.hasNext());
@@ -3765,10 +3778,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
                 execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-02' WITH (bloom_filter_columns = 'val')");
 
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue(cursor.hasNext());
                     Assert.assertFalse(cursor.hasNext());
                 }
+                Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
             }
         });
     }

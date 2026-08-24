@@ -167,12 +167,9 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
         if (pushdownPartitionTableVersion > -1) {
             final long currentPartitionTableVersion = reader.getTxFile().getPartitionTableVersion();
             if (currentPartitionTableVersion != pushdownPartitionTableVersion) {
-                if (executionContext.isPartitionFormatChangeTolerated()) {
-                    pushdownPartitionTableVersion = currentPartitionTableVersion;
-                    return reader;
-                }
                 final boolean hasParquetPushdown = pushdownFilterConditions != null;
-                if (reader.hasParquetPartitions() != hasParquetPushdown) {
+                if (!executionContext.isPartitionFormatChangeTolerated()
+                        && reader.hasParquetPartitions() != hasParquetPushdown) {
                     Misc.free(reader);
                     throw TableReferenceOutOfDateException.ofPartitionFormatChange(tableToken);
                 }
