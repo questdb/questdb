@@ -46,9 +46,11 @@ steps:
   - bash: |
       set -eux
       git submodule update --init --recursive java-questdb-client
-      # macos-14 agents are arm64: that CMake path uses neither nasm nor asmlib,
-      # and cmake/clang ship with the image. Install nasm only on the x86-64 leg,
-      # which still assembles asmlib.
+      # Currently unreachable: no macOS legs remain in hosted-jobs.yml, because the
+      # Azure-hosted macOS images are Intel (x86-64) and macOS 14 is deprecated.
+      # Kept so macOS can be restored if an aarch64 hosted image becomes available.
+      # On aarch64 the CMake path uses neither nasm nor asmlib, and cmake/clang ship
+      # with the image; nasm is only needed on x86-64, which still assembles asmlib.
       if [ "$(uname -m)" = "x86_64" ] && ! command -v nasm >/dev/null 2>&1; then
         brew install nasm
       fi

@@ -1,6 +1,11 @@
-# macOS/Windows test pipeline.
+# Windows test pipeline.
 # On demand on a PR via `/azp run macwin`, and automatically in the GitHub merge
 # queue via the CI trigger on the ephemeral merge-queue branches.
+#
+# The macOS legs were removed: the Azure-hosted macOS images are Intel (x86-64)
+# only -- there is no GA arm64 macOS image -- and macOS 14 Sonoma is deprecated.
+# QuestDB ships macOS aarch64, so those legs exercised an architecture we no
+# longer target. The pipeline is still registered as "macwin" in Azure DevOps.
 trigger:
   branches:
     include:
@@ -20,13 +25,13 @@ variables:
   includeTests: "%regex[.*[^o].class]"
   MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
   MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3g -XX:+UseParallelGC"
-  # Kept in sync with test-pipeline.yml. These hosted (mac/windows) agents resolve from
+  # Kept in sync with test-pipeline.yml. These hosted (windows) agents resolve from
   # Maven Central, not the cache, so the retry is a harmless no-op for them; keeping
   # MAVEN_RUN_OPTS identical across pipelines avoids drift. See test-pipeline.yml for rationale.
   MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException "
   MAVEN_VERSION: "version"
   MAVEN_VERSION_OPTION: "Default"
-  # Hosted mac/windows jobs (hosted-jobs.yml) override this to "-pl core -am" and
+  # Hosted windows jobs (hosted-jobs.yml) override this to "-pl core -am" and
   # drop the unused web console.
   TEST_REACTOR_ARGS: ""
   WEB_CONSOLE_PROFILE: "-P build-web-console"
