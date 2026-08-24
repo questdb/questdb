@@ -332,6 +332,31 @@ Final numbers, baseline (no piece cap) vs `cairo.partition.compaction.max.pieces
 Verified against `O3CompositePartitionTest`, `O3PartitionPreSplitTest`, `O3PartitionCompactionTest` (71
 tests, the same 2 pre-existing failures as always, 0 regressions).
 
+### Piece count vs query cost, measured
+
+`ScratchPieceCountQueryCostTest` (uncommitted, `core/src/test/java/io/questdb/test/cairo/o3/`) - three
+1M-row, one-day tables at a fixed total row count: a plain (never-composite) baseline, one forced into
+25 pieces, one into ~2000. Each piece is founded by its own out-of-order WAL commit into a distinct,
+non-adjacent time slot, drained individually (draining once for the whole backlog instead merges it as
+one combined sort, producing a single clean piece - not what this measures) with compaction disabled so
+nothing folds pieces back together.
+
+| pieces | full scan (`sum`) | `GROUP BY` | narrow range (1%) | wide range (50%) |
+|---|---|---|---|---|
+| 1 | 283us | 10411us | 65us | 168us |
+| 25 | 384us (1.4x) | 10413us (flat) | 53us (flat) | 185us (flat) |
+| 1998 | 1686us (6.0x) | 11487us (flat) | 61us (flat) | 624us (3.7x) |
+
+Cost is real but sublinear: 80x more pieces (25 -> 1998) costs 4.4x on a full scan and 3.4x on a wide
+range, nowhere near proportional. `GROUP BY` and a narrow range are flat across the whole span - the
+narrow-range result confirms `CompositeTimestampFinder`'s own claim ("two binary searches, never a
+walk") empirically: finding the range boundary does not care how many pieces exist. The per-piece cost
+comes from `FwdTableReaderPageFrameCursor` cutting one page frame per piece (a frame cannot span a piece
+boundary), so more pieces means more, smaller frames and more per-frame column-address setup - a fixed
+cost per frame, not per row. At the piece counts compaction's `max.pieces` rule actually produces in
+practice (tens, not thousands), this cost is close to noise against the write amplification compacting
+away those same pieces costs.
+
 ## Working notes
 
 - `JAVA_HOME` must be Java 25: `/opt/homebrew/opt/java/libexec/openjdk.jdk/Contents/Home`.
