@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
@@ -221,6 +222,179 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             TestUtils.assertSqlCursors(
                     engine, sqlExecutionContext, "SELECT * FROM cy_oracle ORDER BY ts, i", "SELECT * FROM cy ORDER BY ts, i", LOG
             );
+        });
+    }
+
+    /**
+     * Same fixture shape as {@link #testScanCompactsIdleCompositePartitionButLeavesRecentAndPlainAlone}, but
+     * the composite partition also carries a BITMAP-indexed symbol column and a POSTING-indexed one.
+     * {@link TableWriter#compactPartitionNoCommit(int)} - the job's one dispatch path for a composite
+     * partition - must leave both indexes able to find every row after the REWRITE, not just the row count
+     * and the raw column bytes right.
+     */
+    @Test
+    public void testScanCompactsIdleCompositePartitionPreservesIndexes() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+
+            final String dayBase = "SELECT x::INT i, ('sym' || (x % 7))::symbol sym_bitmap, ('sym' || (x % 7))::symbol sym_posting," +
+                    " timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760)";
+            // Later, plain day - pushes the max timestamp forward so 2020-01-01 is never the active
+            // partition, and the backfill below goes through the O3 path instead of an append.
+            final String dayPlain = "SELECT x::INT + 90000 i, ('sym' || (x % 7))::symbol sym_bitmap, ('sym' || (x % 7))::symbol sym_posting," +
+                    " timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)";
+            // Lands ONLY inside 2020-01-01, cutting it into pieces (composite).
+            final String dayBackfill = "SELECT x::INT + 70000 i, ('sym' || (x % 7))::symbol sym_bitmap, ('sym' || (x % 7))::symbol sym_posting," +
+                    " timestamp_sequence('2020-01-01T04:00:07', 5*1000000L) ts FROM long_sequence(200)";
+
+            execute("CREATE TABLE cx AS (" + dayBase + "), index(sym_bitmap), index(sym_posting TYPE POSTING)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO cx " + dayPlain);
+            drainWalQueue();
+            execute("INSERT INTO cx " + dayBackfill);
+            drainWalQueue();
+
+            final TableToken cxToken = engine.verifyTableName("cx");
+            try (TableReader cxReader = engine.getReader(cxToken)) {
+                final TxReader cxTx = cxReader.getTxFile();
+                Assert.assertTrue("2020-01-01 should be composite", cxTx.isPartitionComposite(0));
+                Assert.assertTrue("2020-01-01 should have more than one piece", cxReader.getGeometry().getPieceCount(0) > 1);
+            }
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
+
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                job.run();
+            }
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader cxReader = engine.getReader(cxToken)) {
+                Assert.assertFalse("2020-01-01 is idle, should have been REWRITE-compacted", cxReader.getTxFile().isPartitionComposite(0));
+            }
+
+            execute("CREATE TABLE cx_oracle AS (SELECT i, sym_bitmap, sym_posting, ts FROM (" +
+                    dayBase + " UNION ALL " + dayPlain + " UNION ALL " + dayBackfill +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            for (int k = 0; k < 7; k++) {
+                final String value = "sym" + k;
+                // UNION ALL of independently symbol-typed subqueries widens the column to VARCHAR in the
+                // oracle, so both sides are cast to VARCHAR here purely to line up the comparison's column
+                // types - the filter itself still exercises each table's own indexed SYMBOL column.
+                TestUtils.assertSqlCursors(
+                        engine, sqlExecutionContext,
+                        "SELECT i, sym_bitmap::varchar sym_bitmap, sym_posting::varchar sym_posting, ts FROM cx_oracle" +
+                                " WHERE sym_bitmap = '" + value + "' ORDER BY ts, i",
+                        "SELECT i, sym_bitmap::varchar sym_bitmap, sym_posting::varchar sym_posting, ts FROM cx" +
+                                " WHERE sym_bitmap = '" + value + "' ORDER BY ts, i",
+                        LOG
+                );
+                TestUtils.assertSqlCursors(
+                        engine, sqlExecutionContext,
+                        "SELECT i, sym_bitmap::varchar sym_bitmap, sym_posting::varchar sym_posting, ts FROM cx_oracle" +
+                                " WHERE sym_posting = '" + value + "' ORDER BY ts, i",
+                        "SELECT i, sym_bitmap::varchar sym_bitmap, sym_posting::varchar sym_posting, ts FROM cx" +
+                                " WHERE sym_posting = '" + value + "' ORDER BY ts, i",
+                        LOG
+                );
+            }
+        });
+    }
+
+    /**
+     * Same as {@link #testScanCompactsIdleCompositePartitionPreservesIndexes}, except the composite
+     * partition being compacted is the table's only - and therefore ACTIVE - partition, exercising
+     * {@link TableWriter#compactPartitionNoCommit(int)}'s other branch: closing and reopening the writer's
+     * own column handles against the freshly compacted directory (mirrors
+     * {@code UpdateTest#testUpdateOnActiveCompositePartition}, which checks the writer stays usable for
+     * plain appends afterward but carries no indexed column). Here the check is the index, not the append:
+     * both the BITMAP and the POSTING index must still find every row afterward.
+     */
+    @Test
+    public void testScanCompactsIdleActiveCompositePartitionPreservesIndexes() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("1970-01-01T00:00:00.000000Z"));
+
+            // Small partition, well under a day - mirrors UpdateTest#testUpdateOnActiveCompositePartition's
+            // proven recipe for a composite ACTIVE partition (a single PARTITION BY DAY partition is, by
+            // construction, the active one throughout).
+            final String dayBase = "SELECT x::INT i, ('sym' || (x % 7))::symbol sym_bitmap, ('sym' || (x % 7))::symbol sym_posting," +
+                    " timestamp_sequence(0, 15*1000000L) ts FROM long_sequence(400)";
+            // A small batch landing well inside the partition's own range - forces a merge-append there,
+            // leaving the ACTIVE partition composite.
+            final String dayBackfill = "SELECT x::INT + 70000 i, ('sym' || (x % 7))::symbol sym_bitmap, ('sym' || (x % 7))::symbol sym_posting," +
+                    " timestamp_sequence('1970-01-01T00:20:07', 1000000L) ts FROM long_sequence(3)";
+
+            execute("CREATE TABLE cx AS (" + dayBase + "), index(sym_bitmap), index(sym_posting TYPE POSTING)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            execute("INSERT INTO cx " + dayBackfill);
+            drainWalQueue();
+
+            final TableToken cxToken = engine.verifyTableName("cx");
+            try (TableReader cxReader = engine.getReader(cxToken)) {
+                final TxReader cxTx = cxReader.getTxFile();
+                Assert.assertEquals("cx must have exactly one, the active, partition", 1, cxTx.getPartitionCount());
+                Assert.assertTrue("1970-01-01 should be composite", cxTx.isPartitionComposite(0));
+                Assert.assertTrue("1970-01-01 should have more than one piece", cxReader.getGeometry().getPieceCount(0) > 1);
+            }
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("1970-01-01T03:00:00.000000Z"));
+
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                job.run();
+            }
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader cxReader = engine.getReader(cxToken)) {
+                Assert.assertFalse(
+                        "the active partition is idle past the timeout, should have been REWRITE-compacted",
+                        cxReader.getTxFile().isPartitionComposite(0)
+                );
+            }
+
+            // The writer must still be usable for an ordinary append after reopening its active-partition
+            // column handles - see UpdateTest#testUpdateOnActiveCompositePartition for the same check.
+            final String dayAppend = "SELECT x::INT + 90000 i, ('sym' || (x % 7))::symbol sym_bitmap, ('sym' || (x % 7))::symbol sym_posting," +
+                    " timestamp_sequence('1970-01-01T04:00:00', 1000000L) ts FROM long_sequence(5)";
+            execute("INSERT INTO cx " + dayAppend);
+            drainWalQueue();
+
+            execute("CREATE TABLE cx_oracle AS (SELECT i, sym_bitmap, sym_posting, ts FROM (" +
+                    dayBase + " UNION ALL " + dayBackfill + " UNION ALL " + dayAppend +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            for (int k = 0; k < 7; k++) {
+                final String value = "sym" + k;
+                TestUtils.assertSqlCursors(
+                        engine, sqlExecutionContext,
+                        "SELECT i, sym_bitmap::varchar sym_bitmap, sym_posting::varchar sym_posting, ts FROM cx_oracle" +
+                                " WHERE sym_bitmap = '" + value + "' ORDER BY ts, i",
+                        "SELECT i, sym_bitmap::varchar sym_bitmap, sym_posting::varchar sym_posting, ts FROM cx" +
+                                " WHERE sym_bitmap = '" + value + "' ORDER BY ts, i",
+                        LOG
+                );
+                TestUtils.assertSqlCursors(
+                        engine, sqlExecutionContext,
+                        "SELECT i, sym_bitmap::varchar sym_bitmap, sym_posting::varchar sym_posting, ts FROM cx_oracle" +
+                                " WHERE sym_posting = '" + value + "' ORDER BY ts, i",
+                        "SELECT i, sym_bitmap::varchar sym_bitmap, sym_posting::varchar sym_posting, ts FROM cx" +
+                                " WHERE sym_posting = '" + value + "' ORDER BY ts, i",
+                        LOG
+                );
+            }
         });
     }
 

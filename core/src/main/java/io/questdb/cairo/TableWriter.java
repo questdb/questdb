@@ -1717,9 +1717,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean rewritten = compactPartition0(partitionIndex);
         if (rewritten && isActivePartition) {
             // A REWRITE retires the directory columns[] is currently mapped against - see runCompaction's
-            // own javadoc for the identical requirement on its own REWRITE/MOVE-TAIL outcomes.
+            // own javadoc for the identical requirement on its own REWRITE/MOVE-TAIL outcomes. But that
+            // reopen also frees and recreates every POSTING indexer (closeActivePartition ->
+            // freeIndexers), discarding the freshly rebuilt, not-yet-committed chain
+            // compactPartition0's own seal just staged on the OLD indexer objects - the writer's generic
+            // pre-commit publish loop (denseIndexers in syncColumns) only ever sees whatever indexer
+            // object is live AT COMMIT TIME, so the rebuild would be silently replaced by the fresh,
+            // unrebuilt one the reopen just created. Reseal against the reopened columns so the object the
+            // eventual commit publishes from is the one carrying the compacted directory's real state.
             closeActivePartition(false);
             openLastPartition();
+            final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
+            try {
+                if (sealPostingIndexForPartition(partitionTs, false)) {
+                    restorePostingIndexersToLastPartition();
+                }
+            } catch (Throwable e) {
+                LOG.critical().$("compaction succeeded but posting-index reseal failed `").$(e).$('`').$();
+                distressed = true;
+                throw e;
+            }
         }
         return rewritten;
     }
