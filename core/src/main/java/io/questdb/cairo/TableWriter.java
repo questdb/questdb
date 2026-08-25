@@ -29,6 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.frm.ColumnTopSink;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
@@ -3589,8 +3590,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setPartitionGeometryRef(partitionTimestamp, NO_GEOMETRY_REF);
         partitionRemoveCandidates.add(partitionTimestamp, expectedSrcNameTxn);
 
-        columnVersionWriter.setColumnTopPartitionTimestamp(partitionTimestamp);
-        columnTops.pushInto(columnVersionWriter);
+        ColumnTopSink sink = columnVersionWriter.asColumnTopSink(partitionTimestamp);
+        columnTops.pushInto(sink);
 
         if (isActivePartition) {
             // Same reasoning, and same o3FinishInFlight guard, as compactPartitionNoCommit's own active-
@@ -5442,8 +5443,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             // Only now, with every piece copied successfully, does the target's self-tracked view of its
             // own tops become the partition's real, committed one.
-            columnVersionWriter.setColumnTopPartitionTimestamp(partitionTs);
-            targetFrame.publishColumnTops(columnVersionWriter);
+            ColumnTopSink sink = columnVersionWriter.asColumnTopSink(partitionTs);
+            targetFrame.publishColumnTops(sink);
         } finally {
             Misc.free(targetFrame);
             path.trimTo(pathSize);
@@ -9077,8 +9078,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             // Only now, with every tail piece copied successfully, does the target's self-tracked view of
             // its own tops become the fresh tail partition's real, committed one.
-            columnVersionWriter.setColumnTopPartitionTimestamp(tailPartitionTs);
-            targetFrame.publishColumnTops(columnVersionWriter);
+            ColumnTopSink sink = columnVersionWriter.asColumnTopSink(tailPartitionTs);
+            targetFrame.publishColumnTops(sink);
         } finally {
             Misc.free(targetFrame);
             path.trimTo(pathSize);
@@ -9896,8 +9897,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // rewritePhysicalPartition and squash are - see Frame.publishColumnTops.
                             try (Frame targetFrame = frameFactory.createRW(other, newSplitPartitionTimestamp, metadata, columnVersionWriter, 0)) {
                                 FrameAlgebra.append(targetFrame, sourceFrame, newPrevPartitionSize, prevPartitionSize, txWriter.getTxn() + 1L, configuration.getCommitMode());
-                                columnVersionWriter.setColumnTopPartitionTimestamp(newSplitPartitionTimestamp);
-                                targetFrame.publishColumnTops(columnVersionWriter);
+                                ColumnTopSink sink = columnVersionWriter.asColumnTopSink(newSplitPartitionTimestamp);
+                                targetFrame.publishColumnTops(sink);
                             }
                         }
                         addPhysicallyWrittenRows(prevPartitionSize - newPrevPartitionSize);
@@ -15197,8 +15198,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             // Only now, with every source partition squashed in successfully, does the target's
             // self-tracked view of its own tops become the squashed partition's real, committed one.
-            columnVersionWriter.setColumnTopPartitionTimestamp(targetPartition);
-            targetFrame.publishColumnTops(columnVersionWriter);
+            ColumnTopSink sink = columnVersionWriter.asColumnTopSink(targetPartition);
+            targetFrame.publishColumnTops(sink);
         } finally {
             Misc.free(targetFrame);
             path.trimTo(pathSize);

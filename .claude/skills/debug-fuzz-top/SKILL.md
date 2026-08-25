@@ -80,12 +80,18 @@ merge-append composite partition [table=, ts=, pieces=A->B, composite=, keep=, m
 
 - **absent** — no composite write happened; this is not the feature's bug. Fall back to the generic
   `debug-fuzz` skill.
-- `composite=false` — the pieces tiled the files, so no geometry was published and the partition stayed
-  ordinary. A plain append looks like this.
-- `merge>0` — a piece was rewritten at the tail. This is where relocation, and therefore most defects,
-  come from.
-- `deadPct` climbing over repeated commits on one partition — it is being rewritten rather than
-  pre-split.
+
+## Step 2 - use seeds to reproduce
+
+Instrument the correct `generateRandom` call with the seeds. Run the test once: if it fails — i.e. it
+reproduces the bug — good, there is a 100% repeatable reproducer. Next step is to create a minimum
+deterministic reproducer without the fuzz framework.
+
+If it does not fail, try running it a few more times. Some tests fail only under parallel writing, or
+because of races, and only some of the time. If the test fails with the fixed seeds once in a while — say
+1 out of 10 — it is still somewhat repeatable and can be used for Step 4.
+
+If it never fails, or fails rarely with different symptoms each time, report back and stop investigation.
 
 ## Step 4 — form a theory, then build a deterministic reproducer
 
@@ -96,7 +102,7 @@ moving to the loop below — this branch's own defects (`COMPOSITE_PARTITION_STA
 confirm a fixed-seed replay can pass cleanly against the exact code and log that caught it.
 
 1. **Record the shape.** Add a temporary `LOG.info()` at the point that plans or executes the
-   composite write (`assembleFreshPartitionVersion`, `executeCompositePlan`, or wherever step 3
+   composite write (`assembleFreshPartitionVersion`, `executeCompositePlan`, or wherever step 2
    pointed) that dumps, for the commit about to run: every action's
    type/pieceIndex/o3Lo/o3Hi/pieceLo/pieceHi/tsLo/tsHi, and the current per-column tops
    (`columnVersionReader.getColumnTop(ts, col)`) for the columns in play. `describePieces(tableName)`

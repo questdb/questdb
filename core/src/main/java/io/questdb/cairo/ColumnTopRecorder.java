@@ -32,7 +32,7 @@ import io.questdb.std.LongList;
  * {@link LongList} instead of forwarding to a live {@link ColumnVersionWriter}. Lets a reader-based
  * partition build - see {@code PartitionCompactionScanJob} - capture a {@link io.questdb.cairo.frm.Frame}'s
  * self-tracked tops off the writer thread, the same way {@code ColumnVersionWriter} itself does when armed
- * (see {@link ColumnVersionWriter#setColumnTopPartitionTimestamp}), then have the values pushed into the
+ * (see {@link ColumnVersionWriter#asColumnTopSink}), then have the values pushed into the
  * real writer only once a later swap actually holds it. Two longs per entry, no boxing.
  */
 public class ColumnTopRecorder implements ColumnTopSink {
@@ -48,7 +48,7 @@ public class ColumnTopRecorder implements ColumnTopSink {
 
     /**
      * Pushes every recorded pair into {@code sink}, in recorded order. The caller arms the target
-     * partition first - e.g. {@link ColumnVersionWriter#setColumnTopPartitionTimestamp} - the same
+     * partition first - e.g. {@link ColumnVersionWriter#asColumnTopSink} - the same
      * contract {@link io.questdb.cairo.frm.Frame#publishColumnTops} relies on for any sink.
      */
     public void pushInto(ColumnTopSink sink) {

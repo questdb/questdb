@@ -35,11 +35,11 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 
-public class ColumnVersionWriter extends ColumnVersionReader implements ColumnTopSink {
+public class ColumnVersionWriter extends ColumnVersionReader {
+    private final ColumnTopSinkImpl columnTopSink = new ColumnTopSinkImpl();
     private final CairoConfiguration configuration;
     private final MemoryCMARW mem;
     private final boolean partitioned;
-    private long columnTopSinkPartitionTimestamp = Long.MIN_VALUE;
     private boolean hasChanges;
     private long size;
     private long version;
@@ -57,6 +57,18 @@ public class ColumnVersionWriter extends ColumnVersionReader implements ColumnTo
         if (this.size > 0) {
             this.version = super.readUnsafe();
         }
+    }
+
+    /**
+     * Arms this writer's {@link ColumnTopSink} view for one partition and returns it: every
+     * {@link ColumnTopSink#setColumnTop} call the caller makes on the returned reference merges into
+     * {@code partitionTimestamp}'s own record, until the next {@code asColumnTopSink} call re-arms it
+     * for a different partition. Always the same reused instance, so passing it straight to
+     * {@link Frame#publishColumnTops} costs no per-call allocation.
+     */
+    public ColumnTopSink asColumnTopSink(long partitionTimestamp) {
+        columnTopSink.partitionTimestamp = partitionTimestamp;
+        return columnTopSink;
     }
 
     @Override
@@ -193,28 +205,6 @@ public class ColumnVersionWriter extends ColumnVersionReader implements ColumnTo
         mem.putLong(OFFSET_VERSION_64, version - 1);
         // load version and other fields from mem
         readUnsafe();
-    }
-
-    /**
-     * {@link ColumnTopSink} entry point: forwards to {@link #mergeColumnTop} against whatever partition
-     * {@link #setColumnTopPartitionTimestamp} last set. A {@link Frame} calls this once per column it
-     * wrote through - see {@link Frame#publishColumnTops} - so the partition is fixed for the whole
-     * sequence of calls that follows one {@code setColumnTopPartitionTimestamp}.
-     */
-    @Override
-    public void setColumnTop(int columnIndex, long columnTop) {
-        assert columnTopSinkPartitionTimestamp != Long.MIN_VALUE : "setColumnTopPartitionTimestamp not called";
-        mergeColumnTop(columnTopSinkPartitionTimestamp, columnIndex, columnTop);
-    }
-
-    /**
-     * Arms this writer as a {@link ColumnTopSink} for one partition: every {@link #setColumnTop} call
-     * until the next {@code setColumnTopPartitionTimestamp} merges into {@code partitionTimestamp}'s own
-     * record. Exists so {@link Frame#publishColumnTops} can pass this writer straight through as the sink
-     * without a per-call adapter allocation.
-     */
-    public void setColumnTopPartitionTimestamp(long partitionTimestamp) {
-        this.columnTopSinkPartitionTimestamp = partitionTimestamp;
     }
 
     public void squashPartition(long targetPartitionTimestamp, long sourcePartitionTimestamp) {
@@ -472,5 +462,21 @@ public class ColumnVersionWriter extends ColumnVersionReader implements ColumnTo
     static {
         //noinspection ConstantValue
         assert HEADER_SIZE == TableUtils.COLUMN_VERSION_FILE_HEADER_SIZE;
+    }
+
+    /**
+     * The {@link ColumnTopSink} view {@link #asColumnTopSink} hands out - one reused instance rather
+     * than a lambda, so a {@link Frame} publishing its column tops through it costs no per-call
+     * allocation. {@link #setColumnTop} forwards to the outer writer's own {@link #mergeColumnTop}
+     * against whichever partition was last armed.
+     */
+    private final class ColumnTopSinkImpl implements ColumnTopSink {
+        private long partitionTimestamp = Long.MIN_VALUE;
+
+        @Override
+        public void setColumnTop(int columnIndex, long columnTop) {
+            assert partitionTimestamp != Long.MIN_VALUE : "asColumnTopSink not called";
+            mergeColumnTop(partitionTimestamp, columnIndex, columnTop);
+        }
     }
 }
