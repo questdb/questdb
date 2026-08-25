@@ -28,6 +28,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 /**
@@ -81,6 +82,47 @@ public final class CompositeDetachedArtifact {
                 if (txReader.getPartitionTimestampByIndex(i) == partitionTimestamp) {
                     out.add(txReader.getPartitionCellKey(i));
                 }
+            }
+        } finally {
+            artifactRoot.trimTo(rootLen);
+        }
+    }
+
+    /**
+     * Refuses an artifact that did not come from this table.
+     * <p>
+     * A cellKey is table-local, and the artifact carries {@code _meta}, {@code _cv} and {@code _txn} but
+     * NOT the dimension dictionaries or the {@code _cell} registry -- those live at the table root. So a
+     * foreign artifact's cellKeys cannot be decoded to dimension values here, and attaching it would
+     * bind its cells to whatever local cells happen to share those ordinals: silently wrong data filed
+     * under a different dimension value.
+     * <p>
+     * Cross-table attach needs a self-describing artifact (the interners copied in, or a
+     * cellKey-to-values manifest written at detach). Until then this refuses.
+     */
+    public static void checkSameTable(
+            FilesFacade ff,
+            CairoConfiguration configuration,
+            Path artifactRoot,
+            int expectedTableId,
+            CharSequence tableName
+    ) {
+        final int rootLen = artifactRoot.size();
+        try (TableReaderMetadata artifactMeta = new TableReaderMetadata(configuration)) {
+            final LPSZ metaPath = artifactRoot.concat(TableUtils.META_FILE_NAME).$();
+            if (!ff.exists(metaPath)) {
+                throw CairoException.critical(0)
+                        .put("composite partitioning does not yet support attaching a partition from another table")
+                        .put(" [table=").put(tableName).put(", reason=artifact carries no _meta]");
+            }
+            artifactMeta.loadMetadata(metaPath);
+            final int artifactTableId = artifactMeta.getTableId();
+            if (artifactTableId != expectedTableId) {
+                throw CairoException.critical(0)
+                        .put("composite partitioning does not yet support attaching a partition from another table")
+                        .put(" [table=").put(tableName)
+                        .put(", tableId=").put(expectedTableId)
+                        .put(", artifactTableId=").put(artifactTableId).put(']');
             }
         } finally {
             artifactRoot.trimTo(rootLen);

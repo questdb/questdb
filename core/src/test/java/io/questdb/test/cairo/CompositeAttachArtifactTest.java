@@ -24,9 +24,11 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CompositeDetachedArtifact;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.test.tools.TestUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
@@ -176,6 +178,73 @@ public class CompositeAttachArtifactTest extends AbstractCompositeTwinTest {
         });
     }
 
+    /**
+     * Cross-table attach is deferred, and it must FAIL LOUDLY rather than silently mis-map.
+     * <p>
+     * A cellKey is table-local. The artifact carries {@code _meta}, {@code _cv} and {@code _txn} but NOT
+     * the dimension dictionaries or the {@code _cell} registry -- those are table-root -- so a foreign
+     * artifact's cellKeys cannot be decoded to values here. Accepting one would attach its cells onto
+     * whatever local cells happen to share those ordinals: silently wrong data under a different
+     * dimension value, which is precisely what invariant 2 forbids.
+     */
+    @Test(timeout = 60_000)
+    public void testRefusesAnArtifactFromAnotherTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            execute("CREATE TABLE other (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) "
+                    + "PARTITION BY DAY, exch LAYOUT PLAIN WAL");
+            execute("INSERT INTO other VALUES ('" + DAY + "T01:00:00.000000Z','E0',1.0),"
+                    + "('" + DAY + "T20:00:00.000000Z','E1',2.0),"
+                    + "('2023-01-02T01:00:00.000000Z','E0',3.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            execute("ALTER TABLE other DETACH PARTITION LIST '" + DAY + "'");
+            drainWalQueue();
+
+            final int receivingTableId = engine.verifyTableName("c").getTableId();
+            final String artifactDir = tableDir("other").resolve(DAY + ".detached").toString();
+            try (Path path = new Path()) {
+                path.of(artifactDir);
+                try {
+                    CompositeDetachedArtifact.checkSameTable(
+                            configuration.getFilesFacade(), configuration, path, receivingTableId, "c");
+                    Assert.fail("an artifact from another table must be refused");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(),
+                            "composite partitioning does not yet support attaching a partition from another table");
+                }
+            }
+        });
+    }
+
+    /**
+     * The other half of the same guard: the table's OWN artifact must pass. Without this, a guard that
+     * always threw would satisfy the refusal test and break the round trip.
+     */
+    @Test(timeout = 60_000)
+    public void testAcceptsTheTablesOwnArtifact() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            insertIntoBoth("('" + DAY + "T01:00:00.000000Z','E0',1.0),"
+                    + "('" + DAY + "T20:00:00.000000Z','E1',2.0),"
+                    + "('2023-01-02T01:00:00.000000Z','E0',3.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            execute("ALTER TABLE c DETACH PARTITION LIST '" + DAY + "'");
+            drainWalQueue();
+
+            final int ownTableId = engine.verifyTableName("c").getTableId();
+            final String artifactDir = tableDir().resolve(DAY + ".detached").toString();
+            try (Path path = new Path()) {
+                path.of(artifactDir);
+                CompositeDetachedArtifact.checkSameTable(
+                        configuration.getFilesFacade(), configuration, path, ownTableId, "c");
+            }
+        });
+    }
+
     private long readArtifactSize() throws IOException {
         final String artifact = tableDir().resolve(DAY + ".detached").toString();
         try (Path path = new Path()) {
@@ -208,11 +277,15 @@ public class CompositeAttachArtifactTest extends AbstractCompositeTwinTest {
     }
 
     private java.nio.file.Path tableDir() throws IOException {
+        return tableDir("c");
+    }
+
+    private java.nio.file.Path tableDir(String table) throws IOException {
         try (Stream<java.nio.file.Path> children = Files.list(Paths.get(configuration.getDbRoot()))) {
             return children.filter(Files::isDirectory)
-                    .filter(pp -> pp.getFileName().toString().startsWith("c~"))
+                    .filter(pp -> pp.getFileName().toString().startsWith(table + "~"))
                     .findFirst()
-                    .orElseThrow(() -> new AssertionError("no table directory for c"));
+                    .orElseThrow(() -> new AssertionError("no table directory for " + table));
         }
     }
 }
