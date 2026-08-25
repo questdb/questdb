@@ -107,16 +107,23 @@ you wish to understand how our maintainers work together, you can refer to
 
 ## Requirements
 
-- Operating system - **x86-64 or ARM64**: Windows, Linux, FreeBSD, and macOS
-- Java 17 64-bit (strict requirement — no earlier, no later)
+- Operating system - **x86-64 or ARM64**: Windows, Linux, FreeBSD, and macOS.
+  macOS is **ARM64 only**: QuestDB neither builds, tests nor ships native
+  libraries for x86-64 (Intel) macOS, and the jar contains no `darwin-x86-64`
+  binary. On an Intel Mac you have to build both native libraries from source
+  yourself — see [Compiling the native libraries](#compiling-the-native-libraries).
+- Java 25 64-bit (strict requirement — no earlier, no later)
 - Maven 3 (latest version recommended; from your package manager on Linux/macOS
   ([Homebrew](https://github.com/Homebrew/brew)) or
   [from the jar](https://maven.apache.org/install.html) for any OS)
 - C compiler, CMake — to contribute to C libraries — _OPTIONAL_
 
-**Note for Apple Silicon (ARM64) users:** Most tests will run normally. However,
-JIT-related tests are x86-64 only and will be skipped on ARM. If you are contributing
-to JIT functionality, use an x86-64 machine or run an x86-64 JDK under Rosetta emulation.
+**Note for Apple Silicon (ARM64) users:** Tests run normally, JIT tests included —
+QuestDB compiles filters with the JIT on ARM64 as well as on x86-64, so nothing is
+skipped on this architecture. Avoid reaching for an x86-64 JDK under Rosetta: the jar
+bundles no `darwin-x86-64` native libraries, so that route additionally requires
+building both native libraries from source in the same x86-64 environment — see
+[Compiling the native libraries](#compiling-the-native-libraries).
 
 ## Local environment
 
@@ -187,11 +194,16 @@ We recommend using IntelliJ IDEA for development and debugging. The repository
 includes run configurations in the `.idea` directory that you can use to start
 QuestDB with a debugger attached.
 
-### Compiling C libraries
+### Compiling the native libraries
 
-C libraries will have to be compiled for each platform separately. CMake will
-also need `JAVA_HOME` to be set. The following commands will compile on
-Linux/macOS.
+QuestDB loads two native libraries: `libquestdb` (C/C++) and `libquestdbr`
+(Rust). The repository commits a prebuilt pair for every platform CI builds and
+tests, so you need this section only when you change native code, or when you
+run on a platform the repository ships no binary for, such as x86-64 (Intel)
+macOS.
+
+Compile the C/C++ library with CMake, which also needs `JAVA_HOME`. These
+commands work on Linux/macOS:
 
 ```text
 cd core
@@ -199,22 +211,29 @@ cmake -B build/release -DCMAKE_BUILD_TYPE=Release .
 cmake --build build/release --config Release
 ```
 
+CMake writes `libquestdb` to `core/target/classes/io/questdb/bin-local/`.
+
+Maven builds `libquestdbr` only under the `build-rust-library` profile, which
+copies it to `core/target/classes/io/questdb/rust/`; add the `qdbr-release`
+profile for a release build. A bare `cargo build` in `core/rust/qdbr` leaves the
+library in `core/rust/qdbr/target/`, which is on no classpath.
+
+`io.questdb.std.Os` reads both of those paths before it falls back to the
+committed platform directory. `mvn clean` deletes them.
+
 For more details, see [CMake build instructions](core/CMAKE_README.md).
 
 For C/C++ development we use CLion. This IDE understands CMake files and makes
 compilation easier.
 
-The build will copy artifacts as follows:
-
-```
-core/src/main/c -> core/src/main/resources/io/questdb/bin
-```
-
 ## Developing with the Java ILP client
 
 The QuestDB server tests use the [Java ILP client](https://github.com/questdb/java-questdb-client)
-for integration testing. By default, the client is resolved from Maven Central. If you need to
-modify both the client and server simultaneously, you can use the local development workflow.
+for integration testing. `core/pom.xml` names the client version. When that version is a
+released one, Maven resolves it from Maven Central; between releases it is a `-SNAPSHOT`
+that no configured repository serves, so you have to build with `-P local-client` (see
+below). CI detects the `-SNAPSHOT` and adds the profile itself. Use the same profile when
+you need to modify both the client and the server simultaneously.
 
 ### Setup
 
@@ -234,7 +253,8 @@ mvn test -P local-client
 
 This will:
 1. Build the client from `java-questdb-client/` first
-2. Use the locally built client (version `1.0.1-SNAPSHOT`) for server tests
+2. Use the locally built client (the `-SNAPSHOT` version declared by the
+   submodule) for server tests
 
 ### IntelliJ IDEA setup
 
