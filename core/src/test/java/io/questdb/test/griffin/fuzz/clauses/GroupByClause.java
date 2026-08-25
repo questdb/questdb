@@ -207,7 +207,7 @@ public final class GroupByClause {
         // keys seen in real workloads.
         ColumnKind[] options = {
                 ColumnKind.STRING_LIKE, ColumnKind.NUMERIC, ColumnKind.TEMPORAL,
-                ColumnKind.BOOLEAN, ColumnKind.CHAR, ColumnKind.IDENTIFIER,
+                ColumnKind.BOOLEAN, ColumnKind.CHAR, ColumnKind.randomIdentifier(rnd),
                 ColumnKind.DECIMAL
         };
         return options[rnd.nextInt(options.length)];

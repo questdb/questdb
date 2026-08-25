@@ -157,7 +157,7 @@ public final class SampleByClause {
     private static ColumnKind pickGroupableKind(Rnd rnd) {
         ColumnKind[] options = {
                 ColumnKind.STRING_LIKE, ColumnKind.NUMERIC, ColumnKind.BOOLEAN,
-                ColumnKind.CHAR, ColumnKind.IDENTIFIER, ColumnKind.DECIMAL
+                ColumnKind.CHAR, ColumnKind.randomIdentifier(rnd), ColumnKind.DECIMAL
         };
         return options[rnd.nextInt(options.length)];
     }
