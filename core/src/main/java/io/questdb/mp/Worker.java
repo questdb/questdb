@@ -57,6 +57,9 @@ public class Worker extends Thread {
     // persists, periodic re-logging keeps the condition visible without flooding.
     private static final long YIELD_REFUSED_LOG_INTERVAL_MICROS = 2_000_000L;
     private final int affinity;
+    // Idle loop passes credited back to the backoff ticker each time a job on this
+    // worker reports work. See loopBody() for why this is a decay and not a reset.
+    private final long backoffCredit;
     // The pool's continuation queue. Used both as the sink for the worker's own
     // WorkerContinuation (so a yield from inside the loop body parks back into this
     // pool) and as the source of parked conts to remount in the outer driver.
@@ -69,6 +72,7 @@ public class Worker extends Thread {
     private final AtomicReference<WorkerLifecycle> lifecycle = new AtomicReference<>(WorkerLifecycle.BORN);
     private final Log log;
     private final Metrics metrics;
+    private final long napMs;
     private final long napThreshold;
     private final OnHaltAction onHaltAction;
     private final ObjList<Job> ownedJobClones = new ObjList<>();
@@ -113,13 +117,16 @@ public class Worker extends Thread {
             boolean haltOnError,
             long yieldThreshold,
             long napThreshold,
+            long napMs,
             long sleepThreshold,
             long sleepMs,
+            long backoffCredit,
             Metrics metrics,
             @Nullable ContinuationQueue continuationQueue,
             @Nullable Log log
     ) {
         assert yieldThreshold > 0L;
+        assert backoffCredit >= 0L;
         this.setName(poolName + '_' + workerId);
         this.poolName = poolName;
         this.workerId = workerId;
@@ -131,8 +138,10 @@ public class Worker extends Thread {
         this.criticalErrorLine = "0000-00-00T00:00:00.000000Z C Unhandled exception in worker " + getName();
         this.yieldThreshold = yieldThreshold;
         this.napThreshold = napThreshold;
+        this.napMs = napMs;
         this.sleepThreshold = sleepThreshold;
         this.sleepMs = sleepMs;
+        this.backoffCredit = backoffCredit;
         this.metrics = metrics;
         this.continuationQueue = continuationQueue;
         this.log = log;
@@ -481,7 +490,20 @@ public class Worker extends Thread {
             }
 
             if (runAsap) {
-                ticker = 0;
+                // Decay, not reset. A reset let ANY job doing ANY work wipe the whole
+                // ladder, so a worker handed a scrap more often than once per
+                // napThreshold passes could never reach a nap. That is the normal case
+                // for a SynchronizedJob assigned to every worker (an IODispatcher, say):
+                // the trylock winner rotates, so a trickle of work only one worker
+                // handles at a time kept the entire pool spinning at full rate.
+                //
+                // Crediting a fixed number of passes per unit of work makes back-off
+                // depend on how OFTEN this worker finds work rather than on whether it
+                // ever does: the ticker still climbs while work arrives less than once
+                // per backoffCredit passes, and stays pinned at 0 for a worker that is
+                // genuinely busy. Setting backoffCredit >= sleepThreshold restores the
+                // old reset behaviour exactly.
+                ticker = Math.max(0L, ticker - backoffCredit);
                 continue;
             }
             if (++ticker < 0) {
@@ -490,7 +512,7 @@ public class Worker extends Thread {
             if (ticker > sleepThreshold) {
                 Os.sleep(sleepMs);
             } else if (ticker > napThreshold) {
-                Os.sleep(1);
+                Os.sleep(napMs);
             } else if (ticker > yieldThreshold) {
                 Os.pause();
             }
