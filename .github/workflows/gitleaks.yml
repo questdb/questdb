@@ -87,8 +87,15 @@ jobs:
           mkdir -p "$RUNNER_TEMP/gitleaks-canary"
           printf 'ghp_%s\n' "$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 36)" \
             > "$RUNNER_TEMP/gitleaks-canary/canary.txt"
+          # Keep this scan's output out of the job log unless it has something to
+          # report. It ends in "leaks found: 1", and a "leaks found:" line is how
+          # fix-ci recognises a finding from the real scan above, so printing it
+          # on every run names a finding that does not exist. The log file sits
+          # outside --source, or the scan would read its own output.
           if gitleaks detect --no-git --redact --exit-code 2 --config .gitleaks.toml \
-               --source "$RUNNER_TEMP/gitleaks-canary" --report-path=/dev/null --report-format=json; then
+               --source "$RUNNER_TEMP/gitleaks-canary" --report-path=/dev/null --report-format=json \
+               > "$RUNNER_TEMP/gitleaks-canary.log" 2>&1; then
+            cat "$RUNNER_TEMP/gitleaks-canary.log"
             echo "::error::.gitleaks.toml detected nothing -- the ruleset is empty. Check [extend] useDefault."
             exit 1
           fi

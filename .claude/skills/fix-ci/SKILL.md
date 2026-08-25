@@ -117,8 +117,14 @@ Report these as Category E (non-test failures) in the final output. Common cases
     findings table, no job summary at all, and no `Leaks detected` warning — the
     log is the only record. Name the config error and do not expect a re-run to
     clear it.
+  - `::error::.gitleaks.toml detected nothing` (this repo only) is the canary
+    step rather than the scan. The scan above ran and reported cleanly, but a
+    throwaway token the default rules must catch went undetected, so
+    `.gitleaks.toml` is loading no rules and the branch's commits were never
+    really read. There is no finding, no `leaks found:` line and no fingerprint
+    to fetch. Name the config error; a re-run will not clear it either.
 
-  Report the raw error in both cases; do not call it a leaked credential.
+  Report the raw error in all three cases; do not call it a leaked credential.
   With findings, report them and do not act on them: like every Category E
   failure, the decision is the user's (Step 5). A real credential has to be
   rotated first, and only a confirmed false positive gets suppressed by
