@@ -120,6 +120,103 @@ pointed:
 Neither the geometry work nor the frame work was at fault in 1, 4, 6 or 7: each was a place where the
 composite path had to make the same choice the existing O3 path already makes, and made a different one.
 
+8. **A cold-opened writer never configured a BITMAP indexer for an already-composite active partition.**
+   `TableWriter`'s constructor reaches `initLastPartition` -> `openLastPartitionAndSetAppendPosition` ->
+   `populateDenseIndexerList` unconditionally, even when the active partition is composite and the first
+   call is a no-op (`isLastPartitionAppendBlocked` - "nothing appends to it in place").
+   `populateDenseIndexerList` adds every non-null `ColumnIndexer` to `denseIndexers` regardless of whether
+   it was ever `configureFollowerAndWriter`/`configureWriter`-ed, so a fresh `SymbolColumnIndexer`'s
+   `BitmapIndexWriter` - never `of()`-ed, `keyMem` unmapped - landed in the set every future `commit()`
+   indexes. `finishO3Commit` already carries the fix for the same gap when a commit MAKES the active
+   partition composite mid-session (`configureIndexersForClosedActivePartition`, called from its own
+   `isLastPartitionAppendBlocked` branch), but nothing called it from the writer's OWN construction, so a
+   table whose active partition was ALREADY composite BEFORE this writer instance ever opened - the writer
+   pool evicting one instance and a later access cold-opening the next, exactly what a WAL-apply time-quota
+   ejection does mid-fuzz-run - reached every subsequent commit with an unconfigured indexer still sitting
+   in `denseIndexers`. The crash surfaced through `PartitionCompactionScanJob#dispatchComposite`'s own
+   `commit()`, which runs unconditionally after compacting an entirely different, non-active, idle
+   partition - `updateIndexesSlow` computes a genuinely empty `[lo, hi)` for the untouched active partition
+   in that case, but `BitmapIndexWriter#getMaxValue` (`keyMem.getLong(MAX_VALUE_OFFSET)`) is called before
+   the loop that would have skipped the empty range, so it dereferences the unmapped memory regardless -
+   `AssertionError` in `AbstractMemoryCR#addressOf`, indistinguishable at the stack-trace level from a dozen
+   other "read past the mapped extent" bugs already recorded here. Fixed by calling
+   `configureIndexersForClosedActivePartition` from `openLastPartitionAndSetAppendPosition`'s own blocked
+   branch too, so a cold open ends up in the same state a mid-session transition already did.
+   `PartitionCompactionScanJobTest#testScanCommitCrashesOnColdOpenedWriterWithComposedActivePartition`
+   reproduces it deterministically (evict the writer while the active partition is composite, then dispatch
+   a compaction on an unrelated idle partition) - no fuzz replay needed once the mechanism was identified,
+   though the original symptom (`MatViewFuzzTest#testStressWalPurgeJob`) only reproduced on roughly 1 run in
+   25-45 even with a fixed outer fuzz seed, because the writer-pool eviction is its own race against
+   WAL-apply's time-quota timer.
+
+9. **`compactPartitionNoCommit`'s active-partition reopen let `PostingIndexWriter`'s own crash-recovery
+   walk drop the compaction's freshly-published chain entries, mid-transaction, on every run.**
+   `compactPartition0`'s REWRITE publishes fresh posting-index generations for every POSTING-indexed
+   column (`FrameAlgebra.append`'s `upcomingTableTxn` parameter, always `txWriter.getTxn() + 1L` here -
+   the standard "commit in progress" stamp: droppable by recovery if the encompassing commit never lands).
+   `compactPartitionNoCommit`'s own `closeActivePartition` + `openLastPartition()` reopen immediately
+   afterward, still inside the SAME uncommitted transaction, routes through `openPartition`'s per-column
+   loop, which calls `indexer.getWriter().setCurrentTableTxn(txWriter.getTxn())` before
+   `configureFollowerAndWriter` for every indexed column - the OLD, not-yet-incremented txn, since
+   `dispatchComposite`'s own `writer.commit()` (which would bump it) hasn't run yet. For a POSTING column
+   this arms `PostingIndexWriter#of`'s recovery walk, which treats any chain entry whose `txnAtSeal`
+   exceeds `currentTableTxn` as abandoned by a prior distressed writer - true for a genuine crash, false
+   here: this transaction is mid-flight, about to be committed successfully a few lines further up the
+   call stack. So the walk drops the compaction's own not-yet-committed entries in the very transaction
+   that built them (`posting index recovery [..., dropped=2]` for `sym2`+`sym_top` on every dispatch that
+   reached this branch). `finishO3Commit` already carries the fix for the identical hazard on its own
+   reopen (`o3FinishInFlight`, which `openPartition`'s `setCurrentTableTxn` call is explicitly guarded
+   on), but `compactPartitionNoCommit` didn't set it. Fixed by wrapping this reopen in the same flag.
+
+   Confirmed via A/B log diff across looped fuzz reruns of a fixed seed (`WalWriterFuzzTest`
+   `#testWalWriteManySmallTransactions`, 859705727469541L/1787610026502L, one of the runs that also caught
+   defect #10 below) rather than a dedicated unit test: `PartitionCompactionScanJob#dispatchComposite`
+   succeeding at a REWRITE is the only condition under which the drop is ever logged at all (0 occurrences
+   across every run where it never wins the writer-acquire race), and after the fix the same scenario logs
+   `dropped=0` instead of `dropped=2` on every run where it does win. **Confirmed harmless for read
+   correctness regardless of the fix**: `sealPostingIndexForPartition(partitionTs, false)` runs
+   unconditionally right after this reopen and rebuilds the chain from the column `.d` file - not from
+   whatever the recovery walk left - so the wrong drop was pure wasted work (an extra rebuild cycle), never
+   a wrong answer, and is not the cause of defect #10's row mismatch (fixing it alone did not change that
+   failure's rate). No dedicated regression test: the bug has no black-box-observable effect to assert on
+   (that unconditional rebuild is exactly why), and the only way to observe it directly is the log line
+   itself or a new `@TestOnly` accessor exposing `PostingIndexWriter`'s internal generation count - neither
+   used here.
+
+10. **OPEN - a second bug, same trigger as #9, still unidentified: rows genuinely differ (not just
+   posting-index bookkeeping) between the WAL table and its synchronous non-WAL oracle after the same
+   fuzz-generated sequence of inserts and `ALTER TABLE ... DROP PARTITION WHERE` statements, whenever the
+   active composite partition gets REWRITE-compacted mid-run.**
+   `WalWriterFuzzTest#testWalWriteManySmallTransactions` fails intermittently (roughly 1 run in 6-20, both
+   hardcoded seeds `859705727469541L, 1787610026502L` and `859705722835375L, 1787610026498L` reproduce
+   it) with a whole different row (different symbol values, different columns, different timestamp) at the
+   same ordinal position - not a narrow value mismatch. `table_partitions()` on a failing run showed the
+   two tables' surviving windows for that day as disjoint, non-overlapping ranges (one keeping
+   `[15:18:49,16:58:53]`/343 rows, the other `[08:05:46,10:36:12]`/109 rows).
+
+   Trigger confirmed exactly, by direct instrumentation (temporary `LOG.info()` calls in
+   `PartitionCompactionScanJob#dispatchComposite`, since removed) rather than the feature-flag A/B testing
+   an earlier pass at this investigation used: across 20 baseline runs, `dispatchComposite` winning the
+   writer-acquire race and completing a REWRITE on the table's only (therefore active) composite partition
+   occurred in exactly the 3 failing runs and zero of the 17 passing ones - a direct per-run correlation,
+   not an aggregate rate. Chasing that trigger surfaced and fixed #9 above (a real, confirmed-harmless bug
+   in the exact code path the correlation points at), but a rerun of the same instrumented loop after
+   shipping the #9 fix still failed at a comparable rate (6/30) with the identical `dispatchComposite`
+   correlation intact (6 of 7 winning runs failed; the one exception passed with the SAME code, differing
+   only in scheduling) - so #9 was A cause found on this path, not THE cause of the row content itself.
+
+   New lead from the same instrumented rerun, not yet chased down: at the exact moment `dispatchComposite`
+   wins the race, `ApplyWal2TableJob` is caught actively spinning against the same writer acquisition
+   (`"unsolicited table lock"`, dozens of attempts logged within single-digit milliseconds) rather than
+   idly waiting between batches, and its next WAL transaction block is then applied through a writer
+   instance it did not choose to have cold-reopened out from under it (`PartitionCompactionScanJob`'s own
+   REWRITE forces exactly that reopen). Whether `ApplyWal2TableJob`'s own segment/offset bookkeeping for
+   the block it was mid-preparing survives that swap correctly is the next thing to check - not yet
+   verified either way. No deterministic reproducer exists yet; this remains a genuine cross-thread timing
+   race, confirmed only by repeated fuzz/instrumented reruns, not a single seed replay (a fixed-seed replay
+   of `testWalWriteManySmallTransactions` passes most of the time and needs looping ~10-20x to catch the
+   failure).
+
 ## Decisions
 
 ### `_txn` carries the pointer; the OWNERS do the I/O

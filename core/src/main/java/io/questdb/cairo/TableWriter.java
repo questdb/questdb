@@ -1725,8 +1725,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // object is live AT COMMIT TIME, so the rebuild would be silently replaced by the fresh,
             // unrebuilt one the reopen just created. Reseal against the reopened columns so the object the
             // eventual commit publishes from is the one carrying the compacted directory's real state.
-            closeActivePartition(false);
-            openLastPartition();
+            // o3FinishInFlight suppresses openPartition's setCurrentTableTxn call (see its own guard),
+            // which otherwise triggers PostingIndexWriter's crash-recovery walk mid-transaction and drops
+            // the chain entries compactPartition0 just published under the txWriter.getTxn()+1 "commit in
+            // progress" convention. Nothing has crashed - this transaction is about to be committed
+            // successfully by dispatchComposite's own writer.commit() a few lines up the call stack. The
+            // dropped entries get silently rebuilt a few lines below by sealPostingIndexForPartition, so
+            // this never corrupts a read - it only wastes a rebuild finishO3Commit already knows to avoid
+            // for the identical hazard, via this same flag.
+            o3FinishInFlight = true;
+            try {
+                closeActivePartition(false);
+                openLastPartition();
+            } finally {
+                o3FinishInFlight = false;
+            }
             final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
             try {
                 if (sealPostingIndexForPartition(partitionTs, false)) {
@@ -10053,6 +10066,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // in place. Its own writes go through processCompositePartition, which opens its own frames, and a
         // merge-append table takes no LAG, which is the only other thing the mapping is for.
         if (isLastPartitionAppendBlocked()) {
+            // columns[] stays closed, but every indexed column's ColumnIndexer still needs a configured
+            // BitmapIndexWriter - see configureIndexersForClosedActivePartition's own javadoc. That method
+            // already covers a commit that finds the active partition freshly composite
+            // (finishO3Commit's own call), but a writer built by this constructor - a cold open, e.g. the
+            // writer pool evicting and later re-opening a table mid-fuzz-run - reaches this point with the
+            // active partition ALREADY composite and no earlier commit in THIS instance to have run that
+            // fixup, so it has to run here too.
+            configureIndexersForClosedActivePartition();
             return;
         }
         // Not composite past this point (isLastPartitionAppendBlocked() above already ruled it out), so
