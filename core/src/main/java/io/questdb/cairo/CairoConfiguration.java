@@ -697,6 +697,19 @@ public interface CairoConfiguration {
         return 0.0;
     }
 
+    /**
+     * Data page size for the covering index's own parquet, which is NOT
+     * {@link #getPartitionEncoderParquetDataPageSize()}. A page is the unit the
+     * reader can skip when it decodes one key's contiguous run, so the data
+     * partition's 1 MiB default makes a whole row group a single page and
+     * leaves nothing to skip. Measured best at 64 KiB; the curve is U-shaped,
+     * because pages too small cost more page-header walking per lookup than
+     * they save in decompression.
+     */
+    default int getPostingIndexParquetDataPageSize() {
+        return 64 * 1024;
+    }
+
     default byte getPostingIndexParquetPartitionFormat() {
         return PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE;
     }

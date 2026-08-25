@@ -44,6 +44,17 @@ import org.junit.Test;
 public class PostingIndexParquetConfigurationTest extends AbstractCairoTest {
 
     @Test
+    public void testParquetDataPageSizeDefaultsToSixtyFourKiB() throws Exception {
+        assertMemoryLeak(() -> Assert.assertEquals(64 * 1024, configuration.getPostingIndexParquetDataPageSize()));
+    }
+
+    @Test
+    public void testParquetDataPageSizeOverrideReachesWrappedConfiguration() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_DATA_PAGE_SIZE, 32 * 1024);
+        assertMemoryLeak(() -> Assert.assertEquals(32 * 1024, configuration.getPostingIndexParquetDataPageSize()));
+    }
+
+    @Test
     public void testParquetPartitionFormatOverrideReachesWrappedConfiguration() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
         assertMemoryLeak(() -> Assert.assertEquals(

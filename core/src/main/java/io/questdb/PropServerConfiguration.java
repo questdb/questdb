@@ -458,6 +458,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean posthogEnabled;
     private final int postingIndexAdaptiveDeltaAtOrAbove;
     private final boolean postingIndexAutoIncludeTimestamp;
+    private final int postingIndexParquetDataPageSize;
     private final byte postingIndexParquetPartitionFormat;
     private final byte postingIndexRowIdEncoding;
     private final long postingIndexerSpillBytesMax;
@@ -1714,6 +1715,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 case "delta" -> PostingIndexUtils.ENCODING_DELTA;
                 default -> PostingIndexUtils.ENCODING_ADAPTIVE;
             };
+            this.postingIndexParquetDataPageSize = getIntSize(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_DATA_PAGE_SIZE, 64 * 1024);
             this.postingIndexParquetPartitionFormat = switch (getString(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native")) {
                 case "parquet" -> PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET;
                 default -> PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE;
@@ -4652,6 +4654,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPostingIndexAdaptiveDeltaAtOrAbove() {
             return postingIndexAdaptiveDeltaAtOrAbove;
+        }
+
+        @Override
+        public int getPostingIndexParquetDataPageSize() {
+            return postingIndexParquetDataPageSize;
         }
 
         @Override

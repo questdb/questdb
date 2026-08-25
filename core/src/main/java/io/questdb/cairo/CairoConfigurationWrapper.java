@@ -910,6 +910,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPostingIndexParquetDataPageSize() {
+        return getDelegate().getPostingIndexParquetDataPageSize();
+    }
+
+    @Override
     public byte getPostingIndexParquetPartitionFormat() {
         return getDelegate().getPostingIndexParquetPartitionFormat();
     }
