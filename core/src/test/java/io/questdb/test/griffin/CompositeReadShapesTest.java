@@ -405,6 +405,14 @@ public class CompositeReadShapesTest extends AbstractCairoTest {
             // divergence unrelated to any bug, since SortedSymbolIndexRecordCursorFactory's bitmap-index
             // walk order for same-key rows need not match a from-scratch scan's order.
             final String predicate = " where ts >= '2020-02-01' and ts < '2020-02-02'";
+            // WHY the gate is right, measured 2026-08-25 by lifting it on exactly this shape: the row
+            // COUNT is correct (96 == 96), so this is ordering, not row loss. `order by sym, ts` came
+            // back cell-major --
+            //     plain      00:30 Y, 01:15 X, 02:00 Y, 02:45 X ...
+            //     composite  00:30 Y, 02:00 Y, 03:30 Y, 05:00 Y ...
+            // -- because the requested sort was ELIDED: the factory advertises an ordering its
+            // cell-sequential index walk does not deliver.
+            //
             // sanity: the plain twin still takes the SortedSymbolIndex optimisation this gate declines
             // for composite -- confirms the gate is scoped to composite only.
             assertQuery("select * from p" + predicate + " order by sym")

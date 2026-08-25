@@ -11948,6 +11948,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // successfully cell-pruned DIMENSION predicate (dimensionPruned) also bypasses this
                     // gate -- see this method's own resolveDimensionCellPruneSet doc for exactly which
                     // cases that covers; every other composite keyColumn shape still throws, unchanged.
+                    // MEASURED 2026-08-25, with this gate lifted, on a table where one sym value spans
+                    // two cells at interleaved timestamps. The plan is
+                    //     DeferredSingleSymbolFilterPageFrame / Index forward scan / Frame forward scan
+                    // and a page-frame scan walks CELLS sequentially, so it returned cell-major order:
+                    //     plain      01:00 E0, 02:00 E1, 03:00 E0, 04:00 E1
+                    //     composite  01:00 E0, 03:00 E0, 02:00 E1, 04:00 E1
+                    // Silently wrong ORDER, not wrong rows -- which is why two earlier probe shapes
+                    // passed: seeding one sym value per cell cannot expose it, and an outer ORDER BY
+                    // sorts it away. See CompositeColumnDdlSurveyTest#surveyIndexedWhereReturnsCellMajorOrder.
                     if (compositeTable && !dimensionPruned) {
                         throw CairoException.critical(0)
                                 .put("composite partitioning does not yet support an indexed WHERE predicate [table=")
@@ -12316,6 +12325,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // sites the brief named, so loud-gated conservatively rather than left
                             // silently un-audited). NO_INDEX on the column avoids the gate (falls back
                             // to a plain sorted scan over the merged getCursor()). Plan-7 follow-up.
+                            // MEASURED 2026-08-25 with this gate lifted, on the single-day shape the
+                            // optimisation requires. Row COUNT is right (96 == 96) -- this is ordering,
+                            // not row loss. Asking for `order by sym, ts` returned:
+                            //     plain      00:30 Y, 01:15 X, 02:00 Y, 02:45 X ...  (ts-interleaved)
+                            //     composite  00:30 Y, 02:00 Y, 03:30 Y, 05:00 Y ...  (cell-major)
+                            // The requested sort was ELIDED, because the factory advertises an ordering
+                            // its cell-sequential walk does not deliver. Same root cause as the indexed
+                            // WHERE gate above.
                             if (reader.getMetadata().getPartitionSpec().isComposite()) {
                                 throw CairoException.critical(0)
                                         .put("composite partitioning does not yet support ORDER BY on an indexed symbol column [table=")

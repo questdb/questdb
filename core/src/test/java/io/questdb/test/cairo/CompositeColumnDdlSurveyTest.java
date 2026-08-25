@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -95,6 +97,68 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
             assertQuery("SELECT tag FROM c WHERE tag IS NOT NULL ORDER BY tag")
                     .noLeakCheck()
                     .returns("tag\nT0\nT1\n");
+        });
+    }
+
+    /**
+     * Indexed WHERE on a composite table. The gate lives in SqlCodeGenerator's row-cursor
+     * (FilterOnValues) family, which is refused because that family's getScanDirection does not tell
+     * the truth for a composite scan.
+     * <p>
+     * Prerequisite the survey's own history makes necessary: assert the index EXISTS first. Measured
+     * 2026-08-18, ADD INDEX was a silent no-op, and the indexed-predicate gate then ACCEPTED the query
+     * because there was no index for it to refuse over -- a green test proving nothing.
+     */
+    /**
+     * Indexed WHERE on a composite table: the gate fires, and NO_INDEX gives correct answers.
+     * <p>
+     * This is the user-facing contract. The capability behind the gate is a PERFORMANCE one -- with
+     * NO_INDEX the predicate stays a residual filter over the already-correct merged scan, so results
+     * are right today; using the index would only make them faster. Per invariant 8, performance never
+     * gates.
+     * <p>
+     * MEASURED 2026-08-25 with the gate lifted, on a table where one sym value spans two cells at
+     * interleaved timestamps -- the plan being
+     * {@code DeferredSingleSymbolFilterPageFrame / Index forward scan / Frame forward scan}, and a
+     * page-frame scan walking CELLS sequentially:
+     * <pre>
+     * plain      01:00 E0, 02:00 E1, 03:00 E0, 04:00 E1
+     * composite  01:00 E0, 03:00 E0, 02:00 E1, 04:00 E1
+     * </pre>
+     * Wrong ORDER, not wrong rows. Two earlier probe shapes passed against this same defect: seeding
+     * one sym value per cell cannot expose it, and an outer {@code ORDER BY} sorts it away. Any future
+     * attempt to lift this gate must use the interleaved shape below.
+     */
+    @Test(timeout = 60_000)
+    public void surveyIndexedWhereReturnsCellMajorOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins("ts TIMESTAMP, exch SYMBOL, sym SYMBOL, px DOUBLE",
+                    "PARTITION BY DAY, exch LAYOUT PLAIN");
+            insertIntoBoth("('2023-01-01T01:00:00.000000Z','E0','X',1.0),"
+                    + "('2023-01-01T02:00:00.000000Z','E1','X',2.0),"
+                    + "('2023-01-01T03:00:00.000000Z','E0','X',3.0),"
+                    + "('2023-01-01T04:00:00.000000Z','E1','X',4.0)");
+            drainWalQueue();
+
+            execute("ALTER TABLE c ALTER COLUMN sym ADD INDEX");
+            execute("ALTER TABLE p ALTER COLUMN sym ADD INDEX");
+            drainWalQueue();
+            assertIndexed("c", "sym", true);
+
+            try {
+                printSql("SELECT ts, exch FROM c WHERE sym = 'X'");
+                org.junit.Assert.fail("the indexed WHERE gate must fire");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(),
+                        "composite partitioning does not yet support an indexed WHERE predicate");
+            }
+
+            // the escape hatch must give the twin's answer, in the twin's ORDER, with no outer sort
+            printSql("SELECT /*+ NO_INDEX(sym) */ ts, exch FROM c WHERE sym = 'X'");
+            final String cRows = sink.toString();
+            printSql("SELECT ts, exch FROM p WHERE sym = 'X'");
+            final String pRows = sink.toString();
+            org.junit.Assert.assertEquals("NO_INDEX must match the twin exactly", pRows, cRows);
         });
     }
 
