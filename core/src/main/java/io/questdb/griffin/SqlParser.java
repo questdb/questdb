@@ -1366,7 +1366,11 @@ public class SqlParser {
             return false;
         }
         if (node.type == ExpressionNode.CONSTANT) {
-            return !SqlKeywords.isNullKeyword(node.token);
+            // NaN is how QuestDB spells a NULL DOUBLE/FLOAT, so it is a NULL constant even though it is
+            // not the "null" keyword. Every policy that could reach here with a NaN is already rejected
+            // at DDL time by rejectNullConstantExpiryThreshold; refusing it here as well keeps this
+            // method correct on its own terms instead of relying on that shield.
+            return !SqlKeywords.isNullKeyword(node.token) && !SqlKeywords.isNanKeyword(node.token);
         }
         if (node.type == ExpressionNode.FUNCTION || node.type == ExpressionNode.OPERATION) {
             if (SqlKeywords.isClockFunctionKeyword(node.token)) {
@@ -1472,7 +1476,9 @@ public class SqlParser {
             return false;
         }
         if (node.type == ExpressionNode.CONSTANT) {
-            return !SqlKeywords.isNullKeyword(node.token);
+            // NaN is the NULL DOUBLE/FLOAT and null-in -> null-out holds for arithmetic, so a NaN leaf
+            // makes the whole subtree NULL; see the matching check in isOperandProvablyNonNull.
+            return !SqlKeywords.isNullKeyword(node.token) && !SqlKeywords.isNanKeyword(node.token);
         }
         if (node.type != ExpressionNode.OPERATION || !isArithmeticOperator(node.token)) {
             return false;
