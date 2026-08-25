@@ -71,6 +71,17 @@ steps:
       echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
     displayName: "Assert macOS agent is arm64 and activate JDK 25"
     condition: eq(variables['os'], 'macOS')
+  # macOS caps the number of files a process may open separately from its
+  # inherited rlimit. If kern.maxfilesperproc is too low, the JVM cannot raise
+  # its soft limit and falls back to OPEN_MAX (10240), which is insufficient for
+  # tests that scan thousands of table partitions in parallel.
+  - bash: |
+      set -eux
+      sudo sysctl -w kern.maxfiles=10485760
+      sudo sysctl -w kern.maxfilesperproc=1048576
+      sysctl kern.maxfiles kern.maxfilesperproc
+    displayName: "Increase file count on macOS"
+    condition: eq(variables['os'], 'macOS')
   - bash: sudo sysctl -w fs.file-max=500000
     displayName: "Increase file count on Linux"
     condition: |
