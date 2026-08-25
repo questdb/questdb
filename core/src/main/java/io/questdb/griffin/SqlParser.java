@@ -1052,9 +1052,9 @@ public class SqlParser {
         // see keepFilterWhereText for the NULL-operand and partition-pruning details.
         // The flip verdict is a pure function of (predicate, designated timestamp) for a DECLARE-free
         // compile, so the probe parse runs once per CairoTable instance and every later compile reads the
-        // memo. A DECLARE-carrying compile neither trusts nor populates it: column names may legally start
-        // with '@', so a declared name can capture an unquoted such column reference in the predicate
-        // during the probe parse and yield a query-specific verdict.
+        // memo. A DECLARE-carrying compile neither trusts nor populates it, and always gets flip=false:
+        // a declared name can capture a column reference in the predicate and substitute an expression
+        // DDL validation never saw (see isTimestampFlippablePredicate).
         final boolean flip;
         final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = model.getDecls();
         final boolean isMemoUsable = policyTable != null && (decls == null || decls.size() == 0);
@@ -1292,6 +1292,15 @@ public class SqlParser {
      * to a bare comparison for partition pruning. Parses the predicate purely to inspect it (the node is
      * discarded). Returns false for everything else, which leaves the {@code NOT} un-inverted - always
      * correct, just unable to prune.
+     * <p>
+     * A DECLARE-carrying compile never flips. Column names may legally start with {@code '@'}, so a
+     * declared name can capture an unquoted such column reference in the predicate, and the probe then
+     * inspects a tree containing whatever expression the query declared — one DDL validation never saw.
+     * That breaks the premise {@link #isOperandProvablyNonNull} rests on for arithmetic: a declared
+     * {@code @c := 4611686018427387904 * 2} substitutes constant arithmetic that folds to the NULL
+     * sentinel, and flipping {@code NOT(ts < @c)} to {@code ts >= @c} would hide every row for that
+     * query. Refusing the flip keeps the always-correct {@code NOT}; the only cost is partition pruning
+     * on a DECLARE-carrying read of a policied view.
      */
     private boolean isTimestampFlippablePredicate(
             String predicate,
@@ -1299,7 +1308,7 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback,
             LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
-        if (designatedTimestampColumn == null) {
+        if (designatedTimestampColumn == null || (decls != null && decls.size() > 0)) {
             return false;
         }
         final GenericLexer probeLexer = viewLexers.next();
@@ -1367,7 +1376,9 @@ public class SqlParser {
                 // Arithmetic can overflow onto the NULL sentinel, so it is trusted only as a compile-time
                 // constant, which SqlCompilerImpl.rejectNullConstantExpiryThreshold has already evaluated
                 // and proven non-NULL at DDL time. A clock under the operator makes the subtree a runtime
-                // constant, which that check cannot answer for, so it stays possibly-NULL here.
+                // constant, which that check cannot answer for, so it stays possibly-NULL here. The DDL
+                // premise holds because only trees parsed without DECLAREs reach this point: a
+                // DECLARE-carrying compile is refused up front in isTimestampFlippablePredicate.
                 return isConstantArithmetic(node);
             }
             if (!isNullPreservingTimestampExpr(node.token)) {

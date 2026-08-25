@@ -1197,7 +1197,8 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     "cast(null as timestamp)",
                     "4611686018427387904 * 2",
                     "1073741824 * 2",
-                    "2147483647 + 1"
+                    "2147483647 + 1",
+                    "0.0/0.0"
             }) {
                 assertExceptionNoLeakCheck(
                         "create materialized view mv as (select * from base) expire rows when ts < " + threshold,
@@ -1254,6 +1255,32 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             printSql("explain select * from mv");
             TestUtils.assertContains(sink, "not (");
+        });
+    }
+
+    @Test
+    public void testDeclareSubstitutedThresholdNeverFlips() throws Exception {
+        // Column names may start with '@', so a read-time DECLARE can capture a column reference in the
+        // stored predicate and substitute an expression DDL validation never saw. Here the substituted
+        // expression is constant arithmetic that folds to the NULL timestamp, so flipping NOT(ts < @c)
+        // to ts >= @c would hide every row for that query. A DECLARE-carrying compile therefore never
+        // flips: the plan keeps the un-inverted NOT and both rows stay visible.
+        assertMemoryLeak(() -> {
+            execute("create table base (\"@c\" long, sym symbol, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) expire rows when ts < @c");
+            execute("""
+                    insert into base values
+                    (1, 'A', '2024-01-05T00:00:00.000000Z'),
+                    (2, 'B', '2024-01-20T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+
+            // Without a DECLARE, @c is the column: a per-row predicate, never flipped, all rows kept
+            // (ts < 1 microsecond after epoch is false for both).
+            assertQuery("select sym from mv order by ts").noLeakCheck().returns("sym\nA\nB\n");
+
+            assertQuery("declare @c := 4611686018427387904 * 2 select sym from mv order by ts")
+                    .noLeakCheck()
+                    .returns("sym\nA\nB\n");
         });
     }
 
@@ -1679,10 +1706,12 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             assertNotNull(table);
             assertEquals(CairoTable.EXPIRY_FLIP_UNKNOWN, table.getExpiryFlipEligibility());
 
-            // A DECLARE-carrying compile neither trusts nor populates the memo: a declared name can capture
-            // an unquoted '@'-prefixed column reference in the predicate during the probe parse.
+            // A DECLARE-carrying compile neither trusts nor populates the memo, and never flips: a
+            // declared name can capture an unquoted '@'-prefixed column reference in the predicate and
+            // substitute an expression DDL validation never saw, so the parser keeps the always-correct
+            // un-inverted NOT for it (testDeclareSubstitutedThresholdNeverFlips shows why).
             printSql("explain declare @unused := 1 select * from mv");
-            TestUtils.assertContains(sink, "Interval forward scan");
+            TestUtils.assertContains(sink, "not (");
             assertEquals(CairoTable.EXPIRY_FLIP_UNKNOWN, table.getExpiryFlipEligibility());
 
             printSql("explain select * from mv");

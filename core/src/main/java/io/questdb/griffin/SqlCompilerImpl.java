@@ -7280,8 +7280,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     /**
      * Whether this constant evaluates to NULL, across every type a {@code ts < T} threshold can bind to.
-     * The timestamp family, DATE, LONG and INT each carry an in-band sentinel; a bare NULL literal binds
-     * to {@link ColumnType#NULL}; a string threshold is NULL by reference.
+     * The timestamp family, DATE, LONG and INT each carry an in-band sentinel; DOUBLE and FLOAT spell
+     * NULL as NaN (the way {@code 0.0/0.0} folds); a bare NULL literal binds to {@link ColumnType#NULL};
+     * a string threshold is NULL by reference.
      */
     private static boolean isNullConstant(Function t) {
         final int type = t.getType();
@@ -7293,6 +7294,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             case ColumnType.DATE -> t.getDate(null) == Numbers.LONG_NULL;
             case ColumnType.LONG -> t.getLong(null) == Numbers.LONG_NULL;
             case ColumnType.INT -> t.getInt(null) == Numbers.INT_NULL;
+            case ColumnType.DOUBLE -> Numbers.isNull(t.getDouble(null));
+            case ColumnType.FLOAT -> Numbers.isNull(t.getFloat(null));
             case ColumnType.STRING -> t.getStrA(null) == null;
             case ColumnType.VARCHAR -> t.getVarcharA(null) == null;
             default -> false;
