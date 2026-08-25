@@ -134,13 +134,13 @@ brew install questdb
 brew services start questdb
 ```
 
-QuestDB bundles native libraries for Apple Silicon only. On an Intel Mac, use
-the Docker image above.
-
 ```bash
 questdb start
 questdb stop
 ```
+
+QuestDB bundles native libraries for Apple Silicon only. On an Intel Mac, use
+the Docker image above.
 
 Alternatively, to kickoff the full onboarding journey, start with our concise
 [quick start guide](https://questdb.com/docs/getting-started/quick-start/).

@@ -613,8 +613,8 @@
         </profile>
         <!--
         There is deliberately no platform-osx-x86-64 profile: x86-64 (Intel) macOS is not a
-        supported platform. No CI job builds or tests it, so no darwin-x86-64 native library
-        is committed or shipped, and there is no rt-osx-x86-64 runtime archive to assemble.
+        supported platform. No CI job builds or tests it, so we commit and ship no darwin-x86-64
+        native library, and no rt-osx-x86-64 runtime archive exists to assemble.
         A local source build still works on Intel macOS - CMake and Cargo produce host
         binaries that io.questdb.std.Os picks up from the dev resource paths.
         -->

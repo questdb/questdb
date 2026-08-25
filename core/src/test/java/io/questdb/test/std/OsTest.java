@@ -105,13 +105,14 @@ public class OsTest {
 
     /**
      * QuestDB ships native libraries for exactly four platforms. x86-64 (Intel) macOS is not
-     * one of them: no CI job builds or tests it, so no {@code darwin-x86-64} binary may be
-     * committed. A committed-but-never-rebuilt library is worse than none at all - it freezes
-     * while every other platform moves, so the next native ABI change hands Intel Mac users a
-     * stale dylib that fails at an arbitrary later call, or corrupts memory silently, instead
-     * of failing cleanly at load. This test fails if such a binary is re-added, or if a
-     * shipped platform is dropped by accident. It pins the sqllogictest test resource to
-     * the same platform set, because the same CI jobs build it.
+     * one of them: no CI job builds or tests it, so the repository commits no
+     * {@code darwin-x86-64} binary. A committed-but-never-rebuilt library is worse than none
+     * at all - it freezes while every other platform moves, so the next native ABI change
+     * hands Intel Mac users a stale dylib that fails at an arbitrary later call, or corrupts
+     * memory silently, instead of failing cleanly at load. This test fails when one of the
+     * {@code darwin-x86-64} libraries named below returns to the classpath, or when a shipped
+     * platform disappears. It pins the sqllogictest test resource to the same platform set,
+     * because the same CI jobs build it.
      */
     @Test
     public void testOnlySupportedPlatformNativeLibsAreShipped() {
