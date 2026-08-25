@@ -71,6 +71,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = PARTITIONS_SLOT_OFFSET_NAME_TXN + 1;
     private static final int PARTITIONS_SLOT_OFFSET_FORMAT = PARTITIONS_SLOT_OFFSET_COLUMN_VERSION + 1;
     private static final int PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
+    // The txFile geometry ref (TxReader#getGeometryRef) as of the last time this partition's column
+    // files were sized. Meaningless (and left at NO_GEOMETRY_REF) for a partition that is not composite.
+    private static final int PARTITIONS_SLOT_OFFSET_GEOMETRY_REF = PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
     private final BitSet activeColumns = new BitSet();
@@ -1038,6 +1041,33 @@ public class TableReader implements Closeable, SymbolTableSource {
         return newSize;
     }
 
+    /**
+     * Whether an already-open partition's committed geometry moved since this reader last sized its
+     * mapping, for a partition {@link #reconcileOpenPartitions}'s fast path would otherwise never revisit.
+     * That fast path only reconciles the last partition on the assumption that nothing else could have
+     * changed while the partition table version, column version and truncate version all stayed put - an
+     * assumption a composite-partition rewrite breaks: a fold (see TableWriter#foldContiguousPieces)
+     * republishes a partition's _geometry record, and a merge-append can grow its E, neither one bumping
+     * any of those three versions, because the on-disk directory, name txn and column structure are all
+     * unaffected. Left unchecked, the fast path would keep an earlier partition's column files mapped to
+     * a stale, possibly too-small extent. Resident-only, zero I/O - TxReader#isPartitionComposite and
+     * #getGeometryRef both read a long already sitting in the loaded attachedPartitions array - and cheap
+     * in the common case, since most tables have no open composite partition to check at all.
+     */
+    private boolean compositeGeometryStale() {
+        for (int i = 0, n = partitionCount - 1; i < n; i++) {
+            final int offset = i * PARTITIONS_SLOT_SIZE;
+            if (openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE) < 0) {
+                continue; // not open, nothing mapped that could have gone stale
+            }
+            if (txFile.isPartitionComposite(i)
+                    && openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_GEOMETRY_REF) != txFile.getGeometryRef(i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void copyColumns(
             int fromBase,
             int fromColumnIndex,
@@ -1275,6 +1305,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_FORMAT, isParquet ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_GEOMETRY_REF, TableWriter.NO_GEOMETRY_REF);
         }
         return openPartitionInfo;
     }
@@ -1303,6 +1334,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_GEOMETRY_REF, TableWriter.NO_GEOMETRY_REF);
         partitionCount++;
         LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", table=").$(tableToken)
                 .$(", timestamp=").$ts(ColumnType.getTimestampDriver(timestampType), timestamp).I$();
@@ -1356,6 +1388,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                     pathGenNativePartition(partitionIndex, nameTxn);
                     hasNewColumns = true;
                 }
+                // A column that only now became active can't skip the same E-vs-live-count sizing
+                // openPartition0 and reloadColumnFiles already apply - mapping it to partitionSize
+                // (the live count) leaves it short exactly like the two call sites that already
+                // route through mappedRowCount for this reason.
                 reloadColumnAt(
                         partitionIndex,
                         path,
@@ -1364,7 +1400,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         indexes,
                         columnBase,
                         i,
-                        partitionSize
+                        mappedRowCount(partitionIndex, partitionSize)
                 );
             }
         } catch (Throwable th) {
@@ -1522,6 +1558,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), getPartitionPhysicalRowCount(partitionIndex));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_GEOMETRY_REF, txFile.getGeometryRef(partitionIndex));
                         openPartitionCount++;
                     }
 
@@ -1637,7 +1674,8 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void reconcileOpenPartitions(long prevPartitionVersion, long prevColumnVersion, long prevTruncateVersion) {
         // Reconcile partition full or partial will only update row count of last partition and append new partitions
         boolean truncateHappened = txFile.getTruncateVersion() != prevTruncateVersion;
-        if (txFile.getPartitionTableVersion() == prevPartitionVersion && txFile.getColumnVersion() == prevColumnVersion && !truncateHappened) {
+        if (txFile.getPartitionTableVersion() == prevPartitionVersion && txFile.getColumnVersion() == prevColumnVersion && !truncateHappened
+                && !compositeGeometryStale()) {
             int partitionIndex = Math.max(0, partitionCount - 1);
             final int txPartitionCount = txFile.getPartitionCount();
             if (partitionIndex < txPartitionCount) {
@@ -1662,6 +1700,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 // shrinks a composite partition below the pieces that sit above it.
                                 if (reloadColumnFiles(partitionIndex, mappedRowCount(partitionIndex, txPartitionSize))) {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
+                                    openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_GEOMETRY_REF, txFile.getGeometryRef(partitionIndex));
                                     LOG.debug().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
                                 } else {
                                     closePartition(partitionIndex);
@@ -1729,6 +1768,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 // shrinks a composite partition below the pieces that sit above it.
                                 if (reloadColumnFiles(partitionIndex, mappedRowCount(txPartitionIndex, txPartitionSize))) {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
+                                    openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_GEOMETRY_REF, txFile.getGeometryRef(txPartitionIndex));
                                     LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
                                 } else {
                                     closePartition(partitionIndex);

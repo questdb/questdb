@@ -345,6 +345,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
         if (t.getParquetPartitions() != null) {
             sb.append(" partitions=[").append(t.getParquetPartitions()).append(']');
         }
+        if (t.getCompositeDay() != null) {
+            sb.append(" composite=").append(t.getCompositeDay());
+        }
         sb.append("):");
         for (int j = 0, n = t.getColumnCount(); j < n; j++) {
             FuzzColumn c = t.getColumn(j);
@@ -370,6 +373,12 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 ? TestUtils.generateRandom(LOG, s0, s1)
                 : TestUtils.generateRandom(LOG);
         FuzzConfig config = new FuzzConfig(rnd);
+
+        // Global prerequisite for FuzzTableFactory's per-table composite-partition
+        // backdate (see its class javadoc). A no-op for any table the coin flip
+        // misses -- merge-append only changes behaviour on a backdated/overlapping
+        // write, which an in-order table never makes.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
 
         LOG.info().$("fuzz config: tables=").$(config.getNumTables())
                 .$(", rows=").$(config.getRowsPerTable())
