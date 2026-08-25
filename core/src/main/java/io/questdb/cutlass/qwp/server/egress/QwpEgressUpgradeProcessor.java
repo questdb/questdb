@@ -329,7 +329,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         long bufferAddr = rawSocket.getBufferAddress();
         int bufferSize = rawSocket.getBufferSize();
 
-        String validationError = QwpIngressHttpProcessor.validateHandshake(context.getRequestHeader());
+        String validationError = QwpIngressHttpProcessor.validateHandshake(
+                context.getRequestHeader(),
+                context.getSocket().isTlsSessionStarted()
+        );
         if (validationError != null) {
             LOG.error().$("Egress WebSocket handshake validation failed [fd=").$(context.getFd())
                     .$(", error=").$(validationError).I$();

@@ -32,18 +32,35 @@ import org.junit.Test;
 public class QwpBrowserOriginTest {
 
     @Test
-    public void testAcceptsSameOriginBrowserAuthorities() {
+    public void testAcceptsSameOriginBrowserOrigins() {
         Assert.assertTrue(QwpIngressHttpProcessor.isSameOrigin(
                 new Utf8String("http://localhost:9000"),
-                new Utf8String("localhost:9000")
+                new Utf8String("localhost:9000"),
+                false
         ));
         Assert.assertTrue(QwpIngressHttpProcessor.isSameOrigin(
                 new Utf8String("HTTPS://QUESTDB.EXAMPLE.COM"),
-                new Utf8String("questdb.example.com")
+                new Utf8String("questdb.example.com"),
+                true
         ));
         Assert.assertTrue(QwpIngressHttpProcessor.isSameOrigin(
                 new Utf8String("http://[::1]:9000"),
-                new Utf8String("[::1]:9000")
+                new Utf8String("[::1]:9000"),
+                false
+        ));
+    }
+
+    @Test
+    public void testRejectsCrossSchemeBrowserOrigins() {
+        Assert.assertFalse(QwpIngressHttpProcessor.isSameOrigin(
+                new Utf8String("https://questdb.example.com"),
+                new Utf8String("questdb.example.com"),
+                false
+        ));
+        Assert.assertFalse(QwpIngressHttpProcessor.isSameOrigin(
+                new Utf8String("http://questdb.example.com"),
+                new Utf8String("questdb.example.com"),
+                true
         ));
     }
 
@@ -51,19 +68,23 @@ public class QwpBrowserOriginTest {
     public void testRejectsCrossOriginAndMalformedOrigins() {
         Assert.assertFalse(QwpIngressHttpProcessor.isSameOrigin(
                 new Utf8String("http://evil.example.com"),
-                new Utf8String("questdb.example.com")
+                new Utf8String("questdb.example.com"),
+                false
         ));
         Assert.assertFalse(QwpIngressHttpProcessor.isSameOrigin(
                 new Utf8String("null"),
-                new Utf8String("questdb.example.com")
+                new Utf8String("questdb.example.com"),
+                false
         ));
         Assert.assertFalse(QwpIngressHttpProcessor.isSameOrigin(
                 new Utf8String("http://questdb.example.com/path"),
-                new Utf8String("questdb.example.com")
+                new Utf8String("questdb.example.com"),
+                false
         ));
         Assert.assertFalse(QwpIngressHttpProcessor.isSameOrigin(
                 new Utf8String("http://user@questdb.example.com"),
-                new Utf8String("questdb.example.com")
+                new Utf8String("questdb.example.com"),
+                false
         ));
     }
 }

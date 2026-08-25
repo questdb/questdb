@@ -232,8 +232,30 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEgressSameAuthorityCrossSchemeBrowserUpgradeIsRejected() throws Exception {
+        runWithFragmentedSendEgress(port -> assertCrossSchemeUpgradeRejected(port, "/read/v1"));
+    }
+
+    @Test
+    public void testIngressSameAuthorityCrossSchemeBrowserUpgradeIsRejected() throws Exception {
+        runWithFragmentedSend(port -> assertCrossSchemeUpgradeRejected(port, "/write/v4"));
+    }
+
+    @Test
     public void testIngressSameOriginBrowserUpgradeIsAccepted() throws Exception {
         runWithFragmentedSend(port -> assertSameOriginUpgradeAccepted(port, "/write/v4"));
+    }
+
+    private static void assertCrossSchemeUpgradeRejected(int port, String path) throws Exception {
+        String request = "GET " + path + " HTTP/1.1\r\n"
+                + "Host: localhost:" + port + "\r\n"
+                + "Origin: https://localhost:" + port + "\r\n"
+                + "Upgrade: websocket\r\n"
+                + "Connection: Upgrade\r\n"
+                + "Sec-WebSocket-Key: AQIDBAUGBwgJCgsMDQ4PEA==\r\n"
+                + "Sec-WebSocket-Version: 13\r\n"
+                + "\r\n";
+        assertFullRejectDelivered(port, request, EXPECTED_400_ORIGIN_REJECT);
     }
 
     private static void assertSameOriginUpgradeAccepted(int port, String path) throws Exception {

@@ -300,20 +300,20 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
 
     /**
      * Returns {@code true} when a browser WebSocket Origin belongs to the HTTP
-     * Host receiving the upgrade. RFC 6455 browsers always send Origin and do
-     * not let JavaScript remove it, while non-browser QWP clients normally omit
-     * it. Restricting browser upgrades to same-origin keeps the CSWSH protection
-     * without making QWP inaccessible to web applications served by QuestDB or
-     * a same-origin reverse proxy.
+     * Host receiving the upgrade and its scheme matches the connection security.
+     * RFC 6455 browsers always send Origin and do not let JavaScript remove it,
+     * while non-browser QWP clients normally omit it. Restricting browser upgrades
+     * to same-origin keeps the CSWSH protection without making QWP inaccessible to
+     * web applications served from QuestDB's own HTTP(S) endpoint.
      */
-    public static boolean isSameOrigin(Utf8Sequence origin, Utf8Sequence host) {
+    public static boolean isSameOrigin(Utf8Sequence origin, Utf8Sequence host, boolean secureConnection) {
         if (origin == null || host == null) {
             return false;
         }
         final int prefixLength;
-        if (startsWithIgnoreCaseAscii(origin, "http://")) {
+        if (!secureConnection && startsWithIgnoreCaseAscii(origin, "http://")) {
             prefixLength = 7;
-        } else if (startsWithIgnoreCaseAscii(origin, "https://")) {
+        } else if (secureConnection && startsWithIgnoreCaseAscii(origin, "https://")) {
             prefixLength = 8;
         } else {
             return false;
@@ -461,15 +461,16 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     /**
      * Validates WebSocket handshake headers and returns an error message if invalid.
      *
-     * @param header the HTTP request header
+     * @param header           the HTTP request header
+     * @param secureConnection whether the request was received over TLS
      * @return null if valid, error message otherwise
      */
-    public static String validateHandshake(HttpRequestHeader header) {
+    public static String validateHandshake(HttpRequestHeader header, boolean secureConnection) {
         // Browsers always send Origin. Permit a same-origin browser application,
         // but retain the Cross-Site WebSocket Hijacking (CSWSH) guard for every
         // cross-origin or malformed request. Machine clients normally omit it.
         Utf8Sequence origin = header.getHeader(HEADER_ORIGIN);
-        if (origin != null && !isSameOrigin(origin, header.getHeader(HEADER_HOST))) {
+        if (origin != null && !isSameOrigin(origin, header.getHeader(HEADER_HOST), secureConnection)) {
             return ERROR_ORIGIN_HEADER_NOT_ALLOWED;
         }
 
