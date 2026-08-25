@@ -13,8 +13,11 @@ import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.idx.BitpackUtils;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.idx.ParquetIndexSeal;
+import io.questdb.cairo.idx.ParquetPostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexNative;
+import io.questdb.cairo.idx.PostingIndexReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.Record;
@@ -28,11 +31,15 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -91,6 +98,11 @@ public class PostingIndexBenchmarkSuite {
     private static final boolean IS_DELTA = "delta".equals(System.getProperty("questdb.posting.format", "ef"));
     private static final double NVME_US_PER_PAGE = 80;
     private static final int PAGE_SIZE = 4096;
+    // The parquet arm names its artifacts <col>.pidx.<indexTxn>.{parquet,_im}.
+    // Nothing here publishes a _pm, so the benchmark plays the part of the
+    // token: it seals at this index_txn and binds the reader to the same one.
+    private static final long PARQUET_INDEX_TXN = 1;
+    private static final long PARQUET_PARTITION_TXN = -1;
     // SQL keyword for the posting index type: "POSTING" (EF default) or "POSTING DELTA"
     private static final String POSTING_SQL = IS_DELTA ? "POSTING DELTA" : "POSTING";
 
@@ -132,6 +144,18 @@ public class PostingIndexBenchmarkSuite {
             org.openjdk.jmh.runner.options.ChainedOptionsBuilder builder = new OptionsBuilder()
                     .include(includePattern)
                     .resultFormat(ResultFormatType.TEXT);
+            // Pin @Param values from the command line, e.g.
+            //   -Dquestdb.suite.bench.scenario=P400K
+            //   -Dquestdb.suite.bench.format=POSTING,POSTING_PARQUET
+            // Without this a focused arm comparison has to run every scenario
+            // the state declares. Only pass a param the selected benchmark
+            // actually declares; JMH rejects an unknown one.
+            for (String param : new String[]{"scenario", "format", "mode", "columnType"}) {
+                String values = System.getProperty("questdb.suite.bench." + param);
+                if (values != null) {
+                    builder.param(param, values.split(","));
+                }
+            }
             if ("wal_o3".equals(filter) || "wal_o3_append".equals(filter) || "wal_o3_spill".equals(filter)) {
                 builder.forks(1)
                         .warmupIterations(1)
@@ -199,7 +223,7 @@ public class PostingIndexBenchmarkSuite {
     @Benchmark
     public void indexPointRead(IndexState s) {
         try (Path path = new Path().of(s.dir)) {
-            IndexReader reader = openReader(s.config, path, s.isPosting);
+            IndexReader reader = openReader(s, path);
             try {
                 for (int key : s.pointKeys) {
                     try (RowCursor c = reader.getCursor(key, 0, Long.MAX_VALUE)) {
@@ -219,7 +243,7 @@ public class PostingIndexBenchmarkSuite {
     @Benchmark
     public void indexRangeRead(IndexState s) {
         try (Path path = new Path().of(s.dir)) {
-            IndexReader reader = openReader(s.config, path, s.isPosting);
+            IndexReader reader = openReader(s, path);
             try {
                 for (int key : s.rangeKeys) {
                     try (RowCursor c = reader.getCursor(key, s.maxRow / 4, s.maxRow * 3 / 4)) {
@@ -235,7 +259,7 @@ public class PostingIndexBenchmarkSuite {
     @Benchmark
     public void indexScanRead(IndexState s) {
         try (Path path = new Path().of(s.dir)) {
-            IndexReader reader = openReader(s.config, path, s.isPosting);
+            IndexReader reader = openReader(s, path);
             try {
                 for (int key = 0; key < s.keyCount; key++) {
                     try (RowCursor c = reader.getCursor(key, 0, Long.MAX_VALUE)) {
@@ -251,12 +275,10 @@ public class PostingIndexBenchmarkSuite {
     @Benchmark
     public long sidecarRead(SidecarState s) {
         long sum = 0;
-        boolean covering = "covering".equals(s.mode);
+        boolean covering = s.isParquet || "covering".equals(s.mode);
         int[] requiredCovers = covering ? COVER_REQ_0 : null;
         try (Path path = new Path().of(s.dir)) {
-            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                    s.config, path, "test", COLUMN_NAME_TXN_NONE, 0, 0,
-                    s.coverMetadata, s.cvr, 0)) {
+            try (PostingIndexReader reader = openSidecarReader(s, path)) {
                 for (int key : s.readKeys) {
                     try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE, requiredCovers)) {
                         if (covering && cursor instanceof CoveringRowCursor crc && crc.isCoveredAvailable(0)) {
@@ -727,6 +749,152 @@ public class PostingIndexBenchmarkSuite {
                 : new BitmapIndexFwdReader(config, path, "test", COL_TXN, -1, 0);
     }
 
+    /**
+     * Opens the arm {@code s} was built for. The parquet arm is bound through
+     * {@code ofParquet} because its artifacts are named by {@code index_txn},
+     * which a plain {@code of()} has no way to carry - the native readers find
+     * their files from the column name alone.
+     */
+    private static IndexReader openReader(IndexState s, Path path) {
+        if (!s.isParquet) {
+            return openReader(s.config, path, s.isPosting);
+        }
+        ParquetPostingIndexFwdReader reader = new ParquetPostingIndexFwdReader();
+        try {
+            reader.ofParquet(
+                    s.config, path, "test", COL_TXN, PARQUET_PARTITION_TXN, 0,
+                    s.parquetMetadata, s.parquetCvr, 0, PARQUET_INDEX_TXN, s.imFileSize);
+            return reader;
+        } catch (Throwable th) {
+            Misc.free(reader);
+            throw th;
+        }
+    }
+
+    /**
+     * Counts every posting the arm can reach and fails the trial if it is not
+     * {@code expected}. Without this an arm that resolves no postings at all -
+     * a mis-bound {@code index_txn}, a key space read as empty - reports as the
+     * fastest in the suite, because returning nothing is very quick. Runs once
+     * per trial, so it does not enter the measurement.
+     */
+    private static void verifyArmPostingCount(IndexState s, long expected) {
+        long seen = 0;
+        try (Path path = new Path().of(s.dir)) {
+            IndexReader reader = openReader(s, path);
+            try {
+                for (int key = 0; key < s.keyCount; key++) {
+                    try (RowCursor c = reader.getCursor(key, 0, Long.MAX_VALUE)) {
+                        while (c.hasNext()) {
+                            c.next();
+                            seen++;
+                        }
+                    }
+                }
+            } finally {
+                Misc.free(reader);
+            }
+        }
+        if (seen != expected) {
+            throw new IllegalStateException(
+                    "arm " + s.format + "/" + s.scenario + " resolved " + seen
+                            + " postings, expected " + expected
+                            + " - the arms are not indexing the same rows, so any ratio from them is meaningless");
+        }
+    }
+
+    /**
+     * Opens the covered-gather arm {@code s} was built for: the native covering
+     * reader for {@code baseline}/{@code covering}, the parquet-form one for
+     * {@code covering_parquet}.
+     */
+    private static PostingIndexReader openSidecarReader(SidecarState s, Path path) {
+        if (!s.isParquet) {
+            return new PostingIndexFwdReader(
+                    s.config, path, "test", COLUMN_NAME_TXN_NONE, 0, 0,
+                    s.coverMetadata, s.cvr, 0);
+        }
+        ParquetPostingIndexFwdReader reader = new ParquetPostingIndexFwdReader();
+        try {
+            reader.ofParquet(
+                    s.config, path, "test", COLUMN_NAME_TXN_NONE, PARQUET_PARTITION_TXN, 0,
+                    s.coverMetadata, s.cvr, 0, PARQUET_INDEX_TXN, s.imFileSize);
+            return reader;
+        } catch (Throwable th) {
+            Misc.free(reader);
+            throw th;
+        }
+    }
+
+    /**
+     * Cumulative row counts for a synthetic {@code data.parquet}, one more entry
+     * than row groups and starting at 0, cut at the same row-group size the
+     * partition encoder would have used. The seal turns these into the zone maps
+     * the reader prunes with, so a single whole-partition group would hand the
+     * parquet arm a fixture with nothing to prune and flatter it.
+     */
+    private static LongList syntheticRowGroupBoundaries(CairoConfiguration config, long firstRowId, long totalRows) {
+        // 0 is not "one row per group" - it is the encoder's sentinel for "use
+        // my own default", which is 512*512. Taking it literally builds one
+        // boundary per row, and since the seal stores every boundary that alone
+        // inflated the _im to 8 bytes/row and made the parquet arm look far
+        // worse than it is.
+        final int configured = config.getPartitionEncoderParquetRowGroupSize();
+        final long groupSize = configured > 0 ? configured : 512L * 512L;
+        final LongList boundaries = new LongList();
+        for (long cum = 0; cum < totalRows; cum += groupSize) {
+            boundaries.add(firstRowId + cum);
+        }
+        boundaries.add(firstRowId + totalRows);
+        return boundaries;
+    }
+
+    /**
+     * Seals a parquet-form covering index over {@code keys} into {@code dir},
+     * mirroring what the native arm writes with {@link PostingIndexWriter}.
+     *
+     * @return the committed {@code _im} size, which {@code ofParquet} cross-checks
+     */
+    private static long sealParquetArm(
+            CairoConfiguration config,
+            String dir,
+            int[] keys,
+            int totalRows,
+            int keyCount,
+            long firstRowId,
+            ObjList<CharSequence> coveredNames,
+            IntList coveredTypes,
+            IntList coveredWriterIndices,
+            LongList coveredAddrs,
+            LongList coveredColumnTops
+    ) {
+        final DirectIntList rowKeys = new DirectIntList(totalRows, MemoryTag.NATIVE_DEFAULT);
+        try (Path path = new Path().of(dir)) {
+            for (int i = 0; i < totalRows; i++) {
+                rowKeys.add(keys[i]);
+            }
+            return ParquetIndexSeal.seal(
+                    config,
+                    config.getFilesFacade(),
+                    path,
+                    "test",
+                    PARQUET_INDEX_TXN,
+                    keyCount,
+                    rowKeys,
+                    firstRowId,
+                    totalRows,
+                    coveredNames,
+                    coveredTypes,
+                    coveredWriterIndices,
+                    coveredAddrs,
+                    coveredColumnTops,
+                    syntheticRowGroupBoundaries(config, firstRowId, totalRows)
+            );
+        } finally {
+            Misc.free(rowKeys);
+        }
+    }
+
     private static void printSummary(Collection<RunResult> results) {
         // Index results by benchmark name and params
         Map<String, Double> scores = new LinkedHashMap<>();
@@ -1195,15 +1363,19 @@ public class PostingIndexBenchmarkSuite {
         CairoConfiguration config;
         // Written index directory
         String dir;
-        @Param({"LEGACY", "POSTING"})
+        @Param({"LEGACY", "POSTING", "POSTING_PARQUET"})
         String format;
+        long imFileSize;
+        boolean isParquet;
         boolean isPosting;
         int keyCount;
         long maxRow;
+        ColumnVersionReader parquetCvr;
+        GenericRecordMetadata parquetMetadata;
         int[] pointKeys;
         int[] rangeKeys;
         long rowIdBase;
-        @Param({"S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"})
+        @Param({"S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "P400K"})
         String scenario;
         int totalRows;
 
@@ -1211,6 +1383,7 @@ public class PostingIndexBenchmarkSuite {
         public void setup() {
             String tmpDir = System.getProperty("java.io.tmpdir");
             config = benchConfig(tmpDir);
+            isParquet = "POSTING_PARQUET".equals(format);
             isPosting = "POSTING".equals(format);
 
             // Scaled data sizes: preserve distribution, ~1-2M rows for speed
@@ -1266,6 +1439,17 @@ public class PostingIndexBenchmarkSuite {
                     keys = buildRoundRobin(totalRows, keyCount);
                     rowIdBase = 1_000_000_000L;
                 }
+                case "P400K" -> {
+                    // The fixture docs/covering-index-parquet.md publishes its
+                    // native-vs-parquet ratios on: 400k rows, 16 distinct keys,
+                    // round-robin so the hot key repeats every 16th row. Pinned
+                    // here so the suite's numbers sit next to the documented
+                    // ones rather than on a differently shaped fixture.
+                    keyCount = 16;
+                    totalRows = 400_000;
+                    commitInterval = totalRows;
+                    keys = buildRoundRobin(totalRows, keyCount);
+                }
                 default -> throw new IllegalArgumentException(scenario);
             }
 
@@ -1276,7 +1460,9 @@ public class PostingIndexBenchmarkSuite {
             dir = tmpDir + File.separator + "suite_" + scenario + "_" + format + "_" + System.nanoTime();
             new File(dir).mkdirs();
 
-            if (isPosting) {
+            if (isParquet) {
+                buildParquetArm(keys);
+            } else if (isPosting) {
                 initPosting(config, dir);
                 try (Path path = new Path().of(dir)) {
                     PostingIndexWriter writer = new PostingIndexWriter(config);
@@ -1304,11 +1490,32 @@ public class PostingIndexBenchmarkSuite {
                     }
                 }
             }
+            verifyArmPostingCount(this, totalRows);
         }
 
         @TearDown(Level.Trial)
         public void tearDown() {
+            parquetCvr = Misc.free(parquetCvr);
             deleteDir(dir);
+        }
+
+        /**
+         * Seals the parquet arm over the same key assignment the native arms
+         * index, so the only difference between arms is the index form.
+         * Uncovered: these three benchmarks walk row ids and never gather a
+         * covered value, which is what {@code sidecarRead} measures instead.
+         */
+        private void buildParquetArm(int[] keys) {
+            parquetMetadata = new GenericRecordMetadata();
+            parquetMetadata.add(new TableColumnMetadata(
+                    "test", ColumnType.SYMBOL, IndexType.POSTING, 0, false, null, 0, false));
+            parquetCvr = new ColumnVersionReader();
+            imFileSize = sealParquetArm(
+                    config, dir, keys, totalRows, keyCount, rowIdBase,
+                    new ObjList<>(), new IntList(), new IntList(), new LongList(), new LongList());
+            if (imFileSize == 0) {
+                throw new IllegalStateException("parquet seal wrote nothing for scenario " + scenario);
+            }
         }
 
         private void setupStreaming() {
@@ -1340,7 +1547,20 @@ public class PostingIndexBenchmarkSuite {
             dir = tmpDir + File.separator + "suite_S3_" + format + "_" + System.nanoTime();
             new File(dir).mkdirs();
 
-            if (isPosting) {
+            if (isParquet) {
+                // Flatten the per-commit key arrays into one row-ordered
+                // assignment: the seal takes the whole partition at once, since
+                // a parquet-form index is republished wholesale rather than
+                // appended to commit by commit.
+                int[] flat = new int[totalRows];
+                int at = 0;
+                for (int c = 0; c < commits; c++) {
+                    for (int key : activeKeyArrays[c]) {
+                        for (int v = 0; v < valsPerActive; v++) flat[at++] = key;
+                    }
+                }
+                buildParquetArm(flat);
+            } else if (isPosting) {
                 initPosting(config, dir);
                 try (Path path = new Path().of(dir)) {
                     PostingIndexWriter writer = new PostingIndexWriter(config);
@@ -1393,7 +1613,9 @@ public class PostingIndexBenchmarkSuite {
         GenericRecordMetadata coverMetadata;
         ColumnVersionReader cvr;
         String dir;
-        @Param({"baseline", "covering"})
+        long imFileSize;
+        boolean isParquet;
+        @Param({"baseline", "covering", "covering_parquet"})
         String mode;
         int[] readKeys;
 
@@ -1475,7 +1697,30 @@ public class PostingIndexBenchmarkSuite {
             for (int i = 0; i < READ_KEYS; i++) readKeys[i] = rng.nextInt(KEYS);
 
             int[] keyAssignment = buildShuffled(ROWS, KEYS);
+            isParquet = "covering_parquet".equals(mode);
             boolean covering = "covering".equals(mode);
+            if (isParquet) {
+                // Same covered column, same key assignment as the "covering"
+                // arm - only the index form differs, which is the comparison.
+                final ObjList<CharSequence> coveredNames = new ObjList<>();
+                coveredNames.add("c" + COVER_WRITER_IDX);
+                final IntList coveredTypes = new IntList();
+                coveredTypes.add(colType);
+                final IntList coveredWriterIndices = new IntList();
+                coveredWriterIndices.add(COVER_WRITER_IDX);
+                final LongList coveredAddrs = new LongList();
+                coveredAddrs.add(colAddr);
+                final LongList coveredColumnTops = new LongList();
+                coveredColumnTops.add(0);
+                imFileSize = sealParquetArm(
+                        config, dir, keyAssignment, ROWS, KEYS, 0,
+                        coveredNames, coveredTypes, coveredWriterIndices,
+                        coveredAddrs, coveredColumnTops);
+                if (imFileSize == 0) {
+                    throw new IllegalStateException("parquet seal wrote nothing for " + columnType);
+                }
+                return;
+            }
             try (Path path = new Path().of(dir)) {
                 try (PostingIndexWriter writer = new PostingIndexWriter(config, path, "test", COLUMN_NAME_TXN_NONE)) {
                     if (covering) {
