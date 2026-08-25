@@ -407,6 +407,11 @@ public final class Os {
                 throw new Error("Unsupported OS: " + osName);
             }
 
+            // Production layout: /io/questdb/bin/<os>-<arch>/. The directories that exist are
+            // exactly the platforms CI builds, tests and ships: darwin-aarch64, linux-x86-64,
+            // linux-aarch64 and windows-x86-64 (pinned by OsTest#testOnlySupportedPlatformNativeLibsAreShipped).
+            // Any other combination -- darwin-x86-64 above all -- resolves to a missing
+            // resource and is reported as an unsupported platform by loadLib() below.
             String prdLibRoot = "/io/questdb/bin/" + name + '-' + archName + '/';
             String devCXXLibRoot = "/io/questdb/bin-local/";
             String cxxLibName = "libquestdb" + outputLibExt;
