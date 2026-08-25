@@ -1,4 +1,4 @@
-/*+*****************************************************************************
+/*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo.o3;
+package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
@@ -33,7 +33,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
