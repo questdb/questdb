@@ -110,7 +110,8 @@ public class OsTest {
      * while every other platform moves, so the next native ABI change hands Intel Mac users a
      * stale dylib that fails at an arbitrary later call, or corrupts memory silently, instead
      * of failing cleanly at load. This test fails if such a binary is re-added, or if a
-     * shipped platform is dropped by accident.
+     * shipped platform is dropped by accident. It pins the sqllogictest test resource to
+     * the same platform set, because the same CI jobs build it.
      */
     @Test
     public void testOnlySupportedPlatformNativeLibsAreShipped() {
@@ -123,9 +124,14 @@ public class OsTest {
         assertShipped("/io/questdb/bin/windows-x86-64/libquestdb.dll");
         assertShipped("/io/questdb/bin/windows-x86-64/questdbr.dll");
 
+        // libqdbsqllogictest is a test resource, built by the same CI jobs for the same platforms
+        assertShipped("/io/questdb/bin/darwin-aarch64/libqdbsqllogictest.dylib");
+        assertShipped("/io/questdb/bin/linux-x86-64/libqdbsqllogictest.so");
+        assertShipped("/io/questdb/bin/linux-aarch64/libqdbsqllogictest.so");
+        assertShipped("/io/questdb/bin/windows-x86-64/qdbsqllogictest.dll");
+
         assertNotShipped("/io/questdb/bin/darwin-x86-64/libquestdb.dylib");
         assertNotShipped("/io/questdb/bin/darwin-x86-64/libquestdbr.dylib");
-        // libqdbsqllogictest is a test resource, built by the same CI jobs for the same platforms
         assertNotShipped("/io/questdb/bin/darwin-x86-64/libqdbsqllogictest.dylib");
     }
 

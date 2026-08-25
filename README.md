@@ -127,12 +127,15 @@ Use [Docker](https://www.docker.com/) to start quickly:
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-Or macOS users can use Homebrew:
+Or macOS users on Apple Silicon can use Homebrew:
 
 ```bash
 brew install questdb
 brew services start questdb
 ```
+
+QuestDB bundles native libraries for Apple Silicon only. On an Intel Mac, use
+the Docker image above.
 
 ```bash
 questdb start

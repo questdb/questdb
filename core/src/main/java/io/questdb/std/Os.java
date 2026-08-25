@@ -347,6 +347,7 @@ public final class Os {
                 // which would silently drift out of sync with the Java code.
                 throw new FatalError("QuestDB does not support x86-64 (Intel) macOS, no native library is bundled for it. "
                         + "Supported platforms: macOS aarch64, Linux x86-64, Linux aarch64, Windows x86-64. "
+                        + "On an Intel Mac, run QuestDB with Docker (questdb/questdb) instead. "
                         + "On Apple Silicon, check you are not running an x86-64 JDK under Rosetta.");
             }
             throw new FatalError("Internal error: cannot find " + lib + ", broken package?");
