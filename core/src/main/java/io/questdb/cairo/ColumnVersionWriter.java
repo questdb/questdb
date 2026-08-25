@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.frm.ColumnTopSink;
+import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
@@ -34,6 +36,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 
 public class ColumnVersionWriter extends ColumnVersionReader {
+    private final ColumnTopSinkImpl columnTopSink = new ColumnTopSinkImpl();
     private final CairoConfiguration configuration;
     private final MemoryCMARW mem;
     private final boolean partitioned;
@@ -54,6 +57,18 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         if (this.size > 0) {
             this.version = super.readUnsafe();
         }
+    }
+
+    /**
+     * Arms this writer's {@link ColumnTopSink} view for one partition and returns it: every
+     * {@link ColumnTopSink#setColumnTop} call the caller makes on the returned reference merges into
+     * {@code partitionTimestamp}'s own record, until the next {@code asColumnTopSink} call re-arms it
+     * for a different partition. Always the same reused instance, so passing it straight to
+     * {@link Frame#publishColumnTops} costs no per-call allocation.
+     */
+    public ColumnTopSink asColumnTopSink(long partitionTimestamp) {
+        columnTopSink.partitionTimestamp = partitionTimestamp;
+        return columnTopSink;
     }
 
     @Override
@@ -447,5 +462,21 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     static {
         //noinspection ConstantValue
         assert HEADER_SIZE == TableUtils.COLUMN_VERSION_FILE_HEADER_SIZE;
+    }
+
+    /**
+     * The {@link ColumnTopSink} view {@link #asColumnTopSink} hands out - one reused instance rather
+     * than a lambda, so a {@link Frame} publishing its column tops through it costs no per-call
+     * allocation. {@link #setColumnTop} forwards to the outer writer's own {@link #mergeColumnTop}
+     * against whichever partition was last armed.
+     */
+    private final class ColumnTopSinkImpl implements ColumnTopSink {
+        private long partitionTimestamp = Long.MIN_VALUE;
+
+        @Override
+        public void setColumnTop(int columnIndex, long columnTop) {
+            assert partitionTimestamp != Long.MIN_VALUE : "asColumnTopSink not called";
+            mergeColumnTop(partitionTimestamp, columnIndex, columnTop);
+        }
     }
 }

@@ -33,6 +33,8 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.pool.AbstractMultiTenantPool;
+import io.questdb.cairo.pool.WriterPool;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -239,6 +241,15 @@ public class TableUtilsTest extends AbstractTest {
         // Any other reason IS unsolicited
         Assert.assertTrue(TableUtils.isUnsolicitedTableLock("ALTER TABLE"));
         Assert.assertTrue(TableUtils.isUnsolicitedTableLock("test"));
+
+        // The pool reports OWNERSHIP_REASON_UNKNOWN while a holder is still constructing the
+        // writer and has not stamped its reason yet. That string interns to the same reference
+        // as AbstractMultiTenantPool.NO_LOCK_REASON ("unknown"), which a reference-equality
+        // escape used to misread as "no reason, treat as solicited" - silently dropping the
+        // in-flight WAL apply notification with no recovery. An unidentified holder must be
+        // unsolicited so ApplyWal2TableJob re-arms notification delivery.
+        Assert.assertTrue(TableUtils.isUnsolicitedTableLock(WriterPool.OWNERSHIP_REASON_UNKNOWN));
+        Assert.assertTrue(TableUtils.isUnsolicitedTableLock(AbstractMultiTenantPool.NO_LOCK_REASON));
     }
 
     @Test

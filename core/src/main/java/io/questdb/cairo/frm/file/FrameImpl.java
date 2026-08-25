@@ -244,17 +244,18 @@ public class FrameImpl implements Frame {
     }
 
     @Override
-    public void publishColumnTops(ColumnVersionWriter cvw) {
+    public void publishColumnTops(ColumnTopSink sink) {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             long colTop = columnTops.getQuick(i);
             // -1 (untouched, this frame has no sink and nothing wrote through it): nothing to record.
             // Anything else, INCLUDING colTop == rowCount ("every row was a free ride, no real byte
-            // anywhere"), still goes through mergeColumnTop: a brand-new partition timestamp's own
+            // anywhere"), still goes through the sink: a brand-new partition timestamp's own
             // chronological default can resolve to something other than what this frame just
-            // determined (see ColumnVersionWriter#mergeColumnTop), and skipping here would leave that
-            // wrong default in place instead of the value this frame actually computed.
+            // determined (see ColumnVersionWriter#mergeColumnTop, the usual sink behind this call),
+            // and skipping here would leave that wrong default in place instead of the value this
+            // frame actually computed.
             if (colTop > -1) {
-                cvw.mergeColumnTop(partitionTimestamp, i, colTop);
+                sink.setColumnTop(i, colTop);
             }
         }
     }

@@ -58,9 +58,22 @@ import java.time.format.DateTimeFormatter;
  * from the primary (random storage) and the same query rewritten to
  * read from the shadow (different random storage) must agree -- any
  * silent storage divergence surfaces as a row-set mismatch.
+ * <p>
+ * With {@link #COMPOSITE_PARTITION_CHANCE} probability the primary backdates
+ * a handful of rows into one of its own non-active days, landing exactly on
+ * that day's existing timestamps. With merge-append enabled (see
+ * {@code QueryFuzzTest#runFuzz}) this leaves the day a real composite
+ * partition -- a relocated piece and dead space, not a simulated one. This
+ * runs only on the primary, before the shadow copies its data across: both
+ * siblings end up with identical rows, so the always-plain shadow gives the
+ * diff-shadow oracle a genuine composite-vs-plain contrast for free, the
+ * same way it already contrasts parquet-vs-native and indexed-vs-not.
  */
 public final class FuzzTableFactory {
     private static final long DAY_MICROS = 24L * 60L * 60L * 1_000_000L;
+    // Per-table chance that the primary gets a merge-append-driven composite
+    // partition (see the class javadoc).
+    private static final double COMPOSITE_PARTITION_CHANCE = 0.5;
     // SYMBOL columns are relatively rare and there are four index kinds
     // (bitmap plus three posting variants), so a higher rate keeps every kind,
     // and the primary-vs-shadow index contrast, well represented.
@@ -96,6 +109,14 @@ public final class FuzzTableFactory {
         // random sequences and break the row-set comparison.
         executor.execute(buildInsertDml(primaryName, primaryColumns));
         drainWal.run();
+
+        // Composite-partition backdate, primary only and before the shadow copy
+        // (see the class javadoc) -- both siblings still end up with identical rows.
+        String compositeDay = applyCompositePartition(rnd, primaryName, primaryColumns, executor);
+        if (compositeDay != null) {
+            drainWal.run();
+        }
+
         executor.execute("INSERT INTO " + shadowName + " SELECT * FROM " + primaryName);
 
         // Convert statements are queued behind the shadow insert in the WAL
@@ -105,9 +126,37 @@ public final class FuzzTableFactory {
         drainWal.run();
 
         FuzzTable shadow = new FuzzTable(shadowName, shadowColumns, TS_COLUMN,
-                shadowParquet.mode, shadowParquet.partitions, null);
+                shadowParquet.mode, shadowParquet.partitions, null, null);
         return new FuzzTable(primaryName, primaryColumns, TS_COLUMN,
-                primaryParquet.mode, primaryParquet.partitions, shadow);
+                primaryParquet.mode, primaryParquet.partitions, compositeDay, shadow);
+    }
+
+    /**
+     * With {@link #COMPOSITE_PARTITION_CHANCE} probability, backdates a few rows
+     * into one non-active day the table already holds, landing exactly on that
+     * day's own existing timestamps ({@link #config}'s step evenly divides a day,
+     * so a day boundary is always a row boundary too). With merge-append enabled
+     * this relocates the overlapping stride to the tail as its own piece and
+     * leaves the superseded copy dead, making the day a genuine composite
+     * partition. Returns the backdated day (ISO date), or {@code null} if the
+     * coin missed or the table has no non-active day to target.
+     */
+    private String applyCompositePartition(Rnd rnd, String tableName, ObjList<FuzzColumn> columns, SqlExecutor executor) throws SqlException {
+        if (rnd.nextDouble() >= COMPOSITE_PARTITION_CHANCE) {
+            return null;
+        }
+        long totalMicros = config.getStepMicros() * (long) config.getRowsPerTable();
+        int numPartitions = (int) (totalMicros / DAY_MICROS) + 1;
+        if (numPartitions <= 1) {
+            // Only the active day exists - nothing non-active to backdate into.
+            return null;
+        }
+        LocalDate start = LocalDate.parse(config.getTsStart(), DateTimeFormatter.ISO_LOCAL_DATE);
+        String day = start.plusDays(rnd.nextInt(numPartitions - 1)).toString();
+        int rowsPerDay = (int) (DAY_MICROS / config.getStepMicros());
+        int overlapRows = 1 + rnd.nextInt(Math.min(3, rowsPerDay));
+        executor.execute(buildOverlapInsertDml(tableName, columns, day, overlapRows));
+        return day;
     }
 
     private ParquetConversion applyParquetConversion(Rnd rnd, String tableName, SqlExecutor executor) throws SqlException {
@@ -207,6 +256,27 @@ public final class FuzzTableFactory {
             dml.put(' ').put(c.getName());
         }
         dml.put(" FROM long_sequence(").put(config.getRowsPerTable()).put(')');
+        return dml.toString();
+    }
+
+    /** Same shape as {@link #buildInsertDml}, but landing exactly on one day's own existing rows. */
+    private String buildOverlapInsertDml(String tableName, ObjList<FuzzColumn> columns, String day, int rowCount) {
+        StringSink dml = new StringSink();
+        dml.put("INSERT INTO ").put(tableName).put(" SELECT ");
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (i > 0) {
+                dml.put(", ");
+            }
+            FuzzColumn c = columns.getQuick(i);
+            if (c.getName().equals(TS_COLUMN)) {
+                dml.put("timestamp_sequence(to_timestamp('").put(day)
+                        .put("', 'yyyy-MM-dd'), ").put(config.getStepMicros()).put("L)");
+            } else {
+                dml.put(c.getType().getRndCall());
+            }
+            dml.put(' ').put(c.getName());
+        }
+        dml.put(" FROM long_sequence(").put(rowCount).put(')');
         return dml.toString();
     }
 

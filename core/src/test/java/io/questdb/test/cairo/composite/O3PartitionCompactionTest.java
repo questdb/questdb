@@ -1,4 +1,4 @@
-/*+*****************************************************************************
+/*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -33,7 +33,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -738,12 +737,12 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
 
     /**
      * Content fingerprint of ONE day, so the housekeeping commits do not move it. Sums {@code i} by
-     * walking the row cursor in Java rather than with a SQL {@code sum()} - a vectorized aggregate over
-     * a composite partition that has accumulated dead space triggers a pre-existing bug in this
-     * branch's composite read path (see PARTITION_COMPACTION_state.md, "found, not fixed"): the SIMD
-     * kernel scans past the live piece into dead space, or crashes outright. Row-by-row iteration goes
-     * through the ordinary per-piece frame cursor instead, which is the read path
-     * {@code O3CompositePartitionTest} already exercises and is not what this class is testing.
+     * walking the row cursor in Java rather than with a SQL {@code sum()}, keeping this class's "did
+     * compaction preserve the data" assertions independent of whether vectorized SQL aggregation over
+     * a composite partition is itself correct - a question {@link O3CompositePartitionAggregationTest}
+     * tests directly. (Earlier history: a vectorized aggregate over a composite partition with dead
+     * space used to return wrong results or crash the JVM - tracked as "D6" in the now-deleted
+     * PARTITION_COMPACTION_state.md - but that no longer reproduces against current HEAD.)
      */
     private static String fingerprintOfDay(String table, String day) throws Exception {
         final String sql = "select i from " + table + " where ts in '" + day + "'";
