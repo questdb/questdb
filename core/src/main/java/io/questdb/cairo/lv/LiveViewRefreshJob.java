@@ -4100,7 +4100,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * kept, so the generation's base coverage never outruns its roots. A repair
      * that replaces through positive
      * infinity - an unlocalized rebuild, or a localized one whose change set has no
-     * proven ceiling - has no converged suffix to keep and still retires here.
+     * proven ceiling - has no converged suffix to keep. An unlocalized one retires
+     * here; a localized one instead reaches
+     * {@link #truncateOrRetireTimelineOnO3(LiveViewInstance, long)}, which keeps the
+     * roots below {@code R} - correct, because the replay rewrites nothing under them -
+     * and retires only when no prefix survives. A RANGE-only view has taken that route
+     * since the localization existed, and an anchored one joins it now that the anchor
+     * localizes behind an {@code EOF} bound too.
      * This also catches a splice that failed after its replacement committed: the
      * durable output has moved under every root, so the timeline goes.
      * <p>

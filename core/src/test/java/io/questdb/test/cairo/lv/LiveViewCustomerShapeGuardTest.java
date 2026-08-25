@@ -29,10 +29,14 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointKeyProjector;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewSegmentRepairEnvelope;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -74,7 +78,17 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
     // than the whole range, which is the crossover
     // testTheOpenSegmentCapSelectsWhatTheConfiguredPriceDeclines measures.
     private static final int ROWS_PER_ACCOUNT_PER_HOUR = 4;
+    // The minute the last row of an hour lands on, since one row lands per minute from 1.
+    private static final int HEAD_MINUTE = ROWS_PER_ACCOUNT_PER_HOUR * ACCOUNT_COUNT;
+    // The origin of the anchor segment the trickle case corrects into, spelled as its
+    // view's START FROM boundary.
+    private static final String SEGMENT_ORIGIN = "2026-01-04T12:00:00.000000Z";
+    // Corrections the trickle case makes, each one minute deeper under the batch head.
+    private static final int TRICKLE_PASSES = 5;
     private static final String VIEW = "payments_view";
+    // The view's START FROM boundary as the DDL spells it, or null when the view starts
+    // from the beginning.
+    private String startFrom;
 
     @Test
     public void testACustomerViewCreatedWithoutTheIdentityNeverArmsTheRoute() throws Exception {
@@ -399,6 +413,133 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
         });
     }
 
+    @Test
+    public void testATrickleOfLateRowsRepairsTheCorrectionDepthRatherThanTheView() throws Exception {
+        // The reported symptom, end to end: an anchored view under a steady trickle of
+        // rows a minute or two late, with no sealed root below any of them.
+        //
+        // The anchor segment is a day wide, so the convergence boundary an anchored repair
+        // proves sits at TOMORROW's segment end - which the runtime frontier cannot reach
+        // until the day rolls over. Under a finite-bound requirement that denies
+        // localization on every repair for a full day, and an unlocalized rebuild re-emits
+        // the view from its START FROM boundary, retires the timeline and leaves one fresh
+        // root at the batch head - which the next correction is again below. Each pass then
+        // costs O(view size) and the view only grows.
+        //
+        // Localizing behind the EOF bound cuts the emit half of that loop: the anchor
+        // expires by time, so the replacement floor rises from START FROM to the correction
+        // itself and the replay's state is promoted rather than the pre-repair runtime
+        // restored. What it does not cut is the scan, which still reads the segment from
+        // its start - the ladder the resume needs is a separate piece of work, and the
+        // assertions below state both halves.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 16);
+        assertMemoryLeak(() -> {
+            // START FROM the segment origin, which is where the reported view sits: its
+            // first anchor segment, so the segment start and the view boundary coincide
+            // and the scan floor has nowhere to rise to yet.
+            createCustomerShape(true, ANCHOR_TIME, null, SEGMENT_ORIGIN);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                // One hour short of the segment's start, so the bootstrap correction below
+                // lands under every root the cadence seals.
+                for (int hour = FIRST_HOUR + 1; hour < FIRST_HOUR + HOURS_PER_SEGMENT; hour++) {
+                    driveHourInOrder(job, 4, hour);
+                }
+
+                final LiveViewInstance instance = viewInstance();
+
+                // The bootstrap. A correction at the view's own floor has no root below it,
+                // so the repair is the boundary rebuild - and it re-emits the whole view,
+                // because the correction IS the view's floor and there is nothing above it
+                // to keep. That is the trap's entry, not its cost: what it leaves behind is
+                // a timeline holding one root, at the batch head.
+                final long viewRows = rowCount(VIEW);
+                correct(job, 4, FIRST_HOUR, 1, 1);
+
+                Assert.assertEquals(
+                        LiveViewCheckpointRepairPlan.DISPOSITION_BOUNDARY_REBUILD,
+                        instance.getCheckpointRepairLastDisposition()
+                );
+                Assert.assertEquals(
+                        "a correction at the view floor re-emits the view whatever the plan proves",
+                        viewRows + 1,
+                        instance.getO3BoundaryReplayRows()
+                );
+
+                // The trickle. Each correction sits a few minutes under the head of the
+                // last batch, so it is below the only root the timeline holds and no resume
+                // qualifies - which is the loop the reported logs ran 803 times.
+                long emittedBefore = instance.getO3BoundaryReplayRows();
+                long scannedBefore = instance.getO3ReplayScanRows();
+                for (int pass = 1; pass <= TRICKLE_PASSES; pass++) {
+                    final int minute = HEAD_MINUTE - pass;
+                    correct(job, 4, FIRST_HOUR + HOURS_PER_SEGMENT - 1, minute, 1);
+
+                    // Nothing was denied: the anchored repair localized behind the EOF
+                    // bound rather than falling back to the whole-history rebuild.
+                    Assert.assertEquals(
+                            LiveViewCheckpointRepairPlan.DENIAL_NONE,
+                            instance.getCheckpointRepairLastDenialReason()
+                    );
+                    Assert.assertEquals(
+                            LiveViewCheckpointRepairPlan.DISPOSITION_BOUNDARY_REBUILD,
+                            instance.getCheckpointRepairLastDisposition()
+                    );
+                    // And it is this executor doing it: no closed segment to decompose
+                    // against and no anchor to resume from, so neither of the other two
+                    // routes can be what these numbers measure.
+                    Assert.assertEquals(0, job.segmentRepairCountForTest());
+                    Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
+                    Assert.assertEquals(0, instance.getO3ResumeReplayRows());
+
+                    // The emit floor rose from START FROM to the correction: the
+                    // replacement carries exactly the view rows at or above it, which is
+                    // the correction depth rather than the view.
+                    final long emitted = instance.getO3BoundaryReplayRows() - emittedBefore;
+                    Assert.assertEquals(
+                            "pass " + pass + " must re-emit only the rows at or above the correction",
+                            viewRowsAtOrAbove(segmentTs(4, FIRST_HOUR + HOURS_PER_SEGMENT - 1, minute)),
+                            emitted
+                    );
+                    Assert.assertTrue(
+                            "pass " + pass + " emitted " + emitted + " of a " + rowCount(VIEW) + "-row view",
+                            emitted < rowCount(VIEW)
+                    );
+
+                    // The scan floor did not rise with it. L is the start of the
+                    // correction's segment, which on the view's first segment IS the
+                    // START FROM boundary, so the replay still reads the whole view -
+                    // and with no root below the correction there is no resume to price
+                    // against it either. Removing that half needs the checkpoint ladder
+                    // to survive the rebuild, which this change does not do.
+                    final long scanned = instance.getO3ReplayScanRows() - scannedBefore;
+                    Assert.assertTrue(
+                            "pass " + pass + " scanned " + scanned + ", expected the whole segment",
+                            scanned >= rowCount(VIEW) - 1
+                    );
+
+                    // The timeline survives the repair rather than being retired wholesale.
+                    // The prefix it preserves is empty here, because the only root it holds
+                    // sits at the batch head and every correction is below that - which is
+                    // why the resume path stays shut until the ladder itself is repaired.
+                    Assert.assertTrue(
+                            "the repair must leave the view a checkpoint timeline",
+                            instance.getCheckpointTimeline()[LiveViewInstance.CHECKPOINT_TIMELINE_ENTRIES] > 0
+                    );
+
+                    emittedBefore = instance.getO3BoundaryReplayRows();
+                    scannedBefore = instance.getO3ReplayScanRows();
+                }
+
+                // The promotion is what the EOF bound licenses, and only rows arriving
+                // after the repair can tell a correct one from a lost one: they are
+                // evaluated incrementally against whatever state the repair left behind.
+                driveHourInOrder(job, 4, FIRST_HOUR + HOURS_PER_SEGMENT);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
     /**
      * The from-base recompute the view has to equal, bucketed on the same daily anchor the
      * view's own window carries.
@@ -411,7 +552,8 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
                 + "rows between unbounded preceding and current row) as cumulative_sum, "
                 + "count(account_id) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_count "
-                + "from (select created_at, account_id, amount, " + bucket + " as bucket from " + BASE + ")";
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from " + BASE
+                + (startFrom != null ? " where created_at >= '" + startFrom + "'" : "") + ")";
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
@@ -429,7 +571,11 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
      * driven forward, so it is the correction that triggers a checkpoint repair.
      */
     private void correct(LiveViewRefreshJob job, int day, int hour, int account) throws Exception {
-        execute("insert into " + BASE + " values " + row(day, hour, 55, account));
+        correct(job, day, hour, 55, account);
+    }
+
+    private void correct(LiveViewRefreshJob job, int day, int hour, int minute, int account) throws Exception {
+        execute("insert into " + BASE + " values " + row(day, hour, minute, account));
         drainWalQueue();
         driveUntilDurable(job);
     }
@@ -445,6 +591,11 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
      *                     which carries none
      */
     private void createCustomerShape(boolean isKeyIndexed, String anchorTime, String anchorZone) throws Exception {
+        createCustomerShape(isKeyIndexed, anchorTime, anchorZone, null);
+    }
+
+    private void createCustomerShape(boolean isKeyIndexed, String anchorTime, String anchorZone, String startFrom) throws Exception {
+        this.startFrom = startFrom;
         execute("create table " + BASE + " ("
                 + "created_at timestamp, "
                 + "account_id symbol nocache" + (isKeyIndexed ? " index capacity 4" : "") + ", "
@@ -452,13 +603,41 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
                 + ") timestamp(created_at) partition by hour wal");
         execute("insert into " + BASE + " values " + segmentRows(2) + ", " + segmentRows(3));
         drainWalQueue();
-        execute("create live view " + VIEW + " flush every 5s start from beginning as "
+        execute("create live view " + VIEW + " flush every 5s start from "
+                + (startFrom != null ? "'" + startFrom + "'" : "beginning") + " as "
                 + "select created_at, account_id, "
                 + "sum(amount) over w as cumulative_sum, "
                 + "count(account_id) over w as cumulative_count "
                 + "from " + BASE + " "
                 + "window w as (partition by account_id order by created_at "
                 + "anchor daily '" + anchorTime + "'" + (anchorZone != null ? " '" + anchorZone + "'" : "") + ")");
+    }
+
+    /**
+     * Drives one hourly base partition forward in order - every account's rows for that
+     * hour in one commit - and flushes the view's output through to disk.
+     */
+    private void driveHourInOrder(LiveViewRefreshJob job, int day, int hour) throws Exception {
+        driveHourInOrder(job, day, hour, true);
+    }
+
+    private void driveHourInOrder(LiveViewRefreshJob job, int day, int hour, boolean isFlushed) throws Exception {
+        final StringBuilder rows = new StringBuilder();
+        for (int i = 0; i < ROWS_PER_ACCOUNT_PER_HOUR; i++) {
+            for (int account = 1; account <= ACCOUNT_COUNT; account++) {
+                if (rows.length() > 0) {
+                    rows.append(", ");
+                }
+                rows.append(row(day, hour, account + i * ACCOUNT_COUNT, account));
+            }
+        }
+        execute("insert into " + BASE + " values " + rows);
+        drainWalQueue();
+        if (isFlushed) {
+            driveUntilDurable(job);
+        } else {
+            driveRefreshToQuiescence(job);
+        }
     }
 
     /**
@@ -473,22 +652,7 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
 
     private void driveSegmentInOrder(LiveViewRefreshJob job, int day, boolean isFlushed) throws Exception {
         for (int hour = FIRST_HOUR; hour < FIRST_HOUR + HOURS_PER_SEGMENT; hour++) {
-            final StringBuilder rows = new StringBuilder();
-            for (int i = 0; i < ROWS_PER_ACCOUNT_PER_HOUR; i++) {
-                for (int account = 1; account <= ACCOUNT_COUNT; account++) {
-                    if (rows.length() > 0) {
-                        rows.append(", ");
-                    }
-                    rows.append(row(day, hour, account + i * ACCOUNT_COUNT, account));
-                }
-            }
-            execute("insert into " + BASE + " values " + rows);
-            drainWalQueue();
-            if (isFlushed) {
-                driveUntilDurable(job);
-            } else {
-                driveRefreshToQuiescence(job);
-            }
+            driveHourInOrder(job, day, hour, isFlushed);
         }
     }
 
@@ -509,12 +673,52 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
             drainWalQueue();
             drainJob(job);
             drainWalQueue();
-            if (rowCount(VIEW) == rowCount(BASE)) {
+            if (rowCount(VIEW) == expectedViewRows()) {
                 return;
             }
         }
         Assert.fail("the live view never made its whole output durable: view=" + rowCount(VIEW)
-                + " base=" + rowCount(BASE));
+                + " expected=" + expectedViewRows());
+    }
+
+    /**
+     * Base rows at or above the view's own {@code START FROM} boundary - the whole base
+     * for the cases that start from the beginning, and one anchor segment's worth for the
+     * one that starts at a segment origin.
+     */
+    private long expectedViewRows() {
+        return startFrom == null
+                ? rowCount(BASE)
+                : countRows(BASE, "created_at >= '" + startFrom + "'");
+    }
+
+    /**
+     * One row of {@code account} at {@code hour}:{@code minute} on 2026-01-{@code day}, as
+     * a timestamp literal - the same instant {@link #row} writes, without the tuple around
+     * it.
+     */
+    private String segmentTs(int day, int hour, int minute) {
+        return "2026-01-" + String.format("%02d", day) + "T" + String.format("%02d", hour)
+                + ":" + String.format("%02d", minute) + ":00.000000Z";
+    }
+
+    /**
+     * View rows at or above {@code ts} - the replacement a repair whose output floor
+     * landed there has to carry, and nothing else.
+     */
+    private long viewRowsAtOrAbove(String ts) {
+        return countRows(VIEW, "created_at >= '" + ts + "'");
+    }
+
+    private long countRows(String tableName, String predicate) {
+        try (RecordCursorFactory factory = select("select count() from " + tableName + " where " + predicate)) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(cursor.hasNext());
+                return cursor.getRecord().getLong(0);
+            }
+        } catch (SqlException e) {
+            throw new AssertionError(e);
+        }
     }
 
     private long rowCount(String tableName) {
@@ -530,8 +734,7 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
      * INSERT tuple.
      */
     private String row(int day, int hour, int minute, int account) {
-        return "('2026-01-" + String.format("%02d", day) + "T" + String.format("%02d", hour)
-                + ":" + String.format("%02d", minute) + ":00.000000Z', 'acct-" + account + "', 1.0)";
+        return "('" + segmentTs(day, hour, minute) + "', 'acct-" + account + "', 1.0)";
     }
 
     /**
