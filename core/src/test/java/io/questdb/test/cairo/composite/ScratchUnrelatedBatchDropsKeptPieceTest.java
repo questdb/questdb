@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo.o3;
+package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;

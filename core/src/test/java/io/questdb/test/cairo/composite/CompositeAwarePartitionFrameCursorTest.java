@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo;
+package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CompositeAwarePartitionFrameCursor;

@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo.wal;
+package io.questdb.test.cairo.composite;
 
 import io.questdb.cairo.wal.WalTxnClusterer;
 import io.questdb.std.LongList;

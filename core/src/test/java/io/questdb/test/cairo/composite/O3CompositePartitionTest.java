@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo.o3;
+package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
@@ -1074,6 +1074,76 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             Assert.assertFalse("the replace commit suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
             assertQuery("SELECT min(ts) mn FROM x").expectSize().timestamp("mn")
                     .returns("mn\n2022-02-24T00:00:00.000000Z\n");
+        });
+    }
+
+    /**
+     * A REWRITE compaction of a composite partition holding MORE rows than the table's last partition
+     * must keep the compacted partition's POSTING index complete - through the WAL-apply housekeeping
+     * REWRITE, and through a structural commit right after it, whose {@code updateIndexes} runs with a
+     * zero-row range while the reseal may have left the posting indexer bound to the partition it just
+     * rebuilt.
+     * <p>
+     * Guards the shape of the chain truncation
+     * {@code DedupInsertFuzzTest#testRandomDedupRepeat_postingIndexUndercountAfterRewrite_COMPOSITE_STATE_10}
+     * caught (a stale-bound indexer's zero-row refresh truncating the rebuilt chain at the LAST
+     * partition's row count). That defect's own regression test is the pinned-seed fuzz test: its
+     * trigger also needs the writer's active partition to be CLOSED when the compaction commit runs
+     * (the {@code PartitionCompactionScanJob} picking up a pooled WAL writer in that state), which this
+     * hand-built sequence does not produce - here
+     * {@code restorePostingIndexersToLastPartition} still rebinds and the refresh is harmless. The
+     * counts below still pin the REWRITE-plus-index-scan combination itself.
+     */
+    @Test
+    public void testRewriteCompactionKeepsPostingIndexOfLargerPartitionIntact() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "0.01");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1K");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "0");
+
+            execute("CREATE TABLE x (i INT, symi SYMBOL, ts TIMESTAMP)," +
+                    " INDEX(symi TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // The LAST partition stays tiny: its live row count is the bound the stale refresh clamps
+            // the compacted partition's chain to.
+            execute("INSERT INTO x SELECT x::INT + 90_000, 'k' || (x % 3)," +
+                    " timestamp_sequence('2020-02-06', 1000000L) FROM long_sequence(10)");
+            drainWalQueue();
+            // A much larger earlier day...
+            execute("INSERT INTO x SELECT x::INT, 'k' || (x % 3)," +
+                    " timestamp_sequence('2020-02-03', 15*1000000L) FROM long_sequence(5760)");
+            drainWalQueue();
+            // ...made composite, with a mostly-dead rewritten tail, by a mid-day backfill.
+            execute("INSERT INTO x SELECT x::INT + 70_000, 'k' || (x % 3)," +
+                    " timestamp_sequence('2020-02-03T04:00:07', 5*1000000L) FROM long_sequence(200)");
+            drainWalQueue();
+
+            // The waste thresholds above sit so low that the backfill commit's own housekeeping
+            // REWRITEs the day straight back to plain - and its reseal leaves the posting indexer
+            // bound to the freshly rebuilt 2020-02-03.
+            final TableToken xt = engine.verifyTableName("x");
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertFalse("housekeeping should have REWRITTEN 2020-02-03 back to plain: "
+                                + describePieces(reader, 0),
+                        reader.getTxFile().isPartitionComposite(0));
+            }
+
+            // A structural commit appends no rows, so its updateIndexes runs with a zero-row range -
+            // the shape whose rollback used to truncate the stale-bound, freshly rebuilt chain at the
+            // last partition's row count.
+            execute("ALTER TABLE x ADD COLUMN tmp INT");
+            drainWalQueue();
+
+            // symi = 'k1' rows: 1920 of the 5760 base (x % 3 == 1), 67 of the 200 backfill, 4 of the
+            // 10 last-partition rows.
+            assertQuery("SELECT count() c FROM x WHERE symi = 'k1'")
+                    .noRandomAccess().expectSize().returns("c\n1991\n");
+            // And the same through the other keys, so a truncation of any posting list fails loudly.
+            assertQuery("SELECT count() c FROM x WHERE symi = 'k0'")
+                    .noRandomAccess().expectSize().returns("c\n1989\n");
+            assertQuery("SELECT count() c FROM x WHERE symi = 'k2'")
+                    .noRandomAccess().expectSize().returns("c\n1990\n");
         });
     }
 

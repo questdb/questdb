@@ -5762,8 +5762,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     continue;
                 }
                 final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                if (colTop == -1 || colTop >= partitionRowCount) {
-                    continue; // column does not exist or has no data in this partition
+                if (colTop == -1) {
+                    continue; // column does not exist in this partition
                 }
 
                 final String columnName = metadata.getColumnName(columnIndex);
@@ -5775,9 +5775,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // entries must live in the rebuilt index directly.
                     // Applies to both BITMAP (BitmapIndexFwdReader) and POSTING
                     // (PostingIndexFwdReader synthesizes only while colTop > 0).
+                    // A colTop at or beyond partitionRowCount means the column holds no
+                    // real rows at all in this partition - every row falls in the NULL
+                    // prefix - so the real-data range below is empty and no data file is
+                    // read for it.
+                    final long materializedTop = Math.min(colTop, partitionRowCount);
                     final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
-                    final long dataSize = (partitionRowCount - colTop) * Integer.BYTES;
-                    final long dataAddr = TableUtils.mapRO(ff, dFile(path.trimTo(srcDirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                    final long dataSize = (partitionRowCount - materializedTop) * Integer.BYTES;
+                    final long dataAddr = dataSize > 0
+                            ? TableUtils.mapRO(ff, dFile(path.trimTo(srcDirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER)
+                            : 0;
                     IndexWriter iw = IndexFactory.createWriter(indexType, configuration);
                     try {
                         iw.of(other.trimTo(dstDirLen), columnName, columnNameTxn, indexValueBlockCapacity);
@@ -5786,18 +5793,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // entry with the upcoming committed txn.
                         iw.setNextTxnAtSeal(txWriter.getTxn() + 1);
                         final int nullKey = TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL);
-                        for (long row = 0; row < colTop; row++) {
+                        for (long row = 0; row < materializedTop; row++) {
                             iw.add(nullKey, row);
                         }
-                        for (long row = colTop; row < partitionRowCount; row++) {
-                            final int key = TableUtils.toIndexKey(Unsafe.getInt(dataAddr + (row - colTop) * Integer.BYTES));
+                        for (long row = materializedTop; row < partitionRowCount; row++) {
+                            final int key = TableUtils.toIndexKey(Unsafe.getInt(dataAddr + (row - materializedTop) * Integer.BYTES));
                             iw.add(key, row);
                         }
                         iw.setMaxValue(partitionRowCount - 1);
                         iw.seal();
                     } finally {
                         Misc.free(iw);
-                        ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                        if (dataAddr != 0) {
+                            ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                        }
                     }
                 } else {
                     // colTop == 0: no NULL prefix to materialise, just hard-link the
@@ -15545,6 +15554,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void updateIndexesSlow() {
         final long hi = txWriter.getTransientRowCount();
         final long lo = txWriter.getAppendedPartitionCount() == 1 ? hi - txWriter.getLastTxSize() : 0;
+        // A commit that appended no rows (a housekeeping-only compaction commit) has nothing to
+        // index. The refresh below assumes every dense indexer is bound to the LAST partition; a
+        // REWRITE compaction reseal can leave one bound to the partition it just rebuilt, and
+        // refreshing that writer with the last partition's row range truncates the rebuilt chain.
+        if (hi == lo) {
+            return;
+        }
         if (indexCount > 1 && parallelIndexerEnabled && hi - lo > configuration.getParallelIndexThreshold()) {
             updateIndexesParallel(lo, hi);
         } else {
