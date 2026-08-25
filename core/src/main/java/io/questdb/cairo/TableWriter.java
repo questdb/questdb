@@ -119,6 +119,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
@@ -5349,22 +5350,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * at file row 0. Both are only correct for an ordinary partition - a composite one read that way
      * either pulls in dead space or misses a piece a merge-append relocated to the tail.
      * <p>
-     * Unlike the opportunistic pass {@link #runCompaction} runs from {@code housekeep}, this ignores every
-     * budget (row, join, time): the caller needs the partition compacted NOW, in this transaction, not
-     * eventually over several commits. JOIN
-     * runs first and is free; REWRITE, when JOIN alone cannot finish the job, copies the partition's live
-     * rows into a fresh directory - the same shape {@link #squashPartitionForce} already gives a classic
-     * split partition, just for pieces instead of sibling directories. MOVE-TAIL is deliberately never
-     * allowed here: the caller needs {@code partitionIndex} ITSELF to end up plain, and MOVE-TAIL would
-     * leave a new sibling partition behind as a side effect instead - the wrong shape when the caller is
-     * about to read or fold that one specific directory as a whole.
+     * Unlike the opportunistic pass {@link #runCompaction} runs from {@code housekeep}, this ignores the
+     * time budget: the caller needs the partition compacted NOW, in this transaction, not eventually over
+     * several commits. JOIN runs first and is free; REWRITE, when JOIN alone cannot finish the job, copies
+     * the partition's live rows into a fresh directory - the same shape {@link #squashPartitionForce}
+     * already gives a classic split partition, just for pieces instead of sibling directories. MOVE-TAIL
+     * is deliberately never allowed here: the caller needs {@code partitionIndex} ITSELF to end up plain,
+     * and MOVE-TAIL would leave a new sibling partition behind as a side effect instead - the wrong shape
+     * when the caller is about to read or fold that one specific directory as a whole.
      *
      * @param reason short label folded into the exception message if compaction cannot make progress
      */
     private void compactPartitionToPlain(int partitionIndex, String reason) {
         final PartitionGeometry geometry = getGeometry();
         while (geometry.isComposite(partitionIndex)) {
-            if (compactPhysicalPartition(partitionIndex, true, false, Long.MAX_VALUE) == COMPACTION_NONE) {
+            if (compactPhysicalPartition(partitionIndex, false, Long.MAX_VALUE) == COMPACTION_NONE) {
                 final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
                 throw CairoException.critical(0)
                         .put("cannot compact composite partition ahead of ").put(reason)
@@ -5399,15 +5399,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return {@link #COMPACTION_NONE}, {@link #COMPACTION_JOINED}, {@link #COMPACTION_MOVED_TAIL},
      * {@link #COMPACTION_MADE_PLAIN} or {@link #COMPACTION_REWRITTEN}
      */
-    private int compactPhysicalPartition(int partitionIndex, boolean unlimited, boolean allowMoveTail, long deadlineMicros) {
+    private int compactPhysicalPartition(int partitionIndex, boolean allowMoveTail, long deadlineMicros) {
         if (txWriter.isPartitionReadOnly(partitionIndex)) {
             return COMPACTION_NONE;
         }
         // JOIN first and always - it copies nothing - and keep folding while there is anything left to
         // fold. Each fold is its own transaction, so the loop can be cut at any point.
         int joins = 0;
-        final int maxJoins = configuration.getPartitionCompactionMaxJoinsPerCommit();
-        while (joins < maxJoins && foldContiguousPieces(partitionIndex)) {
+        while (foldContiguousPieces(partitionIndex)) {
             joins++;
             if (configuration.getMicrosecondClock().getTicks() > deadlineMicros) {
                 break;
@@ -5419,7 +5418,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return COMPACTION_JOINED;
         }
         if (allowMoveTail) {
-            final int moved = moveTailToFreshPartition(partitionIndex, unlimited);
+            final int moved = moveTailToFreshPartition(partitionIndex);
             if (moved != COMPACTION_NONE) {
                 return moved;
             }
@@ -7407,18 +7406,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * threshold would keep a heavily pre-split cold partition fragmented indefinitely.
      */
     private void foldFoldableFolders(long wallClockMicros) {
-        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudget();
-        final int maxJoins = configuration.getPartitionCompactionMaxJoinsPerCommit();
+        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudgetMs() * Micros.MILLI_MICROS;
         final PartitionGeometry geometry = getGeometry();
-        int joins = 0;
         int from = 0;
-        while (joins < maxJoins) {
+        while (true) {
             final int partitionIndex = partitionCompactionPolicy.selectFoldablePartition(txWriter, geometry, wallClockMicros, from);
             if (partitionIndex < 0) {
                 return;
             }
             if (foldContiguousPieces(partitionIndex)) {
-                joins++;
                 // Partition indices never shift under a fold - unlike the reference this was ported
                 // from, nothing here inserts or removes an attachedPartitions entry - so re-examining
                 // the SAME index is enough to catch a partition with more than one foldable run.
@@ -8669,27 +8665,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * MAKE-PLAIN, independent of the four waste thresholds - see {@link PartitionCompactionPolicy#selectMakePlainCandidate}
      * for why this sweep exists at all, the same reasoning {@link #foldFoldableFolders} already applies
-     * to JOIN. A decline (a reader still blocks it) backs the partition off through the ordinary
-     * decline/cooldown bookkeeping, same as a declined REWRITE or MOVE-TAIL - PARTITION_COMPACTION.md's
-     * own "Backing off after a refusal" - so this pass moves on rather than spinning on it; a success
-     * needs no cooldown, since a plain partition can never match {@link PartitionCompactionPolicy#isMakePlainShape}
+     * to JOIN. A decline (a reader still blocks it) backs the partition off through the ordinary decline
+     * bookkeeping, same as a declined REWRITE or MOVE-TAIL - PARTITION_COMPACTION.md's own "Backing off
+     * after a refusal" - so this pass moves on rather than spinning on it; a success needs no backoff to
+     * clear, since a plain partition can never match {@link PartitionCompactionPolicy#isMakePlainShape}
      * again.
      */
     private void makePlainFoldableFolders(long wallClockMicros) {
-        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudget();
-        final int maxPerCommit = configuration.getPartitionCompactionMaxJoinsPerCommit();
+        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudgetMs() * Micros.MILLI_MICROS;
         final PartitionGeometry geometry = getGeometry();
-        int madePlain = 0;
         int from = 0;
-        while (madePlain < maxPerCommit) {
+        while (true) {
             final int partitionIndex = partitionCompactionPolicy.selectMakePlainCandidate(txWriter, geometry, wallClockMicros, from);
             if (partitionIndex < 0) {
                 return;
             }
             from = partitionIndex + 1;
-            if (makePartitionPlain(partitionIndex)) {
-                madePlain++;
-            } else {
+            if (!makePartitionPlain(partitionIndex)) {
                 partitionCompactionPolicy.onDeclined(txWriter.getPartitionTimestampByIndex(partitionIndex), wallClockMicros);
             }
             if (configuration.getMicrosecondClock().getTicks() > deadline) {
@@ -8832,7 +8824,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *
      * @return {@link #COMPACTION_NONE} or {@link #COMPACTION_MOVED_TAIL}
      */
-    private int moveTailToFreshPartition(int partitionIndex, boolean unlimited) {
+    private int moveTailToFreshPartition(int partitionIndex) {
         final PartitionGeometry geometry = getGeometry();
         final int pieceCount = geometry.getPieceCount(partitionIndex);
         if (pieceCount < 2 || geometry.getPieceRowOffset(partitionIndex, 0) != 0) {
@@ -8849,13 +8841,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long liveRows = prefixRows + tailRows;
         if (prefixRows * 100 < liveRows * (long) configuration.getPartitionCompactionPrefixMinPercent()) {
             return COMPACTION_NONE;
-        }
-        if (!unlimited && tailRows > configuration.getPartitionCompactionMaxRowsPerCommit()) {
-            LOG.info().$("compacting composite partition, MOVE-TAIL: tail over the per-commit row budget," +
-                            " nothing else has run this pass [table=").$(tableToken)
-                    .$(", rows=").$(tailRows)
-                    .$(", budget=").$(configuration.getPartitionCompactionMaxRowsPerCommit())
-                    .I$();
         }
 
         final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
@@ -14109,8 +14094,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * committed state, rather than continued from a stale reading here. MOVE-TAIL is the one exception:
      * a successful MOVE-TAIL is immediately followed, in the same call and the same partition, by an
      * attempt at MAKE-PLAIN - the front it just left behind is exactly MAKE-PLAIN's own eligible shape,
-     * so trying it right away (its own transaction, gated on its own reader check) beats cooling the
-     * partition down for a fixed interval that has nothing to do with whether a reader is in the way.
+     * so trying it right away (its own transaction, gated on its own reader check) beats waiting for a
+     * later pass that has nothing to do with whether a reader is in the way.
      * <p>
      * The active (last) partition is an ordinary candidate for JOIN, MOVE-TAIL and REWRITE, like any
      * other. A REWRITE or MOVE-TAIL of it retires the directory or row range {@code columns[]} is
@@ -14138,27 +14123,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int partitionIndex = partitionCompactionPolicy.getSelectedPartitionIndex();
         final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
         final int reason = partitionCompactionPolicy.getSelectedReason();
-        // The piece-count rule is the one case allowed over the row budget: the alternative is a
-        // geometry file that grows without end.
-        final boolean unlimited = reason == PartitionCompactionPolicy.REASON_PIECE_COUNT;
         // An idle partition (the age rule) will not be written to again, so there is no future write to
         // spare a clean front for - MOVE-TAIL's whole point. Every other rule goes through it first.
         final boolean allowMoveTail = reason != PartitionCompactionPolicy.REASON_AGE;
-        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudget();
+        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudgetMs() * Micros.MILLI_MICROS;
         final boolean isActivePartition = partitionIndex == txWriter.getPartitionCount() - 1;
-        final int result = compactPhysicalPartition(partitionIndex, unlimited, allowMoveTail, deadline);
+        final int result = compactPhysicalPartition(partitionIndex, allowMoveTail, deadline);
         switch (result) {
-            case COMPACTION_REWRITTEN ->
-                // Cooling off matters only after a copy. A fold cannot repeat - the pieces it merged are
-                // gone - so suppressing the partition after one would only delay the copy that follows it.
-                    partitionCompactionPolicy.onCompacted(partitionTs, wallClockMicros);
+            case COMPACTION_REWRITTEN -> partitionCompactionPolicy.onCompacted(partitionTs);
             case COMPACTION_MOVED_TAIL -> {
                 // The front MOVE-TAIL just left behind is exactly MAKE-PLAIN's own eligible shape - try
-                // it immediately, in its own transaction, rather than cooling the partition down for a
-                // fixed interval that has nothing to do with whether a reader is actually in the way. A
-                // plain partition can never match isMakePlainShape again, so success needs no cooldown of
-                // its own; a decline (a reader still pinned) gets the ordinary backoff, same as any other,
-                // and the independent sweep in makePlainFoldableFolders retries it from there.
+                // it immediately, in its own transaction, rather than waiting for a later pass. A plain
+                // partition can never match isMakePlainShape again, so success needs no backoff to clear;
+                // a decline (a reader still pinned) gets the ordinary backoff, same as any other, and the
+                // independent sweep in makePlainFoldableFolders retries it from there.
                 if (!isMakePlainEligible(partitionIndex) || !makePartitionPlain(partitionIndex)) {
                     partitionCompactionPolicy.onDeclined(partitionTs, wallClockMicros);
                 }
@@ -16025,7 +16003,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", anticipatedLiveRows=").$(liveRows)
                     .$(", anticipatedDeadRows=").$(deadRows)
                     .$(", anticipatedPieces=").$(pieceCount)
-                    .$(", maxPieces=").$(configuration.getPartitionCompactionMaxPieces())
+                    .$(", maxPieces=").$(PartitionCompactionPolicy.effectiveMaxPieces(configuration, liveRows))
                     .$(", deadRowsRatio=").$(configuration.getPartitionCompactionDeadRowsRatio())
                     .$(", deadMinSize=").$(configuration.getPartitionCompactionDeadMinSize())
                     .I$();

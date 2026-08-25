@@ -800,18 +800,26 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     /**
      * Partition compaction defaults to off - {@code Overrides} only turns merge-append itself on - so
      * without this, no fuzz run here ever exercises it. One run in three leaves it off, exactly like
-     * every fuzz run before this method existed. The rest turn it on and draw its three budgets
-     * independently, each LOG-UNIFORM (its exponent, not the value itself, is what is drawn uniformly) so
+     * every fuzz run before this method existed. The rest turn it on and draw its budgets independently,
+     * each LOG-UNIFORM (its exponent, not the value itself, is what is drawn uniformly) so
      * a run is as likely to land tight as generous at every scale in between, rather than clustering near
      * the middle the way a plain {@code nextInt} over the same range would:
      * <ul>
-     *     <li>{@code maxPieces}: 1 to 10,000. At the low end - single digits - this is what makes
-     *     {@code O3PartitionJob#shouldAssembleFreshPartitionVersion}'s proactive check fire routinely
-     *     instead of only on the rare generation-exhausted case, so its interaction with dedup,
-     *     replace-range, column-top backfill and every other fuzzed transaction kind gets covered. At the
-     *     high end it never fires for a fuzz-sized table, leaving {@code runCompaction}'s other rules -
-     *     and the plain merge-append path with compaction merely enabled but never triggered - covered
-     *     too;</li>
+     *     <li>{@code pieceThreshold}: 1 to 10,000. The piece-count rule's cap is
+     *     {@code max(pieceThreshold, liveRows / avgRowsPieceLim)} (see
+     *     {@code PartitionCompactionPolicy.effectiveMaxPieces}) - this is the flat floor half of that
+     *     formula. At the low end - single digits - this is what makes {@code
+     *     O3PartitionJob#shouldAssembleFreshPartitionVersion}'s proactive check fire routinely instead of
+     *     only on the rare generation-exhausted case, so its interaction with dedup, replace-range,
+     *     column-top backfill and every other fuzzed transaction kind gets covered. At the high end it
+     *     never fires for a fuzz-sized table on its own, leaving the scaled half of the formula (below) and
+     *     {@code runCompaction}'s other rules covered instead;</li>
+     *     <li>{@code avgRowsPieceLim}: 1 to 10,000,000 - the scaled half of the same cap, {@code liveRows /
+     *     this}. The LOW end (near 1) makes the scaled term track liveRows itself, so {@code pieceThreshold}
+     *     alone decides the cap. The HIGH end (comfortably above every {@code setFuzzCounts} total row
+     *     count in this class) drives the scaled term to 0, so it never out-competes {@code pieceThreshold}
+     *     either - the interesting middle of the range is where the scaled term can exceed a small
+     *     {@code pieceThreshold} draw and take over as the effective cap;</li>
      *     <li>{@code deadRowsRatio}: 0 to 999. The waste-ratio rule fires on dead rows exceeding a whole
      *     MULTIPLE of live rows, not a percentage, so 0 - dead exceeding zero times live, the tightest
      *     this can express - is one decade of the draw rather than a special case;</li>
@@ -824,7 +832,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
      *     backdated strides leave behind, so MOVE-TAIL wins over REWRITE close to every time a folder
      *     qualifies instead of only when the default happens to clear the bar - giving MOVE-TAIL, and the
      *     MAKE-PLAIN it immediately chains into, real odds of firing without dominating every run.</li>
-     *     <li>{@code tableDeadMinSize}: zero four runs in five, so the table-pressure rule keeps firing off
+     *     <li>{@code tableDeadThreshold}: zero four runs in five, so the table-pressure rule keeps firing off
      *     a mere handful of dead rows exactly like every fuzz run before this floor existed - fuzz tables
      *     are small, and a floor anywhere near the 50MB shipped default would suppress table-pressure on
      *     almost all of them, losing the coverage it currently gives REWRITE, MOVE-TAIL and MAKE-PLAIN.
@@ -834,23 +842,26 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
      * </ul>
      */
     private static void setRndPartitionCompactionProperties(Rnd rnd) {
-        final int maxPieces = (int) Math.round(Math.pow(10, rnd.nextDouble() * 4));
+        final int pieceThreshold = (int) Math.round(Math.pow(10, rnd.nextDouble() * 4));
+        final long avgRowsPieceLim = Math.round(Math.pow(10, rnd.nextDouble() * 7));
         final int deadRowsRatio = (int) Math.round(Math.pow(10, rnd.nextDouble() * 3)) - 1;
         final long deadMinSize = Math.round(Math.pow(10, 5 + rnd.nextDouble() * 7));
         final int prefixMinPercent = rnd.nextInt(10) == 0 ? 1 + rnd.nextInt(40) : 50;
-        final long tableDeadMinSize = rnd.nextInt(5) == 0
+        final long tableDeadThreshold = rnd.nextInt(5) == 0
                 ? Math.round(Math.pow(10, rnd.nextDouble() * Math.log10(50 * Numbers.SIZE_1MB)))
                 : 0;
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, maxPieces);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, pieceThreshold);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, avgRowsPieceLim);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, deadRowsRatio);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, deadMinSize);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PREFIX_MIN_PERCENT, prefixMinPercent);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_MIN_SIZE, tableDeadMinSize);
-        LOG.info().$("partition compaction fuzz mode [maxPieces=").$(maxPieces)
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD, tableDeadThreshold);
+        LOG.info().$("partition compaction fuzz mode [pieceThreshold=").$(pieceThreshold)
+                .$(", avgRowsPieceLim=").$(avgRowsPieceLim)
                 .$(", deadRowsRatio=").$(deadRowsRatio)
                 .$(", deadMinSize=").$(deadMinSize)
                 .$(", prefixMinPercent=").$(prefixMinPercent)
-                .$(", tableDeadMinSize=").$(tableDeadMinSize)
+                .$(", tableDeadThreshold=").$(tableDeadThreshold)
                 .I$();
     }
 

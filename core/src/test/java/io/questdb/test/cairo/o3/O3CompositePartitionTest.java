@@ -811,6 +811,10 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
+            // This test wants a many-piece directory to scan across - the pre-split above doubles each
+            // backdated batch into 2 pieces, so the eleven batches below comfortably clear the piece-count
+            // rule's default floor (20) well before they clear the "at least 8" this test actually needs.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, "1000");
 
             final String base = "SELECT x::INT i, -x j, " + WIDE_COLUMNS + "," +
                     " timestamp_sequence('2020-02-03', 15*1000000L) ts FROM long_sequence(5760)";

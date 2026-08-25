@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.o3;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -83,14 +84,10 @@ public class O3SplitWriteAmplificationBenchTest extends AbstractCairoTest {
     // same physicallyWrittenRows counter the amp column is built from, so it RAISES amp on purpose -
     // reclaiming dead space is the other half of that trade.
     private boolean compactionEnabled;
-    // Cooling-off to give compaction, in microseconds. The bench compresses 120 VIRTUAL seconds of
-    // ingestion into a few real ones while the cooling-off timer runs on the WALL clock, so at the 10m
-    // default compaction fires about twice per run whatever the workload does. "hot" sets it to 0 to
-    // show the other end: what continuous compaction costs and reclaims.
-    private String compactionCooldown = "10m";
-    // cairo.partition.compaction.max.pieces for the next scenario. The piece-count rule fires when a
-    // folder holds more geometry pieces than this.
-    private int compactionMaxPieces = 1000;
+    // cairo.partition.compaction.avg.rows.piece.lim for the next scenario. The piece-count rule fires
+    // when a folder holds more geometry pieces than liveRows / this. 1 keeps the rule effectively off
+    // (cap == liveRows, unreachable since a piece needs at least one row).
+    private long compactionAvgRowsPieceLim = 1;
     private int scenarioIndex;
 
     @Test
@@ -114,14 +111,10 @@ public class O3SplitWriteAmplificationBenchTest extends AbstractCairoTest {
             runScenario("split 10/10");
             compactionEnabled = true;
             runScenario("split 10/10 + compaction");
-            compactionCooldown = "0";
-            runScenario("split 10/10 + compaction (hot)");
-            // Piece-count sweep. Cooling-off stays at 0 so the piece-count RULE is what binds
-            // rather than the timer: at the 10m default compaction fires about twice per run
-            // whatever the setting says, and the sweep would measure the clock instead.
-            for (int maxPieces : new int[]{50, 20, 10}) {
-                compactionMaxPieces = maxPieces;
-                runScenario("compaction, max.pieces=" + maxPieces);
+            // Piece-count sweep.
+            for (int targetCap : new int[]{50, 20, 10}) {
+                compactionAvgRowsPieceLim = ROWS_PER_PARTITION / targetCap;
+                runScenario("compaction, avg.rows.piece.lim=" + compactionAvgRowsPieceLim);
             }
             resetCompactionSettings();
         });
@@ -146,11 +139,9 @@ public class O3SplitWriteAmplificationBenchTest extends AbstractCairoTest {
             runCatchUpScenario("split 10/10");
             compactionEnabled = true;
             runCatchUpScenario("split 10/10 + compaction");
-            compactionCooldown = "0";
-            runCatchUpScenario("split 10/10 + compaction (hot)");
-            for (int maxPieces : new int[]{50, 20, 10}) {
-                compactionMaxPieces = maxPieces;
-                runCatchUpScenario("compaction, max.pieces=" + maxPieces);
+            for (int targetCap : new int[]{50, 20, 10}) {
+                compactionAvgRowsPieceLim = ROWS_PER_PARTITION / targetCap;
+                runCatchUpScenario("compaction, avg.rows.piece.lim=" + compactionAvgRowsPieceLim);
             }
             resetCompactionSettings();
         });
@@ -172,11 +163,9 @@ public class O3SplitWriteAmplificationBenchTest extends AbstractCairoTest {
             runInOrderScenario("split 10/10");
             compactionEnabled = true;
             runInOrderScenario("split 10/10 + compaction");
-            compactionCooldown = "0";
-            runInOrderScenario("split 10/10 + compaction (hot)");
-            for (int maxPieces : new int[]{50, 20, 10}) {
-                compactionMaxPieces = maxPieces;
-                runInOrderScenario("compaction, max.pieces=" + maxPieces);
+            for (int targetCap : new int[]{50, 20, 10}) {
+                compactionAvgRowsPieceLim = ROWS_PER_PARTITION / targetCap;
+                runInOrderScenario("compaction, avg.rows.piece.lim=" + compactionAvgRowsPieceLim);
             }
             resetCompactionSettings();
         });
@@ -199,11 +188,9 @@ public class O3SplitWriteAmplificationBenchTest extends AbstractCairoTest {
             runRandomScenario("split 10/10");
             compactionEnabled = true;
             runRandomScenario("split 10/10 + compaction");
-            compactionCooldown = "0";
-            runRandomScenario("split 10/10 + compaction (hot)");
-            for (int maxPieces : new int[]{50, 20, 10}) {
-                compactionMaxPieces = maxPieces;
-                runRandomScenario("compaction, max.pieces=" + maxPieces);
+            for (int targetCap : new int[]{50, 20, 10}) {
+                compactionAvgRowsPieceLim = ROWS_PER_PARTITION / targetCap;
+                runRandomScenario("compaction, avg.rows.piece.lim=" + compactionAvgRowsPieceLim);
             }
             resetCompactionSettings();
         });
@@ -227,11 +214,9 @@ public class O3SplitWriteAmplificationBenchTest extends AbstractCairoTest {
             runSlightlyOutOfOrderScenario("split 10/10");
             compactionEnabled = true;
             runSlightlyOutOfOrderScenario("split 10/10 + compaction");
-            compactionCooldown = "0";
-            runSlightlyOutOfOrderScenario("split 10/10 + compaction (hot)");
-            for (int maxPieces : new int[]{50, 20, 10}) {
-                compactionMaxPieces = maxPieces;
-                runSlightlyOutOfOrderScenario("compaction, max.pieces=" + maxPieces);
+            for (int targetCap : new int[]{50, 20, 10}) {
+                compactionAvgRowsPieceLim = ROWS_PER_PARTITION / targetCap;
+                runSlightlyOutOfOrderScenario("compaction, avg.rows.piece.lim=" + compactionAvgRowsPieceLim);
             }
             resetCompactionSettings();
         });
@@ -261,23 +246,29 @@ public class O3SplitWriteAmplificationBenchTest extends AbstractCairoTest {
     }
 
     /**
-     * Dead rows across every directory the table holds, right now: {@code physical - live}, summed. A
-     * folder's physical extent is {@link TableReader#getPartitionPhysicalRowCount} ({@code E} in
-     * {@code PARTITION_COMPACTION.md} vocabulary, dead space included); its live rows are
-     * {@link TxReader#getPartitionSize}. [0]=dead rows, [1]=live rows.
+     * Dead rows and piece count across every directory the table holds, right now. A folder's physical
+     * extent is {@link TableReader#getPartitionPhysicalRowCount} ({@code E} in {@code
+     * PARTITION_COMPACTION.md} vocabulary, dead space included); its live rows are {@link
+     * TxReader#getPartitionSize}; its piece count is {@link PartitionGeometry#getPieceCount}, 1 for a
+     * folder that was never composite. [0]=dead rows, [1]=live rows, [2]=the most pieces any one folder
+     * holds - what {@code cairo.partition.compaction.avg.rows.piece.lim} (scaled per folder, see
+     * {@code PartitionCompactionPolicy.effectiveMaxPieces}) is actually checked against.
      */
     private static long[] deadSpace(TableReader reader) {
         final TxReader tx = reader.getTxFile();
+        final PartitionGeometry geometry = reader.getGeometry();
         final int folders = tx.getPartitionCount();
         long dead = 0;
         long live = 0;
+        int maxPieces = 0;
         for (int i = 0; i < folders; i++) {
             final long liveRows = tx.getPartitionSize(i);
             final long physicalRows = reader.getPartitionPhysicalRowCount(i);
             live += liveRows;
             dead += Math.max(0, physicalRows - liveRows);
+            maxPieces = Math.max(maxPieces, geometry.getPieceCount(i));
         }
-        return new long[]{dead, live};
+        return new long[]{dead, live, maxPieces};
     }
 
     private static long emitBatch(WalWriter walWriter, WriterSpec spec, long virtualNow, Rnd rnd) {
@@ -303,8 +294,8 @@ public class O3SplitWriteAmplificationBenchTest extends AbstractCairoTest {
 
     private static void printHeader() {
         System.out.printf(
-                "%n%-34s %12s %14s %6s %12s %9s %9s%n",
-                "scenario", "ingested", "physical", "amp", "dead_rows", "dead%", "time_ms"
+                "%n%-34s %12s %14s %6s %12s %9s %8s %9s%n",
+                "scenario", "ingested", "physical", "amp", "dead_rows", "dead%", "pieces", "time_ms"
         );
     }
 
@@ -313,10 +304,11 @@ public class O3SplitWriteAmplificationBenchTest extends AbstractCairoTest {
             final long[] dead = deadSpace(reader);
             final long deadRows = dead[0];
             final long liveRows = dead[1];
+            final long maxPieces = dead[2];
             final double deadPct = deadRows + liveRows > 0 ? 100.0 * deadRows / (deadRows + liveRows) : 0;
             System.out.printf(
-                    "%-34s %12d %14d %6.1f %12d %8.1f%% %9d%n",
-                    name, ingested, physical, (double) physical / ingested, deadRows, deadPct, elapsedMs
+                    "%-34s %12d %14d %6.1f %12d %8.1f%% %8d %9d%n",
+                    name, ingested, physical, (double) physical / ingested, deadRows, deadPct, maxPieces, elapsedMs
             );
             Assert.assertEquals(baseRows + ingested, reader.size());
         }
@@ -331,20 +323,18 @@ public class O3SplitWriteAmplificationBenchTest extends AbstractCairoTest {
      */
     private void applyCompactionSettings() {
         if (compactionEnabled) {
-            setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, compactionMaxPieces);
-            setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_COOLDOWN, compactionCooldown);
+            setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, compactionAvgRowsPieceLim);
         } else {
-            setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_MAX_PIECES, Integer.MAX_VALUE);
+            setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 1);
             setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, Integer.MAX_VALUE);
-            setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_PERCENT, 100);
+            setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT, 100);
             setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_PERCENT, 100);
             setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, Long.MAX_VALUE);
         }
     }
 
     private void resetCompactionSettings() {
-        compactionMaxPieces = 1000;
-        compactionCooldown = "10m";
+        compactionAvgRowsPieceLim = 1;
         compactionEnabled = false;
     }
 

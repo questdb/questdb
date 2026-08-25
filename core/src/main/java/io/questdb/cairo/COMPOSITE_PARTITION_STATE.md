@@ -300,9 +300,9 @@ done
 `O3SplitWriteAmplificationBenchTest` (`core/src/test/java/io/questdb/test/cairo/o3/`) - not a regression
 test, it prints numbers, with a light row-count assertion to keep it honest. Five scenarios (in-order,
 slightly-out-of-order via a bounded 1000-row reorder window, multi-writer at fixed lag offsets, catch-up,
-random-order), each run through a `max.pieces` sweep, at 3 partitions / 1M rows each / 120 virtual
-seconds. `getPhysicallyWrittenRows` (what `amp` is built from) is traced statically end to end - every
-`FrameAlgebra.append`/`merge` call is paired with a matching increment, every no-copy action (JOIN,
+random-order), each run through an `avg.rows.piece.lim` sweep, at 3 partitions / 1M rows each / 120
+virtual seconds. `getPhysicallyWrittenRows` (what `amp` is built from) is traced statically end to end -
+every `FrameAlgebra.append`/`merge` call is paired with a matching increment, every no-copy action (JOIN,
 MAKE-PLAIN, KEEP, DROP) correctly has none - so the numbers can be trusted.
 
 Requires `cairo.o3.partition.split.min.size=0`: the property defaults to `1024G`
@@ -319,15 +319,59 @@ tried before REWRITE there) splits off only the tail - copying what actually nee
 whole directory. Falls through to the full rewrite only when no clean-enough front survives (geometry
 chain exhausted, or every commit lands somewhere different, as under random-order).
 
-Final numbers, baseline (no piece cap) vs `cairo.partition.compaction.max.pieces=20`:
+**The piece-count cap scales with a folder's own live rows, never below a flat floor.** A flat
+`cairo.partition.compaction.piece.threshold=1000` (this property was named `max.pieces` earlier in this
+pass - renamed since "threshold" better describes a value the rule compares pieces AGAINST, not a hard
+ceiling pieces can never cross) punished a large folder for a fragmentation level the query-cost
+measurements below show costs it almost nothing to carry, while a much smaller flat number is right for a
+typical small folder. `PartitionCompactionPolicy.effectiveMaxPieces` computes
+`max(getPartitionCompactionPieceThreshold(), liveRows / getPartitionCompactionAvgRowsPieceLim())`, and both
+`wouldBreachCompactionThresholds` (proactive) and `selectPartition` (reactive) use it. Both halves of that
+formula are independent properties: `cairo.partition.compaction.piece.threshold` (the flat floor, default
+lowered from 1000 to 20) and `cairo.partition.compaction.avg.rows.piece.lim` (the scaling divisor, renamed
+from `min.rows.per.piece`, default 4096, unchanged) - the divisor was chosen from the query-cost data
+below: 25 pieces (~40K rows/piece at this bench's scale) measured flat, 400 pieces (~2.5K rows/piece)
+already cost 3.6x on a full scan, so 4096 sits inside the "still flat" zone with headroom.
 
-| scenario | baseline | pieces≤20 |
-|---|---|---|
-| in-order | 1.0 / 0.0% | 1.0 / 0.0% (never composite) |
-| slightly-out-of-order | 1.7 / 17.2% | 3.0 / 1.8% |
-| multi-writer | 1.2 / 5.6% | 9.9 / 0.0% |
-| catch-up | 1.2 / 5.3% | 7.4 / 2.4% |
-| random-order | 2.2 / 26.7% | 16.8 / 3.6% (no stable front - every commit lands somewhere new, so MOVE-TAIL never applies) |
+An earlier version of this pass removed the flat floor entirely (leaving only the divisor), which broke 43
+of the 59 tests in `O3CompositePartitionTest`/`O3PartitionPreSplitTest` - none of which test compaction
+directly. Root cause: `liveRows / 4096` rounds to 0 or 1 for nearly every fixture in the suite (most hold
+far fewer than 4096 rows), so with no floor the piece-count rule fired on the very first relocated piece
+merely from having merge-append on. The old flat default of 1000 had been silently protecting every
+composite-partition test in the suite, not just the compaction-specific ones. Restoring the floor as its
+own configurable property (default 20, well above what an ordinary fixture's buildup produces) fixed this
+without any suite-wide test-only override - one test (`O3CompositePartitionTest
+#testIntervalScanAcrossManyPieces`) deliberately builds ~21 pieces and needed its own explicit
+`piece.threshold=1000` override, since 20 is a real, intentionally small production default now, not a
+value picked to be always-permissive.
+
+`O3PartitionCompactionTest` pins `cairo.partition.compaction.avg.rows.piece.lim` to `Long.MAX_VALUE` in its
+own `enableCompaction()`, keeping the scaled term at ~0 so the flat floor (`piece.threshold`) is the only
+threshold in play - this suite tests the mechanism at small, exact piece counts on fixtures with thousands
+of rows, and the scaled term would otherwise raise the effective cap well above those counts. The handful
+of tests that target an exact trigger point set `piece.threshold` directly (`"2"`, `"4"`), the same values
+this suite used before `avg.rows.piece.lim` (nee `min.rows.per.piece`) existed at all.
+
+Also changed this pass: `cairo.partition.compaction.dead.rows.ratio`'s default dropped from 3 to 1, so the
+waste-ratio rule fires once dead rows merely equal live rows rather than needing to triple them. The
+property is now a `double` (was `int`), so fractional ratios below 1 are configurable too.
+
+Final numbers, baseline (no compaction) vs `cairo.partition.compaction.max.pieces=20` (scaled, measured
+under this property's OLD name before the `piece.threshold` rename), measured before the
+`dead.rows.ratio` default change - not yet re-measured under either new default:
+
+| scenario | pieces: baseline -> compacted | amp: baseline -> compacted | dead%: baseline -> compacted |
+|---|---|---|---|
+| in-order | 1 -> 1 | 1.0 -> 1.0 | 0.0% -> 0.0% (never composite) |
+| slightly-out-of-order | 185 -> 148 | 1.7 -> 1.9 | 17.2% -> 14.0% |
+| multi-writer | 617 -> 97 | 1.2 -> 2.5 | 5.6% -> 3.8% |
+| catch-up | 377 -> 29 | 1.2 -> 2.1 | 5.3% -> 0.0% |
+| random-order | 136 -> 136 | 2.2 -> 2.2 | 26.7% -> 26.7% (no stable front - every commit lands somewhere new, so MOVE-TAIL never applies, and the scaled cap is rarely even breached) |
+
+Before scaling, the same `max.pieces=20` cost 9.9x (multi-writer) and 7.4x (catch-up) - compaction was
+paying full REWRITE-or-MOVE-TAIL cost to hold every folder to the same 20 pieces regardless of size.
+Scaled, it holds folders to a size-proportional cap instead (97, 29, 148 pieces above, not 20), at a much
+lower amp cost, and leaves random-order (which cannot benefit) alone almost entirely.
 
 Verified against `O3CompositePartitionTest`, `O3PartitionPreSplitTest`, `O3PartitionCompactionTest` (71
 tests, the same 2 pre-existing failures as always, 0 regressions).
@@ -353,7 +397,7 @@ narrow-range result confirms `CompositeTimestampFinder`'s own claim ("two binary
 walk") empirically: finding the range boundary does not care how many pieces exist. The per-piece cost
 comes from `FwdTableReaderPageFrameCursor` cutting one page frame per piece (a frame cannot span a piece
 boundary), so more pieces means more, smaller frames and more per-frame column-address setup - a fixed
-cost per frame, not per row. At the piece counts compaction's `max.pieces` rule actually produces in
+cost per frame, not per row. At the piece counts compaction's piece-count rule actually produces in
 practice (tens, not thousands), this cost is close to noise against the write amplification compacting
 away those same pieces costs.
 

@@ -37,7 +37,7 @@ to MAKE-PLAIN instead.
 | rule | fires when |
 |---|---|
 | **waste ratio** | dead rows exceed a ratio of live rows AND a minimum size |
-| **piece count** | the folder (or its logical partition) has too many pieces |
+| **piece count** | the folder (or its logical partition) has too many pieces - the cap is `max(piece.threshold, liveRows / avg.rows.piece.lim)`, never below the flat floor but scaled up for a large folder, since a piece's read cost is a fixed amount per piece regardless of folder size |
 | **age** | idle past a timeout, and still has waste or more than one piece |
 | **table pressure** | the whole table's dead-row percentage crosses a high-water mark AND the absolute dead bytes clear a minimum floor (or the absolute dead bytes alone cross a much higher ceiling); picks the oldest wasteful folder first, and keeps compacting until a lower low-water mark is reached |
 

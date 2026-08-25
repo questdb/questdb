@@ -759,13 +759,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getPartitionCompactionCheckInterval() {
-        return getDelegate().getPartitionCompactionCheckInterval();
+    public long getPartitionCompactionAvgRowsPieceLim() {
+        return getDelegate().getPartitionCompactionAvgRowsPieceLim();
     }
 
     @Override
-    public long getPartitionCompactionCooldown() {
-        return getDelegate().getPartitionCompactionCooldown();
+    public long getPartitionCompactionCheckInterval() {
+        return getDelegate().getPartitionCompactionCheckInterval();
     }
 
     @Override
@@ -774,7 +774,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getPartitionCompactionDeadRowsRatio() {
+    public double getPartitionCompactionDeadRowsRatio() {
         return getDelegate().getPartitionCompactionDeadRowsRatio();
     }
 
@@ -789,18 +789,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getPartitionCompactionMaxJoinsPerCommit() {
-        return getDelegate().getPartitionCompactionMaxJoinsPerCommit();
-    }
-
-    @Override
-    public int getPartitionCompactionMaxPieces() {
-        return getDelegate().getPartitionCompactionMaxPieces();
-    }
-
-    @Override
-    public long getPartitionCompactionMaxRowsPerCommit() {
-        return getDelegate().getPartitionCompactionMaxRowsPerCommit();
+    public int getPartitionCompactionPieceThreshold() {
+        return getDelegate().getPartitionCompactionPieceThreshold();
     }
 
     @Override
@@ -809,28 +799,28 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getPartitionCompactionTableDeadMaxSize() {
-        return getDelegate().getPartitionCompactionTableDeadMaxSize();
-    }
-
-    @Override
-    public long getPartitionCompactionTableDeadMinSize() {
-        return getDelegate().getPartitionCompactionTableDeadMinSize();
-    }
-
-    @Override
-    public int getPartitionCompactionTableDeadPercent() {
-        return getDelegate().getPartitionCompactionTableDeadPercent();
-    }
-
-    @Override
     public int getPartitionCompactionTableDeadStopPercent() {
         return getDelegate().getPartitionCompactionTableDeadStopPercent();
     }
 
     @Override
-    public long getPartitionCompactionTimeBudget() {
-        return getDelegate().getPartitionCompactionTimeBudget();
+    public long getPartitionCompactionTableDeadThreshold() {
+        return getDelegate().getPartitionCompactionTableDeadThreshold();
+    }
+
+    @Override
+    public int getPartitionCompactionTableDeadThresholdPercent() {
+        return getDelegate().getPartitionCompactionTableDeadThresholdPercent();
+    }
+
+    @Override
+    public long getPartitionCompactionTableDeadTrigger() {
+        return getDelegate().getPartitionCompactionTableDeadTrigger();
+    }
+
+    @Override
+    public long getPartitionCompactionTimeBudgetMs() {
+        return getDelegate().getPartitionCompactionTimeBudgetMs();
     }
 
     @Override

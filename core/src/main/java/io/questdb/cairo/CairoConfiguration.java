@@ -491,17 +491,22 @@ public interface CairoConfiguration {
     int getParquetExportVersion();
 
     /**
+     * The piece-count rule's target average piece size, in rows - see
+     * {@link #getPartitionCompactionPieceThreshold()}. A folder is allowed {@code liveRows / this} pieces
+     * before the rule fires, never fewer than the flat floor, so a large folder is allowed proportionally
+     * more before the rule fires - a piece's fixed per-frame read cost is the same regardless of how many
+     * live rows sit around it, so a flat cap alone would punish a big folder for a fragmentation level a
+     * small one would never be flagged for.
+     */
+    long getPartitionCompactionAvgRowsPieceLim();
+
+    /**
      * How often {@link io.questdb.cairo.PartitionCompactionScanJob} sweeps every table for idle
      * composite or Parquet-format partitions, in milliseconds. Independent of
      * {@link #getPartitionCompactionIdleTimeout()}: this is the scan cadence, that is the age threshold
      * a partition must clear before the sweep (or the per-commit age rule) will act on it.
      */
     long getPartitionCompactionCheckInterval();
-
-    /**
-     * How long a folder compaction has just touched is left alone, in microseconds.
-     */
-    long getPartitionCompactionCooldown();
 
     /**
      * The minimum wasted BYTES a folder must hold before the waste-ratio rule will fire on it. The
@@ -512,7 +517,7 @@ public interface CairoConfiguration {
     /**
      * The waste-ratio rule fires when a folder's dead rows exceed this multiple of its live rows.
      */
-    int getPartitionCompactionDeadRowsRatio();
+    double getPartitionCompactionDeadRowsRatio();
 
     /**
      * The ceiling of the doubling back-off applied to a folder whose compaction was declined, in
@@ -527,20 +532,12 @@ public interface CairoConfiguration {
     long getPartitionCompactionIdleTimeout();
 
     /**
-     * How many JOINs - piece folds that copy nothing - one housekeeping pass may perform.
+     * The piece-count rule fires when a folder holds more pieces than this - a FLOOR, not the whole
+     * story: the effective cap is {@code max(getPartitionCompactionPieceThreshold(), liveRows /
+     * getPartitionCompactionAvgRowsPieceLim())}, so a small folder is held to this number exactly, but a
+     * large one is allowed proportionally more before the rule fires.
      */
-    int getPartitionCompactionMaxJoinsPerCommit();
-
-    /**
-     * The piece-count rule fires when a folder holds more pieces than this.
-     */
-    int getPartitionCompactionMaxPieces();
-
-    /**
-     * How many rows a compaction may copy in one housekeeping pass. A folder larger than this is still
-     * compacted when nothing else has run in that pass, otherwise it could never be compacted at all.
-     */
-    long getPartitionCompactionMaxRowsPerCommit();
+    int getPartitionCompactionPieceThreshold();
 
     /**
      * MOVE-TAIL only splits off the tail when the clean front is at least this percentage of the
@@ -550,37 +547,37 @@ public interface CairoConfiguration {
     int getPartitionCompactionPrefixMinPercent();
 
     /**
-     * The table-pressure rule turns on when the table's estimated dead BYTES exceed this, whatever the
-     * percentage says.
-     */
-    long getPartitionCompactionTableDeadMaxSize();
-
-    /**
-     * The table-pressure rule never turns on from the percentage check alone while the table's estimated
-     * dead BYTES stay below this floor - a handful of dead rows in an otherwise tiny table should not
-     * force a copy. The absolute-size check ({@link #getPartitionCompactionTableDeadMaxSize()}) ignores
-     * this floor, since it is itself already well above it.
-     */
-    long getPartitionCompactionTableDeadMinSize();
-
-    /**
-     * The table-pressure rule turns on when the table's dead rows reach this percentage of its total.
-     */
-    int getPartitionCompactionTableDeadPercent();
-
-    /**
      * The table-pressure rule turns off again only once the table's dead rows fall below this
      * percentage. Two thresholds rather than one, or the rule would switch on and off around a single
      * point and queue a folder on every commit forever. Clamped to at most
-     * {@link #getPartitionCompactionTableDeadPercent()}.
+     * {@link #getPartitionCompactionTableDeadThresholdPercent()}.
      */
     int getPartitionCompactionTableDeadStopPercent();
 
     /**
-     * The wall-clock budget one housekeeping pass may spend compacting, in microseconds. Checked
+     * The table-pressure rule never turns on from the percentage check alone while the table's estimated
+     * dead BYTES stay below this floor - a handful of dead rows in an otherwise tiny table should not
+     * force a copy. The absolute-size check ({@link #getPartitionCompactionTableDeadTrigger()}) ignores
+     * this floor, since it is itself already well above it.
+     */
+    long getPartitionCompactionTableDeadThreshold();
+
+    /**
+     * The table-pressure rule turns on when the table's dead rows reach this percentage of its total.
+     */
+    int getPartitionCompactionTableDeadThresholdPercent();
+
+    /**
+     * The table-pressure rule turns on when the table's estimated dead BYTES exceed this, whatever the
+     * percentage says.
+     */
+    long getPartitionCompactionTableDeadTrigger();
+
+    /**
+     * The wall-clock budget one housekeeping pass may spend compacting, in milliseconds. Checked
      * between folders, never inside one.
      */
-    long getPartitionCompactionTimeBudget();
+    long getPartitionCompactionTimeBudgetMs();
 
     double getPartitionEncoderParquetBloomFilterFpp();
 

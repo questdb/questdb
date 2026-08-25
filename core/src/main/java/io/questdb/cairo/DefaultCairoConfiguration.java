@@ -776,13 +776,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getPartitionCompactionCheckInterval() {
-        return 120_000;
+    public long getPartitionCompactionAvgRowsPieceLim() {
+        return 4096;
     }
 
     @Override
-    public long getPartitionCompactionCooldown() {
-        return 10 * Micros.MINUTE_MICROS;
+    public long getPartitionCompactionCheckInterval() {
+        return 120_000;
     }
 
     @Override
@@ -791,8 +791,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getPartitionCompactionDeadRowsRatio() {
-        return 3;
+    public double getPartitionCompactionDeadRowsRatio() {
+        return 1;
     }
 
     @Override
@@ -806,18 +806,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getPartitionCompactionMaxJoinsPerCommit() {
-        return 32;
-    }
-
-    @Override
-    public int getPartitionCompactionMaxPieces() {
-        return 1000;
-    }
-
-    @Override
-    public long getPartitionCompactionMaxRowsPerCommit() {
-        return 5_000_000;
+    public int getPartitionCompactionPieceThreshold() {
+        return 20;
     }
 
     @Override
@@ -826,28 +816,28 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getPartitionCompactionTableDeadMaxSize() {
-        return 10 * Numbers.SIZE_1GB;
+    public int getPartitionCompactionTableDeadStopPercent() {
+        return 10;
     }
 
     @Override
-    public long getPartitionCompactionTableDeadMinSize() {
+    public long getPartitionCompactionTableDeadThreshold() {
         return 50 * Numbers.SIZE_1MB;
     }
 
     @Override
-    public int getPartitionCompactionTableDeadPercent() {
+    public int getPartitionCompactionTableDeadThresholdPercent() {
         return 50;
     }
 
     @Override
-    public int getPartitionCompactionTableDeadStopPercent() {
-        return 40;
+    public long getPartitionCompactionTableDeadTrigger() {
+        return 10 * Numbers.SIZE_1GB;
     }
 
     @Override
-    public long getPartitionCompactionTimeBudget() {
-        return 200 * Micros.MILLI_MICROS;
+    public long getPartitionCompactionTimeBudgetMs() {
+        return 1000;
     }
 
     @Override

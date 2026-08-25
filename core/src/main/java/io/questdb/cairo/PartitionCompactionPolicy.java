@@ -42,7 +42,7 @@ import io.questdb.std.datetime.microtime.Micros;
  * port required.
  * <p>
  * It is owned by one writer, allocates nothing per commit, and keeps no durable state: handing the
- * writer to another thread costs at most one wasted attempt, and making the cooling-off timers durable
+ * writer to another thread costs at most one wasted attempt, and making the decline backoff timer durable
  * would mean a per-partition {@code _txn} field for an advisory number plus recovery code that could
  * itself be wrong.
  * <p>
@@ -56,15 +56,12 @@ public class PartitionCompactionPolicy implements Mutable {
     public static final int REASON_TABLE_PRESSURE = 4;
     public static final int REASON_WASTE_RATIO = 1;
     private static final int BACKOFF_LONGS = 3;
-    // (partitionTimestamp, untilMicros)
-    private static final int COOLDOWN_LONGS = 2;
-    // Bounded so a table with a great many partitions cannot grow these lists without end. Dropping the
+    // Bounded so a table with a great many partitions cannot grow this list without end. Dropping the
     // oldest entry only ever costs one extra attempt.
     private static final int MAX_TRACKED = 256;
     // (partitionTimestamp, nextAttemptMicros, currentBackoffMicros)
     private final LongList backoff = new LongList();
     private final CairoConfiguration configuration;
-    private final LongList cooldown = new LongList();
     private int selectedPartitionIndex = -1;
     private int selectedReason = REASON_NONE;
     private boolean tablePressureOn;
@@ -76,30 +73,42 @@ public class PartitionCompactionPolicy implements Mutable {
     @Override
     public void clear() {
         backoff.clear();
-        cooldown.clear();
         tablePressureOn = false;
         selectedReason = REASON_NONE;
         selectedPartitionIndex = -1;
     }
 
     /**
+     * The piece-count rule's actual cap for a folder holding {@code liveRows} live rows: never below the
+     * flat floor {@link CairoConfiguration#getPartitionCompactionPieceThreshold()}, but scaled up for a
+     * large folder so it is not flagged at the same absolute piece count a small one would be - a piece's
+     * per-frame read cost (see {@code FwdTableReaderPageFrameCursor}) is the same fixed amount regardless
+     * of how many live rows sit around it, so a bigger folder can carry proportionally more pieces before
+     * that cost is worth paying a compaction copy to avoid.
+     */
+    public static int effectiveMaxPieces(CairoConfiguration configuration, long liveRows) {
+        final long scaled = liveRows / configuration.getPartitionCompactionAvgRowsPieceLim();
+        return (int) Math.max(configuration.getPartitionCompactionPieceThreshold(), scaled);
+    }
+
+    /**
      * True if a piece count of {@code pieceCount}, or a dead-versus-live row split of {@code deadRows}
      * against {@code liveRows}, already crosses the same waste-ratio or piece-count thresholds
      * {@link #selectPartition} enforces after the fact. Static and stateless, with none of
-     * {@link #selectPartition}'s cooldown or backoff bookkeeping - those exist to stop {@code housekeep}
-     * from retrying a partition it just declined or just compacted, which does not apply to a decision
-     * made before the write that would create the waste has even landed.
+     * {@link #selectPartition}'s backoff bookkeeping - that exists to stop {@code housekeep} from
+     * retrying a partition it just declined, which does not apply to a decision made before the write
+     * that would create the waste has even landed.
      */
     public static boolean exceedsThresholds(
             CairoConfiguration configuration, long liveRows, long deadRows, int pieceCount, long avgRecordSize
     ) {
-        if (pieceCount > configuration.getPartitionCompactionMaxPieces()) {
+        if (pieceCount > effectiveMaxPieces(configuration, liveRows)) {
             return true;
         }
         final long deadMinRows = avgRecordSize > 0
                 ? configuration.getPartitionCompactionDeadMinSize() / avgRecordSize
                 : configuration.getPartitionCompactionDeadMinSize();
-        return deadRows > (long) configuration.getPartitionCompactionDeadRowsRatio() * liveRows && deadRows > deadMinRows;
+        return deadRows > configuration.getPartitionCompactionDeadRowsRatio() * liveRows && deadRows > deadMinRows;
     }
 
     public int getSelectedPartitionIndex() {
@@ -107,20 +116,18 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     /**
-     * Why the last {@link #selectPartition} picked what it picked. The piece-count rule is the one case
-     * allowed to run over the per-commit row budget: the alternative is a geometry file that grows
-     * without end.
+     * Why the last {@link #selectPartition} picked what it picked.
      */
     public int getSelectedReason() {
         return selectedReason;
     }
 
     /**
-     * Records that the partition was compacted, so the rules leave it alone for a while.
+     * Records that the partition was compacted, clearing any decline backoff a prior attempt left
+     * behind.
      */
-    public void onCompacted(long partitionTimestamp, long nowMicros) {
+    public void onCompacted(long partitionTimestamp) {
         clearBackoff(partitionTimestamp);
-        putCooldown(partitionTimestamp, nowMicros + configuration.getPartitionCompactionCooldown());
     }
 
     /**
@@ -165,9 +172,8 @@ public class PartitionCompactionPolicy implements Mutable {
         final long deadMinRows = avgRecordSize > 0
                 ? configuration.getPartitionCompactionDeadMinSize() / avgRecordSize
                 : configuration.getPartitionCompactionDeadMinSize();
-        final int maxPieces = configuration.getPartitionCompactionMaxPieces();
         final long idleTimeout = configuration.getPartitionCompactionIdleTimeout();
-        final int ratio = configuration.getPartitionCompactionDeadRowsRatio();
+        final double ratio = configuration.getPartitionCompactionDeadRowsRatio();
 
         int chosen = -1;
         int chosenReason = REASON_NONE;
@@ -207,10 +213,10 @@ public class PartitionCompactionPolicy implements Mutable {
             if (chosen > -1) {
                 continue; // still counting totals for the table-wide rule
             }
-            if (dead > (long) ratio * live && dead > deadMinRows) {
+            if (dead > ratio * live && dead > deadMinRows) {
                 chosen = i;
                 chosenReason = REASON_WASTE_RATIO;
-            } else if (pieces > maxPieces) {
+            } else if (pieces > effectiveMaxPieces(configuration, live)) {
                 chosen = i;
                 chosenReason = REASON_PIECE_COUNT;
             } else if (lastWrite > 0 && nowMicros - lastWrite > idleTimeout && (dead > 0 || pieces > 1)) {
@@ -225,18 +231,18 @@ public class PartitionCompactionPolicy implements Mutable {
         final long deadBytes = deadRowsTable * Math.max(1, avgRecordSize);
         if (tablePressureOn) {
             tablePressureOn = !(deadRowsTable * 100 < total * configuration.getPartitionCompactionTableDeadStopPercent()
-                    && deadBytes <= configuration.getPartitionCompactionTableDeadMaxSize() / 2);
+                    && deadBytes <= configuration.getPartitionCompactionTableDeadTrigger() / 2);
         } else {
             // total == 0 (no composite partition seen yet) must never turn this on: 0 >= 0 would
             // otherwise satisfy the percentage check trivially, latching table pressure on from the
             // very first commit of any table, well before there is any real waste to speak of. The
-            // dead.min.size floor guards the same percentage check the same way: a table with hardly any
-            // waste in absolute terms should not be forced through a copy just because it is nearly empty
-            // to begin with. getPartitionCompactionTableDeadMaxSize's own trigger is exempt - it already
-            // implies well more waste than the floor, by construction.
-            tablePressureOn = (total > 0 && deadBytes >= configuration.getPartitionCompactionTableDeadMinSize()
-                    && deadRowsTable * 100 >= total * configuration.getPartitionCompactionTableDeadPercent())
-                    || deadBytes > configuration.getPartitionCompactionTableDeadMaxSize();
+            // table.dead.threshold floor guards the same percentage check the same way: a table with
+            // hardly any waste in absolute terms should not be forced through a copy just because it is
+            // nearly empty to begin with. getPartitionCompactionTableDeadTrigger's own trigger is exempt -
+            // it already implies well more waste than the floor, by construction.
+            tablePressureOn = (total > 0 && deadBytes >= configuration.getPartitionCompactionTableDeadThreshold()
+                    && deadRowsTable * 100 >= total * configuration.getPartitionCompactionTableDeadThresholdPercent())
+                    || deadBytes > configuration.getPartitionCompactionTableDeadTrigger();
         }
 
         if (chosen == -1 && tablePressureOn) {
@@ -326,33 +332,11 @@ public class PartitionCompactionPolicy implements Mutable {
     }
 
     private boolean isSuppressed(long partitionTimestamp, long nowMicros) {
-        for (int i = 0, n = cooldown.size(); i < n; i += COOLDOWN_LONGS) {
-            if (cooldown.getQuick(i) == partitionTimestamp) {
-                if (nowMicros < cooldown.getQuick(i + 1)) {
-                    return true;
-                }
-                cooldown.removeIndexBlock(i, COOLDOWN_LONGS);
-                break;
-            }
-        }
         for (int i = 0, n = backoff.size(); i < n; i += BACKOFF_LONGS) {
             if (backoff.getQuick(i) == partitionTimestamp) {
                 return nowMicros < backoff.getQuick(i + 1);
             }
         }
         return false;
-    }
-
-    private void putCooldown(long partitionTimestamp, long untilMicros) {
-        for (int i = 0, n = cooldown.size(); i < n; i += COOLDOWN_LONGS) {
-            if (cooldown.getQuick(i) == partitionTimestamp) {
-                cooldown.setQuick(i + 1, untilMicros);
-                return;
-            }
-        }
-        if (cooldown.size() >= MAX_TRACKED * COOLDOWN_LONGS) {
-            cooldown.removeIndexBlock(0, COOLDOWN_LONGS);
-        }
-        cooldown.add(partitionTimestamp, untilMicros);
     }
 }
