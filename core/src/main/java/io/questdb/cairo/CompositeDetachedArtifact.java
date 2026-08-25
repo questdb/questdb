@@ -30,6 +30,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Reads a DETACHED composite partition artifact (a {@code <day>.detached} / {@code <day>.attachable}
@@ -70,7 +71,26 @@ public final class CompositeDetachedArtifact {
             long partitionTimestamp,
             IntList out
     ) {
-        out.clear();
+        readCells(ff, artifactRoot, timestampType, partitionBy, partitionTimestamp, out, null);
+    }
+
+    /**
+     * Collects the cellKey AND row count of every entry the artifact holds for {@code partitionTimestamp},
+     * in {@code _txn} order. {@code sizesOut} may be null when only the keys are wanted.
+     */
+    public static void readCells(
+            FilesFacade ff,
+            Path artifactRoot,
+            int timestampType,
+            int partitionBy,
+            long partitionTimestamp,
+            IntList cellKeysOut,
+            @Nullable LongList sizesOut
+    ) {
+        cellKeysOut.clear();
+        if (sizesOut != null) {
+            sizesOut.clear();
+        }
         final int rootLen = artifactRoot.size();
         try (TxReader txReader = new TxReader(ff)) {
             txReader.ofRO(artifactRoot.concat(TableUtils.TXN_FILE_NAME).$(), timestampType, partitionBy);
@@ -80,7 +100,10 @@ public final class CompositeDetachedArtifact {
             // stride 4 (cellKey always 0) without the caller knowing which it holds.
             for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
                 if (txReader.getPartitionTimestampByIndex(i) == partitionTimestamp) {
-                    out.add(txReader.getPartitionCellKey(i));
+                    cellKeysOut.add(txReader.getPartitionCellKey(i));
+                    if (sizesOut != null) {
+                        sizesOut.add(txReader.getPartitionSize(i));
+                    }
                 }
             }
         } finally {

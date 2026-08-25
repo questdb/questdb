@@ -800,6 +800,17 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         updateAttachedPartitionSizeByTimestamp(timestamp, cellKey, rowCount, txn - 1);
     }
 
+    /**
+     * As {@link #updatePartitionSizeByCell(long, int, long)}, but with an explicit partition name-txn.
+     * ATTACH needs {@code -1} here: a composite day CONTAINER carries no {@code .nameTxn} suffix, because
+     * composite versions are per CELL inside the container. Taking the default {@code txn - 1} would name
+     * a directory that does not exist.
+     */
+    public void updatePartitionSizeByCell(long timestamp, int cellKey, long rowCount, long partitionNameTxn) {
+        recordStructureVersion++;
+        updateAttachedPartitionSizeByTimestamp(timestamp, cellKey, rowCount, partitionNameTxn);
+    }
+
     private static long updatePartitionFlagAt(long maskedSize, boolean flag, int bitOffset) {
         if (flag) {
             maskedSize |= 1L << bitOffset;

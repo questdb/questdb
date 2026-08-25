@@ -359,6 +359,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private ObjList<Runnable> activeNullSetters;
     private ColumnVersionReader attachColumnVersionReader;
     private IndexBuilder attachIndexBuilder;
+    private final IntList attachCellKeys = new IntList();
+    private final LongList attachCellSizes = new LongList();
     private long attachMaxTimestamp;
     private MemoryCMR attachMetaMem;
     private TableWriterMetadata attachMetadata;
@@ -1282,8 +1284,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        // final name of partition folder after attachment
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, timestamp, getTxn());
+        // final name of partition folder after attachment. A composite day is a CONTAINER holding its
+        // cells, and carries no .nameTxn suffix -- composite versions are per CELL, inside it.
+        final boolean compositeAttach = metadata.getPartitionSpec().getDimensionCount() > 0;
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, timestamp,
+                compositeAttach ? -1L : getTxn());
         if (ff.exists(path.$())) {
             // Very unlikely since txn is part of the folder name
             return AttachDetachStatus.ATTACH_ERR_DIR_EXISTS;
@@ -1429,7 +1434,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean appendPartitionAttached = size() == 0 || txWriter.getNextPartitionTimestamp(nextMaxTimestamp) > txWriter.getNextPartitionTimestamp(txWriter.getMaxTimestamp());
 
             txWriter.beginPartitionSizeUpdate();
-            txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize, getTxn());
+            if (compositeAttach) {
+                // One attached-partition entry per cell, each with its own size, all inside the single
+                // _txn commit below: invariant 3 (all cells or none).
+                for (int i = 0, n = attachCellKeys.size(); i < n; i++) {
+                    txWriter.updatePartitionSizeByCell(
+                            timestamp, attachCellKeys.getQuick(i), attachCellSizes.getQuick(i), -1L);
+                }
+            } else {
+                txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize, getTxn());
+            }
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
             if (isSoftLink) {
                 txWriter.setPartitionReadOnlyByTimestamp(timestamp, true);
@@ -16491,7 +16505,46 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // returns size of partition detected, e.g., size of monotonic increase
     // of timestamp longs read from 0 offset to the end of the file
     // It also writes min and max values found in detachedMinTimestamp and detachedMaxTimestamp
+    /**
+     * Composite counterpart of {@link #readNativeSizeMinMaxTimestamps}: the artifact's size is the SUM
+     * across its cells and its bounds are the FOLD across them, because a composite day keeps its data
+     * one level down in per-cell directories and carries only zero-byte phantom column files at the
+     * container root.
+     * <p>
+     * Rendering the artifact's cellKeys through THIS table's registry is sound only because
+     * {@link CompositeDetachedArtifact#checkSameTable} has already refused a foreign artifact -- a
+     * cellKey is table-local.
+     */
+    private long readCompositeSizeMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName) {
+        final IntList cellKeys = attachCellKeys;
+        final LongList cellSizes = attachCellSizes;
+        CompositeDetachedArtifact.readCells(ff, path, timestampType, partitionBy, partitionTimestamp, cellKeys, cellSizes);
+        if (cellKeys.size() == 0) {
+            throw CairoException.nonCritical()
+                    .put("partition is not present in detached txn file [path=").put(path).put(']');
+        }
+
+        final ObjList<CharSequence> segments = new ObjList<>();
+        final StringSink segmentSink = new StringSink();
+        long total = 0;
+        for (int i = 0, n = cellKeys.size(); i < n; i++) {
+            segmentSink.clear();
+            renderCellSegment(segmentSink, cellKeys.getQuick(i));
+            segments.add(segmentSink.toString());
+            total += cellSizes.getQuick(i);
+        }
+
+        final long[] minMax = new long[]{-1, -1};
+        CompositeDetachedArtifact.readMinMaxTimestamps(ff, path, columnName, timestampType, segments, cellSizes, minMax);
+        attachMinTimestamp = minMax[0];
+        attachMaxTimestamp = minMax[1];
+        return total;
+    }
+
     private long readNativeSizeMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName) {
+        if (metadata.getPartitionSpec().getDimensionCount() > 0) {
+            return readCompositeSizeMinMaxTimestamps(partitionTimestamp, path, columnName);
+        }
         int pathLen = path.size();
         try {
             path.concat(TXN_FILE_NAME);

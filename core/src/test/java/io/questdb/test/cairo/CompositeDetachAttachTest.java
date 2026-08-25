@@ -82,12 +82,15 @@ public class CompositeDetachAttachTest extends AbstractCompositeTwinTest {
      * DETACH then ATTACH must round-trip: the table returns to its pre-detach contents and agrees with
      * the twin, which never lost the day at all.
      */
-    @Ignore("SP1: ATTACH is not yet supported for composite. Measured 2026-08-18 with the gates lifted:"
-            + " DETACH round-trips as far as the artifact, then attach fails 'cannot read min, max"
-            + " timestamp ... errno=2' because it reads the designated-timestamp column at the artifact's"
-            + " CONTAINER root while a composite artifact keeps its data inside per-cell directories."
-            + " Re-attaching must also map those directories' dimension VALUES back to this table's"
-            + " cellKeys. Un-ignore when attach is cell-aware.")
+    @Ignore("SP1: ATTACH is not yet supported for composite. RE-MEASURED 2026-08-25 with the gates"
+            + " lifted, and it now fails LATER than it used to. The size sum, the min/max fold, the bare"
+            + " day container and the per-cell _txn registration are all in place, so attach returns OK --"
+            + " and the day's rows are then MISSING from the table. That is the exact silent shape"
+            + " attachPartition's own gate comment predicts: the per-cell column-version pinning"
+            + " (attachPartitionPinColumnVersions iterates the CONTAINER) and the three"
+            + " attachPartitionCheckFilesMatch* validators still concatenate flat, with no cell concept,"
+            + " and a missing column is recorded as a full-partition column top rather than an error."
+            + " Un-ignore when those walk cells.")
     @Test(timeout = 60_000)
     public void testDetachThenAttachRoundTrips() throws Exception {
         assertMemoryLeak(() -> {
