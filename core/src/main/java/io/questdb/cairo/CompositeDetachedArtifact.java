@@ -84,4 +84,34 @@ public final class CompositeDetachedArtifact {
             artifactRoot.trimTo(rootLen);
         }
     }
+
+    /**
+     * Returns the total row count the artifact holds for {@code partitionTimestamp}, summed across every
+     * cell. A plain artifact has exactly one entry, so the sum degenerates to it.
+     */
+    public static long readSize(
+            FilesFacade ff,
+            Path artifactRoot,
+            int timestampType,
+            int partitionBy,
+            long partitionTimestamp
+    ) {
+        final int rootLen = artifactRoot.size();
+        try (TxReader txReader = new TxReader(ff)) {
+            txReader.ofRO(artifactRoot.concat(TableUtils.TXN_FILE_NAME).$(), timestampType, partitionBy);
+            txReader.unsafeLoadAll();
+            // Deliberately NOT getPartitionRowCountByTimestamp: that resolves through
+            // findAttachedPartitionRawIndexByLoTimestamp, which hardcodes cellKey = 0, so on a composite
+            // artifact it returns the FIRST cell's row count and calls it the day's.
+            long size = 0;
+            for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
+                if (txReader.getPartitionTimestampByIndex(i) == partitionTimestamp) {
+                    size += txReader.getPartitionSize(i);
+                }
+            }
+            return size;
+        } finally {
+            artifactRoot.trimTo(rootLen);
+        }
+    }
 }

@@ -95,6 +95,50 @@ public class CompositeAttachArtifactTest extends AbstractCompositeTwinTest {
         });
     }
 
+    /**
+     * The measured defect this fixes: attaching a two-row, two-cell day reported
+     * {@code partitionSizeRows=1}. {@code getPartitionRowCountByTimestamp} resolves through
+     * {@code findAttachedPartitionRawIndexByLoTimestamp}, which hardcodes {@code cellKey = 0}, so it
+     * returns the FIRST cell's row count and calls it the day's. The size must be the sum across cells.
+     * <p>
+     * Asserting the number, not merely that the read stopped failing: a cell-blind read still returns a
+     * plausible-looking 1 here.
+     */
+    @Test(timeout = 60_000)
+    public void testSizeIsTheSumAcrossCellsNotTheFirstCell() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            // Three rows on the detached day, split 2/1 across two cells, so neither a first-cell-only
+            // read (2) nor a cell count (2) can masquerade as the correct total of 3.
+            insertIntoBoth("('" + DAY + "T01:00:00.000000Z','E0',1.0),"
+                    + "('" + DAY + "T02:00:00.000000Z','E0',2.0),"
+                    + "('" + DAY + "T20:00:00.000000Z','E1',3.0),"
+                    + "('2023-01-02T01:00:00.000000Z','E0',4.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            execute("ALTER TABLE c DETACH PARTITION LIST '" + DAY + "'");
+            drainWalQueue();
+
+            Assert.assertEquals("the detached day holds three rows across two cells",
+                    3L, readArtifactSize());
+        });
+    }
+
+    private long readArtifactSize() throws IOException {
+        final String artifact = tableDir().resolve(DAY + ".detached").toString();
+        try (Path path = new Path()) {
+            path.of(artifact);
+            return CompositeDetachedArtifact.readSize(
+                    configuration.getFilesFacade(),
+                    path,
+                    ColumnType.TIMESTAMP,
+                    PartitionBy.DAY,
+                    parseFloorPartialTimestamp(DAY)
+            );
+        }
+    }
+
     private IntList readArtifactCellKeys() throws IOException {
         final IntList out = new IntList();
         final String artifact = tableDir().resolve(DAY + ".detached").toString();
