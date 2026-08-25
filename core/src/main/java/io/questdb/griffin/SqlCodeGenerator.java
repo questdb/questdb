@@ -11811,13 +11811,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // with the keyColumn branch above), the feature is enabled, not opted out, and not an UPDATE.
                 // no_index(t) is the documented escape hatch that forces a full scan, so it suppresses this
                 // route as well; every other index decision in this file consults it too.
+                //
+                // A live view base SELECT is excluded for the same reason WhereClauseParser suppresses
+                // indexed-symbol key extraction for one: the incremental refresh drives the compiled plan
+                // itself, and it only knows the plain filter-over-full-scan shape. The adaptive factory
+                // breaks that plan twice over - LiveViewCompiledPlan reaches its scan delegate's leaf,
+                // whose partition frames come from a NonOwningPartitionFrameCursorFactory rather than a
+                // full scan, so the O3 replay's getCursorInTimestampRange() rejects it; and the residual
+                // filter the WAL-segment path applies is the factory's PreparedSymbolPatternFilter, whose
+                // matched-key set only the factory's own prepare() builds. Both faults land after CREATE,
+                // at refresh, where they exhaust the flush retry budget and invalidate the view.
                 if (intrinsicModel.keyColumn == null
                         && intrinsicModel.filter != null
                         && intrinsicModel.keySubQuery == null
                         && configuration.isSymbolPatternIndexEnabled()
                         && !SqlHints.hasNoSymbolPatternIndexHint(model)
                         && !SqlHints.hasNoIndexHint(model)
-                        && !model.isUpdate()) {
+                        && !model.isUpdate()
+                        && !executionContext.isLiveViewCompile()) {
                     final RecordCursorFactory f;
                     try {
                         f = tryGenerateSymbolPatternIndex(
@@ -12736,11 +12747,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Non-owning alias. patternFilter stays the owning local that the catch below frees, and
             // is nulled at whichever point ownership actually transfers.
             final AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter preparedFilter = patternFilter;
+            // ONE close-no-op wrapper for all three delegates, not one each: it is also the hand-off
+            // point that lets the delegate an open selects read the very partition-frame cursor - and
+            // therefore the very reader transaction - the adaptive owner's selectivity estimate built
+            // its key lists from. Separate wrappers would each open their own reader again.
+            final AdaptiveSymbolPatternRecordCursorFactory.NonOwningPartitionFrameCursorFactory sharedFrameFactory =
+                    new AdaptiveSymbolPatternRecordCursorFactory.NonOwningPartitionFrameCursorFactory(dfcFactory);
 
             indexDelegate = new SymbolPatternIndexRecordCursorFactory(
                     configuration,
                     queryMeta,
-                    new AdaptiveSymbolPatternRecordCursorFactory.NonOwningPartitionFrameCursorFactory(dfcFactory),
+                    sharedFrameFactory,
                     keyColumnIndex,
                     effectiveKeys,
                     model.getOrderByAdviceMnemonic(),
@@ -12756,7 +12773,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (coveringMapping != null) {
                     coveringDelegate = new CoveringIndexRecordCursorFactory(
                             queryMeta,
-                            new AdaptiveSymbolPatternRecordCursorFactory.NonOwningPartitionFrameCursorFactory(dfcFactory),
+                            sharedFrameFactory,
                             keyReaderColIdx,
                             SymbolTable.VALUE_NOT_FOUND,
                             null,
@@ -12774,7 +12791,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             scanDelegate = new PageFrameRecordCursorFactory(
                     configuration,
                     queryMeta,
-                    new AdaptiveSymbolPatternRecordCursorFactory.NonOwningPartitionFrameCursorFactory(dfcFactory),
+                    sharedFrameFactory,
                     new PageFrameRowCursorFactory(dfcFactory.getOrder()),
                     false,
                     null,
@@ -12823,6 +12840,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     new AdaptiveSymbolPatternRecordCursorFactory(
                             queryMeta,
                             dfcFactory,
+                            sharedFrameFactory,
                             columnIndexes,
                             effectiveKeys,
                             columnIndexes.getQuick(keyColumnIndex),

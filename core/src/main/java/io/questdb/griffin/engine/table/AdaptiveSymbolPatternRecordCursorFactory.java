@@ -45,11 +45,14 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -83,6 +86,16 @@ import java.util.concurrent.atomic.AtomicLong;
  *       re-bound bind variable cannot make them disagree.</li>
  * </ul>
  * <p>
+ * Self-filtering mode also advertises FILTER STEALING, because being the top-level operator with
+ * no page frames is exactly what a parallel parent cannot work with. A parent that needs page
+ * frames - parallel GROUP BY, SAMPLE BY, async top-K - admits a child through either
+ * {@code supportsPageFrameCursor()} or {@code supportsFilterStealing()}, and self-filtering mode
+ * answered false to both, so the parent silently fell back to its serial operator EVEN WHEN the
+ * per-open estimate would have picked the parallel scan. Measured with four workers over 10M rows
+ * and a pattern matching 10% of them, that cost 28.982 ms against 8.644 ms for a keyed GROUP BY and
+ * 34.802 ms against 8.962 ms for a SAMPLE BY. See {@link #supportsFilterStealing()} and
+ * {@link #halfClose()} for what a steal costs in return.
+ * <p>
  * The conservative policy opens an index delegate only after a bounded estimate proves that the
  * matching index entries cover at most a fixed share of the selected rows. The share is route
  * dependent and fixed at construction from {@code coveringDelegate != null}: 1/50 (2%) for the
@@ -100,6 +113,16 @@ import java.util.concurrent.atomic.AtomicLong;
  * cursor that cannot state its row count up front (every interval-filtered query) supplies the
  * denominator frame by frame instead of being rejected outright. Probe budget exhaustion on either
  * axis selects the scan delegate.
+ * <p>
+ * Every route reads the SAME table-reader transaction the estimate ran on. The estimate opens one
+ * partition-frame cursor, builds {@code effectiveKeys} and the prepared filter's key set from that
+ * reader's symbol dictionary, and then hands the cursor itself to the delegate it selects, through
+ * the shared {@link NonOwningPartitionFrameCursorFactory} all three delegates open against. Without
+ * that hand-off the delegate acquired a SECOND reader, which the pool positions at the latest
+ * transaction: a commit landing between the two acquisitions then produced a result belonging to
+ * neither snapshot - rows appeared under symbol keys the estimate had already seen, while every row
+ * under a symbol the same commit introduced was silently dropped, because it has no key in the
+ * list the estimate built. The hand-off also removes one reader acquisition per open.
  * <p>
  * The configured threshold {@code max(1, configuredThreshold)} caps planning work on the
  * two INDEPENDENT axes the estimate spends it on: at most that many partition frames, and
@@ -194,11 +217,18 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     private final int maxRowShareDivisor;
     private final PreparedSymbolPatternFilter patternFilter;
     private final RecordCursorFactory scanDelegate;
+    // The one partition-frame factory every delegate opens against, so the cursor the estimate ran on
+    // can be handed to the delegate instead of the delegate acquiring a second reader.
+    private final NonOwningPartitionFrameCursorFactory sharedFrameFactory;
     private final SymbolTableSourceMapper symbolTableSourceMapper;
+    // Set by halfClose(). Marks that a parent took the scan delegate's base and the prepared filter,
+    // so _close() must free neither them nor anything halfClose() already freed.
+    private boolean isFilterStolen;
 
     public AdaptiveSymbolPatternRecordCursorFactory(
             @NotNull RecordMetadata metadata,
             @NotNull PartitionFrameCursorFactory dfcFactory,
+            @NotNull NonOwningPartitionFrameCursorFactory sharedFrameFactory,
             @NotNull IntList columnIndexes,
             @NotNull IntList effectiveKeys,
             int indexReaderColumnIndex,
@@ -212,6 +242,8 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     ) {
         super(metadata);
         this.dfcFactory = dfcFactory;
+        this.sharedFrameFactory = sharedFrameFactory;
+        sharedFrameFactory.of(this);
         this.columnIndexes = columnIndexes;
         this.effectiveKeys = effectiveKeys;
         this.indexReaderColumnIndex = indexReaderColumnIndex;
@@ -233,43 +265,95 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         // Wrapped mode only; supportsPageFrameCursor() reports false for the other one, where the scan
         // delegate is an async filter with no frames to give.
         assert indexRouteFilterCursor == null;
-        final boolean isSelective = prepareAndEstimate(executionContext);
-        if (isSelective && coveringDelegate != null) {
-            testCoveringInvocations.incrementAndGet();
-            return coveringDelegate.getPageFrameCursor(executionContext, order);
+        // The delegate this open selects requests the very same order, so the estimate opens its
+        // cursor with it and the hand-off below matches.
+        final boolean isSelective = prepareAndEstimate(executionContext, order);
+        try {
+            if (isSelective && coveringDelegate != null) {
+                testCoveringInvocations.incrementAndGet();
+                return coveringDelegate.getPageFrameCursor(executionContext, order);
+            }
+            testScanInvocations.incrementAndGet();
+            if (!isSelective) {
+                SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.incrementAndGet();
+            }
+            return scanDelegate.getPageFrameCursor(executionContext, order);
+        } finally {
+            // A no-op once the delegate has taken the pinned cursor. It releases the reader when the
+            // delegate never asked for a cursor, when it asked for the opposite scan direction, or
+            // when the open threw before reaching the delegate.
+            sharedFrameFactory.releasePinnedCursor();
         }
-        testScanInvocations.incrementAndGet();
-        if (!isSelective) {
-            SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.incrementAndGet();
-        }
-        return scanDelegate.getPageFrameCursor(executionContext, order);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final boolean isSelective = prepareAndEstimate(executionContext);
-        if (isSelective) {
-            if (coveringDelegate != null) {
-                testCoveringInvocations.incrementAndGet();
-                return coveringDelegate.getCursor(executionContext);
+        // Ascending: the covering delegate opens ORDER_ASC, and both page-frame delegates open
+        // ORDER_ANY, which resolves to the partition factory's own base order.
+        final boolean isSelective = prepareAndEstimate(executionContext, PartitionFrameCursorFactory.ORDER_ASC);
+        try {
+            if (isSelective) {
+                if (coveringDelegate != null) {
+                    testCoveringInvocations.incrementAndGet();
+                    return coveringDelegate.getCursor(executionContext);
+                }
+                final RecordCursor indexCursor = indexDelegate.getCursor(executionContext);
+                if (indexRouteFilterCursor == null) {
+                    return indexCursor;
+                }
+                // The index route only guarantees the pattern conjunct; the residual still has to run, and
+                // in self-filtering mode no wrapper above this factory will run it.
+                try {
+                    indexRouteFilterCursor.of(indexCursor, executionContext);
+                    return indexRouteFilterCursor;
+                } catch (Throwable th) {
+                    Misc.free(indexCursor);
+                    throw th;
+                }
             }
-            final RecordCursor indexCursor = indexDelegate.getCursor(executionContext);
-            if (indexRouteFilterCursor == null) {
-                return indexCursor;
-            }
-            // The index route only guarantees the pattern conjunct; the residual still has to run, and
-            // in self-filtering mode no wrapper above this factory will run it.
-            try {
-                indexRouteFilterCursor.of(indexCursor, executionContext);
-                return indexRouteFilterCursor;
-            } catch (Throwable th) {
-                Misc.free(indexCursor);
-                throw th;
-            }
+            testScanInvocations.incrementAndGet();
+            SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.incrementAndGet();
+            return scanDelegate.getCursor(executionContext);
+        } finally {
+            // See getPageFrameCursor().
+            sharedFrameFactory.releasePinnedCursor();
         }
-        testScanInvocations.incrementAndGet();
-        SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.incrementAndGet();
-        return scanDelegate.getCursor(executionContext);
+    }
+
+    /**
+     * The scan delegate's own base - a bare page-frame factory - in self-filtering mode, and null in
+     * wrapped mode, which does not offer filter stealing. See {@link #supportsFilterStealing()}.
+     */
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return indexRouteFilterCursor != null ? scanDelegate.getBaseFactory() : null;
+    }
+
+    // The next three answer null today, whichever mode this factory is in: in wrapped mode the guard
+    // returns null, and in self-filtering mode the scan delegate is always the
+    // AsyncFilteredRecordCursorFactory built by tryGenerateSymbolPatternIndex, which overrides none of
+    // them and so falls through to the interface defaults. They stay because a stealing parent reads
+    // this whole group together with getFilter() - see SqlCodeGenerator's parallel-aggregate steal -
+    // so it is a contract unit that must keep delegating if the scan delegate ever stops being async.
+
+    @Override
+    public @Nullable ObjList<Function> getBindVarFunctions() {
+        return indexRouteFilterCursor != null ? scanDelegate.getBindVarFunctions() : null;
+    }
+
+    @Override
+    public @Nullable MemoryCARW getBindVarMemory() {
+        return indexRouteFilterCursor != null ? scanDelegate.getBindVarMemory() : null;
+    }
+
+    @Override
+    public @Nullable CompiledFilter getCompiledFilter() {
+        return indexRouteFilterCursor != null ? scanDelegate.getCompiledFilter() : null;
+    }
+
+    @Override
+    public @Nullable Function getFilter() {
+        return indexRouteFilterCursor != null ? scanDelegate.getFilter() : null;
     }
 
     @Override
@@ -287,8 +371,54 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     }
 
     @Override
+    public @Nullable ExpressionNode getStealFilterExpr() {
+        return indexRouteFilterCursor != null ? scanDelegate.getStealFilterExpr() : null;
+    }
+
+    @Override
     public TableToken getTableToken() {
         return dfcFactory.getTableToken();
+    }
+
+    /**
+     * Dismantles this factory after a parent has stolen the filter. The parent keeps exactly two
+     * things: {@link #getBaseFactory()}, the scan delegate's bare page-frame factory, and
+     * {@link #getFilter()}, the shared prepared filter. Everything else this factory owns is freed
+     * here, because the code generator drops a stolen-from factory without ever calling
+     * {@code close()} on it - {@code halfClose()} IS the terminal cleanup.
+     * <p>
+     * Ownership of {@code dfcFactory} moves to {@link #sharedFrameFactory}, which the surviving base
+     * still holds and still closes. The base keeps opening through that wrapper, so it keeps calling
+     * back into {@link #prepareKeysFor}: that is what rebuilds the stolen filter's matched-key set
+     * against the executing reader, since {@code PreparedSymbolPatternFilter.init()} deliberately
+     * leaves the provider alone. The half-closed factory therefore stays reachable as the wrapper's
+     * owner; only its delegates are gone.
+     */
+    @Override
+    public void halfClose() {
+        assert indexRouteFilterCursor != null : "only self-filtering mode advertises filter stealing";
+        isFilterStolen = true;
+        // The index route is unreachable from here on: the parent aggregates over page frames the
+        // bitmap index cannot supply. That is what a steal costs -- a pattern selective enough for
+        // the per-open estimate to admit the index now runs the parallel scan instead.
+        Throwable failure = Misc.freeBestEffort(null, sharedFrameFactory.takePinnedCursor());
+        // Order matters: closing the index delegate closes the shared wrapper too, so the ownership
+        // transfer below has to come after it, or the wrapper would free dfcFactory here and the
+        // surviving base would then hold a closed one.
+        failure = Misc.freeBestEffort(failure, indexDelegate);
+        try {
+            // Frees the async machinery but neither the base nor the filter, which is precisely the
+            // pair the parent took.
+            scanDelegate.halfClose();
+        } catch (Throwable th) {
+            if (failure == null) {
+                failure = th;
+            } else if (failure != th) {
+                failure.addSuppressed(th);
+            }
+        }
+        sharedFrameFactory.assumeDelegateOwnership();
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
@@ -310,12 +440,27 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     }
 
     @Override
+    public boolean supportsFilterStealing() {
+        // Self-filtering mode only, where this factory is the top-level operator and supplies no page
+        // frames. Wrapped mode needs no answer here: it already supplies frames, so its parent admits
+        // it directly and steals from the async filter above it instead.
+        //
+        // The claim a true makes is that this factory is a filter over getBaseFactory(). That holds
+        // for the scan route verbatim, and it is the route the estimate picks for every pattern the
+        // index route would lose on. It does NOT hold for the index route, which the steal discards
+        // outright -- see halfClose(). The alternative is what shipped before: no parent can
+        // parallelise over a symbol-pattern filter at all, on any pattern.
+        return indexRouteFilterCursor != null && scanDelegate.supportsFilterStealing();
+    }
+
+    @Override
     public boolean supportsPageFrameCursor() {
         // True exactly in wrapped mode. getPageFrameCursor() opens only the covering delegate or the
         // scan delegate, and both supply page frames, so the answer holds for every route it can take.
         // In self-filtering mode the answer must stay false for a second, stronger reason: the scan
         // delegate is then an async-filtered factory, so exposing frames upward would either hand the
         // caller a factory that has no frames or, in an earlier link of the chain, unfiltered rows.
+        // A parallel parent reaches the scan plan through supportsFilterStealing() instead.
         return coveringDelegate != null;
     }
 
@@ -358,126 +503,161 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
 
     @Override
     protected void _close() {
+        if (isFilterStolen) {
+            // halfClose() already freed everything this factory still owned and handed the scan
+            // delegate's base and the shared filter to the parent that stole them. Freeing again here
+            // would free the parent's own children.
+            return;
+        }
         // Best-effort: in self-filtering mode the index and scan delegates own compiled filter
-        // functions, so a throw from the first close must not strand the rest.
-        Throwable failure = Misc.freeBestEffort(null, coveringDelegate);
+        // functions, so a throw from the first close must not strand the rest. The pin release joins
+        // the chain rather than preceding it, so a cleanup failure there cannot strand the delegates.
+        // It is defensive only: both getCursor() and getPageFrameCursor() release the pin in a finally
+        // block, so no traced path reaches close() with one held.
+        Throwable failure = Misc.freeBestEffort(null, sharedFrameFactory.takePinnedCursor());
+        failure = Misc.freeBestEffort(failure, coveringDelegate);
         failure = Misc.freeBestEffort(failure, indexDelegate);
         failure = Misc.freeBestEffort(failure, scanDelegate);
         failure = Misc.freeBestEffort(failure, dfcFactory);
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    private boolean prepareAndEstimate(SqlExecutionContext executionContext) throws SqlException {
-        try (PartitionFrameCursor frameCursor = dfcFactory.getCursor(
-                executionContext,
-                columnIndexes,
-                PartitionFrameCursorFactory.ORDER_ASC
-        )) {
-            symbolTableSourceMapper.of(frameCursor);
-            patternFilter.prepare(symbolTableSourceMapper, executionContext);
-            buildEffectiveKeys(symbolTableSourceMapper);
-            if (effectiveKeys.size() == 0) {
-                return true;
-            }
+    /**
+     * Opens one partition-frame cursor, builds the key set from its reader, costs the routes against
+     * it, and then PINS it for the delegate this open selects. The delegate takes that cursor - and
+     * therefore that reader transaction - out of {@link #sharedFrameFactory} instead of acquiring a
+     * second reader the pool would position at the latest transaction. The caller releases the pin in
+     * a finally block, which is a no-op once a delegate has taken it.
+     */
+    private boolean prepareAndEstimate(SqlExecutionContext executionContext, int order) throws SqlException {
+        final PartitionFrameCursor frameCursor = dfcFactory.getCursor(executionContext, columnIndexes, order);
+        final boolean isSelective;
+        try {
+            prepareKeysFor(frameCursor, executionContext);
+            isSelective = estimate(frameCursor);
+        } catch (Throwable th) {
+            Misc.free(frameCursor);
+            throw th;
+        }
+        sharedFrameFactory.pinCursor(frameCursor, columnIndexes, order);
+        return isSelective;
+    }
 
-            // A cursor confined to designated-timestamp intervals answers size() with -1 rather than
-            // counting rows it has not walked yet (AbstractIntervalPartitionFrameCursor.size()), and
-            // that is the shape every time-filtered query takes. Reading -1 as "reject" kept the index
-            // route dark on exactly the queries whose row set is already narrowed to where it wins, so
-            // the denominator comes from the frames instead - they carry the selected row count and the
-            // loop below walks them anyway. calculateSize() would answer it too, but it re-walks every
-            // partition in the interval, a second pass this loop does not need.
-            final long totalRows = frameCursor.size();
-            final boolean isTotalRowsKnown = totalRows >= 0;
-            // Recomputed per frame while the total is unknown. The running denominator only ever
-            // under-estimates the final one, so the admission test below can reject a run of matches
-            // that later frames would have diluted, but it can never admit a route the final ratio
-            // would have rejected.
-            long maxIndexRows = isTotalRowsKnown ? Math.max(1, totalRows / maxRowShareDivisor) : 1;
-            final TableReader tableReader = frameCursor.getTableReader();
-            // The frame cap in O(1), for the cursors whose partition count bounds their frame count.
-            // size() >= 0 is exactly that signal: a cursor that can state its row count off reader
-            // metadata is walking whole partitions, and it yields one frame per NON-EMPTY partition
-            // (FullFwdPartitionFrameCursor.next()), so the reader's partition count bounds it. Walking
-            // to find that out reaches the same verdict -- the loop below rejects at frame
-            // maxEstimateProbes + 1 -- so this skips the walk without moving the route. The one
-            // divergence is a table with enough empty partitions to bring the frame count back under
-            // the cap, and that can only arise on a table whose partition count is already past the
-            // cap, where the fallback is the answer the cap exists to give.
-            // An interval cursor is deliberately excluded: its frames are the partitions IN RANGE, and
-            // the total partition count does not bound those usefully -- a one-day filter on a
-            // three-year table walks a single frame, which is the shape the index route wins on.
-            if (isTotalRowsKnown && tableReader.getPartitionCount() > maxEstimateProbes) {
-                return false;
-            }
-            long matchedRows = 0;
-            long selectedRows = 0;
-            int frames = 0;
-            PartitionFrame frame;
-            while ((frame = frameCursor.next()) != null) {
-                if (isEstimatorCounterEnabled) {
-                    testEstimatorFramesWalked.incrementAndGet();
-                }
-                if (++frames > maxEstimateProbes) {
-                    return false;
-                }
-                final IndexReader reader = tableReader.getIndexReader(
-                        frame.getPartitionIndex(),
-                        indexReaderColumnIndex,
-                        IndexReader.DIR_FORWARD
-                );
-                final long rowLo = frame.getRowLo();
-                final long rowHiExclusive = frame.getRowHi();
-                final long callerHiInclusive = rowHiExclusive - 1;
-                if (!isTotalRowsKnown) {
-                    selectedRows += rowHiExclusive - rowLo;
-                    maxIndexRows = Math.max(1, selectedRows / maxRowShareDivisor);
-                }
-                // Reset per frame: the key cap bounds what one frame may cost, and the frame cap above
-                // bounds how many frames may cost that. Spending one counter across both multiplies the
-                // two axes together, which is what let partition count alone exhaust the budget.
-                int keyProbes = 0;
-                for (int i = 0, n = effectiveKeys.size(); i < n; i++) {
-                    if (++keyProbes > maxEstimateProbes) {
-                        return false;
-                    }
-                    final int indexKey = TableUtils.toIndexKey(effectiveKeys.getQuick(i));
-                    long count = Numbers.LONG_NULL;
-                    if (reader instanceof AbstractPostingIndexReader posting) {
-                        final long entryMax = posting.getEntryMaxValue();
-                        final long clampedMax = entryMax >= 0
-                                ? Math.min(callerHiInclusive, entryMax)
-                                : callerHiInclusive;
-                        count = posting.countMatchesClamped(indexKey, rowLo, callerHiInclusive, clampedMax);
-                    } else if (reader instanceof BitmapIndexFwdReader bitmap) {
-                        // SYMBOL INDEX without an explicit type builds a bitmap index, so this is the
-                        // default shape. countMatchesInRange() answers the same question from the key
-                        // entry and two block seeks; without it every open of a broad pattern walked
-                        // index entries up to the whole maxIndexRows budget before rejecting the route.
-                        count = bitmap.countMatchesInRange(indexKey, rowLo, callerHiInclusive);
-                    }
-                    if (count == Numbers.LONG_NULL) {
-                        // A mixed/unsealed generation cannot supply an exact metadata count. Traverse only
-                        // until the remaining budget is exceeded; this preserves a bounded estimate.
-                        count = 0;
-                        try (RowCursor rowCursor = reader.getCursor(indexKey, rowLo, callerHiInclusive)) {
-                            while (rowCursor.hasNext() && matchedRows + count <= maxIndexRows) {
-                                rowCursor.next();
-                                count++;
-                            }
-                        }
-                        if (isEstimatorCounterEnabled) {
-                            testEstimatorIndexEntryReads.addAndGet(count);
-                        }
-                    }
-                    matchedRows += count;
-                    if (matchedRows > maxIndexRows) {
-                        return false;
-                    }
-                }
-            }
+    /**
+     * Rebuilds the prepared filter's matched-key set and {@code effectiveKeys} from the symbol
+     * dictionary of {@code frameCursor}'s reader. Both key lists are only valid against the
+     * transaction they were read from: symbol keys are append-only, so a list built on an older
+     * transaction cannot point at the wrong symbol, but it has no key at all for a symbol a later
+     * commit introduced, and every row carrying that symbol would then be dropped.
+     */
+    private void prepareKeysFor(PartitionFrameCursor frameCursor, SqlExecutionContext executionContext) throws SqlException {
+        symbolTableSourceMapper.of(frameCursor);
+        patternFilter.prepare(symbolTableSourceMapper, executionContext);
+        buildEffectiveKeys(symbolTableSourceMapper);
+    }
+
+    private boolean estimate(PartitionFrameCursor frameCursor) {
+        if (effectiveKeys.size() == 0) {
             return true;
         }
+
+        // A cursor confined to designated-timestamp intervals answers size() with -1 rather than
+        // counting rows it has not walked yet (AbstractIntervalPartitionFrameCursor.size()), and
+        // that is the shape every time-filtered query takes. Reading -1 as "reject" kept the index
+        // route dark on exactly the queries whose row set is already narrowed to where it wins, so
+        // the denominator comes from the frames instead - they carry the selected row count and the
+        // loop below walks them anyway. calculateSize() would answer it too, but it re-walks every
+        // partition in the interval, a second pass this loop does not need.
+        final long totalRows = frameCursor.size();
+        final boolean isTotalRowsKnown = totalRows >= 0;
+        // Recomputed per frame while the total is unknown. The running denominator only ever
+        // under-estimates the final one, so the admission test below can reject a run of matches
+        // that later frames would have diluted, but it can never admit a route the final ratio
+        // would have rejected.
+        long maxIndexRows = isTotalRowsKnown ? Math.max(1, totalRows / maxRowShareDivisor) : 1;
+        final TableReader tableReader = frameCursor.getTableReader();
+        // The frame cap in O(1), for the cursors whose partition count bounds their frame count.
+        // size() >= 0 is exactly that signal: a cursor that can state its row count off reader
+        // metadata is walking whole partitions, and it yields one frame per NON-EMPTY partition
+        // (FullFwdPartitionFrameCursor.next()), so the reader's partition count bounds it. Walking
+        // to find that out reaches the same verdict -- the loop below rejects at frame
+        // maxEstimateProbes + 1 -- so this skips the walk without moving the route. The one
+        // divergence is a table with enough empty partitions to bring the frame count back under
+        // the cap, and that can only arise on a table whose partition count is already past the
+        // cap, where the fallback is the answer the cap exists to give.
+        // An interval cursor is deliberately excluded: its frames are the partitions IN RANGE, and
+        // the total partition count does not bound those usefully -- a one-day filter on a
+        // three-year table walks a single frame, which is the shape the index route wins on.
+        if (isTotalRowsKnown && tableReader.getPartitionCount() > maxEstimateProbes) {
+            return false;
+        }
+        long matchedRows = 0;
+        long selectedRows = 0;
+        int frames = 0;
+        PartitionFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            if (isEstimatorCounterEnabled) {
+                testEstimatorFramesWalked.incrementAndGet();
+            }
+            if (++frames > maxEstimateProbes) {
+                return false;
+            }
+            final IndexReader reader = tableReader.getIndexReader(
+                    frame.getPartitionIndex(),
+                    indexReaderColumnIndex,
+                    IndexReader.DIR_FORWARD
+            );
+            final long rowLo = frame.getRowLo();
+            final long rowHiExclusive = frame.getRowHi();
+            final long callerHiInclusive = rowHiExclusive - 1;
+            if (!isTotalRowsKnown) {
+                selectedRows += rowHiExclusive - rowLo;
+                maxIndexRows = Math.max(1, selectedRows / maxRowShareDivisor);
+            }
+            // Reset per frame: the key cap bounds what one frame may cost, and the frame cap above
+            // bounds how many frames may cost that. Spending one counter across both multiplies the
+            // two axes together, which is what let partition count alone exhaust the budget.
+            int keyProbes = 0;
+            for (int i = 0, n = effectiveKeys.size(); i < n; i++) {
+                if (++keyProbes > maxEstimateProbes) {
+                    return false;
+                }
+                final int indexKey = TableUtils.toIndexKey(effectiveKeys.getQuick(i));
+                long count = Numbers.LONG_NULL;
+                if (reader instanceof AbstractPostingIndexReader posting) {
+                    final long entryMax = posting.getEntryMaxValue();
+                    final long clampedMax = entryMax >= 0
+                            ? Math.min(callerHiInclusive, entryMax)
+                            : callerHiInclusive;
+                    count = posting.countMatchesClamped(indexKey, rowLo, callerHiInclusive, clampedMax);
+                } else if (reader instanceof BitmapIndexFwdReader bitmap) {
+                    // SYMBOL INDEX without an explicit type builds a bitmap index, so this is the
+                    // default shape. countMatchesInRange() answers the same question from the key
+                    // entry and two block seeks; without it every open of a broad pattern walked
+                    // index entries up to the whole maxIndexRows budget before rejecting the route.
+                    count = bitmap.countMatchesInRange(indexKey, rowLo, callerHiInclusive);
+                }
+                if (count == Numbers.LONG_NULL) {
+                    // A mixed/unsealed generation cannot supply an exact metadata count. Traverse only
+                    // until the remaining budget is exceeded; this preserves a bounded estimate.
+                    count = 0;
+                    try (RowCursor rowCursor = reader.getCursor(indexKey, rowLo, callerHiInclusive)) {
+                        while (rowCursor.hasNext() && matchedRows + count <= maxIndexRows) {
+                            rowCursor.next();
+                            count++;
+                        }
+                    }
+                    if (isEstimatorCounterEnabled) {
+                        testEstimatorIndexEntryReads.addAndGet(count);
+                    }
+                }
+                matchedRows += count;
+                if (matchedRows > maxIndexRows) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private void buildEffectiveKeys(SymbolTableSource symbolTableSource) {
@@ -505,8 +685,38 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         }
     }
 
+    /**
+     * The single partition-frame factory every delegate of one
+     * {@link AdaptiveSymbolPatternRecordCursorFactory} opens against. It closes nothing - the adaptive
+     * owner closes the real factory exactly once - and it carries the reader hand-off between the
+     * per-open selectivity estimate and the delegate that estimate selects.
+     * <p>
+     * The owner pins the cursor its estimate ran on; the first delegate that asks for a cursor in the
+     * same scan direction, over the same column set, gets that cursor back rather than a second reader
+     * the pool would position at the latest transaction. When the delegate resolves to the opposite
+     * direction the pin is released and a fresh cursor is opened, with the owner rebuilding both key
+     * lists against it, so that route reads one coherent transaction too. It just pays the second
+     * acquisition. The shape that resolves the opposite way is a DESCENDING BASE ORDER: the owner's
+     * {@code getCursor()} pins ORDER_ASC unconditionally, while the index and scan delegates ask
+     * ORDER_ANY, which {@link #resolveDirection} resolves to the base order. The page-frame path never
+     * mismatches - it pins the very order it is asked for, and every delegate then asks for that same
+     * order, the async filter's negative-limit backward path included.
+     * <p>
+     * The pin is per-open mutable state and carries the same single-open constraint the owner's
+     * {@code effectiveKeys} list already carries: one cursor open at a time per compiled factory.
+     * <p>
+     * Non-owning is the DEFAULT, not an invariant: the owner closes the real factory exactly once, so
+     * this wrapper closes nothing. {@link #assumeDelegateOwnership()} flips that when a parent steals
+     * the owner's filter, because the owner is then dismantled while the base factory holding this
+     * wrapper lives on.
+     */
     public static final class NonOwningPartitionFrameCursorFactory implements PartitionFrameCursorFactory {
-        private final PartitionFrameCursorFactory delegate;
+        private PartitionFrameCursorFactory delegate;
+        private boolean isDelegateOwned;
+        private AdaptiveSymbolPatternRecordCursorFactory owner;
+        private IntList pinnedColumnIndexes;
+        private PartitionFrameCursor pinnedCursor;
+        private int pinnedDirection;
 
         public NonOwningPartitionFrameCursorFactory(PartitionFrameCursorFactory delegate) {
             this.delegate = delegate;
@@ -514,11 +724,38 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
 
         @Override
         public void close() {
+            if (isDelegateOwned) {
+                delegate = Misc.free(delegate);
+            }
         }
 
         @Override
         public PartitionFrameCursor getCursor(SqlExecutionContext executionContext, IntList columnIndexes, int order) throws SqlException {
-            return delegate.getCursor(executionContext, columnIndexes, order);
+            final PartitionFrameCursor pinned = pinnedCursor;
+            if (pinned != null) {
+                final boolean isReusable = pinnedColumnIndexes == columnIndexes
+                        && pinnedDirection == resolveDirection(order);
+                pinnedCursor = null;
+                pinnedColumnIndexes = null;
+                if (isReusable) {
+                    // Same reader, same transaction the owner built its key lists from. The estimate
+                    // walked this cursor to the end, so rewind it.
+                    pinned.toTop();
+                    return pinned;
+                }
+                Misc.free(pinned);
+            }
+            final PartitionFrameCursor cursor = delegate.getCursor(executionContext, columnIndexes, order);
+            try {
+                // A fresh reader may already carry a newer transaction than the estimate costed, so the
+                // key lists have to be rebuilt from THIS reader's symbol dictionary before the delegate
+                // binds them.
+                owner.prepareKeysFor(cursor, executionContext);
+            } catch (Throwable th) {
+                Misc.free(cursor);
+                throw th;
+            }
+            return cursor;
         }
 
         @Override
@@ -559,6 +796,53 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         @Override
         public void toPlan(PlanSink sink) {
             delegate.toPlan(sink);
+        }
+
+        /**
+         * Takes over closing the real partition-frame factory. The owner calls this from
+         * {@link AdaptiveSymbolPatternRecordCursorFactory#halfClose()}, where it stops being the
+         * closer, and the base factory that survives the steal becomes the only remaining holder of
+         * this wrapper - and therefore the one that closes it.
+         */
+        void assumeDelegateOwnership() {
+            isDelegateOwned = true;
+        }
+
+        void of(AdaptiveSymbolPatternRecordCursorFactory owner) {
+            this.owner = owner;
+        }
+
+        void pinCursor(PartitionFrameCursor cursor, IntList columnIndexes, int order) {
+            assert pinnedCursor == null : "an unreleased pin would strand its reader";
+            pinnedCursor = cursor;
+            pinnedColumnIndexes = columnIndexes;
+            pinnedDirection = resolveDirection(order);
+        }
+
+        void releasePinnedCursor() {
+            Misc.free(takePinnedCursor());
+        }
+
+        /**
+         * Detaches the pinned cursor and hands it to the caller, which then owns closing it.
+         */
+        PartitionFrameCursor takePinnedCursor() {
+            final PartitionFrameCursor pinned = pinnedCursor;
+            pinnedCursor = null;
+            pinnedColumnIndexes = null;
+            return pinned;
+        }
+
+        /**
+         * The scan direction {@code order} selects, resolving ORDER_ANY the way every
+         * {@link PartitionFrameCursorFactory} implementation resolves it: to the factory's own base
+         * order, ascending unless that base order is descending.
+         */
+        private int resolveDirection(int order) {
+            if (order == ORDER_ASC || order == ORDER_DESC) {
+                return order;
+            }
+            return delegate.getOrder() == ORDER_DESC ? ORDER_DESC : ORDER_ASC;
         }
     }
 
