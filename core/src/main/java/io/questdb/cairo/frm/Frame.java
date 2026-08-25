@@ -24,8 +24,6 @@
 
 package io.questdb.cairo.frm;
 
-import io.questdb.cairo.ColumnVersionWriter;
-
 import java.io.Closeable;
 
 /**
@@ -43,7 +41,14 @@ public interface Frame extends Closeable {
 
     long getRowCount();
 
-    void publishColumnTops(ColumnVersionWriter cvw);
+    /**
+     * Reports every column's self-tracked top to {@code sink}, one {@link ColumnTopSink#setColumnTop}
+     * call per column this frame actually wrote through (see {@link #saveChanges}). A {@link ColumnTopSink}
+     * rather than a {@code ColumnVersionWriter} directly, so a caller can defer applying the values - e.g.
+     * record them off the writer thread and push them into the real {@code ColumnVersionWriter} only once
+     * it holds the writer - instead of writing straight into a table-wide, non-thread-safe instance.
+     */
+    void publishColumnTops(ColumnTopSink sink);
 
     void saveChanges(FrameColumn column);
 
