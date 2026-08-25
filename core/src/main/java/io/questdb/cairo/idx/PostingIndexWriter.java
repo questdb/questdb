@@ -3434,6 +3434,25 @@ public class PostingIndexWriter implements IndexWriter {
         if (!hasPendingData || pendingCountsAddr == 0 || activeKeyCount == 0) {
             return;
         }
+        // A preceding commit/seal flush can fail to extend the .pv (for example an
+        // I/O fault during the valueMem mremap) and leave valueMem closed while its
+        // pending batch is still queued and valueMemSize still reflects the old
+        // mapped extent. A later flush -- rollbackValues() unwinding that same failed
+        // commit, or a seal() from ADD INDEX, REINDEX or snapshot restore -- would
+        // then jumpTo() the stale valueMemSize. MemoryCMARWImpl.close() zeroes lim and
+        // appendAddress, so checkAndExtend() short-circuits only on a zero address: any
+        // positive valueMemSize routes into extend0(), which trips the size > 0 assert
+        // under -ea and dereferences the nulled FilesFacade in TableUtils.allocateDiskSpace
+        // without it. The guard below covers the remaining zero case as well. There is
+        // nothing to flush into, so raise a domain error naming the writer state and
+        // let the caller's rollback mark the writer distressed; the next open recovers
+        // the on-disk chain.
+        if (!valueMem.isOpen()) {
+            throw CairoException.critical(0)
+                    .put("cannot flush posting index into closed value memory [valueMemSize=")
+                    .put(valueMemSize).put(", genCount=").put(genCount)
+                    .put(", activeKeyCount=").put(activeKeyCount).put(']');
+        }
 
         // Sort active keys for the sparse format (requires ascending keyIds).
         // Skip sort if keys were added in order (common for sequential writes).
@@ -3683,6 +3702,20 @@ public class PostingIndexWriter implements IndexWriter {
     private void flushAllPendingDense() {
         if (!hasPendingData || pendingCountsAddr == 0 || activeKeyCount == 0) {
             return;
+        }
+        // Mirror flushAllPending's guard: a failed .pv extend can leave valueMem
+        // closed with a pending batch queued, and this dense flush would then write
+        // into it. getAppendOffset() is pure arithmetic over the zeroed bounds, so the
+        // first putLong() is what fails -- inside extend0(), on the size > 0 assert
+        // under -ea or on the nulled FilesFacade without it; the addressOf() reads
+        // further down never run. A domain error naming the writer state beats both.
+        // Keep the check below the hasPendingData early-return so a genuine no-op
+        // stays a no-op.
+        if (!valueMem.isOpen()) {
+            throw CairoException.critical(0)
+                    .put("cannot flush posting index into closed value memory [valueMemSize=")
+                    .put(valueMemSize).put(", genCount=").put(genCount)
+                    .put(", activeKeyCount=").put(activeKeyCount).put(']');
         }
 
         boolean isSorted = true;
@@ -4809,7 +4842,8 @@ public class PostingIndexWriter implements IndexWriter {
             //     anywhere in the precondition. Both methods now arm
             //     upcomingTableTxn (which FrameAlgebra.append hands them before
             //     the call) ahead of rollbackConditionally. Pinned by
-            //     PostingIndexCriticalIssuesTest#testSquashAppendRollbackPublishesUpcomingTxnAtSeal.
+            //     PostingIndexCriticalIssuesTest#testSquashAppendRollbackPublishesUpcomingTxnAtSeal
+            //     and #testSquashAppendNullsRollbackPublishesUpcomingTxnAtSeal.
             //   - TableWriter.openPartition reached here the same way --
             //     configureFollowerAndWriter, whose of() resets this field, then
             //     rollbackConditionally(rowCount) -- so a partition whose index
@@ -5114,6 +5148,22 @@ public class PostingIndexWriter implements IndexWriter {
      *                       any other value trims per-key values to those <= cutoff (rollback path)
      */
     private void reencodeAllGenerations(long newSealTxn, long maxValue, long maxValueCutoff) {
+        // The third flush/reencode site a closed valueMem reaches: Phase 1 reads
+        // every generation out of valueMem (addressOf below). truncate() closes
+        // valueMem before it opens the replacement .pv, so a failed open leaves the
+        // writer with valueMem closed and genCount > 0; a failed .pv extend leaves
+        // the same state. Both arrive here through sealFull(), or through
+        // rollbackToMaxValue() under rollbackValues() -- the path a failed truncate()
+        // leaves behind. These three guards do not cover every valueMem deref in the
+        // class: sealIncremental() dereferences it unguarded too, byte-identical to
+        // base and not provably reachable with a closed valueMem, so those sites stay
+        // as they are. genCount == 0 never touches valueMem here (empty gen loop
+        // routes to truncate()), so guard only when there is a generation to read.
+        if (genCount > 0 && !valueMem.isOpen()) {
+            throw CairoException.critical(0)
+                    .put("cannot reencode posting index generations over closed value memory [valueMemSize=")
+                    .put(valueMemSize).put(", genCount=").put(genCount).put(']');
+        }
 
         // Phase 1: Count total values per key across all generations
         long totalCountsSize = (long) keyCount * Integer.BYTES;

@@ -31,11 +31,13 @@ import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.idx.BitpackUtils;
 import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexChainEntry;
@@ -62,6 +64,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.DirectBitSet;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -1292,6 +1295,199 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
             assertQuery("SELECT count() FROM t_rowless_wal WHERE extra IS NULL")
                     .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
+        });
+    }
+
+    /**
+     * A failed {@code .pv} remap while flushing a generation runs
+     * {@code MemoryCMARWImpl.extend0}'s catch, which {@code close(false)}'s valueMem --
+     * leaving it unmapped while the pending batch is still queued and valueMemSize still
+     * reflects the old extent. The failed commit's caller then rolls back, re-entering
+     * {@code flushAllPending} through {@code rollbackValues()}. That second flush must not
+     * write into the closed valueMem: its first act is {@code jumpTo(valueMemSize)}, and
+     * because {@code close()} zeroes {@code lim} and {@code appendAddress} the
+     * {@code checkAndExtend()} short-circuit no longer fires for a positive valueMemSize,
+     * so the call lands in {@code extend0()} -- which trips {@code assert size > 0} under
+     * {@code -ea} and dereferences the nulled {@code FilesFacade} in
+     * {@code TableUtils.allocateDiskSpace} without it. {@code flushAllPending} surfaces a clean {@link CairoException} instead,
+     * so the caller can distress the writer and recover the chain on reopen.
+     */
+    @Test
+    public void testRollbackValuesRejectsFlushOverClosedValueMemAfterValueFileRemapFailure() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 1024);
+        final IntHashSet valueFds = new IntHashSet();
+        final AtomicBoolean armRemapFailure = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                valueFds.remove((int) fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                if (armRemapFailure.get() && valueFds.contains((int) fd)) {
+                    return MAP_FAILED;
+                }
+                return super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (fd > -1 && Utf8s.containsAscii(name, ".pv")) {
+                    valueFds.add((int) fd);
+                }
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "posting_rollback_closed_valuemem";
+                PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE);
+                try {
+                    // Phase 1: a clean commit builds gen 0 so valueMemSize and the mapped
+                    // .pv are non-zero before the fault, matching the production state.
+                    long row = 0;
+                    for (int k = 0; k < 256; k++) {
+                        for (int r = 0; r < 8; r++) {
+                            writer.add(k, row++);
+                        }
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                    final long gen0MaxValue = row - 1;
+
+                    // Phase 2: queue a second batch, then fail the .pv remap so the commit
+                    // flush that grows the file closes valueMem with the batch still pending.
+                    for (int k = 0; k < 256; k++) {
+                        for (int r = 0; r < 32; r++) {
+                            writer.add(k, row++);
+                        }
+                    }
+                    writer.setMaxValue(row - 1);
+                    armRemapFailure.set(true);
+                    try {
+                        writer.commit();
+                        Assert.fail("expected the armed .pv remap failure to abort the flush");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not remap file");
+                    }
+
+                    // valueMem is closed, keyMem stays open, and the batch is still pending.
+                    // rollbackValues() re-enters flushAllPending here; the method javadoc covers
+                    // why that must surface a clean CairoException instead of dereferencing it.
+                    try {
+                        writer.rollbackValues(gen0MaxValue);
+                        Assert.fail("rollbackValues must not flush into closed value memory");
+                    } catch (CairoException e) {
+                        // Pin the flush message in full: the bare "closed value memory" substring
+                        // also matches reencodeAllGenerations' guard, which would mask the removal
+                        // of this one. flushAllPending and flushAllPendingDense emit this exact
+                        // string, so no narrower assertion exists without changing production text.
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "cannot flush posting index into closed value memory"
+                        );
+                    }
+                } finally {
+                    // The writer is degraded (valueMem closed). No disarm is needed: the fault
+                    // fires only for an fd in valueFds, and MemoryCMARWImpl.close() already
+                    // routed the .pv fd through Vm.bestEffortClose -> ff.close(), which the
+                    // close(long) override above drops from the set. close() opens no file of
+                    // its own, so the armed mremap cannot match anything it does.
+                    try {
+                        writer.close();
+                    } catch (CairoException ignore) {
+                        // close() already wraps its keyMem trim I/O in a catch of its own, so
+                        // this should not throw. Swallow it regardless: a throw escaping this
+                        // finally would replace -- and hide -- a genuine assertion failure
+                        // raised by the try block above.
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * {@code truncate()} frees the pending buffers and closes valueMem before it opens the
+     * replacement {@code .pv}. When that open fails (ENOSPC/EMFILE) the resets at its tail
+     * never run, so the writer is left with valueMem closed, {@code genCount > 0} and
+     * {@code pendingCountsAddr == 0} -- the degraded state truncate()'s own comment
+     * acknowledges. A later {@code rollbackValues()} sails straight past
+     * {@code flushAllPending}'s guard (the {@code pendingCountsAddr == 0} early-return) into
+     * {@code reencodeAllGenerations}, whose Phase 1 reads every generation out of valueMem.
+     * <p>
+     * That deref is worse than the flush one: gen 0 always sits at file offset 0, and
+     * {@code MemoryCR.checkOffsetMapped(0)} is {@code 0 <= size()}, which holds on a closed
+     * mapping where {@code size()} is 0. So {@code addressOf(0)} passes even under
+     * {@code -ea} and returns {@code pageAddress + 0 == 0}; Phase 1 then reads from address
+     * 0 and the JVM dies with SIGSEGV. {@code reencodeAllGenerations} must reject the closed
+     * mapping up front instead.
+     * <p>
+     * The assertion names the reencode message specifically: if a future change moved
+     * {@code flushAllPending}'s guard above its {@code hasPendingData} early-return, that
+     * guard would fire first with a different message and mask the removal of this one.
+     */
+    @Test
+    public void testRollbackValuesRejectsReencodeOverClosedValueMemAfterTruncateOpenFailure() throws Exception {
+        final AtomicBoolean armValueFileOpenFailure = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (armValueFileOpenFailure.get() && Utf8s.containsAscii(name, ".pv")) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "posting_reencode_closed_valuemem";
+                PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE);
+                try {
+                    // Phase 1: a clean commit builds gen 0, so genCount > 0 when the fault lands.
+                    long row = 0;
+                    for (int k = 0; k < 256; k++) {
+                        for (int r = 0; r < 8; r++) {
+                            writer.add(k, row++);
+                        }
+                    }
+                    final long gen0MaxValue = row - 1;
+                    writer.setMaxValue(gen0MaxValue);
+                    writer.commit();
+                    Assert.assertTrue("commit() must build at least one generation", writer.getGenCount() > 0);
+
+                    // Phase 2: fail the replacement .pv open inside truncate(). truncate() does
+                    // not poison the writer, so the entry points below stay callable.
+                    armValueFileOpenFailure.set(true);
+                    try {
+                        writer.truncate();
+                        Assert.fail("expected the armed .pv open failure to abort truncate()");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
+                    }
+                    armValueFileOpenFailure.set(false);
+                    Assert.assertTrue("truncate() must leave a generation behind for the reencode to read",
+                            writer.getGenCount() > 0);
+
+                    // Phase 3: the reencode entry point must reject the closed mapping.
+                    try {
+                        writer.rollbackValues(gen0MaxValue - 1);
+                        Assert.fail("rollbackValues must not reencode over closed value memory");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "cannot reencode posting index generations over closed value memory"
+                        );
+                    }
+                } finally {
+                    // The writer is degraded (valueMem closed). Disarm so close()'s cleanup
+                    // does its own I/O without the injected fault, then free it.
+                    armValueFileOpenFailure.set(false);
+                    writer.close();
+                }
+            }
         });
     }
 
@@ -9107,6 +9303,167 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * The column-top twin of {@link #testSquashAppendRollbackPublishesUpcomingTxnAtSeal}, which
+     * covers the {@code append()} arming only: here the squash source carries a POSTING column
+     * top over its whole length, so {@code FrameAlgebra.append} routes the target through
+     * {@code ContiguousFileIndexedFrameColumn.appendNulls} and never calls {@code append()}.
+     * Same rationale for the arming order, same failure mode when it is wrong.
+     */
+    @Test
+    public void testSquashAppendNullsRollbackPublishesUpcomingTxnAtSeal() throws Exception {
+        // Let the O3 inserts split the partition and keep the split until the
+        // explicit squashPartitions() call below.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_squash_nulls_txn (
+                        ts TIMESTAMP,
+                        x INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_squash_nulls_txn
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP), x::INT
+                    FROM long_sequence(400)
+                    """);
+            // Extend the day to 20:00, then split it with an O3 row at 19:00.
+            execute("INSERT INTO t_squash_nulls_txn VALUES ('2024-01-01T20:00:00.000000Z', 1)");
+            execute("INSERT INTO t_squash_nulls_txn VALUES ('2024-01-01T19:00:00.000000Z', 2)");
+            // ADD COLUMN tops the ACTIVE sub-partition only, i.e. the split one
+            // the squash reads as its source.
+            execute("ALTER TABLE t_squash_nulls_txn ADD COLUMN sym SYMBOL INDEX TYPE POSTING");
+            // An O3 row that sorts before every row of the squash TARGET forces
+            // O3OpenColumnJob to materialize sym's null prefix there and drop the
+            // target's column top to 0. Without it the target's top would still
+            // equal its row count and FrameAlgebra.append would take the addTop
+            // shortcut instead of appendNulls.
+            execute("INSERT INTO t_squash_nulls_txn VALUES ('2024-01-01T00:00:00.000000Z', 3, 'm')");
+            assertQuery("SELECT count() FROM table_partitions('t_squash_nulls_txn')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            2
+                            """);
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.verifyTableName("t_squash_nulls_txn");
+            final long columnNameTxn;
+            final long sourceColumnTop;
+            final long targetColumnTop;
+            final long targetNameTxn;
+            final long targetRowCount;
+            final long targetTs;
+            final long txnBeforeSquash;
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader txFile = reader.getTxFile();
+                final ColumnVersionReader cvr = reader.getColumnVersionReader();
+                final int symIndex = reader.getMetadata().getColumnIndex("sym");
+                targetTs = txFile.getPartitionTimestampByIndex(0);
+                targetNameTxn = txFile.getPartitionNameTxn(0);
+                targetRowCount = txFile.getPartitionSize(0);
+                txnBeforeSquash = txFile.getTxn();
+                columnNameTxn = cvr.getColumnNameTxn(targetTs, symIndex);
+                // Resolve both tops the way FrameImpl.createColumn does: an absent
+                // record means the column does not exist in that partition, i.e. a
+                // top equal to the partition's row count.
+                final long targetTop = cvr.getColumnTop(targetTs, symIndex);
+                targetColumnTop = Math.min(targetTop < 0 ? targetRowCount : targetTop, targetRowCount);
+                final long sourceRowCount = txFile.getPartitionSize(1);
+                final long sourceTop = cvr.getColumnTop(txFile.getPartitionTimestampByIndex(1), symIndex);
+                sourceColumnTop = Math.min(sourceTop < 0 ? sourceRowCount : sourceTop, sourceRowCount);
+            }
+            // FrameAlgebra.append reaches appendNulls only when the source pads
+            // NULLs and the target's column top differs from its row count.
+            Assert.assertTrue(
+                    "test setup gap: the squash source carries no sym column top, so FrameAlgebra.append"
+                            + " pads no NULLs [sourceColumnTop=" + sourceColumnTop + ']',
+                    sourceColumnTop > 0
+            );
+            Assert.assertNotEquals(
+                    "test setup gap: the squash target's sym column top equals its row count, so"
+                            + " FrameAlgebra.append takes the addTop shortcut instead of appendNulls"
+                            + " [targetColumnTop=" + targetColumnTop + ']',
+                    targetRowCount,
+                    targetColumnTop
+            );
+
+            final long headOffsetBeforeSquash;
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, targetTs, targetNameTxn);
+                final int plen = path.size();
+                // Strand rowids past the target's committed row count so that
+                // appendNulls' rollbackConditionally publishes. See the sibling
+                // test for why this bare writer's own entry is tagged 0 and why
+                // the walk below starts at the head watermark.
+                try (PostingIndexWriter planted = new PostingIndexWriter(configuration)) {
+                    planted.of(path.trimTo(plen), "sym", columnNameTxn, targetTs, targetNameTxn);
+                    for (int i = 0; i < 5; i++) {
+                        planted.add(0, targetRowCount + i);
+                    }
+                    planted.setMaxValue(targetRowCount + 4);
+                    planted.commit();
+                }
+                headOffsetBeforeSquash = readPostingChainHeadOffset(path.trimTo(plen), "sym", columnNameTxn);
+
+                try (TableWriter w = TestUtils.getWriter(engine, token)) {
+                    w.squashPartitions();
+                }
+                engine.releaseAllWriters();
+
+                final LongList newTags = new LongList();
+                readPostingChainTagsAbove(path.trimTo(plen), "sym", columnNameTxn, headOffsetBeforeSquash, newTags);
+                Assert.assertTrue(
+                        "the squash must have published two new chain entries: appendNulls'"
+                                + " rollbackConditionally republish and its terminal commit(). Fewer means"
+                                + " rollbackConditionally never published, so the assertions below cover"
+                                + " nothing [tags=" + newTags + ']',
+                        newTags.size() >= 2
+                );
+                for (int i = 0, n = newTags.size(); i < n; i++) {
+                    Assert.assertNotEquals(
+                            "a chain entry published by the squash carries TXN_AT_SEAL=0, i.e. publishToChain's"
+                                    + " pendingTxnAtSeal<0 fallback: ContiguousFileIndexedFrameColumn.appendNulls"
+                                    + " armed setNextTxnAtSeal only AFTER rollbackConditionally [tags=" + newTags + ']',
+                            0L,
+                            newTags.getQuick(i)
+                    );
+                }
+                Assert.assertTrue(
+                        "the squash's republish must carry the upcoming table txn FrameAlgebra was given"
+                                + " [tags=" + newTags + ", txnBeforeSquash=" + txnBeforeSquash + ']',
+                        newTags.indexOf(txnBeforeSquash + 1) >= 0
+                );
+            }
+
+            // The squashed partition must still answer indexed predicates: 'm' is
+            // the only non-NULL sym in the target, and the source's two rows are
+            // the NULLs appendNulls padded.
+            assertQuery("SELECT count() FROM t_squash_nulls_txn WHERE sym = 'm'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            1
+                            """);
+            assertQuery("SELECT count() FROM t_squash_nulls_txn WHERE sym IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            402
+                            """);
+        });
+    }
+
+    /**
      * A partition squash appends the source partition into the target through
      * {@code FrameAlgebra.append} -> {@code ContiguousFileIndexedFrameColumn.append},
      * which starts with {@code indexWriter.rollbackConditionally(appendOffsetRowCount)}
@@ -9190,7 +9547,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     planted.setMaxValue(targetRowCount + 4);
                     planted.commit();
                 }
-                headOffsetBeforeSquash = readPostingChainHeadOffset(path.trimTo(plen), "sym");
+                headOffsetBeforeSquash = readPostingChainHeadOffset(path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE);
 
                 // The squash appends the split sub-partition into the target
                 // through FrameAlgebra.append, whose rollbackConditionally
@@ -9201,7 +9558,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 engine.releaseAllWriters();
 
                 final LongList newTags = new LongList();
-                readPostingChainTagsAbove(path.trimTo(plen), "sym", headOffsetBeforeSquash, newTags);
+                readPostingChainTagsAbove(path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE, headOffsetBeforeSquash, newTags);
                 Assert.assertTrue(
                         "the squash must have published at least one new chain entry",
                         newTags.size() > 0
@@ -12734,15 +13091,15 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
-     * Returns the chain head entry offset of the posting {@code .pk} for {@code name},
-     * read from a raw private mapping. Callers use it as a watermark: every entry
+     * Returns the chain head entry offset of the posting {@code .pk} for
+     * {@code (name, columnNameTxn)}, read from a raw private mapping. Callers use it as a watermark: every entry
      * published later sits above it in the chain. {@code path} is left trimmed to
      * {@code plen}.
      */
-    private long readPostingChainHeadOffset(Path path, CharSequence name) {
+    private long readPostingChainHeadOffset(Path path, CharSequence name, long columnNameTxn) {
         final FilesFacade ff = configuration.getFilesFacade();
         final int plen = path.size();
-        final LPSZ keyFile = PostingIndexUtils.keyFileName(path, name, COLUMN_NAME_TXN_NONE);
+        final LPSZ keyFile = PostingIndexUtils.keyFileName(path, name, columnNameTxn);
         try (MemoryCMARWImpl pk = new MemoryCMARWImpl(ff, keyFile, ff.getPageSize(),
                 ff.length(keyFile), MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
             PostingIndexChainWriter chain = new PostingIndexChainWriter();
@@ -12785,16 +13142,16 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
-     * Collects the {@code TXN_AT_SEAL} of every chain entry published after the entry
-     * at {@code sinceEntryOffset}, walking back from the head through
+     * Collects the {@code TXN_AT_SEAL} of every chain entry of {@code (name, columnNameTxn)}
+     * published after the entry at {@code sinceEntryOffset}, walking back from the head through
      * {@code prevEntryOffset} and stopping at that watermark. {@code path} is left
      * trimmed to its size on entry.
      */
-    private void readPostingChainTagsAbove(Path path, CharSequence name, long sinceEntryOffset, LongList out) {
+    private void readPostingChainTagsAbove(Path path, CharSequence name, long columnNameTxn, long sinceEntryOffset, LongList out) {
         out.clear();
         final FilesFacade ff = configuration.getFilesFacade();
         final int plen = path.size();
-        final LPSZ keyFile = PostingIndexUtils.keyFileName(path, name, COLUMN_NAME_TXN_NONE);
+        final LPSZ keyFile = PostingIndexUtils.keyFileName(path, name, columnNameTxn);
         try (MemoryCMARWImpl pk = new MemoryCMARWImpl(ff, keyFile, ff.getPageSize(),
                 ff.length(keyFile), MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
             PostingIndexChainWriter chain = new PostingIndexChainWriter();
