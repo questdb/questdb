@@ -537,6 +537,21 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         setPartitionFormat(timestamp, true, fileLength);
     }
 
+    /**
+     * Marks exactly one {@code (ts, cellKey)} record parquet. See
+     * {@link #setPartitionFormatByRawIndex(int, boolean, long)} for why a timestamp is not enough.
+     */
+    public void setPartitionParquetByRawIndex(int indexRaw, long fileLength) {
+        setPartitionFormatByRawIndex(indexRaw, true, fileLength);
+    }
+
+    /**
+     * Marks exactly one {@code (ts, cellKey)} record native again.
+     */
+    public void setPartitionNativeByRawIndex(int indexRaw, long seqTxn) {
+        setPartitionFormatByRawIndex(indexRaw, false, seqTxn);
+    }
+
     public void setPartitionParquetFileSize(int partitionIndex, long size) {
         setPartitionParquetFileSizeByRawIndex(partitionIndex * longsPerAttachedPartition, size);
     }
@@ -986,6 +1001,25 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     private void setPartitionFormat(long timestamp, boolean isParquetFormat, long version) {
         int indexRaw = findAttachedPartitionRawIndex(timestamp);
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        setPartitionFormatByRawIndex(indexRaw, isParquetFormat, version);
+    }
+
+    /**
+     * Raw-index counterpart of {@link #setPartitionFormat(long, boolean, long)}, for per-cell parquet on
+     * a composite table.
+     * <p>
+     * The timestamp-keyed form resolves through {@code findAttachedPartitionRawIndex}, which answers for
+     * cellKey 0, so on a composite day it would flip the format of the FIRST cell no matter which one
+     * was meant. A raw index names exactly one {@code (ts, cellKey)} record -- and a cell IS a partition
+     * record, which is what lets a day hold a mix of native and parquet cells.
+     * <p>
+     * Behaviour-preserving: the body below is the original one, unchanged, and {@code cellKey == 0}
+     * resolves to the same raw index the timestamp-keyed form would have found.
+     */
+    public void setPartitionFormatByRawIndex(int indexRaw, boolean isParquetFormat, long version) {
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }

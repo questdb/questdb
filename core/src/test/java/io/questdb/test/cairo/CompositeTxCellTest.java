@@ -244,6 +244,47 @@ public class CompositeTxCellTest extends AbstractCairoTest {
      * not the insert.
      */
     @Test
+    public void testPartitionFormatIsAddressablePerCell() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exchange symbol, x double) " +
+                    "timestamp(ts) partition by day, exchange wal");
+            engine.releaseInactive();
+
+            final long day1 = 0L;
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            TableToken tableToken = engine.verifyTableName("c");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+
+                try (TxWriter txWriter = new TxWriter(ff, configuration)) {
+                    txWriter.setCompositeForTest(true);
+                    txWriter.ofRW(path.$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+
+                    // two SIBLING cells of the SAME day -- the shape a timestamp-keyed setter cannot tell
+                    // apart, and the reason per-cell parquet needs a raw-index entry point
+                    txWriter.appendPartitionForTest(day1, 10L, 100L, 0);
+                    txWriter.appendPartitionForTest(day1, 20L, 101L, 1);
+
+                    final int rawCell1 = txWriter.findAttachedPartitionRawIndexBy(day1, 1);
+                    txWriter.setPartitionParquetByRawIndex(rawCell1, 4096L);
+
+                    Assert.assertTrue("the targeted cell must be parquet",
+                            txWriter.isPartitionParquet(1));
+                    Assert.assertFalse("its SIBLING at the same timestamp must stay native -- this is the"
+                                    + " whole point of addressing by raw index rather than by timestamp",
+                            txWriter.isPartitionParquet(0));
+                    Assert.assertEquals(4096L, txWriter.getPartitionParquetFileSize(1));
+
+                    // and back again, still without touching the sibling
+                    txWriter.setPartitionNativeByRawIndex(rawCell1, 7L);
+                    Assert.assertFalse(txWriter.isPartitionParquet(1));
+                    Assert.assertFalse(txWriter.isPartitionParquet(0));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFindRawIndexByTsAndCellKey() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
