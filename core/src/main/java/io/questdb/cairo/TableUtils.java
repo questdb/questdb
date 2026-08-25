@@ -88,7 +88,6 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
-import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 import static io.questdb.tasks.TableWriterTask.CMD_STORAGE_POLICY;
 import static io.questdb.tasks.TableWriterTask.getCommandName;
@@ -1222,10 +1221,17 @@ public final class TableUtils {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SYMBOL_CACHE) != 0;
     }
 
+    /**
+     * A lock reason the WAL apply machinery did not arrange itself is unsolicited - including
+     * {@link io.questdb.cairo.pool.WriterPool#OWNERSHIP_REASON_UNKNOWN}, reported while a holder
+     * is still constructing the writer and has not stamped its reason yet. ApplyWal2TableJob
+     * responds to an unsolicited lock by re-arming notification delivery
+     * ({@link CairoEngine#notifyWalTxnRepublisher}); treating an unidentified holder as solicited
+     * instead would drop the in-flight notification with no recovery until the next commit or the
+     * sequencer check interval.
+     */
     public static boolean isUnsolicitedTableLock(String lockReason) {
-        //noinspection StringEquality
-        return lockReason != NO_LOCK_REASON
-                && !WAL_2_TABLE_WRITE_REASON.equals(lockReason)
+        return !WAL_2_TABLE_WRITE_REASON.equals(lockReason)
                 && !WAL_2_TABLE_RESUME_REASON.equals(lockReason)
                 && !getCommandName(CMD_STORAGE_POLICY).equals(lockReason);
     }
