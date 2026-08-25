@@ -1926,6 +1926,55 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterTableAddIndexIncludesArrayColumnPredatingKeyColumnTop() throws Exception {
+        // Same scenario as testAlterTableAddIndexIncludesColumnPredatingKeyColumnTop,
+        // but for an ARRAY INCLUDE column. ARRAY's raw column format differs from
+        // STRING/BINARY/VARCHAR (the aux entry stores an offset and a size, and the
+        // data itself starts with a shape header), so it needs its own raw reader
+        // in the null-prefix path rather than reusing theirs.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_key_top_arr (
+                        ts TIMESTAMP,
+                        tag DOUBLE[]
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 2 rows before sym2 exists -- tag has real data here.
+            execute("""
+                    INSERT INTO t_key_top_arr VALUES
+                    ('2024-01-01T00:00:00', ARRAY[1.0, 2.0]),
+                    ('2024-01-01T01:00:00', ARRAY[3.0])
+                    """);
+
+            execute("ALTER TABLE t_key_top_arr ADD COLUMN sym2 SYMBOL");
+
+            // 2 rows after ADD COLUMN, sym2 populated.
+            execute("""
+                    INSERT INTO t_key_top_arr VALUES
+                    ('2024-01-01T02:00:00', ARRAY[4.0], 'A'),
+                    ('2024-01-01T03:00:00', ARRAY[5.0, 6.0], 'B')
+                    """);
+
+            execute("ALTER TABLE t_key_top_arr ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (tag)");
+            engine.releaseAllWriters();
+
+            // Rows at ts 00:00 and 01:00 are below sym2's column top, so they
+            // implicitly match sym2 = null. Their tag values are real arrays,
+            // not null -- tag has no column top of its own.
+            assertQuery("SELECT sym2, tag FROM t_key_top_arr WHERE sym2 = null ORDER BY ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            sym2\ttag
+                            \t[1.0,2.0]
+                            \t[3.0]
+                            """);
+        });
+    }
+
+    @Test
     public void testAlterTableAddIndexIncludesGeoIpv4ColumnsWithColumnTop() throws Exception {
         // Regression: CoveringPageFrameCursor.writeColumnRow uses Long.MIN_VALUE,
         // Integer.MIN_VALUE, and zeros as the "null" sentinel for rows below

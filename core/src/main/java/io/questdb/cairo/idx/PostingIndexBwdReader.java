@@ -31,7 +31,9 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.BinarySequence;
@@ -1109,16 +1111,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         @Override
         public ArrayView getCoveredArray(int includeIdx, int columnType) {
-            // No raw-array reader (multi-dimensional header format) -- fail loud
-            // rather than silently return null/wrong data for a row that has a
-            // real array value on disk.
             if (isNullPrefixRow) {
-                long top = rawColTopFor(includeIdx);
-                if (top >= 0 && next >= top) {
-                    throw CairoException.critical(0)
-                            .put("covering index: reading an ARRAY INCLUDE column for a row below the ")
-                            .put("indexed key column's own column top is not supported [includeIdx=")
-                            .put(includeIdx).put(", row=").put(next).put(']');
+                ArrayView v = readRawCoveredArray(includeIdx, next, columnType, arrayView);
+                if (v != null) {
+                    return v;
                 }
             }
             return super.getCoveredArray(includeIdx, columnType);
@@ -1392,6 +1388,40 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             }
         }
 
+        private ArrayView readRawCoveredArray(int includeIdx, long row, int columnType, BorrowedArray view) {
+            if (!ensureNullPrefixColumnsOpen() || includeIdx < 0 || npColTops == null || includeIdx >= npColTops.length) {
+                return null;
+            }
+            long fileRow = row - npColTops[includeIdx];
+            if (fileRow < 0) {
+                return null;
+            }
+            long auxAddr = resolveRawAuxAddr(includeIdx, ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES * fileRow, ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES);
+            if (auxAddr == 0) {
+                return null;
+            }
+            int size = Unsafe.getInt(auxAddr + Long.BYTES);
+            if (size <= 0) {
+                view.ofNull();
+                return view;
+            }
+            long dataOffset = Unsafe.getLong(auxAddr) & ArrayTypeDriver.OFFSET_MAX;
+            long dataAddr = resolveRawDataAddr(includeIdx, dataOffset, size);
+            if (dataAddr == 0) {
+                return null;
+            }
+            int dims = ColumnType.decodeArrayDimensionality(columnType);
+            short elemType = ColumnType.decodeArrayElementType(columnType);
+            int elemSize = ColumnType.sizeOf(elemType);
+            int cardinality = 1;
+            for (int d = 0; d < dims; d++) {
+                cardinality *= Unsafe.getInt(dataAddr + (long) d * Integer.BYTES);
+            }
+            int valueSize = cardinality * elemSize;
+            long valuePtr = dataAddr + size - valueSize;
+            return view.of(columnType, dataAddr, valuePtr, valueSize);
+        }
+
         private BinarySequence readRawCoveredBin(int includeIdx, long row, DirectBinarySequence view) {
             if (!ensureNullPrefixColumnsOpen() || includeIdx < 0 || npColTops == null || includeIdx >= npColTops.length) {
                 return null;
@@ -1479,13 +1509,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return null;
             }
             return view.of(dataAddr, dataAddr + size);
-        }
-
-        private long rawColTopFor(int includeIdx) {
-            if (!ensureNullPrefixColumnsOpen() || includeIdx < 0 || npColTops == null || includeIdx >= npColTops.length) {
-                return -1;
-            }
-            return npColTops[includeIdx];
         }
 
         private long resolveRawAuxAddr(int includeIdx, long offset, long needed) {
