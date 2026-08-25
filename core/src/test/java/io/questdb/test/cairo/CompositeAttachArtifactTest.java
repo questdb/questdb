@@ -28,6 +28,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CompositeDetachedArtifact;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
@@ -122,6 +124,55 @@ public class CompositeAttachArtifactTest extends AbstractCompositeTwinTest {
 
             Assert.assertEquals("the detached day holds three rows across two cells",
                     3L, readArtifactSize());
+        });
+    }
+
+    /**
+     * The other half of the measured attach failure. {@code readNativeMinMaxTimestamps} opens
+     * {@code <container>/ts.d} -- and on a composite artifact that file EXISTS and is ZERO BYTES (the
+     * phantom bare-day files detach carries along), so both reads come back negative and attach throws
+     * "cannot read min, max timestamp ... errno=2". The errno is incidental: the throw is on the
+     * negative check, not on a failed open.
+     * <p>
+     * Worth stating because it is the dangerous shape: had that phantom file held bytes, attach would
+     * have read WRONG timestamps silently instead of failing. Min and max must come from the CELLS.
+     */
+    @Test(timeout = 60_000)
+    public void testMinMaxAreFoldedAcrossCellsNotReadAtTheContainerRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            // The day's min lives in E0 and its max in E1, so a fold that looks at only one cell -- or at
+            // the container root -- cannot produce both correct values by accident.
+            insertIntoBoth("('" + DAY + "T01:00:00.000000Z','E0',1.0),"
+                    + "('" + DAY + "T02:00:00.000000Z','E0',2.0),"
+                    + "('" + DAY + "T20:00:00.000000Z','E1',3.0),"
+                    + "('2023-01-02T01:00:00.000000Z','E0',4.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            execute("ALTER TABLE c DETACH PARTITION LIST '" + DAY + "'");
+            drainWalQueue();
+
+            final long[] minMax = new long[]{-1, -1};
+            final ObjList<CharSequence> segments = new ObjList<>();
+            segments.add("E0");
+            segments.add("E1");
+            final LongList sizes = new LongList();
+            sizes.add(2);
+            sizes.add(1);
+
+            final String artifactDir = tableDir().resolve(DAY + ".detached").toString();
+            try (Path path = new Path()) {
+                path.of(artifactDir);
+                CompositeDetachedArtifact.readMinMaxTimestamps(
+                        configuration.getFilesFacade(), path, "ts", ColumnType.TIMESTAMP,
+                        segments, sizes, minMax);
+            }
+
+            Assert.assertEquals("min must come from E0's first row",
+                    parseFloorPartialTimestamp(DAY + "T01:00:00.000000Z"), minMax[0]);
+            Assert.assertEquals("max must come from E1's last row",
+                    parseFloorPartialTimestamp(DAY + "T20:00:00.000000Z"), minMax[1]);
         });
     }
 

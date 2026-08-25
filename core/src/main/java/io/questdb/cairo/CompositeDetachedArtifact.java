@@ -26,6 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
 /**
@@ -82,6 +84,81 @@ public final class CompositeDetachedArtifact {
             }
         } finally {
             artifactRoot.trimTo(rootLen);
+        }
+    }
+
+    /**
+     * Folds the designated-timestamp min and max across the artifact's cells into
+     * {@code minMaxOut[0]}/{@code minMaxOut[1]}.
+     * <p>
+     * Deliberately never reads the container root. A detached composite artifact carries ZERO-BYTE
+     * phantom {@code <column>.d} files there -- measured, not assumed -- so a root read returns -1 for
+     * both bounds. Worse, if such a file ever held bytes it would yield silently WRONG bounds rather
+     * than an error.
+     *
+     * @param cellSegments rendered cell segment names, in the same order as {@code cellSizes}
+     */
+    public static void readMinMaxTimestamps(
+            FilesFacade ff,
+            Path artifactRoot,
+            CharSequence tsColumnName,
+            int timestampType,
+            ObjList<CharSequence> cellSegments,
+            LongList cellSizes,
+            long[] minMaxOut
+    ) {
+        final int rootLen = artifactRoot.size();
+        try {
+            minMaxOut[0] = -1;
+            minMaxOut[1] = -1;
+            boolean first = true;
+            for (int i = 0, n = cellSegments.size(); i < n; i++) {
+                artifactRoot.trimTo(rootLen).concat(cellSegments.getQuick(i));
+                readBounds(ff, artifactRoot, tsColumnName, timestampType, cellSizes.getQuick(i), minMaxOut, first);
+                if (minMaxOut[0] < 0 || minMaxOut[1] < 0) {
+                    // One unreadable cell fails the whole fold: a day whose bounds are computed from a
+                    // subset of its cells is worse than one that refuses to attach.
+                    return;
+                }
+                first = false;
+            }
+        } finally {
+            artifactRoot.trimTo(rootLen);
+        }
+    }
+
+    private static void readBounds(
+            FilesFacade ff,
+            Path dir,
+            CharSequence tsColumnName,
+            int timestampType,
+            long rows,
+            long[] minMaxOut,
+            boolean reset
+    ) {
+        final int len = dir.size();
+        try {
+            final long fd = ff.openRO(TableUtils.dFile(dir, tsColumnName, TableUtils.COLUMN_NAME_TXN_NONE));
+            if (fd < 0) {
+                minMaxOut[0] = -1;
+                minMaxOut[1] = -1;
+                return;
+            }
+            try {
+                final long lo = ff.readNonNegativeLong(fd, 0);
+                final long hi = ff.readNonNegativeLong(fd, (rows - 1) * ColumnType.sizeOf(timestampType));
+                if (reset || lo < 0 || hi < 0) {
+                    minMaxOut[0] = lo;
+                    minMaxOut[1] = hi;
+                } else {
+                    minMaxOut[0] = Math.min(minMaxOut[0], lo);
+                    minMaxOut[1] = Math.max(minMaxOut[1], hi);
+                }
+            } finally {
+                ff.close(fd);
+            }
+        } finally {
+            dir.trimTo(len);
         }
     }
 
