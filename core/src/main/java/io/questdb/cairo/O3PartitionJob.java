@@ -3853,6 +3853,21 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long newPartitionSize
     ) {
         assert !tableWriter.getTableToken().isMatView() : "FORMAT PARQUET should be rejected on mat views at SQL level";
+        // DEFENCE IN DEPTH, added 2026-08-26 after auditing every path into the native parquet encoder.
+        // This method builds its target with the bare setPathForParquetPartition overload and never
+        // consults the cellSegment its CALLER has in scope, so for a composite table it would write the
+        // day's parquet at the bare day path -- the same cell-blind shape that makes CONVERT PARTITION
+        // TO PARQUET crash the JVM with a SIGBUS in the encoder.
+        // It is unreachable today only because FORMAT PARQUET is refused earlier, at CREATE. That is a
+        // shadow, not a guarantee: the two gates lifted in this session (ATTACH, DROP COLUMN) both
+        // exposed exactly this kind of site the moment their outer gate came off. Fail loudly here so
+        // that lifting FORMAT PARQUET produces a refusal rather than a wrong-path write.
+        // The message literal is reused verbatim, so the scope-closure audit's key set is unchanged.
+        if (tableWriter.isComposite()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support FORMAT PARQUET [table=")
+                    .put(tableWriter.getTableToken().getTableName()).put(']');
+        }
 
         final TableRecordMetadata metadata = tableWriter.getMetadata();
         final long partitionRowCount = srcOooHi - srcOooLo + 1;

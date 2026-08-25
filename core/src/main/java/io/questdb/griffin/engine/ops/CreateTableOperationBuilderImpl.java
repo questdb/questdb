@@ -282,6 +282,21 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             throw SqlException.$(partitionDimensionExprs.getQuick(0).position, "composite partitioning requires a WAL table");
         }
 
+        // Invariant 6, fixed 2026-08-26. FORMAT PARQUET was ACCEPTED at CREATE on a composite table and
+        // then suspended it on the first INSERT, through the writer-side gate in processO3Block --
+        // measured: "suspended=true, errorMessage=composite partitioning does not yet support FORMAT
+        // PARQUET", with the table left holding 0 rows and SHOW CREATE TABLE still advertising FORMAT
+        // PARQUET. A user got a successful DDL and a broken table, which is exactly the defect class
+        // wave 0 exists to close; the scope-closure index even records this gate as "DDL accepted, next
+        // commit suspends".
+        // The writer-side gate STAYS as the non-SQL backstop -- gates move rather than vanish -- and the
+        // message literal is reused verbatim so the audit's key set is unchanged.
+        if (dimCount > 0 && tableFormat == TableUtils.TABLE_FORMAT_PARQUET) {
+            throw SqlException.$(tableFormatPosition,
+                    "composite partitioning does not yet support FORMAT PARQUET [table=")
+                    .put(tableNameExpr.token).put(']');
+        }
+
         // Plan 4b feature-gate sweep: DEDUP UPSERT KEYS is not yet cell-aware for a real composite
         // table. O3PartitionJob#getDedupRowsWithAdditionalKeys (reached whenever the upsert-key list
         // has any column besides the designated timestamp) resolves per-partition columnTop/nameTxn
