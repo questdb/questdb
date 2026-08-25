@@ -698,6 +698,39 @@ public interface CairoConfiguration {
     }
 
     /**
+     * Compression codec for the covering index's own parquet, separate from
+     * {@link #getPartitionEncoderParquetCompressionCodec()}.
+     * <p>
+     * LZ4_RAW by default, matching the data partition. {@code UNCOMPRESSED}
+     * reads roughly 2.5x faster -- decompression is a large share of what a
+     * lookup does once page skipping works -- at about 3x the index parquet's
+     * size. Since the point of the parquet form is that the index TRAVELS to
+     * cold storage, that size is not obviously worth trading, so the faster
+     * setting is offered rather than chosen.
+     */
+    default int getPostingIndexParquetCompressionCodec() {
+        return getPartitionEncoderParquetCompressionCodec();
+    }
+
+    /**
+     * Upper bound on how many distinct keys share one index row group.
+     * <p>
+     * A lookup pays for the group it lands in rather than for its own rows, so
+     * the cost driver is how many OTHER keys are packed alongside it. A row cap
+     * alone cannot express that: at 1,000 rows per key a 100k-row group holds
+     * 100 keys, while at 25,000 rows per key it holds 4.
+     * <p>
+     * 16, measured. Partitions whose keys are already wide enough to fill a
+     * group on their own are untouched by it -- their artifacts come out byte
+     * identical -- so this only bites the high-cardinality case it exists for.
+     * The curve is sharp and not monotonic (12 and 20 both measured worse than
+     * 16 on three fixtures), so treat the default as tuned rather than derived.
+     */
+    default int getPostingIndexParquetMaxKeysPerRowGroup() {
+        return 16;
+    }
+
+    /**
      * Data page size for the covering index's own parquet, which is NOT
      * {@link #getPartitionEncoderParquetDataPageSize()}. A page is the unit the
      * reader can skip when it decodes one key's contiguous run, so the data

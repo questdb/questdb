@@ -458,7 +458,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean posthogEnabled;
     private final int postingIndexAdaptiveDeltaAtOrAbove;
     private final boolean postingIndexAutoIncludeTimestamp;
+    private final int postingIndexParquetCompressionCodec;
     private final int postingIndexParquetDataPageSize;
+    private final int postingIndexParquetMaxKeysPerRowGroup;
     private final byte postingIndexParquetPartitionFormat;
     private final byte postingIndexRowIdEncoding;
     private final long postingIndexerSpillBytesMax;
@@ -1715,7 +1717,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                 case "delta" -> PostingIndexUtils.ENCODING_DELTA;
                 default -> PostingIndexUtils.ENCODING_ADAPTIVE;
             };
+            this.postingIndexParquetCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_COMPRESSION_CODEC, "LZ4_RAW"));
             this.postingIndexParquetDataPageSize = getIntSize(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_DATA_PAGE_SIZE, 64 * 1024);
+            this.postingIndexParquetMaxKeysPerRowGroup = getInt(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_MAX_KEYS_PER_ROW_GROUP, 16);
             this.postingIndexParquetPartitionFormat = switch (getString(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native")) {
                 case "parquet" -> PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET;
                 default -> PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE;
@@ -4657,8 +4661,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getPostingIndexParquetCompressionCodec() {
+            return postingIndexParquetCompressionCodec;
+        }
+
+        @Override
         public int getPostingIndexParquetDataPageSize() {
             return postingIndexParquetDataPageSize;
+        }
+
+        @Override
+        public int getPostingIndexParquetMaxKeysPerRowGroup() {
+            return postingIndexParquetMaxKeysPerRowGroup;
         }
 
         @Override

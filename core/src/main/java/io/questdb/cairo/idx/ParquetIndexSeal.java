@@ -92,6 +92,16 @@ public final class ParquetIndexSeal {
     private static final int SYNTHETIC_COLUMN_ID = -1;
     // Rows a row group aims for. Only a key boundary at or past this closes a
     // group, so groups land near it rather than exactly on it.
+    /**
+     * Upper bound on how many distinct keys share one index row group.
+     * <p>
+     * A lookup pays for the group it lands in, not for its own rows, so the
+     * cost driver is how many OTHER keys are packed alongside it. A row cap
+     * alone cannot express that: at 1,000 rows per key a 100k-row group holds
+     * 100 keys, while at 25,000 rows per key it holds 4. Capping keys bounds
+     * the waste directly and leaves wide-key partitions, which were already
+     * well packed, untouched.
+     */
     private static final long TARGET_ROW_GROUP_ROWS = 100_000;
     // The streaming writer's fixed threshold stays live and would split a key
     // wherever it fired, so it is put beyond any partition's posting count.
@@ -219,7 +229,8 @@ public final class ParquetIndexSeal {
             planRowGroups(
                     keyIdsAddr, rowIdsAddr, rowCount,
                     groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs,
-                    keyDirEntries, groupKeyDirCounts
+                    keyDirEntries, groupKeyDirCounts,
+                    configuration.getPostingIndexParquetMaxKeysPerRowGroup()
             );
             imFileSize = writeIndexArtifacts(
                     configuration, ff, path, plen, indexColumnName, indexTxn, keySpaceSize,
@@ -384,10 +395,12 @@ public final class ParquetIndexSeal {
             LongList groupRowIdMins,
             LongList groupRowIdMaxs,
             IntList keyDirEntries,
-            IntList groupKeyDirCounts
+            IntList groupKeyDirCounts,
+            int maxKeysPerRowGroup
     ) {
         long groupLo = 0;
         long keyLo = 0;
+        int keysInGroup = 0;
         while (keyLo < rowCount) {
             final int key = Unsafe.getInt(keyIdsAddr + keyLo * Integer.BYTES);
             long keyHi = keyLo + 1;
@@ -399,6 +412,7 @@ public final class ParquetIndexSeal {
             if (groupLo < keyLo && keyHi - groupLo > TARGET_ROW_GROUP_ROWS) {
                 closeRowGroup(keyIdsAddr, rowIdsAddr, groupLo, keyLo, groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs, keyDirEntries, groupKeyDirCounts);
                 groupLo = keyLo;
+                keysInGroup = 0;
             }
             // A key of its own is larger than the target: give it consecutive
             // dedicated groups. Every one of them holds only this key, which the
@@ -407,10 +421,15 @@ public final class ParquetIndexSeal {
                 final long splitHi = groupLo + TARGET_ROW_GROUP_ROWS;
                 closeRowGroup(keyIdsAddr, rowIdsAddr, groupLo, splitHi, groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs, keyDirEntries, groupKeyDirCounts);
                 groupLo = splitHi;
+                keysInGroup = 0;
             }
-            if (keyHi - groupLo >= TARGET_ROW_GROUP_ROWS) {
+            keysInGroup++;
+            // Closing on either bound, and both close at a key boundary, so the
+            // key-alignment invariant holds however the group filled up.
+            if (keyHi - groupLo >= TARGET_ROW_GROUP_ROWS || keysInGroup >= maxKeysPerRowGroup) {
                 closeRowGroup(keyIdsAddr, rowIdsAddr, groupLo, keyHi, groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs, keyDirEntries, groupKeyDirCounts);
                 groupLo = keyHi;
+                keysInGroup = 0;
             }
             keyLo = keyHi;
         }
@@ -623,7 +642,7 @@ public final class ParquetIndexSeal {
                     -1,
                     false,
                     ParquetCompression.packCompressionCodecLevel(
-                            configuration.getPartitionEncoderParquetCompressionCodec(),
+                            configuration.getPostingIndexParquetCompressionCodec(),
                             configuration.getPartitionEncoderParquetCompressionLevel()
                     ),
                     // The key_id chunk's min and max statistics are what the _im

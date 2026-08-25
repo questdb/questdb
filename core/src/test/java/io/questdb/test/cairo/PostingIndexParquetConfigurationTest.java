@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -52,6 +53,21 @@ public class PostingIndexParquetConfigurationTest extends AbstractCairoTest {
     public void testParquetDataPageSizeOverrideReachesWrappedConfiguration() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_DATA_PAGE_SIZE, 32 * 1024);
         assertMemoryLeak(() -> Assert.assertEquals(32 * 1024, configuration.getPostingIndexParquetDataPageSize()));
+    }
+
+    @Test
+    public void testParquetMaxKeysPerRowGroupOverrideReachesWrappedConfiguration() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_MAX_KEYS_PER_ROW_GROUP, 8);
+        assertMemoryLeak(() -> Assert.assertEquals(8, configuration.getPostingIndexParquetMaxKeysPerRowGroup()));
+    }
+
+    @Test
+    public void testParquetCompressionCodecOverrideReachesWrappedConfiguration() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_COMPRESSION_CODEC, "UNCOMPRESSED");
+        assertMemoryLeak(() -> Assert.assertEquals(
+                ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                configuration.getPostingIndexParquetCompressionCodec()
+        ));
     }
 
     @Test

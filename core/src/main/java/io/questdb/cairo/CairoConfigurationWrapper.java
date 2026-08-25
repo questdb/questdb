@@ -910,8 +910,18 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPostingIndexParquetCompressionCodec() {
+        return getDelegate().getPostingIndexParquetCompressionCodec();
+    }
+
+    @Override
     public int getPostingIndexParquetDataPageSize() {
         return getDelegate().getPostingIndexParquetDataPageSize();
+    }
+
+    @Override
+    public int getPostingIndexParquetMaxKeysPerRowGroup() {
+        return getDelegate().getPostingIndexParquetMaxKeysPerRowGroup();
     }
 
     @Override

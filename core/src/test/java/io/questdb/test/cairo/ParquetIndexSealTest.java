@@ -2924,8 +2924,70 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSealCapsKeysPerRowGroup() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_MAX_KEYS_PER_ROW_GROUP, 16);
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            createPackedKeyTable();
+
+            execute("ALTER TABLE " + PACKED_TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+            drainWalQueue();
+            execute("ALTER TABLE " + PACKED_TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final String indexParquetPath;
+            try (Path path = new Path()) {
+                final String indexParquet = onlyFileNamed(partitionPath(path, PACKED_TABLE_NAME), "sym.pidx.", ".parquet");
+                final String indexMeta = onlyFileNamed(partitionPath(path, PACKED_TABLE_NAME), "sym.pidx.", "._im");
+                indexParquetPath = partitionPath(path, PACKED_TABLE_NAME).concat(indexParquet).toString();
+
+                final IndexMetaFileReader reader = new IndexMetaFileReader();
+                IndexMetaFileReader.openAndMapRO(
+                        configuration.getFilesFacade(),
+                        partitionPath(path, PACKED_TABLE_NAME).concat(indexMeta).$(),
+                        reader
+                );
+                try {
+                    // The cap is what bounds a lookup's waste: a key pays for
+                    // the group it lands in, so the keys packed alongside it are
+                    // the cost. Key alignment must survive the extra closes.
+                    assertRowGroupsAreKeyAligned(reader);
+                    final int keyIdColumn = reader.getKeyIdColumn();
+                    final int groups = reader.getIndexRowGroupCount();
+                    Assert.assertTrue("the cap must split this fixture", groups > 1);
+                    boolean shared = false;
+                    for (int i = 0; i < groups; i++) {
+                        final long keysInGroup =
+                                reader.getChunkMaxStat(i, keyIdColumn) - reader.getChunkMinStat(i, keyIdColumn) + 1;
+                        Assert.assertTrue(
+                                "row group " + i + " holds " + keysInGroup + " keys, over the cap",
+                                keysInGroup <= 16
+                        );
+                        shared |= keysInGroup > 1;
+                    }
+                    // Capping must not degenerate into one key per group, which
+                    // would trade the whole point of packing for the bound.
+                    Assert.assertTrue("keys must still share groups under the cap", shared);
+                } finally {
+                    reader.close();
+                }
+            }
+
+            assertPostingsCoverEveryRow(indexParquetPath, PACKED_ROW_COUNT);
+            assertPostingKeysAgree(indexParquetPath, PACKED_KEY_OF_ROW_ID);
+        });
+    }
+
+    @Test
     public void testSealPacksManySmallKeysIntoSharedRowGroups() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        // This test is about the ROW target's two closing branches, which the
+        // key cap would pre-empt on this fixture -- 350k rows over ~500 keys
+        // packs far more than 16 keys into a group. Lifted here so those
+        // branches stay covered; the cap has its own test below.
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_MAX_KEYS_PER_ROW_GROUP, Integer.MAX_VALUE);
         assertMemoryLeak(() -> {
             inputRoot = root;
             createPackedKeyTable();
