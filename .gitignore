@@ -54,3 +54,6 @@ compat/src/test/php/vendor/
 compat/src/test/php/composer.lock
 compat/src/test/golang/gorunner
 compat/src/test/rust/scenarios/target/
+
+# composite-partitioning design docs (agent workflow artifacts, kept locally)
+docs/superpowers/
