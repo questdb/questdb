@@ -112,18 +112,17 @@ you wish to understand how our maintainers work together, you can refer to
   libraries for x86-64 (Intel) macOS, and the jar contains no `darwin-x86-64`
   binary. On an Intel Mac you have to build the C/C++ and Rust libraries from
   source yourself.
-- Java 17 64-bit (strict requirement — no earlier, no later)
+- Java 25 64-bit (strict requirement — no earlier, no later)
 - Maven 3 (latest version recommended; from your package manager on Linux/macOS
   ([Homebrew](https://github.com/Homebrew/brew)) or
   [from the jar](https://maven.apache.org/install.html) for any OS)
 - C compiler, CMake — to contribute to C libraries — _OPTIONAL_
 
-**Note for Apple Silicon (ARM64) users:** Most tests will run normally. However,
-JIT-related tests are x86-64 only and will be skipped on ARM. If you are contributing
-to JIT functionality, use an x86-64 Linux or Windows machine. An x86-64 JDK under
-Rosetta needs `darwin-x86-64` native libraries, which are not shipped in the jar, so
-that route additionally requires building the C/C++ and Rust libraries from source in
-the same x86-64 environment.
+**Note for Apple Silicon (ARM64) users:** Tests run normally, JIT tests included —
+QuestDB compiles filters with the JIT on ARM64 as well as on x86-64, so nothing is
+skipped on this architecture. Avoid reaching for an x86-64 JDK under Rosetta: the jar
+bundles no `darwin-x86-64` native libraries, so that route additionally requires
+building the C/C++ and Rust libraries from source in the same x86-64 environment.
 
 ## Local environment
 
@@ -220,8 +219,11 @@ core/src/main/c -> core/src/main/resources/io/questdb/bin
 ## Developing with the Java ILP client
 
 The QuestDB server tests use the [Java ILP client](https://github.com/questdb/java-questdb-client)
-for integration testing. By default, the client is resolved from Maven Central. If you need to
-modify both the client and server simultaneously, you can use the local development workflow.
+for integration testing. `core/pom.xml` names the client version. When that version is a
+released one, Maven resolves it from Maven Central; between releases it is a `-SNAPSHOT`
+that no configured repository serves, so you have to build with `-P local-client` (see
+below). CI detects the `-SNAPSHOT` and adds the profile itself. Use the same profile when
+you need to modify both the client and the server simultaneously.
 
 ### Setup
 
