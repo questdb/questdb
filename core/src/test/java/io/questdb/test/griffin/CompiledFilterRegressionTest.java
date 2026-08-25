@@ -1548,6 +1548,52 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolNegativeQuotedNumericConstantEquals() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sy SYMBOL, k TIMESTAMP) TIMESTAMP(k)");
+            execute("INSERT INTO x VALUES ('-5', 0), ('5', 1), ('other', 2), (null, 3)");
+            execute("CREATE TABLE y (sy SYMBOL, k TIMESTAMP) TIMESTAMP(k)");
+            execute("INSERT INTO y VALUES ('-5', 0), ('other', 1), (null, 2)");
+
+            assertJitMatchesJavaInAllModes("x WHERE sy = -'5'");
+            assertJitMatchesJavaInAllModes("y WHERE sy = -'5'");
+        });
+    }
+
+    @Test
+    public void testSymbolNegativeQuotedNumericConstantNotEquals() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sy SYMBOL, k TIMESTAMP) TIMESTAMP(k)");
+            execute("INSERT INTO x VALUES ('-5', 0), ('5', 1), ('other', 2), (null, 3)");
+            execute("CREATE TABLE y (sy SYMBOL, k TIMESTAMP) TIMESTAMP(k)");
+            execute("INSERT INTO y VALUES ('-5', 0), ('other', 1), (null, 2)");
+
+            assertJitMatchesJavaInAllModes("x WHERE sy != -'5'");
+            assertJitMatchesJavaInAllModes("y WHERE sy != -'5'");
+        });
+    }
+
+    @Test
+    public void testSymbolNumericNegativeZeroEquals() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sy SYMBOL, k TIMESTAMP) TIMESTAMP(k)");
+            execute("INSERT INTO x VALUES ('0', 0), ('-0', 1), (null, 2)");
+
+            assertJitMatchesJavaInAllModes("x WHERE sy = -0");
+        });
+    }
+
+    @Test
+    public void testSymbolNumericNegativeZeroNotEquals() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sy SYMBOL, k TIMESTAMP) TIMESTAMP(k)");
+            execute("INSERT INTO x VALUES ('0', 0), ('-0', 1), (null, 2)");
+
+            assertJitMatchesJavaInAllModes("x WHERE sy != -0");
+        });
+    }
+
+    @Test
     public void testSymbolNull() throws Exception {
         final String query = "x where sym <> null";
         final String ddl = "create table x as " +

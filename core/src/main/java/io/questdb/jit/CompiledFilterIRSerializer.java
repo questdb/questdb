@@ -1915,30 +1915,54 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     /**
      * Emits the symbol key for a constant compared against a SYMBOL column.
-     * {@code negated} carries the unary minus that the parser splits off an
-     * unquoted negative numeric literal: {@code sy = -5} reaches this method as
-     * the bare token {@code "5"}, so the key has to be resolved against the
-     * signed spelling {@code "-5"} - the same string the Java filter compares
-     * the symbol value against.
+     * The parser splits unary minus from its numeric token, including when the
+     * token is quoted, while the Java filter evaluates the resulting LONG
+     * constant before formatting it as a symbol. Evaluate and format numeric
+     * tokens here as well, so equivalent spellings such as {@code -0} and
+     * {@code 0} resolve to the same key.
      */
     private void serializeSymbolConstant(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
         final int len = token.length();
         final CharSequence symbol;
-        sink.clear();
-        if (negated) {
-            sink.put('-');
-        }
         if (Chars.isQuoted(token)) {
             if (len < 3) {
                 throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
             }
+            sink.clear();
             Chars.unescape(token, 1, len - 1, '\'', sink);
-            symbol = sink;
-        } else if (negated) {
-            sink.put(token);
-            symbol = sink;
+            if (negated) {
+                final long value;
+                try {
+                    final long parsedValue = Numbers.parseLong(sink);
+                    value = parsedValue != Numbers.LONG_NULL ? -parsedValue : Numbers.LONG_NULL;
+                } catch (NumericException e) {
+                    throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
+                }
+                if (value == Numbers.LONG_NULL) {
+                    symbol = null;
+                } else {
+                    sink.clear();
+                    sink.put(value);
+                    symbol = sink;
+                }
+            } else {
+                symbol = sink;
+            }
         } else {
-            symbol = token;
+            final long value;
+            try {
+                final long parsedValue = Numbers.parseLong(token);
+                value = negated ? -parsedValue : parsedValue;
+            } catch (NumericException e) {
+                throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
+            }
+            if (value == Numbers.LONG_NULL) {
+                symbol = null;
+            } else {
+                sink.clear();
+                sink.put(value);
+                symbol = sink;
+            }
         }
 
         if (predicateContext.symbolTable == null || predicateContext.symbolColumnIndex == -1) {
