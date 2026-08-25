@@ -95,6 +95,34 @@ public final class ParquetIndexSeal {
     private static final long TARGET_ROW_GROUP_ROWS = 100_000;
     // The streaming writer's fixed threshold stays live and would split a key
     // wherever it fired, so it is put beyond any partition's posting count.
+    /**
+     * Data page size for the index parquet, deliberately NOT the data
+     * partition's {@code cairo.partition.encoder.parquet.data.page.size}.
+     * <p>
+     * The page is the unit the reader can skip: {@code decode_column_chunk}
+     * walks a chunk's pages and decompresses only those overlapping the row
+     * range asked for. At the data partition's 1 MiB default a 100k-row group's
+     * {@code key_id} chunk is 400 KB and its {@code row_id} chunk 800 KB, so
+     * each is ONE page and there is nothing to skip -- a single key's lookup
+     * decompressed the whole group. That is the opposite of this file's access
+     * pattern, which is one key's contiguous run at a time.
+     * <p>
+     * 64 KiB, measured. The curve is U-shaped, because a page too small costs
+     * more walking page headers on every lookup than it saves in
+     * decompression. Lookup cost over 16 keys of a 400k-row fixture, and over
+     * 2000 keys of a 2M-row one:
+     * <pre>
+     *   page size    400k/16 keys    2M/2000 keys
+     *     4 KiB        20.7 ms         2140 ms
+     *    16 KiB         8.1 ms          535 ms
+     *    32 KiB         6.8 ms          305 ms
+     *    64 KiB         6.8 ms          196 ms   &lt;-- best or tied on both
+     *   128 KiB         8.1 ms          193 ms
+     *   256 KiB        11.2 ms          451 ms
+     *     1 MiB        27.3 ms         2465 ms   (the old inherited default)
+     * </pre>
+     */
+    private static final int INDEX_DATA_PAGE_SIZE = 64 * 1024;
     private static final long WRITER_ROW_GROUP_ROWS = Long.MAX_VALUE;
 
     private ParquetIndexSeal() {
@@ -632,7 +660,7 @@ public final class ParquetIndexSeal {
                     true,
                     false,
                     WRITER_ROW_GROUP_ROWS,
-                    configuration.getPartitionEncoderParquetDataPageSize(),
+                    INDEX_DATA_PAGE_SIZE,
                     ParquetVersion.PARQUET_VERSION_V1,
                     0,
                     0,
