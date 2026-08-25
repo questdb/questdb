@@ -80,18 +80,24 @@ jobs:
       # ruleset is live with a throwaway GitHub-token-shaped canary the default
       # rules must catch; if gitleaks finds nothing in it, .gitleaks.toml has no
       # rules. The token is generated at runtime, so this step's own source scans
-      # clean. gitleaks is on PATH from the action step above.
+      # clean, and its alphabet is hex so that no draw can end in "null" or
+      # contain "false" -- the default global allowlist carries
+      # (?i)^true|false|null$ as an unanchored alternation, which would silence
+      # such a draw and fail this step against a healthy ruleset. gitleaks is on
+      # PATH from the action step above.
       - name: Verify the ruleset is not empty
         if: ${{ !cancelled() && env.HAS_GITLEAKS_LICENSE == 'true' }}
         run: |
           mkdir -p "$RUNNER_TEMP/gitleaks-canary"
-          printf 'ghp_%s\n' "$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 36)" \
+          printf 'ghp_%s\n' "$(openssl rand -hex 18)" \
             > "$RUNNER_TEMP/gitleaks-canary/canary.txt"
           # Keep this scan's output out of the job log unless it has something to
-          # report. It ends in "leaks found: 1", and a "leaks found:" line is how
-          # fix-ci recognises a finding from the real scan above, so printing it
-          # on every run names a finding that does not exist. The log file sits
-          # outside --source, or the scan would read its own output.
+          # report. Its last line carries a leak count in the colon form that
+          # fix-ci reads as a finding from the real scan above, so printing it on
+          # every run names a finding that does not exist. The runner echoes this
+          # comment into the log too, which is why it does not spell that form
+          # out. The log file sits outside --source, or the scan would read its
+          # own output.
           if gitleaks detect --no-git --redact --exit-code 2 --config .gitleaks.toml \
                --source "$RUNNER_TEMP/gitleaks-canary" --report-path=/dev/null --report-format=json \
                > "$RUNNER_TEMP/gitleaks-canary.log" 2>&1; then
