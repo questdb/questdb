@@ -103,6 +103,39 @@ public class OsTest {
         Assert.assertNotEquals(0, Os.getRss());
     }
 
+    /**
+     * QuestDB ships native libraries for exactly four platforms. x86-64 (Intel) macOS is not
+     * one of them: no CI job builds or tests it, so the repository commits no
+     * {@code darwin-x86-64} binary. A committed-but-never-rebuilt library is worse than none
+     * at all - it freezes while every other platform moves, so the next native ABI change
+     * hands Intel Mac users a stale dylib that fails at an arbitrary later call, or corrupts
+     * memory silently, instead of failing cleanly at load. This test fails when one of the
+     * {@code darwin-x86-64} libraries named below returns to the classpath, or when a shipped
+     * platform disappears. It pins the sqllogictest test resource to the same platform set,
+     * because the same CI jobs build it.
+     */
+    @Test
+    public void testOnlySupportedPlatformNativeLibsAreShipped() {
+        assertShipped("/io/questdb/bin/darwin-aarch64/libquestdb.dylib");
+        assertShipped("/io/questdb/bin/darwin-aarch64/libquestdbr.dylib");
+        assertShipped("/io/questdb/bin/linux-x86-64/libquestdb.so");
+        assertShipped("/io/questdb/bin/linux-x86-64/libquestdbr.so");
+        assertShipped("/io/questdb/bin/linux-aarch64/libquestdb.so");
+        assertShipped("/io/questdb/bin/linux-aarch64/libquestdbr.so");
+        assertShipped("/io/questdb/bin/windows-x86-64/libquestdb.dll");
+        assertShipped("/io/questdb/bin/windows-x86-64/questdbr.dll");
+
+        // libqdbsqllogictest is a test resource, built by the same CI jobs for the same platforms
+        assertShipped("/io/questdb/bin/darwin-aarch64/libqdbsqllogictest.dylib");
+        assertShipped("/io/questdb/bin/linux-x86-64/libqdbsqllogictest.so");
+        assertShipped("/io/questdb/bin/linux-aarch64/libqdbsqllogictest.so");
+        assertShipped("/io/questdb/bin/windows-x86-64/qdbsqllogictest.dll");
+
+        assertNotShipped("/io/questdb/bin/darwin-x86-64/libquestdb.dylib");
+        assertNotShipped("/io/questdb/bin/darwin-x86-64/libquestdbr.dylib");
+        assertNotShipped("/io/questdb/bin/darwin-x86-64/libqdbsqllogictest.dylib");
+    }
+
     @Test
     public void testParkPreservesInterruptFlag() {
         Thread.currentThread().interrupt();
@@ -265,5 +298,18 @@ public class OsTest {
         long fromMXBean = Os.getMemorySizeFromMXBean();
         assertTrue("Could not obtain memory size from OperatingSystemMXBean",
                 fromMXBean > 0 && fromMXBean < (1L << 48));
+    }
+
+    private static void assertNotShipped(String resource) {
+        Assert.assertNull(
+                resource + " is bundled, but nothing builds or tests that platform. Delete the"
+                        + " binary, or restore the CI legs that rebuild it. If the URL below points"
+                        + " into target/, it is a stale build output: run mvn clean.",
+                OsTest.class.getResource(resource)
+        );
+    }
+
+    private static void assertShipped(String resource) {
+        Assert.assertNotNull("missing shipped native library: " + resource, OsTest.class.getResource(resource));
     }
 }
