@@ -4064,9 +4064,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // to the on-disk txnlog and reconciles the cached sequencer only later; WAL apply and the
         // refresh read the file, so the view can legitimately move past the cached head. The ahead
         // guard must treat that as catch-up, not data loss: the base tracker's writerTxn covers
-        // the stale window. A second TableSequencerAPI plays the downloader, and setCurrentMicros
-        // drives FLUSH EVERY so each drain flushes the lead. The tail pins the other operand:
-        // with writerTxn reset to -1 the guard must fall back to the cached head, not fire.
+        // the stale window. A second TableSequencerAPI plays the downloader. It shares the engine,
+        // so its commits also enqueue live-view refresh tasks, which the real downloader never
+        // does; the guard still runs on the fallback pass of the same drain, after those tasks are
+        // consumed. setCurrentMicros drives FLUSH EVERY so each drain flushes the lead. The tail
+        // pins the other operand: with writerTxn reset to -1 the guard must fall back to the
+        // cached head, not fire.
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -4109,9 +4112,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         1, engine.getTableSequencerAPI().lastTxn(baseToken)
                 );
 
-                // Post the apply notification the way the downloader does (enterprise
-                // WalEvents.registerTable), without touching the cached sequencer; the apply job
-                // reads the file and applies 2 and 3.
+                // The out-of-band commits already posted an apply notification through the shared
+                // engine. Post it explicitly anyway, as the downloader's callback does (enterprise
+                // WalEvents.registerTable) minus its sequencer reload, so the apply does not hinge
+                // on the out-of-band tracker's notify heuristic and the cache stays stale; the apply
+                // job reads the file and applies 2 and 3.
                 engine.notifyWalTxnCommitted(baseToken);
                 drainWalQueue();
                 Assert.assertEquals(3, engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn());
