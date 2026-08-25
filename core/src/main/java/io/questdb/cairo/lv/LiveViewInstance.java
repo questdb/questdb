@@ -390,6 +390,17 @@ public class LiveViewInstance implements QuietCloseable {
     // trigger has fired this cycle. Mirrored as volatile because the catalogue
     // may surface it via live_views() later.
     private volatile long lastCheckpointWrittenUs = Numbers.LONG_NULL;
+    // Per-view duration cadence learned from out-of-order arrivals. The latest
+    // correction depth is halved so a similarly late next row has a complete
+    // checkpoint interval below it rather than landing on the newest boundary.
+    // Tightening is immediate; upward relaxation is capped at 25% per sample so
+    // one deep correction cannot abruptly discard a cadence that recent shallow
+    // corrections proved useful. All three fields are in-memory observability
+    // and reset on restart. Mutated by the refresh worker under the refresh latch;
+    // volatile for live_views().
+    private volatile long adaptiveCheckpointCorrectionCount;
+    private volatile long adaptiveCheckpointDurationMicros = Numbers.LONG_NULL;
+    private volatile long adaptiveCheckpointLastCorrectionDepthMicros = Numbers.LONG_NULL;
     // Wall-clock (micros) of the most recent successful LV WAL commit. Used by
     // LiveViewRefreshJob to enforce FLUSH EVERY: a refresh that arrives within
     // flushEveryMicros of the previous commit is skipped, so high-rate base
@@ -822,6 +833,53 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void recordO3OpenSegmentColdKeyedReplay() {
         o3OpenSegmentColdKeyedReplayCount++;
+    }
+
+    /**
+     * Learns a duration cadence from one observed out-of-order correction depth.
+     * The configured duration stays the ceiling, while {@code minDurationMicros}
+     * (normally the view's FLUSH EVERY interval) prevents a target the refresh
+     * cycle cannot physically realize.
+     */
+    public void recordAdaptiveCheckpointCorrection(
+            long correctionDepthMicros,
+            long configuredDurationMicros,
+            long minDurationMicros
+    ) {
+        if (correctionDepthMicros <= 0) {
+            return;
+        }
+        adaptiveCheckpointLastCorrectionDepthMicros = correctionDepthMicros;
+        adaptiveCheckpointCorrectionCount++;
+        if (configuredDurationMicros <= 0) {
+            // Zero already fires on every eligible cycle; negative values retain
+            // the same legacy comparison semantics rather than being normalized.
+            adaptiveCheckpointDurationMicros = configuredDurationMicros;
+            return;
+        }
+
+        final long halfDepth = correctionDepthMicros / 2 + correctionDepthMicros % 2;
+        final long floor = Math.max(1, minDurationMicros);
+        final long desired = Math.min(configuredDurationMicros, Math.max(floor, halfDepth));
+        final long current = adaptiveCheckpointDurationMicros;
+        if (current == Numbers.LONG_NULL || desired <= current) {
+            adaptiveCheckpointDurationMicros = desired;
+            return;
+        }
+
+        final long step = Math.max(1, current / 4);
+        adaptiveCheckpointDurationMicros = current >= desired - step
+                ? desired
+                : current + step;
+    }
+
+    /**
+     * Returns the duration cadence currently in force. Before the first observed
+     * correction this is the configured ceiling.
+     */
+    public long getEffectiveCheckpointDurationMicros(long configuredDurationMicros) {
+        final long learned = adaptiveCheckpointDurationMicros;
+        return learned == Numbers.LONG_NULL ? configuredDurationMicros : learned;
     }
 
     /**
@@ -1259,6 +1317,18 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long getHeadCheckpointWriteMicros() {
         return headCheckpointWriteMicros;
+    }
+
+    public long getAdaptiveCheckpointCorrectionCount() {
+        return adaptiveCheckpointCorrectionCount;
+    }
+
+    public long getAdaptiveCheckpointDurationMicros() {
+        return adaptiveCheckpointDurationMicros;
+    }
+
+    public long getAdaptiveCheckpointLastCorrectionDepthMicros() {
+        return adaptiveCheckpointLastCorrectionDepthMicros;
     }
 
     public LiveViewInMemoryTier getInMemoryTier() {

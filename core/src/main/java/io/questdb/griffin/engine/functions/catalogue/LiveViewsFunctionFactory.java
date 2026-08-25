@@ -90,6 +90,14 @@ import io.questdb.std.ObjList;
  * Both reset on restart; in steady state the resume count should grow while the
  * cold count stays flat.
  * <p>
+ * {@code checkpoint_effective_duration_micros},
+ * {@code checkpoint_last_correction_depth_micros}, and
+ * {@code checkpoint_correction_depth_sample_count} describe adaptive checkpoint
+ * cadence. Before the first out-of-order correction the effective duration is
+ * the configured ceiling and the depth is NULL. Once samples arrive, the
+ * effective duration may tighten below that ceiling to keep a checkpoint below
+ * similarly late future rows. All learned state resets on restart.
+ * <p>
  * The {@code checkpoint_*} group describes the versioned checkpoint timeline, and
  * splits four ways.
  * <ul>
@@ -276,6 +284,9 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_O3_REPLAY_SCAN_ROWS = 24;
         private static final int COLUMN_O3_OPEN_SEGMENT_KEYED_RESUME_COUNT = 56;
         private static final int COLUMN_O3_OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT = 57;
+        private static final int COLUMN_CHECKPOINT_EFFECTIVE_DURATION_MICROS = 58;
+        private static final int COLUMN_CHECKPOINT_LAST_CORRECTION_DEPTH_MICROS = 59;
+        private static final int COLUMN_CHECKPOINT_CORRECTION_DEPTH_SAMPLE_COUNT = 60;
         private static final int COLUMN_O3_RESUME_REPLAY_ROWS = 22;
         private static final int COLUMN_SEED_TARGET_SEQTXN = 21;
         private static final int COLUMN_VIEW_LOWER_BOUND_TIMESTAMP = 19;
@@ -592,6 +603,21 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                                 instance.getO3OpenSegmentKeyedResumeCount();
                         case COLUMN_O3_OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT ->
                                 instance.getO3OpenSegmentColdKeyedReplayCount();
+                        // Adaptive duration cadence learned from O3 correction
+                        // depth. The feature switch changes execution, so when
+                        // disabled the effective value is the configured fixed
+                        // cadence even if a future caller retains learned state.
+                        case COLUMN_CHECKPOINT_EFFECTIVE_DURATION_MICROS -> {
+                            final long configured =
+                                    engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros();
+                            yield engine.getConfiguration().isLiveViewCheckpointAdaptiveCadenceEnabled()
+                                    ? instance.getEffectiveCheckpointDurationMicros(configured)
+                                    : configured;
+                        }
+                        case COLUMN_CHECKPOINT_LAST_CORRECTION_DEPTH_MICROS ->
+                                instance.getAdaptiveCheckpointLastCorrectionDepthMicros();
+                        case COLUMN_CHECKPOINT_CORRECTION_DEPTH_SAMPLE_COUNT ->
+                                instance.getAdaptiveCheckpointCorrectionCount();
                         // Seals refused because the rows the view emitted and the rows
                         // its table holds disagreed. Zero is the only healthy value:
                         // any bump means rows never reached the table (or reached it
@@ -795,6 +821,9 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("checkpoint_row_count_mismatches", ColumnType.LONG));    // 55
             metadata.add(new TableColumnMetadata("o3_open_segment_keyed_resume_count", ColumnType.LONG)); // 56
             metadata.add(new TableColumnMetadata("o3_open_segment_cold_keyed_replay_count", ColumnType.LONG)); // 57
+            metadata.add(new TableColumnMetadata("checkpoint_effective_duration_micros", ColumnType.LONG)); // 58
+            metadata.add(new TableColumnMetadata("checkpoint_last_correction_depth_micros", ColumnType.LONG)); // 59
+            metadata.add(new TableColumnMetadata("checkpoint_correction_depth_sample_count", ColumnType.LONG)); // 60
             METADATA = metadata;
         }
     }

@@ -14881,7 +14881,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "checkpoint_segment_repair_gate\tcheckpoint_keyed_scan_gate\t"
                         + "checkpoint_row_count_mismatches\t"
                         + "o3_open_segment_keyed_resume_count\t"
-                        + "o3_open_segment_cold_keyed_replay_count\n");
+                        + "o3_open_segment_cold_keyed_replay_count\t"
+                        + "checkpoint_effective_duration_micros\t"
+                        + "checkpoint_last_correction_depth_micros\t"
+                        + "checkpoint_correction_depth_sample_count\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }
@@ -17003,6 +17006,69 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     preFunctionMapSize,
                     reloaded.getAnchorWindow().getAnchorMapSize()
             );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAdaptiveCheckpointDurationTracksCorrectionDepth() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 60 * Micros.MINUTE_MICROS);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES ('2026-06-01T00:00:00.000000Z', 'a', 1.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                setCurrentMicros(currentMicros + 2 * Micros.SECOND_MICROS);
+                execute("INSERT INTO base VALUES ('2026-06-01T00:20:00.000000Z', 'a', 2.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                setCurrentMicros(currentMicros + 2 * Micros.SECOND_MICROS);
+                execute("INSERT INTO base VALUES ('2026-06-01T00:10:00.000000Z', 'a', 3.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals(10 * Micros.MINUTE_MICROS, instance.getAdaptiveCheckpointLastCorrectionDepthMicros());
+                Assert.assertEquals(5 * Micros.MINUTE_MICROS, instance.getAdaptiveCheckpointDurationMicros());
+                Assert.assertEquals(1, instance.getAdaptiveCheckpointCorrectionCount());
+                assertQuery(
+                        "SELECT checkpoint_effective_duration_micros, " +
+                                "checkpoint_last_correction_depth_micros, " +
+                                "checkpoint_correction_depth_sample_count " +
+                                "FROM live_views() WHERE view_name = 'lv'"
+                ).noLeakCheck().noRandomAccess().returns(
+                        "checkpoint_effective_duration_micros\tcheckpoint_last_correction_depth_micros\t" +
+                                "checkpoint_correction_depth_sample_count\n" +
+                                "300000000\t600000000\t1\n"
+                );
+
+                final long repairHead = instance.getHeadCheckpointLvSeqTxn();
+                setCurrentMicros(currentMicros + 5 * Micros.MINUTE_MICROS);
+                execute("INSERT INTO base VALUES ('2026-06-01T00:30:00.000000Z', 'a', 4.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertNotEquals(
+                        "the learned five-minute duration must seal before the configured hour",
+                        repairHead,
+                        instance.getHeadCheckpointLvSeqTxn()
+                );
+            }
 
             execute("DROP LIVE VIEW lv");
         });

@@ -490,6 +490,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isLiveViewCheckpointAdaptiveCadenceEnabled() {
+        return getDelegate().isLiveViewCheckpointAdaptiveCadenceEnabled();
+    }
+
+    @Override
     public long getLiveViewCheckpointMaxDurationMicros() {
         return getDelegate().getLiveViewCheckpointMaxDurationMicros();
     }

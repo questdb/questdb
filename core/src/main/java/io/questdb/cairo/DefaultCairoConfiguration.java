@@ -507,6 +507,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isLiveViewCheckpointAdaptiveCadenceEnabled() {
+        return true;
+    }
+
+    @Override
     public long getLiveViewCheckpointCompactionInterval() {
         return 0;
     }

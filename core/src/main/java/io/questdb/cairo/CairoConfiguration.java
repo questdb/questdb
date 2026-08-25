@@ -355,6 +355,14 @@ public interface CairoConfiguration {
     long getLiveViewCheckpointCompactionInterval();
 
     /**
+     * Whether a live view may shorten its configured checkpoint duration cadence
+     * after observing out-of-order correction depth. The learned cadence never
+     * exceeds {@link #getLiveViewCheckpointMaxDurationMicros()} and never runs
+     * more frequently than the view's {@code FLUSH EVERY} interval.
+     */
+    boolean isLiveViewCheckpointAdaptiveCadenceEnabled();
+
+    /**
      * Wall-clock ceiling between consecutive head-checkpoint writes for a
      * live view. The refresh worker writes a fresh head once this duration
      * has elapsed since the prior write, even when

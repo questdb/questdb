@@ -916,6 +916,7 @@ public class PropServerConfigurationTest {
         // ignored key or a getter wired to the wrong field would go unnoticed there.
         CairoConfiguration cairo = newPropServerConfiguration(new Properties()).getCairoConfiguration();
 
+        Assert.assertTrue(cairo.isLiveViewCheckpointAdaptiveCadenceEnabled());
         Assert.assertTrue(cairo.isLiveViewCheckpointRepairIsolatedRuntimeEnabled());
         Assert.assertEquals(5 * Micros.MINUTE_MICROS, cairo.getLiveViewCheckpointMaxDurationMicros());
         Assert.assertEquals(1_000_000L, cairo.getLiveViewCheckpointRows());
@@ -939,6 +940,9 @@ public class PropServerConfigurationTest {
         final Properties properties = new Properties();
         final Map<String, String> env = new HashMap<>();
 
+        properties.setProperty("cairo.live.view.checkpoint.adaptive.cadence.enabled", "true");
+        env.put("QDB_CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED", "false");
+
         properties.setProperty("cairo.live.view.checkpoint.rows", "250000");
         env.put("QDB_CAIRO_LIVE_VIEW_CHECKPOINT_ROWS", "777000");
 
@@ -954,6 +958,7 @@ public class PropServerConfigurationTest {
         CairoConfiguration cairo = newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
                 .getCairoConfiguration();
 
+        Assert.assertFalse(cairo.isLiveViewCheckpointAdaptiveCadenceEnabled());
         Assert.assertEquals(777_000L, cairo.getLiveViewCheckpointRows());
         Assert.assertFalse(cairo.isLiveViewEnabled());
         Assert.assertEquals(90 * Micros.MINUTE_MICROS, cairo.getLiveViewInMemoryMaxMicros());
@@ -1041,6 +1046,7 @@ public class PropServerConfigurationTest {
         // its neighbour cannot satisfy these assertions. The duration and size keys carry
         // unit suffixes, exercising the getMicros()/getLongSize() conversions.
         Properties properties = new Properties();
+        properties.setProperty("cairo.live.view.checkpoint.adaptive.cadence.enabled", "false");
         properties.setProperty("cairo.live.view.checkpoint.max.duration.micros", "90s");
         properties.setProperty("cairo.live.view.checkpoint.rows", "640000");
         properties.setProperty("cairo.live.view.enabled", "false");
@@ -1056,6 +1062,7 @@ public class PropServerConfigurationTest {
 
         CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
 
+        Assert.assertFalse(cairo.isLiveViewCheckpointAdaptiveCadenceEnabled());
         Assert.assertEquals(90 * Micros.SECOND_MICROS, cairo.getLiveViewCheckpointMaxDurationMicros());
         Assert.assertEquals(640_000L, cairo.getLiveViewCheckpointRows());
         Assert.assertFalse(cairo.isLiveViewEnabled());

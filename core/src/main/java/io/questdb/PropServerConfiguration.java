@@ -321,6 +321,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String keepAliveHeader;
     private final int latestByQueueCapacity;
     private final String legacyCheckpointRoot;
+    private final boolean liveViewCheckpointAdaptiveCadenceEnabled;
     private final long liveViewCheckpointCompactionInterval;
     private final long liveViewCheckpointMaxDurationMicros;
     private final long liveViewCheckpointPurgeInterval;
@@ -1552,6 +1553,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
 
             // live-view config
+            this.liveViewCheckpointAdaptiveCadenceEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED, true);
             this.liveViewCheckpointCompactionInterval = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_COMPACTION_INTERVAL, 0L);
             this.liveViewCheckpointMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 5L * Micros.MINUTE_MICROS);
             this.liveViewCheckpointPurgeInterval = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, 1L);
@@ -4255,6 +4257,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getLiveViewCheckpointCompactionInterval() {
             return liveViewCheckpointCompactionInterval;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointAdaptiveCadenceEnabled() {
+            return liveViewCheckpointAdaptiveCadenceEnabled;
         }
 
         @Override

@@ -6388,6 +6388,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
 
+        if (engine.getConfiguration().isLiveViewCheckpointAdaptiveCadenceEnabled()) {
+            final long runtimeFrontierTs = instance.getLatestSeenTs();
+            if (lateRowTs != Numbers.LONG_NULL
+                    && runtimeFrontierTs != Numbers.LONG_NULL
+                    && lateRowTs < runtimeFrontierTs) {
+                final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(
+                        instance.getDefinition().getBaseTimestampType()
+                );
+                final long frontierMicros = timestampDriver.toMicros(runtimeFrontierTs);
+                final long lateMicros = timestampDriver.toMicros(lateRowTs);
+                final long correctionDepthMicros = lateMicros < 0
+                        && frontierMicros > Long.MAX_VALUE + lateMicros
+                        ? Long.MAX_VALUE
+                        : frontierMicros - lateMicros;
+                instance.recordAdaptiveCheckpointCorrection(
+                        correctionDepthMicros,
+                        engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros(),
+                        instance.getDefinition().getFlushEveryMicros()
+                );
+            }
+        }
+
         // Pin one applied base reader for the whole repair, then plan against it.
         // The executors run off this same reader and this same plan: a resume the
         // plan rejects rebuilds from the snapshot its bounds were derived against,
@@ -10183,7 +10205,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         instance.addRowsSinceLastCheckpointWritten(appendedRows);
 
         final long rowsCadence = engine.getConfiguration().getLiveViewCheckpointRows();
-        final long durationCadence = engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros();
+        final long configuredDurationCadence = engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros();
+        final long durationCadence = engine.getConfiguration().isLiveViewCheckpointAdaptiveCadenceEnabled()
+                ? instance.getEffectiveCheckpointDurationMicros(configuredDurationCadence)
+                : configuredDurationCadence;
         final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         // A cooldown is armed only after MAX_CONSECUTIVE_SEAL_FAILURES proved the fault
         // deterministic, so suppress the seal here whatever triggered it - force
@@ -12317,7 +12342,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // firstSeedRoot forces a write so a crash early in the sweep resumes
         // rather than re-sweeping from scratch.
         final long rowsCadence = engine.getConfiguration().getLiveViewCheckpointRows();
-        final long durationCadence = engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros();
+        final long configuredDurationCadence = engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros();
+        final long durationCadence = engine.getConfiguration().isLiveViewCheckpointAdaptiveCadenceEnabled()
+                ? instance.getEffectiveCheckpointDurationMicros(configuredDurationCadence)
+                : configuredDurationCadence;
         final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         final long lastWrittenUs = instance.getLastCheckpointWrittenUs();
         final long priorOffset = instance.getSeedCheckpointDataOffset();
