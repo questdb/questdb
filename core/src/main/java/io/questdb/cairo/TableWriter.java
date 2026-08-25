@@ -3505,6 +3505,121 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
+    /**
+     * Swaps in a composite partition REWRITE built off a {@link TableReader} snapshot - see
+     * {@code PartitionCompactionScanJob} and {@link CompositePartitionSwapCommand} - never holding this
+     * writer for the copy itself, only for this metadata-only swap. Stays inside the caller's own
+     * transaction, the same contract {@link #compactPartitionNoCommit} gives an UPDATE.
+     * <p>
+     * {@code expectedSrcNameTxn}/{@code expectedWriterTxn} are the source directory's own generation,
+     * captured when the build started - {@link PartitionGeometry#getWriterTxn} bumps on every
+     * {@link PartitionGeometry#publish}, so a mismatch here means something committed to this partition
+     * between snapshot and swap (a merge-append, another compaction, anything), and the staged directory
+     * no longer reflects what this partition holds. Discovering that AFTER the build is cheap: the copy
+     * ran off a reader, costing nothing from this writer's own budget, so throwing the work away and
+     * letting the next sweep retry from a fresh snapshot is strictly better than holding this writer for
+     * the length of the copy, which is the whole reason this path exists instead of
+     * {@link #compactPartitionNoCommit}.
+     *
+     * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if the source partition's generation
+     *                                                                moved since the build snapshot was
+     *                                                                taken. The staged directory is
+     *                                                                deleted before this throws.
+     */
+    public void swapCompactedCompositePartition(
+            long partitionTimestamp,
+            long expectedSrcNameTxn,
+            long expectedWriterTxn,
+            long liveRows,
+            ColumnTopRecorder columnTops
+    ) {
+        if (inTransaction()) {
+            commit();
+        }
+
+        final int partitionIndex = getPartitionIndexByTimestamp(partitionTimestamp);
+        final long liveWriterTxn = partitionIndex < 0 ? -1L : getGeometry().getWriterTxn(partitionIndex);
+        final boolean stale = partitionIndex < 0
+                || !txWriter.isPartitionComposite(partitionIndex)
+                || txWriter.getPartitionNameTxn(partitionIndex) != expectedSrcNameTxn
+                || liveWriterTxn != expectedWriterTxn;
+
+        other.trimTo(pathSize);
+        setPathForNativePartition(other, timestampType, partitionBy, partitionTimestamp, expectedSrcNameTxn);
+        other.put(TableUtils.COMPACTING_DIR_MARKER).put(expectedWriterTxn);
+
+        if (stale) {
+            LOG.info().$("discarding stale composite partition rewrite [table=").$(tableToken)
+                    .$(", dir=").$substr(pathRootSize, other)
+                    .$(", expectedWriterTxn=").$(expectedWriterTxn)
+                    .$(", liveWriterTxn=").$(liveWriterTxn)
+                    .I$();
+            if (ff.exists(other.$())) {
+                ff.rmdir(other, false);
+            }
+            other.trimTo(pathSize);
+            throw TableReferenceOutOfDateException.ofOutdatedView(tableToken, expectedWriterTxn, liveWriterTxn);
+        }
+
+        final boolean isActivePartition = partitionIndex == txWriter.getPartitionCount() - 1;
+        final long newNameTxn = txWriter.getTxn();
+        path.trimTo(pathSize);
+        setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, newNameTxn);
+        if (ff.rename(other.$(), path.$()) != Files.FILES_RENAME_OK) {
+            other.trimTo(pathSize);
+            path.trimTo(pathSize);
+            throw CairoException.critical(ff.errno())
+                    .put("could not rename staged composite partition rewrite [table=").put(tableToken)
+                    .put(", from=").put(other)
+                    .put(", to=").put(path)
+                    .put(']');
+        }
+        path.trimTo(pathSize);
+        other.trimTo(pathSize);
+
+        LOG.info().$("swapping in composite partition rewrite [table=").$(tableToken)
+                .$(", dir=").$(formatPartitionForTimestamp(partitionTimestamp, newNameTxn))
+                .$(", liveRows=").$(liveRows)
+                .I$();
+
+        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, liveRows);
+        // The new directory is one piece at row 0 spanning every row it holds - the ordinary, non-
+        // composite shape - so no geometry record is published for it. Same convention compactPartition0
+        // uses for the same outcome.
+        txWriter.setPartitionGeometryRef(partitionTimestamp, NO_GEOMETRY_REF);
+        partitionRemoveCandidates.add(partitionTimestamp, expectedSrcNameTxn);
+
+        columnVersionWriter.setColumnTopPartitionTimestamp(partitionTimestamp);
+        columnTops.pushInto(columnVersionWriter);
+
+        if (isActivePartition) {
+            // Same reasoning, and same o3FinishInFlight guard, as compactPartitionNoCommit's own active-
+            // partition branch: the REWRITE just retired the directory columns[] is mapped against, and
+            // reopening without the guard would let openPartition's setCurrentTableTxn trigger a posting
+            // index recovery walk mid-transaction that drops what the reader-side build just recorded.
+            o3FinishInFlight = true;
+            try {
+                closeActivePartition(false);
+                openLastPartition();
+            } finally {
+                o3FinishInFlight = false;
+            }
+        }
+        try {
+            if (sealPostingIndexForPartition(partitionTimestamp, false)) {
+                restorePostingIndexersToLastPartition();
+            }
+        } catch (Throwable e) {
+            LOG.critical().$("composite partition swap succeeded but posting-index reseal failed `").$(e).$('`').$();
+            distressed = true;
+            throw e;
+        }
+
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        commitTxWriterAndPublishPendingPostingSealPurges();
+    }
+
     // Returns SWITCH_OK (0) on successful switch, SWITCH_SKIPPED (-2) if the partition was
     // skipped (active or already parquet), SWITCH_NO_PARQUET (-1) if there is no parquet file to switch to.
     public int switchNativePartitionWithParquet(long partitionTimestamp, long parquetFileSize) {
@@ -5327,6 +5442,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             // Only now, with every piece copied successfully, does the target's self-tracked view of its
             // own tops become the partition's real, committed one.
+            columnVersionWriter.setColumnTopPartitionTimestamp(partitionTs);
             targetFrame.publishColumnTops(columnVersionWriter);
         } finally {
             Misc.free(targetFrame);
@@ -8961,6 +9077,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             // Only now, with every tail piece copied successfully, does the target's self-tracked view of
             // its own tops become the fresh tail partition's real, committed one.
+            columnVersionWriter.setColumnTopPartitionTimestamp(tailPartitionTs);
             targetFrame.publishColumnTops(columnVersionWriter);
         } finally {
             Misc.free(targetFrame);
@@ -9779,6 +9896,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // rewritePhysicalPartition and squash are - see Frame.publishColumnTops.
                             try (Frame targetFrame = frameFactory.createRW(other, newSplitPartitionTimestamp, metadata, columnVersionWriter, 0)) {
                                 FrameAlgebra.append(targetFrame, sourceFrame, newPrevPartitionSize, prevPartitionSize, txWriter.getTxn() + 1L, configuration.getCommitMode());
+                                columnVersionWriter.setColumnTopPartitionTimestamp(newSplitPartitionTimestamp);
                                 targetFrame.publishColumnTops(columnVersionWriter);
                             }
                         }
@@ -15079,6 +15197,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             // Only now, with every source partition squashed in successfully, does the target's
             // self-tracked view of its own tops become the squashed partition's real, committed one.
+            columnVersionWriter.setColumnTopPartitionTimestamp(targetPartition);
             targetFrame.publishColumnTops(columnVersionWriter);
         } finally {
             Misc.free(targetFrame);

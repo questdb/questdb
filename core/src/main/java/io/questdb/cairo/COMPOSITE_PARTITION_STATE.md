@@ -205,17 +205,135 @@ composite path had to make the same choice the existing O3 path already makes, a
    correlation intact (6 of 7 winning runs failed; the one exception passed with the SAME code, differing
    only in scheduling) - so #9 was A cause found on this path, not THE cause of the row content itself.
 
-   New lead from the same instrumented rerun, not yet chased down: at the exact moment `dispatchComposite`
-   wins the race, `ApplyWal2TableJob` is caught actively spinning against the same writer acquisition
+   New lead from the same instrumented rerun: at the exact moment `dispatchComposite` wins the race,
+   `ApplyWal2TableJob` is caught actively spinning against the same writer acquisition
    (`"unsolicited table lock"`, dozens of attempts logged within single-digit milliseconds) rather than
    idly waiting between batches, and its next WAL transaction block is then applied through a writer
    instance it did not choose to have cold-reopened out from under it (`PartitionCompactionScanJob`'s own
-   REWRITE forces exactly that reopen). Whether `ApplyWal2TableJob`'s own segment/offset bookkeeping for
-   the block it was mid-preparing survives that swap correctly is the next thing to check - not yet
-   verified either way. No deterministic reproducer exists yet; this remains a genuine cross-thread timing
-   race, confirmed only by repeated fuzz/instrumented reruns, not a single seed replay (a fixed-seed replay
-   of `testWalWriteManySmallTransactions` passes most of the time and needs looping ~10-20x to catch the
-   failure).
+   REWRITE forced exactly that reopen). That reopen, and the writer hold spanning the whole REWRITE that
+   forced it, was architecturally wrong regardless of whether it fully explained the row content itself:
+   `dispatchComposite` held the target table's writer for the entire copy - cost proportional to live row
+   count, ~40ms for a 152-row partition in the traced case - which is exactly the window
+   `ApplyWal2TableJob` spent hammering to get back in.
+
+   **Fixed the architecture, not (fully) the symptom.** `dispatchComposite` no longer holds the writer for
+   the copy at all: `PartitionCompactionScanJob#buildCompactedComposite` builds the REWRITE off a
+   `TableReader` snapshot (piece list from the reader's own `PartitionGeometry`, columns read via the
+   reader's `ColumnVersionReader`, target frame built with `FrameFactory#openRW`'s `ColumnTopSink` overload
+   into a staging directory - `TableUtils#COMPACTING_DIR_MARKER`, named after the source directory's own
+   `nameTxn` plus the geometry's `writerTxn` stamp for uniqueness) - no writer touched at all. The result
+   is handed to a new `CompositePartitionSwapCommand`
+   (`AsyncWriterCommand`, mirroring `ParquetPartitionCompactionCommand`'s existing protocol via
+   `CairoEngine#getWriterOrPublishCommand`: idle writer applies immediately, busy writer queues onto its
+   own `TableWriterTask` command queue and applies later via `TableWriter#tick()`) whose `apply()` calls the
+   new `TableWriter#swapCompactedCompositePartition` - metadata-only, proportional to nothing but the
+   partition's own bookkeeping regardless of row count. That method re-resolves the partition fresh and
+   compares `PartitionGeometry#getWriterTxn` (bumped on every `publish`) plus the source `nameTxn` against
+   what the build snapshot saw; on any mismatch it deletes the staged directory and throws
+   `TableReferenceOutOfDateException` - the design doc's own long-unbuilt "Staleness" section (§6),
+   finally wired up, since a reader-based build genuinely can go stale against concurrent writes in a way
+   the old writer-held approach structurally could not. `Frame#publishColumnTops` was widened from a
+   concrete `ColumnVersionWriter` parameter to the existing `ColumnTopSink` interface so this reader-based
+   build - which holds no writer to publish into - can record tops off a `ColumnTopRecorder` (plain
+   `LongList`, zero boxing) and have them pushed into the real `ColumnVersionWriter` only at swap time,
+   without a lambda/adapter allocation per call: `ColumnVersionWriter` now implements `ColumnTopSink`
+   itself, armed via `setColumnTopPartitionTimestamp` before each of its own four pre-existing
+   `publishColumnTops` call sites, the same stateful-prepare idiom `PostingIndexWriter#setNextTxnAtSeal`
+   already uses. `compactPartitionNoCommit`/`compactPartition0` are untouched and still used by
+   `UpdateOperatorImpl` (which already holds the writer for the whole UPDATE, so the concern this redesign
+   addresses does not apply there).
+
+   Confirmed correct: `PartitionCompactionScanJobTest` (7/7), the full `io.questdb.test.cairo.o3` package
+   (461/461), `UpdateTest` (105/105) and `PostingSealPurgeTest` (22/22) all green. One real bug caught and
+   fixed during this work: the first version used `FrameFactory#createRW` (forces `create=true`) instead of
+   `openRW` for the staging target frame - `create=true` makes every column's `createNew` check ignore its
+   own top and re-truncate on every `Frame#createColumn` call, so each piece after the first silently threw
+   away the ones before it. `compactPartition0` was already correct here (`openRW`, not `createRW`) - this
+   redesign initially diverged from it by accident and `PartitionCompactionScanJobTest` caught the wrong
+   row content immediately.
+
+   **Confirmed this measurably narrows defect #10 but does not close it - and confirmed the residual
+   trigger is this job itself, not `runCompaction()`.** 30 further fuzz-loop runs of
+   `testWalWriteManySmallTransactions` after this redesign: 2 failures (down from 6/30 on the same loop
+   before it, ~7% vs ~20%), same row-content-mismatch symptom. Initially guessed the remaining trigger was
+   `TableWriter#runCompaction` (called from `housekeep()` on every ordinary commit, still writer-held via
+   `compactPartition0`) since both mechanisms fire on the same partition in every traced run. **That guess
+   was wrong** - checked directly by no-op'ing `PartitionCompactionScanJob#sweep` (early `return` before
+   the table walk) and rerunning the exact same 30-loop: 0 failures, 30/30 green. With this job entirely
+   disabled the race does not reproduce, so the residual failures need `PartitionCompactionScanJob`
+   itself active; `runCompaction()` alone, over 30 runs, produces none. So the reader-based build/swap
+   this redesign introduced still has its own remaining race, distinct from whatever `runCompaction()`
+   contributes when both run together.
+
+   **Narrowed further: the swap/mutation half is not needed either.** Hardcoded
+   `swapCompactedCompositePartition`'s `stale` local to always be `true`, so `dispatchComposite` still
+   builds the REWRITE off a `TableReader` snapshot and still acquires/queues onto the writer via
+   `getWriterOrPublishCommand`, but the swap always takes the stale branch - deletes the staged directory,
+   throws `TableReferenceOutOfDateException`, and nothing past that point in the method (rename,
+   `txWriter` bookkeeping, column-top push, posting-index reseal, active-partition reopen) ever runs.
+   Reran the same 30-loop: 1/30 failed, same row-content-mismatch symptom (whole wrong row at ordinal 1).
+   So the mutation/swap code is not required to trigger the race - it happens with the swap permanently
+   rejected. The suspect is now the BUILD itself: `buildCompactedComposite` opening a `TableReader`,
+   resolving its `PartitionGeometry`, and copying rows via `FrameFactory#openRO`/`openRW` +
+   `FrameAlgebra#append` off that snapshot into a `.compacting`-staged directory alongside the live one -
+   or possibly the mere act of creating/deleting that staging directory concurrently with ordinary WAL
+   apply traffic on the same table. 1/30 and 2/30 are thin samples, consistent with each other but not
+   enough to rule out interaction effects on their own.
+
+   **Ruled out reader-pool staleness; found a live, previously-unnoticed race between the two
+   subsystems' directory scans.** `FuzzRunner#runFuzz` (the `tableCount` overload) gained a temporary
+   `questdb.fuzz.snapshotDir` system-property hook (`FuzzRunner#snapshotTableDir(s)`) that copies both
+   tables' whole directory trees right after WAL apply finishes and before the cursor comparison, plus
+   an `engine.releaseInactive()` call in the same spot to force the comparison to open brand-new
+   `TableReader`s instead of reusing pooled ones. First loop iteration failed immediately with the same
+   symptom (row 294 of 298 is a whole different, internally-consistent row) - reader pooling is not the
+   cause, since these are fresh readers reading genuinely wrong on-disk bytes.
+
+   The snapshot's `_txn` (dumped standalone via a temporary `DumpSnapshotDefect10Test`, no live engine)
+   showed the partition already flattened by the time of comparison: `composite=false, nameTxn=23,
+   size=298`. Grepping that run's log for the partition's history told the real story:
+   ```
+   ...several ordinary WAL-driven merge-append commits grow the composite partition to 5 pieces/298 rows...
+   received async cmd [type=6, cursor=0]  -> discarding stale composite partition rewrite [...compacting14, expectedWriterTxn=14, liveWriterTxn=22]
+   received async cmd [type=6, cursor=1]  -> discarding stale composite partition rewrite [...compacting17, expectedWriterTxn=17, liveWriterTxn=22]
+   received async cmd [type=6, cursor=2]  -> discarding stale composite partition rewrite [...compacting18, expectedWriterTxn=18, liveWriterTxn=22]
+   WriterPool closed [reason=IDLE] -> WriterPool open -> TableWriter open '...'
+   E TableWriter invalid partition directory inside table folder: .../2022-02-25.11.compacting20
+   TableWriter discarding stale composite partition rewrite [...compacting20, expectedWriterTxn=20, liveWriterTxn=22]
+   PartitionCompactionScanJob skipping table during partition compaction scan [...expectedSeqTxn=20, actualSeqTxn=22]
+   ...
+   TableWriter swapping in composite partition rewrite [table=..., dir=2022-02-25.23, liveRows=298]  <- the corrupted result
+   ```
+   Four straight `buildCompactedComposite` snapshots (writerTxn 14/17/18/20) went stale before their swap
+   could even reach the writer - ordinary WAL-driven O3 merge-appends kept moving `liveWriterTxn` to 22
+   faster than each build+dispatch round-trip. In the middle of that churn the writer pool evicted the
+   writer as IDLE and opened a brand-new `TableWriter` instance, whose own startup housekeeping
+   (`removeNonAttachedPartitions` in `TableWriter.java`) scans the table's root directory and logs
+   `"invalid partition directory inside table folder"` for anything it can't parse as
+   `<date>.<nameTxn>` - which is exactly what a `.compacting<writerTxn>` staging directory looks like to
+   it (it was never taught the `COMPACTING_DIR_MARKER` idiom the way it already knows
+   `isDetachedDirMarker`/wal/seq/attach-suffix directories). That particular occurrence turned out
+   harmless on inspection - `Numbers.parseLong` throws on the non-numeric `.compacting20` suffix, which
+   is caught and the directory is just logged and left alone, not touched - but it is direct, timestamped
+   proof that `TableWriter`'s own open-time directory scan and `PartitionCompactionScanJob`'s staging
+   directories are running concurrently and observing each other's transient on-disk state, completely
+   unsynchronized. The swap that produced the corrupted partition (writerTxn ~22 -> dir `2022-02-25.23`)
+   happened immediately after this exact reopen. Not yet proven as the mechanism - `removeNonAttachedPartitions`
+   itself doesn't touch anything here - but a full writer reopen mid-build (which re-derives the writer's
+   entire in-memory partition/column state from `_txn`/`_geometry`/`_meta` from scratch) racing against a
+   `buildCompactedComposite` call that is mid-copy from a `TableReader` snapshot taken against the *old*
+   writer generation is now the leading hypothesis, and squarely on the BUILD side per the two swap
+   experiments above. Next step: reproduce with the writer-reopen-during-build window forced (e.g.
+   instrument `buildCompactedComposite` to block after opening its `TableReader` until a concurrent
+   `engine.releaseInactive()` + reopen has definitely happened, then let it proceed) to confirm or rule
+   out this specific interleaving as the mechanism, rather than just observing it correlate once.
+
+   The temporary `questdb.fuzz.snapshotDir`/`releaseInactive()` hook in `FuzzRunner.java` and the
+   `DumpSnapshotDefect10Test.java` scratch class are debugging aids, not permanent - remove them once this
+   defect is closed, or keep the snapshot hook if it proves generally useful for other fuzz failures
+   (ask before deciding either way). No deterministic reproducer exists yet; this remains a genuine
+   cross-thread timing race, confirmed only by repeated fuzz/instrumented reruns, not a single seed
+   replay.
 
 ## Decisions
 

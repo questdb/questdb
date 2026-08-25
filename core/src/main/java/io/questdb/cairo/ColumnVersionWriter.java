@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.frm.ColumnTopSink;
+import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
@@ -33,10 +35,11 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 
-public class ColumnVersionWriter extends ColumnVersionReader {
+public class ColumnVersionWriter extends ColumnVersionReader implements ColumnTopSink {
     private final CairoConfiguration configuration;
     private final MemoryCMARW mem;
     private final boolean partitioned;
+    private long columnTopSinkPartitionTimestamp = Long.MIN_VALUE;
     private boolean hasChanges;
     private long size;
     private long version;
@@ -190,6 +193,28 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         mem.putLong(OFFSET_VERSION_64, version - 1);
         // load version and other fields from mem
         readUnsafe();
+    }
+
+    /**
+     * {@link ColumnTopSink} entry point: forwards to {@link #mergeColumnTop} against whatever partition
+     * {@link #setColumnTopPartitionTimestamp} last set. A {@link Frame} calls this once per column it
+     * wrote through - see {@link Frame#publishColumnTops} - so the partition is fixed for the whole
+     * sequence of calls that follows one {@code setColumnTopPartitionTimestamp}.
+     */
+    @Override
+    public void setColumnTop(int columnIndex, long columnTop) {
+        assert columnTopSinkPartitionTimestamp != Long.MIN_VALUE : "setColumnTopPartitionTimestamp not called";
+        mergeColumnTop(columnTopSinkPartitionTimestamp, columnIndex, columnTop);
+    }
+
+    /**
+     * Arms this writer as a {@link ColumnTopSink} for one partition: every {@link #setColumnTop} call
+     * until the next {@code setColumnTopPartitionTimestamp} merges into {@code partitionTimestamp}'s own
+     * record. Exists so {@link Frame#publishColumnTops} can pass this writer straight through as the sink
+     * without a per-call adapter allocation.
+     */
+    public void setColumnTopPartitionTimestamp(long partitionTimestamp) {
+        this.columnTopSinkPartitionTimestamp = partitionTimestamp;
     }
 
     public void squashPartition(long targetPartitionTimestamp, long sourcePartitionTimestamp) {
