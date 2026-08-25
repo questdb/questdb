@@ -37,7 +37,9 @@
 # the whole line, though. A regexTarget = "line" regex keeps the blind spot an
 # entry here has, silencing whatever that rule reports on a matching line; the
 # default target is the secret itself, so a substituted value stops matching and
-# the finding comes back. See CONTRIBUTING.md, "Secret scanning".
+# the finding comes back -- as long as the regex is anchored and literal-quoted
+# (^\Q...\E$), since gitleaks matches it as an unanchored substring, not a
+# literal. See CONTRIBUTING.md, "Secret scanning".
 #
 # Note that the scan reads each of the branch's commits separately, not the
 # squashed diff. A secret-shaped line added in one commit and removed in a later

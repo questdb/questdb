@@ -397,14 +397,17 @@ an allowlist to `.gitleaks.toml` instead. It matches content rather than
 position, so none of those cases can shift the finding out from under it. Match
 the placeholder value itself, not the line it sits on: the default target is the
 secret gitleaks extracted, so a substituted value stops matching and the finding
-comes back.
+comes back. Wrap the value in `^\Q...\E$`, as below: `regexes` holds a Go RE2
+regexp matched as an unanchored substring, so `\Q...\E` takes the placeholder
+literally (an unescaped `.` would otherwise match any character) and `^...$`
+keeps it from suppressing a longer, real secret that merely contains it.
 
 ```toml
 [[rules]]
 id = "generic-api-key"
   [[rules.allowlists]]
   description = "why this is not a secret"
-  regexes = ['''dGhlIHNhbXBsZSBub25jZQ==''']
+  regexes = ['''^\QdGhlIHNhbXBsZSBub25jZQ==\E$''']
 ```
 
 Reach for `regexTarget = "line"` only where there is no stable value to match —
