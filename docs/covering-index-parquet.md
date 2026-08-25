@@ -46,34 +46,40 @@ Source: `ParquetIndexSeal.java:107,115`.
 
 ## Read performance
 
-**The Parquet form is currently slower to read than the native one.** Measured
-on 400k rows in one partition, 16 distinct keys, covered columns
-`price DOUBLE` + `qty LONG`, median of 20 iterations after 5 warm-up, both arms
-holding identical data in a Parquet partition so the index form is the only
-difference:
+**The Parquet form is still slower to read than the native one**, and the gap
+widens with the number of distinct keys a query touches rather than with the
+rows it returns. Measured over the posting benchmark suite's own fixtures, both
+arms holding identical data so the index form is the only difference:
 
-| Query shape | Native | Parquet | Ratio |
-| --- | --- | --- | --- |
-| `count()` on a hot key (metadata only) | 535 us | 3800 us | 6.7-7.1x |
-| covered gather, hot key | 927 us | 6142 us | 5.1-6.6x |
-| covered gather, cold key (pruning) | 408 us | 735 us | 1.6-1.8x |
+| Benchmark | Fixture | Native | Parquet | Ratio |
+| --- | --- | --- | --- | --- |
+| `indexPointRead` | 400k rows, 16 keys | 1198 ops/s | 157 ops/s | 7.6x |
+| `indexPointRead` | 2M rows, 2000 keys | 240 ops/s | 5.0 ops/s | 48x |
+| `indexScanRead` | 400k rows, 16 keys | 3060 ops/s | 171 ops/s | 17.9x |
+| `indexRangeRead` | 400k rows, 16 keys | 6700 ops/s | 168 ops/s | 40x |
+| `sidecarRead` covered gather, 200 keys | 1M rows, 500 keys | 278 ops/s | 20 ops/s | 14x |
 
-Three runs agree on the direction and on the cold-key ratio. The hot-key
-gather moved between 6.63x and 5.09x across runs, so treat these as ranges.
+Reproduce with `PostingIndexBenchmarkSuite`, whose `POSTING_PARQUET` and
+`covering_parquet` arms build the same fixture through
+`ParquetIndexSeal`:
+
+```
+java -cp benchmarks/target/benchmarks.jar org.questdb.PostingIndexBenchmarkSuite \
+    -Dquestdb.suite.bench=indexPointRead -Dquestdb.suite.bench.scenario=P400K \
+    -Dquestdb.suite.bench.format=POSTING,POSTING_PARQUET
+```
+
+**Read cost is per key touched, not per row returned.** A key's postings live in
+one contiguous run of one row group; resolving and decoding that run costs
+roughly a fixed amount regardless of how many rows the key has. Queries over a
+few hot keys therefore pay little; queries sweeping thousands of distinct keys
+pay thousands of times that. Plan for the trade accordingly: the feature is
+aimed at partitions that travel, not at high-cardinality key sweeps.
 
 So the feature trades read latency for portability: the index travels with the
 partition into cold storage, replication and S3, and reads cost more. Enable it
 where that trade is the one you want, not by default -- which is why the
 default is `native`.
-
-Reproduce with:
-
-```
-mvn -pl core -Pbuild-rust-library -Dtest='ParquetCoveringIndexBenchTest' \
-    -DfailIfNoSpecifiedTests=false -Dquestdb.bench=true test
-```
-
-Source: `ParquetCoveringIndexBenchTest.java`.
 
 ## Covered column restrictions
 
