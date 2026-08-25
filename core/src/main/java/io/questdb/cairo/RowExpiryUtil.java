@@ -69,6 +69,13 @@ public final class RowExpiryUtil {
     /**
      * {@code materialized_views().expire_enforcement} value for a policy the cleanup job reclaims disk for:
      * every read hides the expired rows AND the background job eventually deletes them from disk.
+     * <p>
+     * "Eventually" excludes the active (newest) partition, which the sweep never rewrites so that it cannot
+     * delete under the writer. An "expire old" policy such as {@code ts < T} keeps the rows there anyway, so
+     * the exclusion never shows. An "expire recent" policy such as {@code ts > T} inverts it: the active
+     * partition is precisely the one whose rows have expired, so a view that is still being written to holds
+     * one partition of expired rows on disk at all times, releasing each one only when a newer partition
+     * takes over as active. Reads are unaffected either way - the keep-filter hides those rows throughout.
      */
     public static final String ENFORCEMENT_FILTER_AND_RECLAIM = "FILTER_AND_RECLAIM";
 

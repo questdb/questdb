@@ -338,7 +338,12 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             readerSeqTxn = reader.getSeqTxn();
 
             final int partitionCount = reader.getPartitionCount();
-            // Active-partition protection: with < 2 partitions there is only the active partition.
+            // Active-partition protection: the sweep never rewrites the partition the writer appends to, so
+            // with < 2 partitions there is nothing it may touch. An "expire recent" policy (ts > T) feels
+            // this for as long as the view is written to - its expired rows are the newest ones, so the
+            // active partition always holds expired rows and each partition becomes reclaimable only once a
+            // newer one takes over. Reads stay correct throughout; see
+            // RowExpiryUtil.ENFORCEMENT_FILTER_AND_RECLAIM.
             if (partitionCount < 2) {
                 return false;
             }
