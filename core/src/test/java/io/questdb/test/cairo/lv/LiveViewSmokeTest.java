@@ -14847,8 +14847,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // admits, then the last repair's effective disposition and denial. The
         // checkpoint_segment_repair_gate and checkpoint_keyed_scan_gate follow:
         // they describe the SQL as well.
-        // checkpoint_row_count_mismatches closes the set - the one column that
-        // says the view's own bookkeeping stopped describing its output.
+        // checkpoint_row_count_mismatches closes the checkpoint set - the one
+        // column that says the view's own bookkeeping stopped describing its
+        // output. The two keyed open-segment execution counters are appended so
+        // operators can distinguish a healthy checkpoint resume from a cold
+        // bootstrap without binding to refresh-job test hooks.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
@@ -14876,7 +14879,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "checkpoint_repair_plan\tcheckpoint_repair_last_disposition\t"
                         + "checkpoint_repair_last_denial\tcheckpoint_seal_failures\t"
                         + "checkpoint_segment_repair_gate\tcheckpoint_keyed_scan_gate\t"
-                        + "checkpoint_row_count_mismatches\n");
+                        + "checkpoint_row_count_mismatches\t"
+                        + "o3_open_segment_keyed_resume_count\t"
+                        + "o3_open_segment_cold_keyed_replay_count\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }

@@ -66,6 +66,12 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(1, job.openSegmentColdKeyedCheaperCountForTest());
                 Assert.assertEquals(1, job.openSegmentColdKeyedReplayCountForTest());
                 Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
+                assertQuery("SELECT o3_open_segment_keyed_resume_count, "
+                        + "o3_open_segment_cold_keyed_replay_count FROM live_views()")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("o3_open_segment_keyed_resume_count\t"
+                                + "o3_open_segment_cold_keyed_replay_count\n0\t1\n");
                 Assert.assertEquals(0, job.keyedReplaySegmentCountForTest());
                 Assert.assertTrue(
                         job.openSegmentColdKeyedPostingRowsForTest()
@@ -320,6 +326,12 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                         1,
                         job.openSegmentKeyedResumeCountForTest()
                 );
+                assertQuery("SELECT o3_open_segment_keyed_resume_count, "
+                        + "o3_open_segment_cold_keyed_replay_count FROM live_views()")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("o3_open_segment_keyed_resume_count\t"
+                                + "o3_open_segment_cold_keyed_replay_count\n1\t0\n");
                 Assert.assertEquals(
                         "and publish only the rows it recomputed",
                         1,

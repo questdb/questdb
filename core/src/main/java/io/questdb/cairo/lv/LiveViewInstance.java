@@ -486,6 +486,19 @@ public class LiveViewInstance implements QuietCloseable {
     // current value. In-memory only - resets to 0 on restart. Surfaced via
     // live_views().o3_replay_scan_rows.
     private volatile long o3ReplayScanRows;
+    // Cumulative count of open-segment checkpoint resumes whose replay followed
+    // only the correction's indexed key domain. This is the steady-state keyed
+    // route: a growing value means the checkpoint ladder is supplying a usable
+    // root below the correction. Bumped only on the refresh-worker thread;
+    // volatile for live_views(). In-memory only - resets to 0 on restart.
+    private volatile long o3OpenSegmentKeyedResumeCount;
+    // Cumulative count of localized open-segment head misses replayed cold by key
+    // from the active anchor segment's origin. This is the bootstrap/fallback
+    // counterpart to o3OpenSegmentKeyedResumeCount: it should stop growing once
+    // repairs preserve usable roots above the segment origin. Bumped only on the
+    // refresh-worker thread; volatile for live_views(). In-memory only - resets
+    // to 0 on restart.
+    private volatile long o3OpenSegmentColdKeyedReplayCount;
     // Cumulative count of live-view rows re-emitted by bounded resume-from-anchor O3
     // replays (replayFromAnchor - the tail re-evaluation above the newest logical
     // boundary strictly below the change). Surfaced via
@@ -791,6 +804,24 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void bumpO3ReplayScanRows(long n) {
         o3ReplayScanRows += n;
+    }
+
+    /**
+     * Records one open-segment checkpoint resume that followed only the
+     * correction's indexed keys. Exposed via
+     * {@code live_views().o3_open_segment_keyed_resume_count}.
+     */
+    public void recordO3OpenSegmentKeyedResume() {
+        o3OpenSegmentKeyedResumeCount++;
+    }
+
+    /**
+     * Records one localized open-segment head miss replayed cold by key from the
+     * active anchor segment's origin. Exposed via
+     * {@code live_views().o3_open_segment_cold_keyed_replay_count}.
+     */
+    public void recordO3OpenSegmentColdKeyedReplay() {
+        o3OpenSegmentColdKeyedReplayCount++;
     }
 
     /**
@@ -1339,6 +1370,14 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getO3ReplayScanRows() {
         return o3ReplayScanRows;
+    }
+
+    public long getO3OpenSegmentKeyedResumeCount() {
+        return o3OpenSegmentKeyedResumeCount;
+    }
+
+    public long getO3OpenSegmentColdKeyedReplayCount() {
+        return o3OpenSegmentColdKeyedReplayCount;
     }
 
     public long getO3ResumeReplayRows() {

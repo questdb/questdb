@@ -7015,6 +7015,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (keyed) {
             isolatedReplayTurnCount++;
             openSegmentKeyedResumeCount++;
+            instance.recordO3OpenSegmentKeyedResume();
             // Equal counts by construction, and both kept: one names the route the resume
             // took, the other names what its checkpoint positions are made of.
             openSegmentArithmeticRowPositionCount++;
@@ -8548,6 +8549,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             );
                             if (coldKeyedRoute) {
                                 openSegmentColdKeyedReplayCount++;
+                                instance.recordO3OpenSegmentColdKeyedReplay();
                             } else {
                                 keyedReplaySegmentCount++;
                             }

@@ -82,6 +82,14 @@ import io.questdb.std.ObjList;
  * equals the emit counters without a WHERE filter and exceeds them with one. All
  * three are in-memory counters that reset on restart.
  * <p>
+ * {@code o3_open_segment_keyed_resume_count} and
+ * {@code o3_open_segment_cold_keyed_replay_count} expose the two keyed
+ * open-segment executors per view. The first is the healthy steady-state path:
+ * a preserved checkpoint root sits below the correction. The second starts
+ * cold at the active anchor segment's origin because no usable root exists.
+ * Both reset on restart; in steady state the resume count should grow while the
+ * cold count stays flat.
+ * <p>
  * The {@code checkpoint_*} group describes the versioned checkpoint timeline, and
  * splits four ways.
  * <ul>
@@ -266,6 +274,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_O3_BOUNDARY_REPLAY_ROWS = 23;
         private static final int COLUMN_O3_REJECTED_COUNT = 12;
         private static final int COLUMN_O3_REPLAY_SCAN_ROWS = 24;
+        private static final int COLUMN_O3_OPEN_SEGMENT_KEYED_RESUME_COUNT = 56;
+        private static final int COLUMN_O3_OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT = 57;
         private static final int COLUMN_O3_RESUME_REPLAY_ROWS = 22;
         private static final int COLUMN_SEED_TARGET_SEQTXN = 21;
         private static final int COLUMN_VIEW_LOWER_BOUND_TIMESTAMP = 19;
@@ -573,6 +583,15 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // above; a WHERE filter makes scan exceed emit). In-memory
                         // counter, resets on restart.
                         case COLUMN_O3_REPLAY_SCAN_ROWS -> instance.getO3ReplayScanRows();
+                        // Executions of the two keyed open-segment O3 paths. The
+                        // resume restores a root below the correction; the cold
+                        // replay starts from the active anchor segment's origin
+                        // because no such root exists. In-memory counters, reset
+                        // on restart.
+                        case COLUMN_O3_OPEN_SEGMENT_KEYED_RESUME_COUNT ->
+                                instance.getO3OpenSegmentKeyedResumeCount();
+                        case COLUMN_O3_OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT ->
+                                instance.getO3OpenSegmentColdKeyedReplayCount();
                         // Seals refused because the rows the view emitted and the rows
                         // its table holds disagreed. Zero is the only healthy value:
                         // any bump means rows never reached the table (or reached it
@@ -774,6 +793,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("checkpoint_segment_repair_gate", ColumnType.STRING));          // 53
             metadata.add(new TableColumnMetadata("checkpoint_keyed_scan_gate", ColumnType.STRING));      // 54
             metadata.add(new TableColumnMetadata("checkpoint_row_count_mismatches", ColumnType.LONG));    // 55
+            metadata.add(new TableColumnMetadata("o3_open_segment_keyed_resume_count", ColumnType.LONG)); // 56
+            metadata.add(new TableColumnMetadata("o3_open_segment_cold_keyed_replay_count", ColumnType.LONG)); // 57
             METADATA = metadata;
         }
     }
