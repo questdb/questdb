@@ -110,8 +110,8 @@ you wish to understand how our maintainers work together, you can refer to
 - Operating system - **x86-64 or ARM64**: Windows, Linux, FreeBSD, and macOS.
   macOS is **ARM64 only**: QuestDB neither builds, tests nor ships native
   libraries for x86-64 (Intel) macOS, and the jar contains no `darwin-x86-64`
-  binary. On an Intel Mac you have to build the C/C++ and Rust libraries from
-  source yourself.
+  binary. On an Intel Mac you have to build both native libraries from source
+  yourself — see [Compiling the native libraries](#compiling-the-native-libraries).
 - Java 25 64-bit (strict requirement — no earlier, no later)
 - Maven 3 (latest version recommended; from your package manager on Linux/macOS
   ([Homebrew](https://github.com/Homebrew/brew)) or
@@ -122,7 +122,8 @@ you wish to understand how our maintainers work together, you can refer to
 QuestDB compiles filters with the JIT on ARM64 as well as on x86-64, so nothing is
 skipped on this architecture. Avoid reaching for an x86-64 JDK under Rosetta: the jar
 bundles no `darwin-x86-64` native libraries, so that route additionally requires
-building the C/C++ and Rust libraries from source in the same x86-64 environment.
+building both native libraries from source in the same x86-64 environment — see
+[Compiling the native libraries](#compiling-the-native-libraries).
 
 ## Local environment
 
@@ -193,11 +194,16 @@ We recommend using IntelliJ IDEA for development and debugging. The repository
 includes run configurations in the `.idea` directory that you can use to start
 QuestDB with a debugger attached.
 
-### Compiling C libraries
+### Compiling the native libraries
 
-C libraries will have to be compiled for each platform separately. CMake will
-also need `JAVA_HOME` to be set. The following commands will compile on
-Linux/macOS.
+QuestDB loads two native libraries: `libquestdb` (C/C++) and `libquestdbr`
+(Rust). The repository commits a prebuilt pair for every platform CI builds and
+tests, so you need this section only when you change native code, or when you
+run on a platform the repository ships no binary for — x86-64 (Intel) macOS is
+the only such case.
+
+Compile the C/C++ library with CMake, which also needs `JAVA_HOME`. These
+commands work on Linux/macOS:
 
 ```text
 cd core
@@ -205,16 +211,30 @@ cmake -B build/release -DCMAKE_BUILD_TYPE=Release .
 cmake --build build/release --config Release
 ```
 
+CMake writes `libquestdb` to `core/target/classes/io/questdb/bin-local/`.
+
+Compile the Rust library through Maven. The `build-rust-library` profile runs
+`cargo` and copies the result to `core/target/classes/io/questdb/rust/`:
+
+```text
+cd core
+mvn compile -P build-rust-library,qdbr-release
+```
+
+Both profiles are opt-in: without `build-rust-library` Maven builds no Rust at
+all, and without `qdbr-release` it builds a debug library. A bare `cargo build`
+in `core/rust/qdbr` leaves `libquestdbr` in `core/rust/qdbr/target/`, which is
+on no classpath, so the loader never sees it.
+
+`io.questdb.std.Os` checks both of those `core/target/classes` paths before it
+falls back to the committed platform directory, which is what makes a source
+build work on a platform QuestDB ships no binary for. `mvn clean` deletes
+`core/target`, so re-run CMake and the Rust profile after one.
+
 For more details, see [CMake build instructions](core/CMAKE_README.md).
 
 For C/C++ development we use CLion. This IDE understands CMake files and makes
 compilation easier.
-
-The build will copy artifacts as follows:
-
-```
-core/src/main/c -> core/src/main/resources/io/questdb/bin
-```
 
 ## Developing with the Java ILP client
 

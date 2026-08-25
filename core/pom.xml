@@ -615,8 +615,12 @@
         There is deliberately no platform-osx-x86-64 profile: x86-64 (Intel) macOS is not a
         supported platform. No CI job builds or tests it, so we commit and ship no darwin-x86-64
         native library, and no rt-osx-x86-64 runtime archive exists to assemble.
-        A local source build still works on Intel macOS - CMake and Cargo produce host
-        binaries that io.questdb.std.Os picks up from the dev resource paths.
+        A local source build still runs on Intel macOS, but it has to produce both natives
+        itself: CMake writes libquestdb.dylib to target/classes/io/questdb/bin-local/, and
+        -P build-rust-library,qdbr-release makes rust-maven-plugin write libquestdbr.dylib to
+        target/classes/io/questdb/rust/. io.questdb.std.Os reads both dev paths before it
+        looks at the platform directory. Re-run both after a mvn clean, which deletes them.
+        CONTRIBUTING.md, "Compiling the native libraries", spells this out.
         -->
         <profile>
             <id>platform-osx-aarch64</id>

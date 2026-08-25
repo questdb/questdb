@@ -140,7 +140,10 @@ questdb stop
 ```
 
 QuestDB bundles native libraries for Apple Silicon only. On an Intel Mac, use
-the Docker image above.
+the Docker image above. `questdb start` there prints nothing and still exits 0:
+the launcher redirects the server's output, so it leaves the "does not support
+x86-64 (Intel) macOS" message in `<root>/log/stdout-<date>.txt`, where `<root>`
+is `/usr/local/var/questdb` or `$HOME/.questdb`.
 
 Alternatively, to kickoff the full onboarding journey, start with our concise
 [quick start guide](https://questdb.com/docs/getting-started/quick-start/).
