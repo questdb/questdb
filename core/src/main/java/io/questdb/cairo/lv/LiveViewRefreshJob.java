@@ -348,8 +348,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private long segmentYieldCount;
     // What the Stage 2 crossover is read off: how many closed segments were priced, how
     // many of them a keyed scan would read less of, and the two row counts that decide it.
-    // Diagnostic only - no repair reads them, because the keyed publication a keyed replay
-    // needs does not exist yet.
+    // Diagnostic only - no repair reads these aggregate counters; each candidate uses its
+    // own per-segment price when deciding whether to follow keys.
     private long keyedScanCheaperCount;
     private long keyedScanPostingRows;
     private long keyedScanPricedCount;
@@ -4974,7 +4974,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Folds one finished segment repair's uniqueness verdict into the run's counters and
+     * Folds one finished keyed repair's uniqueness verdict into the run's counters and
      * reports it.
      * <p>
      * Called before the publication commits, which is where the check has to finish: a
@@ -4983,15 +4983,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * other view it only records, and what it produces there is the fallback rate a sparse
      * publication would run at.
      *
-     * @param isSegmentCandidate whether this repair is the bounded, converging kind a
-     *                           sparse publication could ever serve. An unlocalized
-     *                           rebuild is neither counted nor reported: it rewrites the
-     *                           view rather than a segment of it
-     * @param isKeyedRoute       whether the replay followed its keys, which makes the
-     *                           checked rows exactly the set a sparse commit would carry
+     * @param isMeasuredCandidate whether the repair is keyed or a bounded localized
+     *                            diagnostic candidate
+     * @param isKeyedRoute      whether the replay followed its keys, which makes the
+     *                          checked rows exactly the set a sparse commit would carry
      */
-    private void reportOutputUniqueness(CharSequence viewName, boolean isSegmentCandidate, boolean isKeyedRoute) {
-        if (!isSegmentCandidate) {
+    private void reportOutputUniqueness(CharSequence viewName, boolean isMeasuredCandidate, boolean isKeyedRoute) {
+        if (!isMeasuredCandidate) {
             return;
         }
         if (!outputUniqueness.isArmed()) {
@@ -5007,7 +5005,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (outputUniqueness.isUnique()) {
             outputUniquenessUniqueRepairs++;
         }
-        LOG.info().$("live view segment repair output uniqueness [view=").$(viewName)
+        LOG.info().$("live view repair output uniqueness [view=").$(viewName)
                 .$(", keyed=").$(isKeyedRoute)
                 .$(", rows=").$(outputUniqueness.getCheckedRows())
                 .$(", duplicateRows=").$(outputUniqueness.getDuplicateRows())
@@ -5698,8 +5696,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * them. Nothing new is serialised, and the isolated map holds this correction's keys
      * alone, so the walk is bounded by the correction rather than by the view.
      * <p>
-     * Runs after the repair publication (a splice for a resume, the reconciled full-range
-     * replacement for a cold head miss) and before the head seal, because the seal images
+     * Runs after the repair publication (a splice plus either sparse upsert or reconciled
+     * replacement) and before the head seal, because the seal images
      * the primary and must see the state this leaves. It is also why it may not
      * fail silently: a transplant that threw half way would leave the primary holding some
      * corrected keys and some stale ones, with the durable output already correct for all
@@ -7977,10 +7975,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // inclusive, so reusing it would move every boundary below by one microsecond.
         final long timelineHighTsExclusive = finiteHighBound ? plan.getHighTsExclusive() : Long.MAX_VALUE;
         // A keyed no-anchor replay starts cold at the active anchor segment's origin.
-        // Price it before touching either runtime, resolve Q in the pinned reader, and open
-        // the stored-row merge it needs for Phase 3's full-range publication. Phase 4 owns
-        // the sparse publication and Q-aware EOF splice, so this partial replay deliberately
-        // declines the key-complete splice below.
+        // Price it before touching either runtime, resolve Q in the pinned reader, and keep
+        // the stored-row merge unopened unless duplicate output makes the sparse publication
+        // fall back. The same Q narrows the EOF timeline splice, so a successful bootstrap
+        // leaves an ordinary checkpoint resume behind it rather than another cold repair.
         boolean coldKeyedRoute = false;
         RecordCursor storedRowCursor = null;
         if (resumed == null && isColdOpenSegmentKeyedHeadMissAvailable(windowFactory, plan)) {
@@ -8052,7 +8050,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // replay never saw has an expired frame, or a reset segment, at every timestamp
         // the re-versioned roots describe, so a root that omits it and a root that
         // carries its empty accumulator say the same thing.
-        final boolean isTimelineSpliceable = !coldKeyedRoute && (finiteHighBound
+        final boolean isTimelineSpliceable = coldKeyedRoute || (finiteHighBound
                 ? plan.isReplayStateKeyComplete() || plan.getOutputKeyDomain() != null
                 : localized && plan.isReplayStateKeyComplete());
         // The publication ordering this rebuild walks. It owns the two decisions the
@@ -8207,6 +8205,35 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 session.setRepairMarkerLive(true);
             }
         }
+        if (timelineCapture != null && coldKeyedRoute) {
+            // The cold keyed envelope is insert-only, unfiltered and over a base that
+            // does not deduplicate, so each residual base row adds exactly one output
+            // row. Rebase the old roots' effective positions by that exact delta instead
+            // of walking the live view's stored interval. This is the same proof the
+            // keyed resume uses; the only difference is that no anchor position exists
+            // to serve as the origin.
+            timelineCapture.collectEffectiveRowPositions(
+                    session.getBoundaries(),
+                    openSegmentArithmeticBoundaryPositions
+            );
+            for (int i = 0, n = session.getBoundaries().size(); i < n; i++) {
+                try {
+                    openSegmentArithmeticBoundaryPositions.setQuick(
+                            i,
+                            Math.addExact(
+                                    openSegmentArithmeticBoundaryPositions.getQuick(i),
+                                    segmentChangeSet.getResidualRowCountAtOrBelow(
+                                            session.getBoundaries().getQuick(i).maxTimestamp
+                                    )
+                            )
+                    );
+                } catch (ArithmeticException e) {
+                    throw CairoException.critical(0).put("live view checkpoint row position overflow");
+                }
+            }
+            openSegmentArithmeticRowPositionCount++;
+        }
+        final long insertedRowDelta = coldKeyedRoute ? segmentChangeSet.getResidualRowCount() : 0;
         if (session != null) {
             // The publication mirrors every stage it records into the descriptor, and
             // a resumed turn walks the stages from PLAN again over the same record.
@@ -8360,13 +8387,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
             RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
             final int cursorTimestampIndex = outMetadata.getTimestampIndex();
-            // The (designated timestamp, projected key) pairs this repair emits, which is
-            // the identity a sparse keyed publication would have to stand on. It runs dark:
-            // nothing reads the verdict and the replacement below carries the whole
-            // replaced range either way, so what it produces is the rate at which such a
-            // publication would fall back to exactly that. Only a bounded, converging
-            // repair is armed - an unlocalized rebuild rewrites the view rather than a
-            // segment of it, and no sparse commit could describe it.
+            // The emitted (designated timestamp, projected key) pairs are the identity a
+            // sparse upsert stands on. Both keyed routes arm the detector, while bounded
+            // localized fallbacks keep collecting the pre-existing diagnostic verdict.
             //
             // A resumed turn continues the check the prior turns left rather than
             // restarting it: a duplicate whose two rows sit on either side of a park is
@@ -8375,7 +8398,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (resuming) {
                 outputUniqueness.copyFrom(resumed.getOutputUniqueness());
             } else {
-                outputUniqueness.of(localized && finiteHighBound
+                outputUniqueness.of((keyedRoute || (localized && finiteHighBound))
                         ? LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex(compiledPlan)
                         : LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN);
             }
@@ -8513,7 +8536,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // proved one identity and upserted on another would collapse
                             // rows nothing checked. The verdict itself is not known until
                             // the replay ends, which is what makes it an attempt.
-                            final boolean sparseAttempt = !coldKeyedRoute && instance.isDedupKeyed()
+                            final boolean sparseAttempt = instance.isDedupKeyed()
                                     && outputUniqueness.isArmed()
                                     && instance.getDedupKeyColumnIndex() == outputUniqueness.getKeyColumnIndex();
                             keyedReplay.bindOutput(
@@ -8573,7 +8596,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     source,
                                     timelineCapture,
                                     repairBoundaries,
-                                    null,
+                                    coldKeyedRoute ? openSegmentArithmeticBoundaryPositions : null,
                                     replayWindowFactory.getWindowFunctions(),
                                     replayAnchorWindow,
                                     session,
@@ -8581,7 +8604,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     pageFrameFactory.getMetadata().getTimestampIndex()
                             );
                             boundaryFreezingCursor.setRowPosition(durableRowsBelowFloor + appendedRows);
-                            if (keyedRoute) {
+                            if (keyedRoute && !coldKeyedRoute) {
                                 // A keyed replay's cursor yields only the affected keys'
                                 // rows, so the boundary about to be frozen has to count
                                 // the merged rows below it as well. Draining here rather
@@ -8653,7 +8676,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // not reach it, so emitting it would duplicate a row the LV
                                 // table still holds.
                                 if (ts >= emitLowTs) {
-                                    if (keyedRoute) {
+                                    if (keyedRoute && !coldKeyedRoute) {
                                         // Every unaffected key's stored row at or below
                                         // this one, so the block's rows come out in
                                         // timestamp order and the position stamped below
@@ -8728,7 +8751,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             if (!yielded && timelineCapture != null) {
                                 boundaryFreezingCursor.freezeRemaining();
                             }
-                            if (keyedRoute && !yielded) {
+                            if (keyedRoute && !coldKeyedRoute && !yielded) {
                                 // The stored rows above the last boundary the freeze
                                 // drained to. They sit inside the range the replacement
                                 // deletes, so a repair that stopped accounting at its own
@@ -8824,7 +8847,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // Before the commit, which is where the check has to finish:
                             // the publication chosen below stands on the pair, and a
                             // duplicate admitted to a sparse commit is collapsed silently.
-                            reportOutputUniqueness(viewName, localized && finiteHighBound, keyedRoute);
+                            reportOutputUniqueness(
+                                    viewName,
+                                    keyedRoute || localized && finiteHighBound,
+                                    keyedRoute
+                            );
                             // The verdict, acted on. A sparse attempt publishes only the
                             // rows the replay recomputed, upserted onto the view's dedup
                             // keys, and leaves every other stored row where it stands -
@@ -8836,9 +8863,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             final boolean sparse = keyedReplay.isSparse()
                                     && appendedRows > 0
                                     && outputUniqueness.isUnique();
-                            if (!sparse && keyedReplay.materializeMerge()) {
+                            if (!sparse && (coldKeyedRoute
+                                    ? keyedReplay.materializeUnaccountedMerge()
+                                    : keyedReplay.materializeMerge())) {
                                 sparsePublicationFallbackCount++;
-                                LOG.info().$("live view segment repair abandoned its sparse publication [view=")
+                                LOG.info().$("live view keyed repair abandoned its sparse publication [view=")
                                         .$(viewName)
                                         .$(", replayedRows=").$(appendedRows)
                                         .$(", mergedRows=").$(keyedReplay.getMergedRows())
@@ -8848,13 +8877,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             }
                             if (sparse) {
                                 sparsePublicationCount++;
-                                sparsePublicationRowsKept += keyedReplay.getMergedRows();
-                                LOG.info().$("live view segment repaired sparsely [view=").$(viewName)
+                                final long supersededRows = coldKeyedRoute
+                                        ? Math.max(0, appendedRows - insertedRowDelta)
+                                        : keyedReplay.getSupersededRows();
+                                final long rowsKept = coldKeyedRoute
+                                        ? Math.max(0, durableRowsReplaced - supersededRows)
+                                        : keyedReplay.getMergedRows();
+                                sparsePublicationRowsKept += rowsKept;
+                                LOG.info().$("live view keyed repair published sparsely [view=").$(viewName)
+                                        .$(", origin=").$(coldKeyedRoute ? "segment start" : "closed segment")
                                         .$(", replayedRows=").$(appendedRows)
-                                        .$(", supersededRows=").$(keyedReplay.getSupersededRows())
-                                        .$(", rowsKept=").$(keyedReplay.getMergedRows())
+                                        .$(", supersededRows=").$(supersededRows)
+                                        .$(", rowsKept=").$(rowsKept)
                                         .$(", outputLowTs=").$ts(emitLowTs)
-                                        .$(", highTsExclusive=").$ts(plan.getHighTsExclusive()).I$();
+                                        .$(", highTsExclusive=").$ts(timelineHighTsExclusive).I$();
                                 commitLiveViewWithUpsertFenced(instance, walWriter, effectiveSeqTxn);
                             } else {
                                 commitLiveViewWithReplaceRangeFenced(instance, walWriter,
@@ -9051,16 +9087,30 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // later restart can detect, only fail on.
                 final long durableRowsAfterRepair = instance.getLvRowsTotal();
                 final long suffixRowDelta = durableRowsAfterRepair - durableRowsBeforeRepair;
-                // Both routes' rows: a keyed replay emitted its own keys and copied every
-                // other key's stored row forward, and the block carries the two together.
-                // Zero on every whole-segment repair, which merges nothing.
+                // A replacement carries the keyed replay plus the unaffected stored rows
+                // it merged. A sparse cold repair carries only the keyed output and leaves
+                // every unaffected stored row in place, so its durable proof is the
+                // pre-repair count plus the exact insert delta.
                 final long emittedRows = appendedRows + keyedReplay.getMergedRows();
-                if (durableRowsBeforeRepair - durableRowsReplaced + emittedRows != durableRowsAfterRepair) {
+                final long expectedRowsAfterRepair;
+                try {
+                    expectedRowsAfterRepair = coldKeyedRoute
+                            ? Math.addExact(durableRowsBeforeRepair, insertedRowDelta)
+                            : Math.addExact(
+                                    Math.subtractExact(durableRowsBeforeRepair, durableRowsReplaced),
+                                    emittedRows
+                            );
+                } catch (ArithmeticException e) {
+                    throw CairoException.critical(0).put("live view replacement row count overflow");
+                }
+                if (expectedRowsAfterRepair != durableRowsAfterRepair) {
                     LOG.critical().$("live view replacement row count does not match the repair plan [view=")
                             .$(viewName)
                             .$(", rowsBefore=").$(durableRowsBeforeRepair)
                             .$(", rowsReplaced=").$(durableRowsReplaced)
                             .$(", rowsEmitted=").$(emittedRows)
+                            .$(", insertedRowDelta=").$(insertedRowDelta)
+                            .$(", expectedRows=").$(expectedRowsAfterRepair)
                             .$(", rowsAfter=").$(durableRowsAfterRepair).I$();
                 } else {
                     timelineSplice = publishCheckpointTimelineRepair(
@@ -9089,8 +9139,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // already published, so a crash from here on restores that generation
             // rather than a runtime nothing recorded.
             if (coldKeyedRoute && replacementReconciled) {
-                // The full-range replacement is durable, but the replay ran beside the
-                // primary and followed only Q. Hand those finished accumulators back before
+                // The repair publication is durable, but the replay ran beside the primary
+                // and followed only Q. Hand those finished accumulators back before
                 // the head seal images the primary. A partial failure leaves durable output
                 // correct but runtime state ambiguous, so force the next cycle to rebuild it.
                 try {

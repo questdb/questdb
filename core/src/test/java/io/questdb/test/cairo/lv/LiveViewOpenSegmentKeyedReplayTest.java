@@ -40,16 +40,13 @@ import org.junit.Test;
  * base row above its anchor.
  * <p>
  * That resume is where the reported workload's volume is: under a daily anchor almost every
- * late commit is shallower than a day, so it lands in the open segment, and the per-segment
- * scoping, the keyed replay and the sparse publication all decline by construction. What
- * these cases pin is the route that reaches it - the open segment's own key domain, and the
- * pricing that decides whether following those keys reads less than reading every row above
- * the anchor.
+ * late commit is shallower than a day, so it lands in the open segment. These cases pin both
+ * an ordinary checkpoint resume and the cold keyed bootstrap, including sparse fallback.
  */
 public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
 
     @Test
-    public void testAHeadMissReplaysTheOpenSegmentColdByKey() throws Exception {
+    public void testAHeadMissReplaysTheOpenSegmentColdByKeyAndPublishesSparsely() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
@@ -78,13 +75,78 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                         job.openSegmentColdKeyedPostingRowsForTest(),
                         instance.getO3ReplayScanRows() - scanRowsBefore
                 );
-                Assert.assertTrue(job.keyedReplayMergedRowsForTest() > 0);
-                Assert.assertTrue(job.transplantedKeyCountForTest() > 0);
                 Assert.assertEquals(
-                        "Phase 3 publishes the full range; sparse publication is Phase 4",
-                        0,
-                        job.sparsePublicationCountForTest()
+                        "checkpoint positions must come from the exact insert delta, not a stored-row scan",
+                        1,
+                        job.openSegmentArithmeticRowPositionCountForTest()
                 );
+                Assert.assertEquals(
+                        "a sparse cold repair must leave unaffected stored rows in place",
+                        0,
+                        job.keyedReplayMergedRowsForTest()
+                );
+                Assert.assertTrue(job.transplantedKeyCountForTest() > 0);
+                Assert.assertEquals(1, job.sparsePublicationCountForTest());
+                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+                Assert.assertTrue(job.sparsePublicationRowsKeptForTest() > 0);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAColdKeyedSpliceSurvivesARestart() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(3, 2, 35, "acct-1"), job);
+                Assert.assertEquals(1, job.openSegmentColdKeyedReplayCountForTest());
+                Assert.assertEquals(1, job.sparsePublicationCountForTest());
+                assertViewMatchesRecompute();
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testARepeatedPairFallsBackWithoutDiscardingTheColdKeyedSplice() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final long rowsBefore = count("select count() from lv");
+
+                // The seed already carries this pair. The keyed scan stays valid, but an
+                // upsert on the view's identity would collapse the two output rows.
+                commit(row(3, 2, 10, "acct-1"), job);
+
+                Assert.assertEquals(1, job.openSegmentColdKeyedReplayCountForTest());
+                Assert.assertEquals(0, job.sparsePublicationCountForTest());
+                Assert.assertEquals(1, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(1, job.outputUniquenessDuplicateRowsForTest());
+                Assert.assertEquals(rowsBefore + 1, count("select count() from lv"));
+                Assert.assertEquals(2, rowsAt("2026-01-03T02:10:00.000000Z", "acct-1"));
+                assertViewMatchesRecompute();
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                Assert.assertEquals(2, rowsAt("2026-01-03T02:10:00.000000Z", "acct-1"));
                 assertViewMatchesRecompute();
             }
         });
@@ -144,7 +206,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testSuccessiveHeadMissesRemainColdUntilTheKeyedSpliceLands() throws Exception {
+    public void testAColdKeyedSpliceHandsTheNextCorrectionToTheOrdinaryResume() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
@@ -154,14 +216,33 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 driveRefreshToQuiescence(job);
 
                 commit(row(3, 2, 35, "acct-1"), job);
-                commit(row(3, 3, 15, "acct-4"), job);
+                // The cold repair re-versioned the old 09:40 root. Move the frontier past
+                // it, then correct above it: preserving that root is what gives this repair
+                // a predecessor to resume from.
+                commit(
+                        row(3, 10, 10, "acct-1") + ", "
+                                + row(3, 11, 20, "acct-2") + ", "
+                                + row(3, 12, 30, "acct-3") + ", "
+                                + row(3, 13, 40, "acct-4"),
+                        job
+                );
+                commit(row(3, 9, 50, "acct-4"), job);
 
                 Assert.assertEquals(
-                        "Phase 3 preserves correctness but Phase 4 is what preserves Q in the ladder",
-                        2,
+                        "only the bootstrap repair should have to start cold",
+                        1,
                         job.openSegmentColdKeyedReplayCountForTest()
                 );
-                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals(
+                        "the next correction must price from the re-versioned root",
+                        1,
+                        job.openSegmentKeyedPricedCountForTest()
+                );
+                Assert.assertEquals(
+                        "this small fixture deliberately leaves the whole resume cheaper",
+                        0,
+                        job.openSegmentKeyedResumeCountForTest()
+                );
                 assertViewMatchesRecompute();
             }
         });
