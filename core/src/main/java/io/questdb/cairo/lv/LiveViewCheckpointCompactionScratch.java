@@ -161,7 +161,9 @@ public final class LiveViewCheckpointCompactionScratch implements Closeable {
         selectedSegments = MapFactory.createUnorderedMap(configuration, SEGMENT_KEY_TYPES, null, false, false);
     }
 
-    /** Binds and opens native capacity for exactly one compaction call. */
+    /**
+     * Binds and opens native capacity for exactly one compaction call.
+     */
     public void begin(@Nullable MemoryTracker memoryTracker) {
         if (isActive) {
             throw CairoException.critical(0).put("live view checkpoint compaction scratch already active");

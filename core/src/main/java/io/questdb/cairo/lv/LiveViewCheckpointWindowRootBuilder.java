@@ -406,6 +406,7 @@ public class LiveViewCheckpointWindowRootBuilder implements Closeable {
         keySchema = null;
         manifest = null;
     }
+
     /**
      * Stages one fused entry: the whole scalar payload for {@code key}, anchor value and
      * every component together. The array is stored rather than copied, so the caller

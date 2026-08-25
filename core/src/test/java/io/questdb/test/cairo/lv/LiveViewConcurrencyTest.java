@@ -792,8 +792,8 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             final int pendingRetirementIdentity = activeGenerationCount == 0
                     ? 0
                     : engine.getLiveViewCheckpointLifecycleState().getPendingRetirementIdentityForTest(
-                            workerLifecycleIdentity.get()
-                    );
+                    workerLifecycleIdentity.get()
+            );
             final int retirementPoolSize =
                     engine.getLiveViewCheckpointLifecycleState().getRetirementPoolSizeForTest();
             Assert.assertEquals(

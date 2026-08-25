@@ -1292,7 +1292,7 @@ public class LiveViewNoGcSourceHygieneTest {
     private static boolean isAllowedBorrowOrPublicClone(String code, int methodStart, int copyStart, int copyEnd) {
         final String construct = code.substring(Math.max(methodStart, copyStart - 96), copyEnd);
         return Pattern.compile("isBorrowed\\s*\\?[^:;{}]+:\\s*"
-                + "[A-Za-z_$][A-Za-z0-9_$]*\\s*\\.\\s*clone\\s*\\(\\s*\\)\\s*$")
+                        + "[A-Za-z_$][A-Za-z0-9_$]*\\s*\\.\\s*clone\\s*\\(\\s*\\)\\s*$")
                 .matcher(construct)
                 .find();
     }

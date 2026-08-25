@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
@@ -68,6 +69,16 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
                                 sequencerTxn\tminTimestamp
                                 1\t2020-02-01T00:00:00.123456Z
                                 """);
+
+                execute("DROP TABLE x");
+                execute("CREATE TABLE x (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+                try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table is not a WAL table: x");
+                    Assert.assertEquals("SELECT sequencerTxn, minTimestamp FROM wal_transactions(".length(), e.getPosition());
+                }
             }
         });
     }

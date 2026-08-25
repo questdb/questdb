@@ -503,9 +503,9 @@ final class LiveViewCheckpointPartitionMapNode {
         final LiveViewCheckpointMutationArena storedArena = keyArenas[index];
         return storedArena == null
                 ? arena.equalsScalar(mutationIndex, scalarStates[index])
-                && arena.refsEqual(mutationIndex, statePageRefs[index])
+                  && arena.refsEqual(mutationIndex, statePageRefs[index])
                 : arena.equalsScalar(mutationIndex, storedArena, keyMutationIndexes[index])
-                && arena.refsEqual(mutationIndex, storedArena, keyMutationIndexes[index]);
+                  && arena.refsEqual(mutationIndex, storedArena, keyMutationIndexes[index]);
     }
 
     private int compareKeyAt(int index, byte[] key) {

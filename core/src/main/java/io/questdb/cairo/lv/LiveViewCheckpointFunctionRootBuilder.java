@@ -291,6 +291,7 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
         functionIdentity = null;
         keySchema = null;
     }
+
     /**
      * Frees the staging arena against the tracker that acquired it and detaches
      * that tracker, leaving the builder reusable by the next view.
