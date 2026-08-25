@@ -735,12 +735,18 @@ public interface CairoConfiguration {
      * {@link #getPartitionEncoderParquetDataPageSize()}. A page is the unit the
      * reader can skip when it decodes one key's contiguous run, so the data
      * partition's 1 MiB default makes a whole row group a single page and
-     * leaves nothing to skip. Measured best at 64 KiB; the curve is U-shaped,
-     * because pages too small cost more page-header walking per lookup than
-     * they save in decompression.
+     * leaves nothing to skip.
+     * <p>
+     * 16 KiB, measured against an OPTIMISED Rust build with the key cap in
+     * place. The curve is U-shaped -- pages too small cost more page-header
+     * walking per lookup than they save in decompression -- but its minimum
+     * moves with both of those, and 64 KiB was tuned before either. On 2M rows
+     * / 2000 keys: 4 KiB 44.7 ms, 8 KiB 37.5 ms, 16 KiB 33.1 ms, 32 KiB 33.6
+     * ms, 64 KiB 43.1 ms. Flat between 12 and 32 KiB, so treat the exact value
+     * as a plateau rather than a peak.
      */
     default int getPostingIndexParquetDataPageSize() {
-        return 64 * 1024;
+        return 16 * 1024;
     }
 
     default byte getPostingIndexParquetPartitionFormat() {

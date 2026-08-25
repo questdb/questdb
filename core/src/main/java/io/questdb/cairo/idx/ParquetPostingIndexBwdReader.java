@@ -130,7 +130,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
         private long groupRows;
         private boolean hasNext;
         private int key;
-        private long keyIdPtr;
+        private boolean decodedGroup;
         private long maxValue;
         private long minValue;
         private long next;
@@ -161,7 +161,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     freeCursors.add(this);
                 }
             }
-            keyIdPtr = 0;
+            decodedGroup = false;
             rowIdPtr = 0;
             hasNext = false;
         }
@@ -172,7 +172,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                 return true;
             }
             while (rg >= rgLo) {
-                if (keyIdPtr == 0 && !decodeCurrentGroup()) {
+                if (!decodedGroup && !decodeCurrentGroup()) {
                     // Out of groups, NOT out of answers: the implicit-null
                     // prefix below still has to be served. Returning here is
                     // what would drop it.
@@ -180,9 +180,6 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                 }
                 while (rowInGroup > 0) {
                     final long i = --rowInGroup;
-                    if (Unsafe.getUnsafe().getInt(keyIdPtr + (i << 2)) != key) {
-                        continue;
-                    }
                     final long rowId = Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
                     if (rowId < minValue || rowId > maxValue) {
                         continue;
@@ -194,7 +191,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                 }
                 // Group exhausted; force a decode of the previous one.
                 rg--;
-                keyIdPtr = 0;
+                decodedGroup = false;
             }
             if (nullPos > minValue) {
                 // The implicit-null prefix, emitted LAST here rather than first:
@@ -261,13 +258,15 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                 }
                 rowLo = Numbers.decodeLowInt(keyRange);
                 rowHi = Numbers.decodeHighInt(keyRange);
-                final DirectIntList columns = coveringProjection(requiredCoverColumns);
+                final DirectIntList columns = coveringProjection(requiredCoverColumns, false);
                 rowGroupBuffers.reopen();
                 decoder().decodeRowGroup(rowGroupBuffers, columns, rg, (int) rowLo, (int) rowHi);
                 onRowGroupDecoded(rowHi - rowLo);
                 groupRows = rowHi - rowLo;
-                keyIdPtr = rowGroupBuffers.getChunkDataPtr(0);
-                rowIdPtr = rowGroupBuffers.getChunkDataPtr(1);
+                // key_id is not in the projection: the decoded window is the
+                // key's own run, so there is nothing to filter against.
+                decodedGroup = true;
+                rowIdPtr = rowGroupBuffers.getChunkDataPtr(0);
                 // Walked from the end: rowInGroup is a countdown, not an index.
                 rowInGroup = groupRows;
                 return true;
@@ -282,7 +281,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             this.maxValue = maxValue;
             this.hasNext = false;
             this.next = -1;
-            this.keyIdPtr = 0;
+            this.decodedGroup = false;
             this.rowIdPtr = 0;
             this.rowInGroup = 0;
             this.groupRows = 0;

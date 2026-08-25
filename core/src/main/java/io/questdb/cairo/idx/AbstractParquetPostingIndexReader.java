@@ -632,9 +632,28 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
          * slots, which is exactly the case a wrong mapping would still pass.
          */
         protected DirectIntList coveringProjection(int[] requiredCoverColumns) {
+            return coveringProjection(requiredCoverColumns, true);
+        }
+
+        /**
+         * @param includeKeyId whether to decode {@code key_id} alongside the
+         *                     values. A cursor bounded by the {@code _im} key
+         *                     directory must pass {@code false}: the window it
+         *                     decodes IS the key's run, so every row in it
+         *                     carries the key by construction and the column
+         *                     would be decompressed only to re-derive what the
+         *                     directory already said. It is a third of the base
+         *                     decode -- 4 bytes a row against {@code row_id}'s
+         *                     8 -- and decompression dominates a lookup.
+         *                     Callers that scan a whole group instead, having no
+         *                     range to bound them, still need it.
+         */
+        protected DirectIntList coveringProjection(int[] requiredCoverColumns, boolean includeKeyId) {
             projection.clear();
-            projection.add(imReader.getKeyIdColumn());
-            projection.add(ColumnType.INT);
+            if (includeKeyId) {
+                projection.add(imReader.getKeyIdColumn());
+                projection.add(ColumnType.INT);
+            }
             projection.add(imReader.getRowIdColumn());
             projection.add(ColumnType.LONG);
 
@@ -646,7 +665,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
             if (requiredCoverColumns == null) {
                 return projection;
             }
-            int ordinal = 2;
+            int ordinal = includeKeyId ? 2 : 1;
             for (int i = 0; i < requiredCoverColumns.length; i++) {
                 final int slot = requiredCoverColumns[i];
                 if (slot < 0 || slot >= coverCount) {

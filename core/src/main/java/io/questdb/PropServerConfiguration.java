@@ -1718,7 +1718,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 default -> PostingIndexUtils.ENCODING_ADAPTIVE;
             };
             this.postingIndexParquetCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_COMPRESSION_CODEC, "LZ4_RAW"));
-            this.postingIndexParquetDataPageSize = getIntSize(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_DATA_PAGE_SIZE, 64 * 1024);
+            this.postingIndexParquetDataPageSize = getIntSize(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_DATA_PAGE_SIZE, 16 * 1024);
             this.postingIndexParquetMaxKeysPerRowGroup = getInt(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_MAX_KEYS_PER_ROW_GROUP, 16);
             this.postingIndexParquetPartitionFormat = switch (getString(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native")) {
                 case "parquet" -> PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET;
