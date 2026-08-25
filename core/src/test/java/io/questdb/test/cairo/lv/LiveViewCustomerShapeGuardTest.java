@@ -83,6 +83,10 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
     // The origin of the anchor segment the trickle case corrects into, spelled as its
     // view's START FROM boundary.
     private static final String SEGMENT_ORIGIN = "2026-01-04T12:00:00.000000Z";
+    // The checkpoint cadence the fixture runs at, so a few-hundred-row view seals the
+    // roots a million-row cadence would not. It is also what bounds how far below a
+    // correction the newest usable anchor can sit.
+    private static final int CHECKPOINT_ROWS = 16;
     // Corrections the trickle case makes, each one minute deeper under the batch head.
     private static final int TRICKLE_PASSES = 5;
     private static final String VIEW = "payments_view";
@@ -424,15 +428,19 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
         // localization on every repair for a full day, and an unlocalized rebuild re-emits
         // the view from its START FROM boundary, retires the timeline and leaves one fresh
         // root at the batch head - which the next correction is again below. Each pass then
-        // costs O(view size) and the view only grows.
+        // costs O(view size) and the view only grows: the reported logs ran that loop 803
+        // times, at 289 to 294 rows scanned and 4 to 12 re-emitted per pass on this
+        // fixture.
         //
-        // Localizing behind the EOF bound cuts the emit half of that loop: the anchor
-        // expires by time, so the replacement floor rises from START FROM to the correction
-        // itself and the replay's state is promoted rather than the pre-repair runtime
-        // restored. What it does not cut is the scan, which still reads the segment from
-        // its start - the ladder the resume needs is a separate piece of work, and the
-        // assertions below state both halves.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 16);
+        // Two things close it, and this case needs both. Localizing behind the EOF bound
+        // cuts the emit half: the anchor expires by time, so the replacement floor rises
+        // from START FROM to the correction itself and the replay's state is promoted
+        // rather than the pre-repair runtime restored. Splicing the timeline instead of
+        // truncating it cuts the scan half: the roots above the correction survive the
+        // repair that moved their output, so the next correction finds an anchor below
+        // itself, the cost comparison picks the resume over the rebuild, and the read
+        // collapses from the whole segment to the tail above that anchor.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, CHECKPOINT_ROWS);
         assertMemoryLeak(() -> {
             // START FROM the segment origin, which is where the reported view sits: its
             // first anchor segment, so the segment start and the view boundary coincide
@@ -451,8 +459,14 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
                 // The bootstrap. A correction at the view's own floor has no root below it,
                 // so the repair is the boundary rebuild - and it re-emits the whole view,
                 // because the correction IS the view's floor and there is nothing above it
-                // to keep. That is the trap's entry, not its cost: what it leaves behind is
-                // a timeline holding one root, at the batch head.
+                // to keep. That cost is unavoidable and unchanged.
+                //
+                // What it leaves behind is not. The rebuild used to retire the whole
+                // timeline and re-seal one root at the batch head, which is what left every
+                // following correction with nothing below it. It splices now: every root
+                // the cadence sealed during the drive keeps its logical key and receives a
+                // new payload version, so the ladder comes out of the bootstrap the depth
+                // it went in.
                 final long viewRows = rowCount(VIEW);
                 correct(job, 4, FIRST_HOUR, 1, 1);
 
@@ -466,68 +480,86 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
                         instance.getO3BoundaryReplayRows()
                 );
 
+                final long ladderDepth =
+                        instance.getCheckpointTimeline()[LiveViewInstance.CHECKPOINT_TIMELINE_ENTRIES];
+                Assert.assertTrue(
+                        "the bootstrap must leave a ladder, not one head-sealed root",
+                        ladderDepth > 1
+                );
+                Assert.assertEquals(
+                        "every surviving root must be one the splice re-versioned",
+                        ladderDepth,
+                        instance.getCheckpointRepairRootsVersioned()
+                );
+
                 // The trickle. Each correction sits a few minutes under the head of the
-                // last batch, so it is below the only root the timeline holds and no resume
-                // qualifies - which is the loop the reported logs ran 803 times.
-                long emittedBefore = instance.getO3BoundaryReplayRows();
+                // last batch - and one minute deeper than the one before it, so no pass is
+                // resting on a root its own predecessor sealed.
+                final long rebuiltBefore = instance.getO3BoundaryReplayRows();
+                long resumedBefore = instance.getO3ResumeReplayRows();
                 long scannedBefore = instance.getO3ReplayScanRows();
                 for (int pass = 1; pass <= TRICKLE_PASSES; pass++) {
                     final int minute = HEAD_MINUTE - pass;
                     correct(job, 4, FIRST_HOUR + HOURS_PER_SEGMENT - 1, minute, 1);
 
-                    // Nothing was denied: the anchored repair localized behind the EOF
-                    // bound rather than falling back to the whole-history rebuild.
+                    // The ladder the bootstrap kept holds a root below this correction, so
+                    // the plan prices a resume from it against the localized rebuild and
+                    // the resume wins. "resume cheaper" is that comparison's outcome, not a
+                    // refusal: it names why the rebuild's bounds were dropped.
                     Assert.assertEquals(
-                            LiveViewCheckpointRepairPlan.DENIAL_NONE,
+                            LiveViewCheckpointRepairPlan.DENIAL_RESUME_CHEAPER,
                             instance.getCheckpointRepairLastDenialReason()
                     );
                     Assert.assertEquals(
-                            LiveViewCheckpointRepairPlan.DISPOSITION_BOUNDARY_REBUILD,
+                            LiveViewCheckpointRepairPlan.DISPOSITION_RESUME_FROM_ANCHOR,
                             instance.getCheckpointRepairLastDisposition()
                     );
-                    // And it is this executor doing it: no closed segment to decompose
-                    // against and no anchor to resume from, so neither of the other two
-                    // routes can be what these numbers measure.
-                    Assert.assertEquals(0, job.segmentRepairCountForTest());
-                    Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
-                    Assert.assertEquals(0, instance.getO3ResumeReplayRows());
-
-                    // The emit floor rose from START FROM to the correction: the
-                    // replacement carries exactly the view rows at or above it, which is
-                    // the correction depth rather than the view.
-                    final long emitted = instance.getO3BoundaryReplayRows() - emittedBefore;
+                    // No rebuild ran at all, so nothing below re-reads the segment: the
+                    // boundary-replay counter has not moved since the bootstrap.
                     Assert.assertEquals(
-                            "pass " + pass + " must re-emit only the rows at or above the correction",
-                            viewRowsAtOrAbove(segmentTs(4, FIRST_HOUR + HOURS_PER_SEGMENT - 1, minute)),
-                            emitted
+                            "pass " + pass + " must take the resume, not the rebuild",
+                            rebuiltBefore,
+                            instance.getO3BoundaryReplayRows()
                     );
-                    Assert.assertTrue(
-                            "pass " + pass + " emitted " + emitted + " of a " + rowCount(VIEW) + "-row view",
-                            emitted < rowCount(VIEW)
-                    );
+                    Assert.assertEquals(0, job.segmentRepairCountForTest());
+                    // And the resume itself takes its own cheapest route: the correction
+                    // touched one account, so the replay follows that key through the base
+                    // posting index rather than reading the interval whole.
+                    Assert.assertEquals(pass, job.openSegmentKeyedResumeCountForTest());
 
-                    // The scan floor did not rise with it. L is the start of the
-                    // correction's segment, which on the view's first segment IS the
-                    // START FROM boundary, so the replay still reads the whole view -
-                    // and with no root below the correction there is no resume to price
-                    // against it either. Removing that half needs the checkpoint ladder
-                    // to survive the rebuild, which this change does not do.
+                    // The scan collapsed from the whole segment to the tail above the
+                    // anchor. The cadence seals a root every CHECKPOINT_ROWS view rows, so
+                    // the newest root below the correction is within one cadence of it, and
+                    // the pass reads that tail plus the rows the earlier passes inserted
+                    // into it.
                     final long scanned = instance.getO3ReplayScanRows() - scannedBefore;
                     Assert.assertTrue(
-                            "pass " + pass + " scanned " + scanned + ", expected the whole segment",
-                            scanned >= rowCount(VIEW) - 1
+                            "pass " + pass + " scanned " + scanned + " of a " + rowCount(VIEW)
+                                    + "-row view, expected the tail above the anchor",
+                            scanned <= CHECKPOINT_ROWS + pass
                     );
-
-                    // The timeline survives the repair rather than being retired wholesale.
-                    // The prefix it preserves is empty here, because the only root it holds
-                    // sits at the batch head and every correction is below that - which is
-                    // why the resume path stays shut until the ladder itself is repaired.
+                    // The emit is bounded by the same tail. It is not the count of view
+                    // rows above the correction, and deliberately so: the keyed route
+                    // recomputes the corrected account's rows above the anchor and copies
+                    // every other account's stored rows forward untouched, so this counts
+                    // one key's rows rather than eight. What proves the other seven came
+                    // through intact is the from-base recompute at the end of the case.
+                    final long resumed = instance.getO3ResumeReplayRows() - resumedBefore;
                     Assert.assertTrue(
-                            "the repair must leave the view a checkpoint timeline",
-                            instance.getCheckpointTimeline()[LiveViewInstance.CHECKPOINT_TIMELINE_ENTRIES] > 0
+                            "pass " + pass + " must re-emit the anchor's tail, not the view",
+                            resumed > 0 && resumed <= CHECKPOINT_ROWS + pass
                     );
 
-                    emittedBefore = instance.getO3BoundaryReplayRows();
+                    // And the ladder comes out of each pass the depth it went in: the
+                    // resume splices the roots above its anchor rather than dropping them,
+                    // which is what keeps the next correction cheap too.
+                    Assert.assertEquals(
+                            "pass " + pass + " must leave the ladder intact",
+                            ladderDepth,
+                            instance.getCheckpointTimeline()[LiveViewInstance.CHECKPOINT_TIMELINE_ENTRIES]
+                    );
+
+                    resumedBefore = instance.getO3ResumeReplayRows();
                     scannedBefore = instance.getO3ReplayScanRows();
                 }
 

@@ -1403,9 +1403,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Opens the repair capture one localized, finitely converging rebuild publishes
-     * its range splice through, and fills the session's boundary schedule with the
-     * logical boundaries in {@code [C, H)} that rebuild has to re-version.
+     * Opens the repair capture one localized rebuild publishes its range splice
+     * through, and fills the session's boundary schedule with the logical boundaries
+     * in {@code [C, H)} that rebuild has to re-version. {@code H} is the plan's
+     * convergence bound for a repair that proved one, and the top of the timestamp
+     * range for one whose influence reaches the end of the base table - which
+     * collects every root above {@code C} rather than a bounded window of them.
      * <p>
      * The capture pins the generation it reads that list from, so it must be opened
      * before anything else touches the timeline and held until publication. Nothing
@@ -4064,10 +4067,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * {@code retireTimeline} decides whether the timeline goes with it. A repair
      * that publishes its own range splice passes {@code false}: the splice
-     * re-versions the roots in {@code [C, H)} and keeps the prefix and converged
-     * suffix, which is the whole point of the timeline, so retiring them here
-     * would throw away exactly what the splice is about to correct. Every other
-     * repair passes {@code true} - see {@link #retireCheckpointTimeline}.
+     * re-versions the roots in {@code [C, H)} and keeps the prefix - and, when the
+     * repair converged, the suffix above {@code H} - which is the whole point of the
+     * timeline, so retiring them here would throw away exactly what the splice is
+     * about to correct. Every other repair passes {@code true} - see
+     * {@link #retireCheckpointTimeline}.
      */
     private void retireCheckpointStateOnO3(LiveViewInstance instance, boolean retireTimeline) {
         instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
@@ -4090,23 +4094,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@link #retireSeedCheckpointTimeline(LiveViewInstance)}.
      * <p>
      * The precise form is the range splice
-     * ({@link #publishCheckpointTimelineRepair}), which re-versions only the roots
-     * in {@code [C, H)} and keeps the prefix and the converged suffix. A repair
-     * takes it when it localized <b>and</b> converged at a finite {@code H}: only
-     * then is there a suffix whose state provably did not change, and only then
-     * does the repair leave the runtime standing where it found it. The splice
+     * ({@link #publishCheckpointTimelineRepair}), which re-versions the roots in
+     * {@code [C, H)} and keeps the prefix - and, for a repair that converged, the
+     * suffix above {@code H} as well. A repair takes it when it localized <b>and</b>
+     * its replay can describe every key the boundaries it crosses held: a converging
+     * repair gets there on the plan's key-completeness or on a named key domain, and
+     * one reaching end-of-frame on key-completeness alone, because the domain belongs
+     * to the ROWS dependency whose state such a repair may not promote. The splice
      * appends no boundary of its own; the post-replay seal adds one at the
      * runtime frontier when the frontier has run past the newest root the splice
      * kept, so the generation's base coverage never outruns its roots. A repair
-     * that replaces through positive
-     * infinity - an unlocalized rebuild, or a localized one whose change set has no
-     * proven ceiling - has no converged suffix to keep. An unlocalized one retires
-     * here; a localized one instead reaches
+     * that replaces through positive infinity has no converged suffix to keep, but it
+     * still has every root to correct, so it splices over {@code [C, +inf)} instead of
+     * dropping the ladder. What is left here is the repair that can splice nothing: an
+     * unlocalized rebuild retires, and a localized repair holding no capture - the view
+     * has no valid generation to splice into, the interval crosses more roots than
+     * {@code cairo.live.view.checkpoint.repair.max.chained.boundaries} allows, or its
+     * durable marker could not be written - reaches
      * {@link #truncateOrRetireTimelineOnO3(LiveViewInstance, long)}, which keeps the
      * roots below {@code R} - correct, because the replay rewrites nothing under them -
-     * and retires only when no prefix survives. A RANGE-only view has taken that route
-     * since the localization existed, and an anchored one joins it now that the anchor
-     * localizes behind an {@code EOF} bound too.
+     * and retires only when no prefix survives.
      * This also catches a splice that failed after its replacement committed: the
      * durable output has moved under every root, so the timeline goes.
      * <p>
@@ -7881,11 +7888,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // fullRebuild veto as the floors: a rebuild that must recompute the whole view
         // may not stop early, whatever the plan derived.
         final boolean finiteHighBound = localized && plan.isRuntimeStatePreserved();
+        // H restated as the exclusive interval bound every timeline consumer takes: the
+        // plan's finite H for a converging repair, and the top of the timestamp range for
+        // one whose influence reaches the end of the base table. Neither of the plan's own
+        // accessors serves here - getHighTsExclusive() is LONG_NULL under an EOF tag,
+        // which is the tagged form recovery reads back, and getScanHighTsInclusive() is
+        // inclusive, so reusing it would move every boundary below by one microsecond.
+        final long timelineHighTsExclusive = finiteHighBound ? plan.getHighTsExclusive() : Long.MAX_VALUE;
         // Whether this repair may re-version the logical boundaries it crosses instead
-        // of truncating the timeline at R. It needs the finite H every splice needs,
-        // and one thing more: the publication has to be able to describe every key the
-        // boundary held. Two ways to get there. A time-expiring dependency reconstructs
-        // every key outright, which is
+        // of truncating the timeline at R. What it needs is that the publication be able
+        // to describe every key the boundary held. Two ways to get there. A time-expiring
+        // dependency reconstructs every key outright, which is
         // LiveViewCheckpointRepairPlan.isReplayStateKeyComplete(). A ROWS dependency
         // does not - a root frozen from such a replay would describe a narrower key set
         // than the boundary it replaces, which a later resume or restore then reads as
@@ -7894,8 +7907,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // With neither, the repair truncates at R: the runtime survives a narrowed
         // state because the overlay puts it back, and a published root has nothing to
         // put it back from.
+        //
+        // The two arms are not the same repair, and the key domain belongs to one of
+        // them only. A converging repair restores the runtime it entered with, so a
+        // narrowed replay costs it nothing and Q is what carries the splice. A repair
+        // reaching the end of the base table promotes what its replay ends on instead,
+        // and a ROWS frame is exactly the dependency that promotion is unsafe for - it
+        // never expires by time, so a key with no row at or above L keeps state no
+        // replay from L reconstructs. The plan already refuses to localize that shape
+        // behind an EOF bound; the predicate says so too rather than leaning on it, so
+        // the domain disjunct cannot follow a future ROWS repair over the boundary.
+        // What the EOF arm does admit is every key-complete localization - the anchored
+        // repair this exists for, and the bounded RANGE one that has localized behind
+        // EOF since the localization existed - on one argument for both: a key the
+        // replay never saw has an expired frame, or a reset segment, at every timestamp
+        // the re-versioned roots describe, so a root that omits it and a root that
+        // carries its empty accumulator say the same thing.
         final boolean isTimelineSpliceable = finiteHighBound
-                && (plan.isReplayStateKeyComplete() || plan.getOutputKeyDomain() != null);
+                ? plan.isReplayStateKeyComplete() || plan.getOutputKeyDomain() != null
+                : localized && plan.isReplayStateKeyComplete();
         // The publication ordering this rebuild walks. It owns the two decisions the
         // rest of the method used to spread across local flags: what happens to the
         // runtime once the repair publishes, and whether the replacement is
@@ -7921,10 +7951,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // the way out; only a repair that parks leaves it on the instance. The
         // unlocalized rebuild has none - it stages no roots, keeps no overlay and
         // may not yield.
+        //
+        // Opened for a spliceable repair as well as a converging one, because the
+        // capture below dereferences the session for its boundary schedule and its
+        // durable descriptor: without one, an EOF-localized repair would splice
+        // through a null. It also makes the turn budget reachable for that repair,
+        // which is what stops a correction over a long open segment from holding one
+        // worker for the whole replay.
         final boolean resuming = resumed != null;
         final LiveViewCheckpointRepairSession session = resuming
                 ? resumed
-                : finiteHighBound ? openRepairSession(plan, replayWindowFactory) : null;
+                : (finiteHighBound || isTimelineSpliceable) ? openRepairSession(plan, replayWindowFactory) : null;
         boolean readerAttached = false;
         // Whether the primary runtime comes out of this repair holding the state it went
         // in with. True both for a replay that ran beside it and for one that copied it
@@ -7971,10 +8008,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
         }
         // The timeline range splice this repair publishes instead of retiring
-        // the whole timeline. Taken only by a repair that stopped at a finite
-        // H whose replay reconstructs every key: that is the case with a converged
-        // suffix to keep, and the case whose runtime is restored rather than
-        // promoted, so it creates no new logical boundary either. Null leaves the
+        // the whole timeline. Taken by a repair whose replay can describe every key
+        // the boundaries it crosses held - see isTimelineSpliceable. Null leaves the
         // retire - or, for a localized repair, the prefix truncate - in place, and
         // the boundary list stays empty so the replay's segmentation is a dead
         // branch.
@@ -7984,17 +8019,70 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         } else if (isTimelineSpliceable) {
             // C, not R: a root in [R, C) keeps its state - nothing it holds changed -
             // and its output is re-emitted identically, so the splice reuses it. Only
-            // [C, H) receives new payload versions.
+            // [C, H) receives new payload versions - and for a repair reaching the end
+            // of the base table that is every root above C, which is what makes it a
+            // splice rather than a truncate.
             timelineCapture = beginCheckpointTimelineRepair(
                     instance,
                     plan,
                     session,
                     plan.getRetireLowTs(),
-                    plan.getHighTsExclusive(),
+                    timelineHighTsExclusive,
+                    // Never chained, whichever bound this repair reached. A chain seeds
+                    // its first boundary from the published root below the interval and
+                    // images only the keys the runtime has marked dirty since, which
+                    // needs a runtime standing at that root. A head miss stands nowhere
+                    // near it: it wipes the accumulators and replays from L, so a key it
+                    // never touched would keep the predecessor's entry instead of the
+                    // identity the anchor reset - or the frame expiry - actually leaves
+                    // it at. The resume path is the one that restores the predecessor
+                    // first, and the one that chains.
                     false,
                     true,
                     keyedRoute ? keyedReplay.getOutputKeys() : null
             );
+            final int maxRepairedBoundaries =
+                    engine.getConfiguration().getLiveViewCheckpointRepairMaxChainedBoundaries();
+            if (timelineCapture != null
+                    && (maxRepairedBoundaries <= 0 || session.getBoundaries().size() > maxRepairedBoundaries)) {
+                // Same bound the resume path applies, and it earns its keep here for a
+                // reason the resume path does not have: an EOF repair's interval is
+                // [C, +inf), so it collects every root the cadence has sealed above the
+                // correction rather than the handful inside a finite H. Re-versioning
+                // that many roots stops being worth what keeping the ladder buys - a
+                // repair this deep is bounded by the rows it replays long before it is
+                // bounded by its roots. Drop back to the truncate, which is what every
+                // out-of-order head miss did before the splice existed.
+                //
+                // Logged rather than silently taken: a view that keeps arriving here is
+                // one whose lateness has outgrown its checkpoint cadence, and that is an
+                // operator's decision to make.
+                LOG.info().$("live view O3 head miss declined the checkpoint splice, truncating instead [view=")
+                        .$(viewName)
+                        .$(", boundaries=").$(session.getBoundaries().size())
+                        .$(", max=").$(maxRepairedBoundaries)
+                        .$(", outputLowTs=").$ts(emitLowTs).I$();
+                timelineCapture = Misc.free(timelineCapture);
+                session.discardDescriptor();
+                session.getBoundaries().clear();
+            }
+            if (timelineCapture != null && !writeCheckpointRepairMarker(instance, emitLowTs)) {
+                // The marker is what makes keeping the roots safe to attempt: it is the
+                // only thing standing between a crash after the replacement commits and
+                // a restart restoring a root that replacement has moved under. The
+                // splice leaves every root where it is and rewrites the output beneath
+                // them, so the window is real on both bounds - and on the EOF bound it
+                // is the whole timeline above C. Without a marker the repair takes the
+                // truncate below, which carries its own.
+                //
+                // Decided here, before the cursor chain is built, so a capture the
+                // repair cannot protect is dropped while dropping it is still free.
+                timelineCapture = Misc.free(timelineCapture);
+                session.discardDescriptor();
+                session.getBoundaries().clear();
+            } else if (timelineCapture != null) {
+                session.setRepairMarkerLive(true);
+            }
         }
         if (session != null) {
             // The publication mirrors every stage it records into the descriptor, and
@@ -8014,7 +8102,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
                 durableRowsBeforeRepair = lvReader.size();
                 durableRowsBelowFloor = countDurableRowsBelow(lvReader, emitLowTs);
-                final long rowsBelowHighBound = countDurableRowsBelow(lvReader, plan.getHighTsExclusive());
+                final long rowsBelowHighBound = countDurableRowsBelow(lvReader, timelineHighTsExclusive);
                 if (durableRowsBelowFloor < 0 || rowsBelowHighBound < 0) {
                     throw CairoException.critical(0)
                             .put("live view table has no searchable prefix for a checkpoint timeline repair");
@@ -8045,11 +8133,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // frontier that has run past that key leaves the generation claiming base
         // coverage no root has.
         LiveViewCheckpointTimelineStoreWriter.RepairResult timelineSplice = null;
-        // Set when this turn preserved the timeline prefix instead of retiring it
-        // (an EOF-reaching localized repair). A durable marker is then live and the
-        // post-replay seal must resolve it: clear it once a fresh head is sealed, or
-        // retire the truncated timeline when the repair emitted no rows to seal.
-        boolean prefixMarkerLive = false;
+        // Set when this turn left a durable repair marker behind, which the two ways of
+        // keeping a timeline both do: the prefix truncate an EOF-reaching localized
+        // repair takes when it holds no capture, and the splice, which leaves every
+        // root where it is and rewrites the output beneath them. The post-replay seal
+        // resolves it either way - see the block that reads it.
+        //
+        // Read off the session rather than re-derived, because it outlives the turn: a
+        // repair that parks on its budget leaves the marker on disk, and the turn that
+        // finishes it is the one that owes the clear.
+        boolean prefixMarkerLive = session != null && session.isRepairMarkerLive();
         // Set when the replay stops on its turn budget with the repair unfinished,
         // together with the inclusive timestamp the next turn re-opens the scan at.
         boolean yielded = false;
@@ -8079,13 +8172,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // the wipe would have destroyed.
             //
             // A repair replaying through the primary runtime takes it only when it holds a
-            // splice capture: without one the timeline is retired outright, no generation is
-            // left for a baseline to name, and the wipe below leaves every target owing the
-            // complete freeze anyway. An isolated replay takes it either way, because it
-            // wipes nothing: its targets would otherwise keep a baseline naming a generation
-            // the retire is about to delete, and the restore below is what re-stamps that
-            // baseline against the splice or drops it.
-            if (!resuming && (timelineCapture != null || isolated)) {
+            // splice capture AND converges, which is exactly the repair that puts the
+            // primary's own state back. Without a capture the timeline is retired outright,
+            // no generation is left for a baseline to name, and the wipe below leaves every
+            // target owing the complete freeze anyway; and a repair reaching the end of the
+            // base table promotes what its replay ends on, so bookkeeping recorded against
+            // the state it replaced describes nothing that survives - settleRepairRuntime
+            // drops it on that path rather than re-stamping it. An isolated replay takes it
+            // whether or not it holds a capture, because it wipes nothing: its targets would
+            // otherwise keep a baseline naming a generation the retire is about to delete,
+            // and the restore below is what re-stamps that baseline against the splice or
+            // drops it.
+            if (!resuming && (isolated || (timelineCapture != null && finiteHighBound))) {
                 session.getSealCarryover().capture(
                         windowFactory.getWindowFunctions(),
                         anchorWindow,
@@ -8107,15 +8205,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // capture pinned.
             if (!resuming) {
                 if (timelineCapture == null && localized) {
-                    // Localized repair whose influence reaches the runtime frontier:
-                    // there is no converged suffix to keep, but the roots below R are
-                    // still correct. Preserve them - keeping the long-term anchors and
-                    // the checkpoint id space - instead of retiring the whole timeline
-                    // for one near-head correction. The durable marker this writes
-                    // forces a mid-repair crash to rebuild from the applied base.
+                    // Localized repair with no capture to splice through - the view's
+                    // timeline was retired by an earlier repair and no seal has re-opened
+                    // it, or the boundary bound or the marker declined it. There is no
+                    // suffix to correct, but the roots below R are still correct.
+                    // Preserve them - keeping the long-term anchors and the checkpoint id
+                    // space - instead of retiring the whole timeline for one near-head
+                    // correction. The durable marker this writes forces a mid-repair
+                    // crash to rebuild from the applied base.
                     prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, emitLowTs);
                 } else {
                     retireCheckpointStateOnO3(instance, timelineCapture == null);
+                }
+                if (session != null) {
+                    // Whatever this turn decided, the session is what carries it to the
+                    // turn that resolves it. The truncate may have retired instead of
+                    // preserving, which takes the marker with it.
+                    session.setRepairMarkerLive(prefixMarkerLive);
                 }
             }
 
@@ -8584,10 +8690,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // The replacement's high bound is the same H the scan stopped at,
                             // so what the replay did not re-evaluate it also does not delete.
                             // Positive infinity otherwise, which is the truncating
-                            // replacement every rebuild issued before the bound existed.
-                            final long replaceHighTs = finiteHighBound
-                                    ? plan.getHighTsExclusive()
-                                    : Long.MAX_VALUE;
+                            // replacement every rebuild issued before the bound existed -
+                            // and the same normalization the timeline consumers take.
+                            final long replaceHighTs = timelineHighTsExclusive;
                             // Before the commit, which is where the check has to finish:
                             // the publication chosen below stands on the pair, and a
                             // duplicate admitted to a sparse commit is collapsed silently.
@@ -8834,8 +8939,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             instance,
                             timelineCapture,
                             effectiveSeqTxn,
-                            plan.getHighTsExclusive(),
-                            suffixRowDelta
+                            timelineHighTsExclusive,
+                            // The delta corrects the cumulative position of every root the
+                            // splice left standing above H, and a repair that ran to the
+                            // end of the base table left none: every root above C is one
+                            // this capture re-versioned, each carrying the position its own
+                            // freeze derived. So it owes no correction, exactly as the
+                            // resume path owes none over the same unbounded interval. The
+                            // arithmetic above still runs - it is what proves the
+                            // replacement moved the rows the repaired positions were
+                            // anchored on.
+                            finiteHighBound ? suffixRowDelta : 0
                     );
                     if (timelineSplice != null) {
                         repairPublication.timelinePublished();
@@ -8851,7 +8965,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     session,
                     windowFactory,
                     anchorWindow,
-                    carriedSealBaselineGeneration(plan, timelineSplice)
+                    carriedSealBaselineGeneration(timelineHighTsExclusive, timelineSplice)
             );
             if (!replacementReconciled) {
                 // The replacement is in the live view's WAL but not in its table. No
@@ -8935,16 +9049,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     );
                 }
                 if (prefixMarkerLive) {
-                    // The truncate preserved the prefix behind a live marker. If a
-                    // fresh head was just sealed above it the timeline is consistent
-                    // again, so drop the marker and let a restart restore normally.
-                    // Otherwise the repair emitted nothing to seal (a pure delete to
-                    // EOF), leaving a headless truncated timeline: retire it - which
-                    // removes the marker - and let a restart rebuild.
-                    if (headSealed) {
+                    // Resolve the repair's live marker, which the two timeline-keeping
+                    // routes reach from opposite sides.
+                    //
+                    // A published splice is consistent on its own: it left every root
+                    // addressable and corrected the ones the replacement moved under, so
+                    // its newest root may already sit at the frontier and need no seal
+                    // above it. Drop the marker.
+                    //
+                    // A truncate is not. It left the timeline headless, so a fresh head
+                    // is what makes the preserved prefix restorable; without one the
+                    // repair emitted nothing to seal (a pure delete to EOF) and the
+                    // truncated timeline has to be retired - which removes the marker -
+                    // and left to a restart.
+                    //
+                    // A splice that never published falls to neither. The exit path below
+                    // retires the timeline for it, and that takes the marker with it, so
+                    // this must not clear one on the strength of a seal alone.
+                    if (timelineSplice != null || (timelineCapture == null && headSealed)) {
                         clearCheckpointRepairMarker(instance);
-                    } else {
+                        if (session != null) {
+                            session.setRepairMarkerLive(false);
+                        }
+                    } else if (timelineCapture == null) {
                         retireCheckpointTimeline(instance);
+                        if (session != null) {
+                            session.setRepairMarkerLive(false);
+                        }
                     }
                 }
             }
@@ -9050,16 +9181,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * sits at or above {@code H}. A repair that published no splice has no generation to
      * name; one whose newest root the splice rewrote has one that no longer describes the
      * restored state.
+     * <p>
+     * The ceiling comes in normalized rather than off the plan, and the difference is not
+     * cosmetic. A repair reaching the end of the base table tags no timestamp at all, so
+     * the plan reports {@link Numbers#LONG_NULL} - {@code Long.MIN_VALUE} - and the
+     * comparison would pass vacuously for a repair that re-versioned every root it holds
+     * and promoted its replay runtime over the state the bookkeeping describes. Against
+     * {@code Long.MAX_VALUE} no real root clears the bound, so such a repair drops the
+     * baseline, which is what it owes.
+     *
+     * @param highTsExclusive {@code H} as an interval bound: the plan's finite ceiling, or
+     *                        {@code Long.MAX_VALUE} for a repair that reaches end-of-frame
      */
     private static long carriedSealBaselineGeneration(
-            LiveViewCheckpointRepairPlan plan,
+            long highTsExclusive,
             @Nullable LiveViewCheckpointTimelineStoreWriter.RepairResult timelineSplice
     ) {
         if (timelineSplice == null) {
             return Numbers.LONG_NULL;
         }
         final long headRootMaxTs = timelineSplice.getHeadRootMaxTimestamp();
-        if (headRootMaxTs == Numbers.LONG_NULL || headRootMaxTs < plan.getHighTsExclusive()) {
+        if (headRootMaxTs == Numbers.LONG_NULL || headRootMaxTs < highTsExclusive) {
             return Numbers.LONG_NULL;
         }
         return timelineSplice.getGeneration();

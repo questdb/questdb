@@ -108,6 +108,11 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     private long durableRowsBelowFloor;
     private long durableRowsReplaced;
     private ObjList<WindowFunction> functions;
+    // Whether this repair has a durable LiveViewCheckpointRepairMarker on disk that the
+    // turn finishing it owes a clear. It lives here rather than in the executing turn
+    // because it outlives one: a repair that parks on its budget leaves the marker
+    // behind, and the turn that resumes it is a different call with its own locals.
+    private boolean isRepairMarkerLive;
     private boolean isSuspended;
     // Set when close() abandoned the repair but could not put the overlay back, leaving the
     // compiled factory holding neither the pre-repair state nor a settled one. Read by
@@ -184,6 +189,7 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         boundaries.clear();
         segmentLoop.clear();
         outputUniqueness.clear();
+        isRepairMarkerLive = false;
         isSuspended = false;
     }
 
@@ -408,6 +414,15 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     }
 
     /**
+     * @return true when a durable {@code LiveViewCheckpointRepairMarker} written for this
+     * repair is still on disk, so the turn that finishes the repair owes either a clear
+     * or a retire. See {@link #setRepairMarkerLive(boolean)}
+     */
+    public boolean isRepairMarkerLive() {
+        return isRepairMarkerLive;
+    }
+
+    /**
      * @return true while the repair is parked between turns, holding the pinned
      * reader, the uncommitted replacement and the staged capture
      */
@@ -459,6 +474,17 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         this.durableRowsBeforeRepair = rowsBeforeRepair;
         this.durableRowsBelowFloor = rowsBelowFloor;
         this.durableRowsReplaced = rowsReplaced;
+    }
+
+    /**
+     * Records whether this repair has a live durable repair marker: one is written before
+     * a prefix truncate or a timeline splice, and cleared once the post-replay seal - or
+     * the splice itself - has made the timeline consistent again. A repair that parks on
+     * its turn budget leaves the marker on disk, so the flag travels with the session and
+     * the turn that finishes the repair is the one that resolves it.
+     */
+    public void setRepairMarkerLive(boolean live) {
+        this.isRepairMarkerLive = live;
     }
 
     /**

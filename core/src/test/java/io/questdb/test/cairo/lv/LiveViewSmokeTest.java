@@ -18713,10 +18713,25 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                             Numbers.LONG_NULL,
                             lv.getHeadCheckpointMaxTs()
                     );
-                    Assert.assertNotEquals(
-                            "head checkpoint state bytes populated post O3 replay",
+                    // The anchored repair localizes behind an end-of-frame bound and
+                    // publishes its timeline as a range splice, which appends no root of
+                    // its own: the newest boundary is the one it re-versioned, already at
+                    // the frontier the seal would stamp. So the head is re-stamped over a
+                    // boundary that already exists and its state-byte figure - a
+                    // diagnostic column - reads 0 until the next cadence seal writes a
+                    // root. What matters is that the ladder is still there.
+                    Assert.assertEquals(
+                            "a splice appends no root, so the head restamps at 0 bytes",
                             0L,
                             lv.getHeadCheckpointStateBytes()
+                    );
+                    Assert.assertTrue(
+                            "the repair must splice its timeline rather than retire it",
+                            lv.getCheckpointRepairRootsVersioned() > 0
+                    );
+                    Assert.assertTrue(
+                            "the boundary the splice re-versioned must survive the repair",
+                            lv.getCheckpointTimeline()[LiveViewInstance.CHECKPOINT_TIMELINE_ENTRIES] > 0
                     );
                 }
             }
@@ -20722,9 +20737,19 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertNotEquals(Numbers.LONG_NULL, postReplayLvSeqTxn);
                 Assert.assertNotEquals(preO3HeadLvSeqTxn, postReplayLvSeqTxn);
                 Assert.assertNotEquals(Numbers.LONG_NULL, lv.getHeadCheckpointMaxTs());
+                // The repair spliced its timeline rather than retiring it, so it appended
+                // no root and the head re-stamps over the boundary it re-versioned. The
+                // state-byte column is diagnostic and reads 0 until the next cadence seal
+                // writes a root of its own; the lvSeqTxn and maxTs above are the two the
+                // post-replay head is actually for.
+                Assert.assertEquals(
+                        "a splice appends no root, so the head restamps at 0 bytes",
+                        0L,
+                        lv.getHeadCheckpointStateBytes()
+                );
                 Assert.assertTrue(
-                        "post-replay state_bytes populated",
-                        lv.getHeadCheckpointStateBytes() > 0L
+                        "the repair must splice its timeline rather than retire it",
+                        lv.getCheckpointRepairRootsVersioned() > 0
                 );
 
 
