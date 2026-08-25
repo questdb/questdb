@@ -24,10 +24,12 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CompositeDimensionTransform;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -76,6 +78,44 @@ public class CompositePartitionPathTest extends AbstractCairoTest {
                         "6-arg overload with a null cellSegment must be byte-identical to the pre-existing 5-arg signature",
                         oldSink.toString(), newSinkNullSegment.toString()
                 );
+            }
+        });
+    }
+
+    /**
+     * T1 of the per-cell parquet plan. A parquet partition is just {@code <partitionDir>/data.parquet},
+     * so the cell-aware form needs no new on-disk shape -- it nests under the cell segment exactly as
+     * the native path does, giving {@code <day>/<cell>.<txn>/data.parquet}.
+     * <p>
+     * The LOAD-BEARING assertion here is the literal {@code "/db/t/2026-07-15.3/data.parquet"}: that is
+     * what pins invariant 1, since it fails if plain parquet rendering moves by a single character.
+     * <p>
+     * The 5-arg-vs-null-segment equality below it is deliberately NOT independent evidence -- the 5-arg
+     * form now delegates to the 6-arg one, so the two are the same code path and comparing them proves
+     * only that delegation happened. It is kept as a structural guard against someone re-splitting them
+     * later, not as a byte-identity proof. Stating that plainly because an assertion that looks like
+     * proof and is not is exactly how this branch has been bitten before.
+     */
+    @Test
+    public void testParquetPathNestsUnderCellSegmentAndStaysPlainIdentical() throws Exception {
+        assertMemoryLeak(() -> {
+            long ts = parseFloorPartialTimestamp(PARTITION_DATE);
+            try (Path oldForm = new Path(); Path nullSegment = new Path(); Path withCell = new Path()) {
+                oldForm.of("/db/t");
+                TableUtils.setPathForParquetPartition(oldForm, ColumnType.TIMESTAMP, PartitionBy.DAY, ts, NAME_TXN);
+
+                nullSegment.of("/db/t");
+                TableUtils.setPathForParquetPartition(nullSegment, ColumnType.TIMESTAMP, PartitionBy.DAY, ts, NAME_TXN, null);
+
+                withCell.of("/db/t");
+                TableUtils.setPathForParquetPartition(withCell, ColumnType.TIMESTAMP, PartitionBy.DAY, ts, NAME_TXN, "exch=BTC");
+
+                Assert.assertEquals("/db/t/2026-07-15.3/data.parquet", oldForm.toString());
+                Assert.assertEquals(
+                        "6-arg overload with a null cellSegment must be byte-identical to the 5-arg signature",
+                        oldForm.toString(), nullSegment.toString()
+                );
+                Assert.assertEquals("/db/t/2026-07-15/exch=BTC.3/data.parquet", withCell.toString());
             }
         });
     }

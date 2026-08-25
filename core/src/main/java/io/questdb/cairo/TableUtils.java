@@ -2801,7 +2801,19 @@ public final class TableUtils {
      * @param nameTxn       Partition txn suffix
      */
     public static void setPathForParquetPartition(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn) {
-        setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn);
+        // delegate rather than duplicate: the two forms cannot drift apart if only one renders
+        setPathForParquetPartition(path, timestampType, partitionBy, timestamp, nameTxn, null);
+    }
+
+    /**
+     * Cell-aware counterpart, for a composite table's per-cell parquet file. A parquet partition is
+     * {@code <partitionDir>/data.parquet}, and the cell segment nests inside the day exactly as it does
+     * for a native partition, so this yields {@code <day>/<cell>.<nameTxn>/data.parquet}.
+     * <p>
+     * A {@code null} {@code cellSegment} renders byte-identically to the 5-arg form -- invariant 1.
+     */
+    public static void setPathForParquetPartition(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn, @Nullable CharSequence cellSegment) {
+        setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn, cellSegment);
         path.concat(PARQUET_PARTITION_NAME);
     }
 
@@ -2816,7 +2828,16 @@ public final class TableUtils {
      * @param nameTxn       Partition txn suffix
      */
     public static void setPathForParquetPartitionMetadata(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn) {
-        setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn);
+        setPathForParquetPartitionMetadata(path, timestampType, partitionBy, timestamp, nameTxn, null);
+    }
+
+    /**
+     * Cell-aware counterpart of {@link #setPathForParquetPartitionMetadata(Path, int, int, long, long)},
+     * yielding {@code <day>/<cell>.<nameTxn>/_pm}. A {@code null} {@code cellSegment} is byte-identical
+     * to the 5-arg form.
+     */
+    public static void setPathForParquetPartitionMetadata(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn, @Nullable CharSequence cellSegment) {
+        setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn, cellSegment);
         path.concat(PARQUET_METADATA_FILE_NAME);
     }
 
