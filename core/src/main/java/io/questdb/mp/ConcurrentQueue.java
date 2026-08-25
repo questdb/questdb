@@ -90,7 +90,7 @@ public class ConcurrentQueue<T> implements Queue<T> {
     public ConcurrentQueue(ObjectFactory<T> factory, ConcurrentSegmentManipulator<T> queueManipulator, int size) {
         assert (size & (size - 1)) == 0; // must be a power of 2
         this.factory = factory;
-        tail = head = new ConcurrentQueueSegment<>(factory, queueManipulator, INITIAL_SEGMENT_LENGTH);
+        tail = head = new ConcurrentQueueSegment<>(factory, queueManipulator, size);
         this.queueManipulator = queueManipulator;
     }
 
