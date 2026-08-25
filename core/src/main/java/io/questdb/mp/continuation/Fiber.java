@@ -84,6 +84,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     private boolean isAsyncRandomInitialized;
     private boolean isRandomInitialized;
     private volatile boolean isShutdown;
+    private int lastMountWorkerId = FiberRuntime.NO_WORKER;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile int notificationState = NOTIFICATION_IDLE;
     private Throwable outcomeError;
@@ -218,6 +219,11 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     public FiberWaitCoordinator getWaitCoordinator() {
         return waitCoordinator;
+    }
+
+    @TestOnly
+    public int getLastMountWorkerIdForTesting() {
+        return lastMountWorkerId;
     }
 
     @Override
@@ -486,7 +492,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return Unsafe.cas(this, RETIREMENT_STATE_OFFSET, 1, 2);
     }
 
-    void finishProcessing() {
+    void finishProcessing(@Nullable FiberRuntime.OwnerContext ownerContext) {
         while (true) {
             final int state = notificationState;
             if (state == NOTIFICATION_PROCESSING) {
@@ -496,7 +502,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
             } else if (state == NOTIFICATION_RESIGNAL) {
                 if (Unsafe.cas(this, NOTIFICATION_STATE_OFFSET, NOTIFICATION_RESIGNAL, NOTIFICATION_QUEUED)) {
                     try {
-                        pool.enqueue(this);
+                        pool.enqueueAfterProcessing(this, ownerContext);
                         return;
                     } catch (Throwable th) {
                         if (!Unsafe.cas(this, NOTIFICATION_STATE_OFFSET, NOTIFICATION_QUEUED, NOTIFICATION_RESIGNAL)) {
@@ -583,6 +589,10 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         }
         final int state = notificationState;
         return state == NOTIFICATION_IDLE || state == NOTIFICATION_PROCESSING;
+    }
+
+    boolean isShutdownRequested() {
+        return isShutdown;
     }
 
     void markRetired() {
@@ -729,6 +739,7 @@ public final class Fiber implements FiberWaitCoordinator.Target {
             throw new IllegalStateException("fiber is not free");
         }
         reservationEpoch = nextEpoch;
+        lastMountWorkerId = FiberRuntime.NO_WORKER;
         return nextEpoch;
     }
 
@@ -794,6 +805,14 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     void setRegistryIndex(int registryIndex) {
         this.registryIndex = registryIndex;
+    }
+
+    void setLastMountWorkerId(int workerId) {
+        lastMountWorkerId = workerId;
+    }
+
+    int getLastMountWorkerId() {
+        return lastMountWorkerId;
     }
 
     void stage(FiberTask task, long reservationEpoch) {

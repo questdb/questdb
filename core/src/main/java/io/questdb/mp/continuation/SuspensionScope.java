@@ -165,6 +165,10 @@ public final class SuspensionScope {
         return getRoleSwitchReadLockState(scope).hasLock(lock);
     }
 
+    public static boolean hasAnyRoleSwitchLock() {
+        return hasAnyRoleSwitchLock(SCOPE.get());
+    }
+
     public static void initializeCarrier() {
         SCOPE.get();
     }

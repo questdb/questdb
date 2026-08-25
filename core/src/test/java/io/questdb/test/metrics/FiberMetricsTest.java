@@ -78,6 +78,26 @@ public class FiberMetricsTest {
                 );
                 TestUtils.assertContains(
                         value,
+                        "questdb_worker_pool_fiber_scheduler_publication_total{worker_pool=\"test\\\"pool\",route=\"global\"} 1\n"
+                );
+                TestUtils.assertContains(
+                        value,
+                        "questdb_worker_pool_fiber_scheduler_selection_total{worker_pool=\"test\\\"pool\",source=\"global\"} 1\n"
+                );
+                TestUtils.assertContains(
+                        value,
+                        "questdb_worker_pool_fiber_wake_total{worker_pool=\"test\\\"pool\"} 0\n"
+                );
+                TestUtils.assertContains(
+                        value,
+                        "questdb_worker_pool_fiber_orphaned_shard_total{worker_pool=\"test\\\"pool\"} 0\n"
+                );
+                TestUtils.assertContains(
+                        value,
+                        "questdb_worker_pool_fiber_orphan_recovery_total{worker_pool=\"test\\\"pool\"} 0\n"
+                );
+                TestUtils.assertContains(
+                        value,
                         "questdb_worker_pool_fiber_launch_total{worker_pool=\"test\\\"pool\",result=\"launched\"} 1\n"
                 );
                 TestUtils.assertContains(
@@ -95,6 +115,10 @@ public class FiberMetricsTest {
                 TestUtils.assertContains(
                         sink.toString(),
                         "questdb_worker_pool_fiber_launch_total{worker_pool=\"test\\\"pool\",result=\"launched\"} 0\n"
+                );
+                TestUtils.assertContains(
+                        sink.toString(),
+                        "questdb_worker_pool_fiber_scheduler_publication_total{worker_pool=\"test\\\"pool\",route=\"global\"} 0\n"
                 );
 
                 metrics.unregister(runtime);

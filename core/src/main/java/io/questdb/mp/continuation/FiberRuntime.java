@@ -27,7 +27,9 @@ package io.questdb.mp.continuation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.Worker;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -39,28 +41,47 @@ import java.util.concurrent.atomic.LongAdder;
 public final class FiberRuntime {
     private static final long ADMISSION_OPEN = Long.MIN_VALUE;
     private static final long ADMISSION_PERMIT_MASK = Long.MAX_VALUE;
+    private static final int GLOBAL_PROBE_INTERVAL = 61;
     private static final Log LOG = LogFactory.getLog(FiberRuntime.class);
+    public static final int NO_WORKER = -1;
     private static final int PROCESS_OWNED = 2;
     private static final int PROCESS_RELEASED = 1;
     private static final int PROCESS_TERMINATED = 0;
     private final AtomicLong admission = new AtomicLong(ADMISSION_OPEN);
     private final @Nullable Runnable beforeFiberAcquireForTesting;
+    private final BindingRole bindingRole;
     private final LongAdder budgetExhaustionCount = new LongAdder();
     private final FiberEventWaitQueue capacityWaitQueue;
     private final SOCountDownLatch closedLatch = new SOCountDownLatch(1);
     private final ObjList<FiberRuntimeConfigurationListener> configurationListeners = new ObjList<>();
+    private final AtomicInteger detachedStealCursor = new AtomicInteger();
     private final FiberPool fiberPool;
     private final AtomicInteger finalizerCount = new AtomicInteger();
+    private final LongAdder globalPublicationCount = new LongAdder();
+    private final LongAdder globalSelectionCount = new LongAdder();
     private final LongAdder inlineSuspendViolationCount = new LongAdder();
     private final AtomicBoolean isInlineSuspendViolationLogged = new AtomicBoolean();
     private final AtomicBoolean isQuiesceListenerPassActive = new AtomicBoolean();
     private final ObjList<LongAdder> launchCounts = new ObjList<>(LaunchResult.COUNT);
+    private final LongAdder localFallbackPublicationCount = new LongAdder();
+    private final LongAdder localPublicationCount = new LongAdder();
+    private final LongAdder localSelectionCount = new LongAdder();
     private final LongAdder mountCount = new LongAdder();
     private final LongAdder mountedCount = new LongAdder();
+    private final AtomicInteger orphanedCount = new AtomicInteger();
+    private final LongAdder orphanedEntryRecoveryCount = new LongAdder();
+    private final LongAdder orphanedShardTransitionCount = new LongAdder();
+    private final long[] orphanedWords;
+    private final ObjList<OwnerContext> ownerContexts;
+    private final int ownerWorkerCount;
     private final AtomicInteger outstandingTaskCount = new AtomicInteger();
     private final ObjList<FiberRuntimeQuiesceListener> quiesceListeners = new ObjList<>();
     private final FiberRunQueue runQueue;
     private final LongAdder saturationCount = new LongAdder();
+    private final ObjList<Shard> shards;
+    private final LongAdder stolenSelectionCount = new LongAdder();
+    private final FiberWakeSink wakeSink;
+    private final LongAdder wakeClaimCount = new LongAdder();
     private volatile @Nullable Runnable afterProcessForTesting;
     private volatile @Nullable Runnable afterReservationReleaseForTesting;
     private volatile Configuration configuration;
@@ -68,15 +89,61 @@ public final class FiberRuntime {
     private volatile FiberRuntimeState state = FiberRuntimeState.OPEN;
 
     public FiberRuntime(int retainedFiberCount) {
-        this(retainedFiberCount, retainedFiberCount, 64, null, null);
+        this(
+                retainedFiberCount,
+                retainedFiberCount,
+                64,
+                null,
+                null,
+                BindingRole.STANDALONE_TEST,
+                0,
+                FiberWakeSink.NO_OP
+        );
     }
 
     public FiberRuntime(int retainedFiberCount, int maxLiveFiberCount) {
-        this(retainedFiberCount, maxLiveFiberCount, 64, null, null);
+        this(
+                retainedFiberCount,
+                maxLiveFiberCount,
+                64,
+                null,
+                null,
+                BindingRole.STANDALONE_TEST,
+                0,
+                FiberWakeSink.NO_OP
+        );
     }
 
     public FiberRuntime(int retainedFiberCount, int maxLiveFiberCount, int mountBudget) {
-        this(retainedFiberCount, maxLiveFiberCount, mountBudget, null, null);
+        this(
+                retainedFiberCount,
+                maxLiveFiberCount,
+                mountBudget,
+                null,
+                null,
+                BindingRole.STANDALONE_TEST,
+                0,
+                FiberWakeSink.NO_OP
+        );
+    }
+
+    public FiberRuntime(
+            int retainedFiberCount,
+            int maxLiveFiberCount,
+            int mountBudget,
+            int ownerWorkerCount,
+            FiberWakeSink wakeSink
+    ) {
+        this(
+                retainedFiberCount,
+                maxLiveFiberCount,
+                mountBudget,
+                null,
+                null,
+                BindingRole.POOL_BOUND,
+                ownerWorkerCount,
+                wakeSink
+        );
     }
 
     @TestOnly
@@ -85,7 +152,16 @@ public final class FiberRuntime {
             int maxLiveFiberCount,
             @Nullable Runnable beforeFiberAcquireForTesting
     ) {
-        this(retainedFiberCount, maxLiveFiberCount, 64, beforeFiberAcquireForTesting, null);
+        this(
+                retainedFiberCount,
+                maxLiveFiberCount,
+                64,
+                beforeFiberAcquireForTesting,
+                null,
+                BindingRole.STANDALONE_TEST,
+                0,
+                FiberWakeSink.NO_OP
+        );
     }
 
     @TestOnly
@@ -95,7 +171,16 @@ public final class FiberRuntime {
             @Nullable Runnable beforeFiberAcquireForTesting,
             @Nullable Runnable beforeWaitFireForTesting
     ) {
-        this(retainedFiberCount, maxLiveFiberCount, 64, beforeFiberAcquireForTesting, beforeWaitFireForTesting);
+        this(
+                retainedFiberCount,
+                maxLiveFiberCount,
+                64,
+                beforeFiberAcquireForTesting,
+                beforeWaitFireForTesting,
+                BindingRole.STANDALONE_TEST,
+                0,
+                FiberWakeSink.NO_OP
+        );
     }
 
     private FiberRuntime(
@@ -103,7 +188,10 @@ public final class FiberRuntime {
             int maxLiveFiberCount,
             int mountBudget,
             @Nullable Runnable beforeFiberAcquireForTesting,
-            @Nullable Runnable beforeWaitFireForTesting
+            @Nullable Runnable beforeWaitFireForTesting,
+            BindingRole bindingRole,
+            int ownerWorkerCount,
+            FiberWakeSink wakeSink
     ) {
         try {
             Fiber.verifyRuntimeAccess();
@@ -126,10 +214,38 @@ public final class FiberRuntime {
         if (mountBudget < 1) {
             throw new IllegalArgumentException("mountBudget must be positive");
         }
+        if (ownerWorkerCount < 0) {
+            throw new IllegalArgumentException("ownerWorkerCount must not be negative");
+        }
+        if (bindingRole == BindingRole.STANDALONE_TEST && ownerWorkerCount != 0) {
+            throw new IllegalArgumentException("standalone Fiber runtime cannot have owner Workers");
+        }
+        if (wakeSink == null) {
+            throw new IllegalArgumentException("Fiber wake sink must not be null");
+        }
         this.beforeFiberAcquireForTesting = beforeFiberAcquireForTesting;
+        this.bindingRole = bindingRole;
+        this.ownerWorkerCount = ownerWorkerCount;
+        this.wakeSink = wakeSink;
         this.configuration = new Configuration(maxLiveFiberCount, retainedFiberCount, mountBudget);
         this.capacityWaitQueue = new FiberEventWaitQueue(FiberWaitCoordinator.REASON_CAPACITY);
         this.runQueue = new FiberRunQueue(maxLiveFiberCount);
+        this.ownerContexts = new ObjList<>(ownerWorkerCount);
+        this.shards = new ObjList<>(ownerWorkerCount);
+        this.orphanedWords = new long[(int) (((long) ownerWorkerCount + Long.SIZE - 1) / Long.SIZE)];
+        if (ownerWorkerCount > 0) {
+            final int localCapacity = FiberLocalRunQueue.calculateCapacity(maxLiveFiberCount, ownerWorkerCount);
+            for (int workerId = 0; workerId < ownerWorkerCount; workerId++) {
+                final Shard shard = new Shard(
+                        workerId,
+                        localCapacity,
+                        (int) (((long) GLOBAL_PROBE_INTERVAL * workerId) / ownerWorkerCount),
+                        workerId + 1 == ownerWorkerCount ? 0 : workerId + 1
+                );
+                shards.add(shard);
+                ownerContexts.add(new OwnerContext(this, workerId, shard));
+            }
+        }
         this.fiberPool = new FiberPool(
                 retainedFiberCount,
                 maxLiveFiberCount,
@@ -244,6 +360,7 @@ public final class FiberRuntime {
             configurationListeners.clear();
         }
         try {
+            wakeAllWorkers();
             beginQuiesceListeners();
             capacityWaitQueue.shutdown();
         } finally {
@@ -260,30 +377,101 @@ public final class FiberRuntime {
     }
 
     public int drain(int attemptBudget) {
-        if (attemptBudget < 1) {
-            throw new IllegalArgumentException("attemptBudget must be positive");
+        validateAttemptBudget(attemptBudget);
+        if (bindingRole == BindingRole.POOL_BOUND && ownerWorkerCount > 0) {
+            if (state == FiberRuntimeState.OPEN && hasStartedOwner()) {
+                throw new IllegalStateException(
+                        "detached drain requires a quiescing or unstarted pool-bound Fiber runtime"
+                );
+            }
+            if (Worker.current() != null || Fiber.isMounted()
+                    || SuspensionScope.hasAnyRoleSwitchLock(SuspensionScope.scope())) {
+                throw new IllegalStateException("detached drain requires a clean non-Worker carrier");
+            }
+        } else if (SuspensionScope.hasAnyRoleSwitchLock(SuspensionScope.scope())) {
+            tryClose();
+            return 0;
         }
+        int attempts = 0;
+        while (attempts < attemptBudget) {
+            final Fiber fiber = selectDetached();
+            if (fiber == null) {
+                break;
+            }
+            attempts++;
+            processSelected(fiber, null, false);
+        }
+        if (attempts == attemptBudget && hasQueuedWork()) {
+            budgetExhaustionCount.increment();
+        }
+        tryClose();
+        return attempts;
+    }
+
+    public int drainOwned(OwnerContext ownerContext, int attemptBudget) {
+        validateAttemptBudget(attemptBudget);
+        final Shard shard = validateActiveOwner(ownerContext);
         if (SuspensionScope.hasAnyRoleSwitchLock(SuspensionScope.scope())) {
             tryClose();
             return 0;
         }
         int attempts = 0;
         while (attempts < attemptBudget) {
-            final Fiber fiber = runQueue.tryDequeue();
+            final Fiber fiber = selectOwned(shard);
             if (fiber == null) {
                 break;
             }
             attempts++;
-            final int processResult = process(fiber, false);
-            if (processResult != PROCESS_TERMINATED) {
-                finishProcessingAfterUnmount(fiber, processResult == PROCESS_OWNED);
-            }
+            processSelected(fiber, ownerContext, false);
         }
-        if (attempts == attemptBudget && runQueue.hasAvailable()) {
+        if (attempts == attemptBudget && hasQueuedWork()) {
             budgetExhaustionCount.increment();
         }
         tryClose();
         return attempts;
+    }
+
+    /**
+     * Final pre-park search after the caller has removed its ready bit. It may process at most one
+     * queued Fiber, preserving the Worker-loop mount budget from before the idle transition.
+     */
+    public boolean drainOneBeforePark(OwnerContext ownerContext) {
+        final Shard shard = validateActiveOwner(ownerContext);
+        if (SuspensionScope.hasAnyRoleSwitchLock(SuspensionScope.scope())) {
+            return false;
+        }
+        final Fiber fiber = selectBeforePark(shard);
+        if (fiber == null) {
+            tryClose();
+            return false;
+        }
+        processSelected(fiber, ownerContext, false);
+        tryClose();
+        return true;
+    }
+
+    /**
+     * Non-mutating half of the ready-Worker search. The caller keeps its ready bit published while
+     * this checks every source, then clears that bit before calling {@link #drainOneBeforePark}.
+     */
+    public boolean hasWorkAfterReady(OwnerContext ownerContext) {
+        final Shard shard = validateActiveOwner(ownerContext);
+        if (SuspensionScope.hasAnyRoleSwitchLock(SuspensionScope.scope())) {
+            return false;
+        }
+        if (runQueue.hasAvailable() || shard.localQueue.hasAvailable()) {
+            return true;
+        }
+        int workerId = shard.stealCursor;
+        for (int i = 0; i < ownerWorkerCount; i++) {
+            if (workerId != shard.workerId && shards.getQuick(workerId).localQueue.hasAvailable()) {
+                return true;
+            }
+            if (++workerId == ownerWorkerCount) {
+                workerId = 0;
+            }
+        }
+        return false;
     }
 
     public long getBudgetExhaustionCount() {
@@ -326,6 +514,26 @@ public final class FiberRuntime {
         return mountCount.sum();
     }
 
+    public long getGlobalPublicationCount() {
+        return globalPublicationCount.sum();
+    }
+
+    public long getGlobalSelectionCount() {
+        return globalSelectionCount.sum();
+    }
+
+    public long getLocalFallbackPublicationCount() {
+        return localFallbackPublicationCount.sum();
+    }
+
+    public long getLocalPublicationCount() {
+        return localPublicationCount.sum();
+    }
+
+    public long getLocalSelectionCount() {
+        return localSelectionCount.sum();
+    }
+
     public int getMountedCount() {
         return mountedCount.intValue();
     }
@@ -334,12 +542,27 @@ public final class FiberRuntime {
         return outstandingTaskCount.get();
     }
 
+    public long getOrphanedEntryRecoveryCount() {
+        return orphanedEntryRecoveryCount.sum();
+    }
+
+    public long getOrphanedShardTransitionCount() {
+        return orphanedShardTransitionCount.sum();
+    }
+
     public int getParkedFiberCount() {
         return fiberPool.getParkedCount();
     }
 
     public int getQueuedCount() {
-        return runQueue.depth();
+        long count = runQueue.depth();
+        for (int i = 0, n = shards.size(); i < n; i++) {
+            count += shards.getQuick(i).localQueue.depth();
+            if (count >= Integer.MAX_VALUE) {
+                return Integer.MAX_VALUE;
+            }
+        }
+        return (int) count;
     }
 
     public int getRetainedFiberCount() {
@@ -365,12 +588,113 @@ public final class FiberRuntime {
         return runQueue.capacity();
     }
 
+    @TestOnly
+    public int getLocalQueueCapacityForTesting(int workerId) {
+        return getShardForTesting(workerId).localQueue.capacity();
+    }
+
+    @TestOnly
+    public static int calculateLocalQueueCapacityForTesting(int initialMaxLiveCount, int workerCount) {
+        return FiberLocalRunQueue.calculateCapacity(initialMaxLiveCount, workerCount);
+    }
+
+    @TestOnly
+    public static int getGlobalProbeIntervalForTesting() {
+        return GLOBAL_PROBE_INTERVAL;
+    }
+
+    @TestOnly
+    public int getLocalQueueDepthForTesting(int workerId) {
+        return getShardForTesting(workerId).localQueue.depth();
+    }
+
+    @TestOnly
+    public int getOwnerWorkerCountForTesting() {
+        return ownerWorkerCount;
+    }
+
+    @TestOnly
+    public boolean isPoolBoundForTesting() {
+        return bindingRole == BindingRole.POOL_BOUND;
+    }
+
+    @TestOnly
+    public boolean offerLocalForTesting(int workerId, Fiber fiber) {
+        return getShardForTesting(workerId).localQueue.offer(fiber);
+    }
+
+    @TestOnly
+    public boolean claimLocalHeadForTesting(int workerId, long expectedHead) {
+        return getShardForTesting(workerId).localQueue.claimHeadForTesting(expectedHead);
+    }
+
+    @TestOnly
+    public void initializeLocalPositionForTesting(int workerId, long position) {
+        getShardForTesting(workerId).localQueue.initializeEmptyPositionForTesting(position);
+    }
+
+    @TestOnly
+    public Fiber releaseLocalClaimForTesting(int workerId, long claimedHead) {
+        return getShardForTesting(workerId).localQueue.releaseClaimForTesting(claimedHead);
+    }
+
+    @TestOnly
+    public @Nullable Fiber tryDequeueLocalForTesting(int workerId) {
+        return getShardForTesting(workerId).localQueue.tryDequeue();
+    }
+
+    public OwnerContext getOwnerContext(int workerId) {
+        if (bindingRole != BindingRole.POOL_BOUND || workerId < 0 || workerId >= ownerWorkerCount) {
+            throw new IllegalArgumentException("Fiber owner Worker id is out of range [workerId="
+                    + workerId + ", workerCount=" + ownerWorkerCount + ']');
+        }
+        return ownerContexts.getQuick(workerId);
+    }
+
     public long getSaturationCount() {
         return saturationCount.sum();
     }
 
+    public long getStolenSelectionCount() {
+        return stolenSelectionCount.sum();
+    }
+
+    public long getWakeClaimCount() {
+        return wakeClaimCount.sum();
+    }
+
     public void initializeCarrier() {
         SuspensionScope.initializeCarrier();
+    }
+
+    public void activateOwner(OwnerContext ownerContext) {
+        final Shard shard = validateOwner(ownerContext);
+        if (!shard.ownerState.compareAndSet(Shard.UNSTARTED, Shard.ACTIVE)) {
+            throw new IllegalStateException("Fiber owner shard is not unstarted [workerId="
+                    + shard.workerId + ", state=" + shard.ownerState.get() + ']');
+        }
+    }
+
+    public void onOwnerExit(OwnerContext ownerContext) {
+        final Shard shard = validateOwner(ownerContext);
+        final int targetState = state == FiberRuntimeState.CLOSED && !shard.localQueue.hasAvailable()
+                ? Shard.STOPPED
+                : Shard.ORPHANED;
+        if (!shard.ownerState.compareAndSet(Shard.ACTIVE, targetState)) {
+            throw new IllegalStateException("Fiber owner shard is not active [workerId="
+                    + shard.workerId + ", state=" + shard.ownerState.get() + ']');
+        }
+        if (targetState == Shard.ORPHANED) {
+            recordCounter(orphanedShardTransitionCount, "orphaned shard transition");
+        }
+        if (targetState == Shard.ORPHANED && shard.localQueue.hasAvailable()) {
+            advertiseOrphan(shard);
+        } else if (targetState == Shard.ORPHANED && runQueue.hasAvailable()) {
+            // A prior global wake may have claimed this now-exiting owner, or no peer may have
+            // been ready at commit time. Re-signal still-visible work after producer revocation.
+            wakeAfterCommit(NO_WORKER);
+        }
+        tryClose();
     }
 
     public boolean isCurrentFiberOwned() {
@@ -413,7 +737,7 @@ public final class FiberRuntime {
             FiberTask task,
             long taskIncarnation
     ) {
-        return launchReserved(fiber, reservationEpoch, task, taskIncarnation, false);
+        return launchReserved(fiber, reservationEpoch, task, taskIncarnation, false, null);
     }
 
     /**
@@ -433,12 +757,16 @@ public final class FiberRuntime {
         // worker-loop boundary. The held-monitor half of that contract has no cheap runtime
         // check; this pins the half that does.
         assert !Fiber.isMounted() : "direct launch requires an unmounted carrier";
+        final OwnerContext ownerContext = currentOwnerContext();
+        final boolean isOwnerRequired = bindingRole == BindingRole.POOL_BOUND && ownerWorkerCount > 0;
         return launchReserved(
                 fiber,
                 reservationEpoch,
                 task,
                 taskIncarnation,
                 !SuspensionScope.hasAnyRoleSwitchLock(SuspensionScope.scope())
+                        && (!isOwnerRequired || ownerContext != null),
+                ownerContext
         );
     }
 
@@ -762,9 +1090,13 @@ public final class FiberRuntime {
         }
     }
 
-    private void finishProcessingAfterUnmount(Fiber fiber, boolean hasFiberOwnership) {
+    private void finishProcessingAfterUnmount(
+            Fiber fiber,
+            boolean hasFiberOwnership,
+            @Nullable OwnerContext ownerContext
+    ) {
         try {
-            fiber.finishProcessing();
+            fiber.finishProcessing(ownerContext);
         } catch (Throwable th) {
             LOG.critical().$("fiber notification finalization failed [error=").$(th).I$();
             final Fiber.Outcome outcome = fiber.getOutcomeScratch();
@@ -843,7 +1175,8 @@ public final class FiberRuntime {
             long reservationEpoch,
             FiberTask task,
             long taskIncarnation,
-            boolean isDirectMountAllowed
+            boolean isDirectMountAllowed,
+            @Nullable OwnerContext directOwnerContext
     ) {
         if (fiber.isForeignTo(this)) {
             throw new IllegalArgumentException("fiber reservation does not belong to this runtime");
@@ -910,9 +1243,13 @@ public final class FiberRuntime {
             }
         }
         if (directFiber != null) {
-            final int processResult = process(directFiber, true);
+            final int processResult = process(directFiber, true, directOwnerContext);
             if (processResult != PROCESS_TERMINATED) {
-                finishProcessingAfterUnmount(directFiber, processResult == PROCESS_OWNED);
+                finishProcessingAfterUnmount(
+                        directFiber,
+                        processResult == PROCESS_OWNED,
+                        directOwnerContext
+                );
             }
         }
         return record(result);
@@ -939,7 +1276,7 @@ public final class FiberRuntime {
         }
     }
 
-    private int process(Fiber fiber, boolean isDirectMount) {
+    private int process(Fiber fiber, boolean isDirectMount, @Nullable OwnerContext ownerContext) {
         if (!isDirectMount && !fiber.beginProcessing()) {
             LOG.critical().$("fiber queue invariant failed [state=").$(fiber.getNotificationState()).I$();
             return PROCESS_TERMINATED;
@@ -952,6 +1289,7 @@ public final class FiberRuntime {
             if (!fiber.beginMount()) {
                 throw mountInvariantFailed(fiber.getExecutionState());
             }
+            fiber.setLastMountWorkerId(ownerContext != null ? ownerContext.workerId : NO_WORKER);
             mountedCount.increment();
             mountCount.increment();
             try {
@@ -1003,6 +1341,329 @@ public final class FiberRuntime {
                 : hasFiberOwnership ? PROCESS_OWNED : PROCESS_RELEASED;
     }
 
+    private void advertiseOrphan(Shard shard) {
+        final int wordIndex = shard.workerId >>> 6;
+        final long bit = 1L << (shard.workerId & 63);
+        orphanedCount.incrementAndGet();
+        while (true) {
+            final long current = Unsafe.arrayGetVolatile(orphanedWords, wordIndex);
+            if ((current & bit) != 0) {
+                orphanedCount.decrementAndGet();
+                reportSchedulerInvariant("Fiber shard is already advertised as orphaned", shard.workerId);
+                return;
+            }
+            if (Unsafe.cas(orphanedWords, wordIndex, current, current | bit)) {
+                if (shard.localQueue.hasAvailable()) {
+                    wakeAfterCommit(NO_WORKER);
+                } else {
+                    clearOrphanIfEmpty(shard);
+                }
+                return;
+            }
+        }
+    }
+
+    private void clearOrphanIfEmpty(Shard shard) {
+        if (shard.localQueue.hasAvailable()) {
+            return;
+        }
+        final int wordIndex = shard.workerId >>> 6;
+        final long bit = 1L << (shard.workerId & 63);
+        while (true) {
+            final long current = Unsafe.arrayGetVolatile(orphanedWords, wordIndex);
+            if ((current & bit) == 0) {
+                return;
+            }
+            if (Unsafe.cas(orphanedWords, wordIndex, current, current & ~bit)) {
+                final int count = orphanedCount.decrementAndGet();
+                if (count < 0) {
+                    reportSchedulerInvariant("Fiber orphaned shard count underflow", count);
+                }
+                return;
+            }
+        }
+    }
+
+    private @Nullable OwnerContext currentOwnerContext() {
+        final Worker worker = Worker.current();
+        if (worker == null) {
+            return null;
+        }
+        final OwnerContext ownerContext = worker.getFiberOwnerContext();
+        return ownerContext != null
+                && ownerContext.runtime == this
+                && ownerContext.shard.ownerState.get() == Shard.ACTIVE
+                ? ownerContext
+                : null;
+    }
+
+    private boolean hasQueuedWork() {
+        if (runQueue.hasAvailable()) {
+            return true;
+        }
+        for (int i = 0, n = shards.size(); i < n; i++) {
+            if (shards.getQuick(i).localQueue.hasAvailable()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasStartedOwner() {
+        for (int i = 0; i < ownerWorkerCount; i++) {
+            if (shards.getQuick(i).ownerState.get() != Shard.UNSTARTED) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Shard getShardForTesting(int workerId) {
+        if (workerId < 0 || workerId >= ownerWorkerCount) {
+            throw new IllegalArgumentException("Fiber shard Worker id is out of range [workerId="
+                    + workerId + ", workerCount=" + ownerWorkerCount + ']');
+        }
+        return shards.getQuick(workerId);
+    }
+
+    private void onOwnedSelection(Shard shard) {
+        shard.globalProbeCountdown--;
+    }
+
+    private void processSelected(
+            Fiber fiber,
+            @Nullable OwnerContext ownerContext,
+            boolean isDirectMount
+    ) {
+        final int processResult = process(fiber, isDirectMount, ownerContext);
+        if (processResult != PROCESS_TERMINATED) {
+            finishProcessingAfterUnmount(fiber, processResult == PROCESS_OWNED, ownerContext);
+        }
+    }
+
+    private void publish(
+            Fiber fiber,
+            @Nullable OwnerContext ownerContext,
+            PublicationMode publicationMode
+    ) {
+        final boolean isOwnerPublication = ownerContext != null && ownerContext.runtime == this;
+        if (publicationMode.isLocalPublicationAllowed
+                && isOwnerPublication
+                && ownerContext.shard.ownerState.get() == Shard.ACTIVE
+                && ownerContext.shard.localQueue.offer(fiber)) {
+            recordCounter(localPublicationCount, "owner-local publication");
+            return;
+        }
+        runQueue.put(fiber);
+        // An external publisher cannot service this runtime. A normal owner publication reaches
+        // this branch only after its bounded local queue is unavailable, which is the structural
+        // backlog signal that justifies adding one parked peer. Owner-generated cleanup is forced
+        // global to preserve FIFO behind injected work, but the active owner can service it and
+        // must not pay an eager-wake penalty.
+        if (!isOwnerPublication || publicationMode.isLocalPublicationAllowed) {
+            wakeAfterCommit(!isOwnerPublication && publicationMode.isLastMountPreferenceAllowed
+                    ? fiber.getLastMountWorkerId()
+                    : NO_WORKER);
+        }
+        recordCounter(
+                isOwnerPublication && publicationMode.isLocalPublicationAllowed
+                        ? localFallbackPublicationCount
+                        : globalPublicationCount,
+                isOwnerPublication && publicationMode.isLocalPublicationAllowed
+                        ? "local publication fallback"
+                        : "global publication"
+        );
+    }
+
+    private @Nullable Fiber selectBeforePark(Shard ownerShard) {
+        Fiber fiber = runQueue.tryDequeue();
+        if (fiber != null) {
+            onOwnedSelection(ownerShard);
+            recordCounter(globalSelectionCount, "global selection");
+            return fiber;
+        }
+        fiber = ownerShard.localQueue.tryDequeue();
+        if (fiber != null) {
+            onOwnedSelection(ownerShard);
+            recordCounter(localSelectionCount, "owner-local selection");
+            return fiber;
+        }
+        for (int i = 1; i < ownerWorkerCount; i++) {
+            final Shard victim = nextVictim(ownerShard);
+            fiber = victim.localQueue.tryDequeue();
+            if (victim.ownerState.get() == Shard.ORPHANED) {
+                clearOrphanIfEmpty(victim);
+            }
+            if (fiber != null) {
+                onOwnedSelection(ownerShard);
+                recordStolenSelection(victim);
+                return fiber;
+            }
+        }
+        return null;
+    }
+
+    private @Nullable Fiber selectDetached() {
+        final Fiber globalFiber = runQueue.tryDequeue();
+        if (globalFiber != null || ownerWorkerCount == 0) {
+            if (globalFiber != null) {
+                recordCounter(globalSelectionCount, "global selection");
+            }
+            return globalFiber;
+        }
+        final int start = Math.floorMod(detachedStealCursor.getAndIncrement(), ownerWorkerCount);
+        for (int i = 0; i < ownerWorkerCount; i++) {
+            final int workerId = (int) (((long) start + i) % ownerWorkerCount);
+            final Shard shard = shards.getQuick(workerId);
+            final Fiber fiber = shard.localQueue.tryDequeue();
+            if (shard.ownerState.get() == Shard.ORPHANED) {
+                clearOrphanIfEmpty(shard);
+            }
+            if (fiber != null) {
+                recordStolenSelection(shard);
+                return fiber;
+            }
+        }
+        return null;
+    }
+
+    private @Nullable Fiber selectOwned(Shard ownerShard) {
+        Fiber fiber;
+        if (ownerShard.globalProbeCountdown <= 0) {
+            ownerShard.globalProbeCountdown = GLOBAL_PROBE_INTERVAL;
+            fiber = runQueue.tryDequeue();
+            if (fiber != null) {
+                onOwnedSelection(ownerShard);
+                recordCounter(globalSelectionCount, "global selection");
+                return fiber;
+            }
+        }
+        if (ownerWorkerCount > 1 && orphanedCount.get() != 0) {
+            fiber = tryDequeueAdvertisedOrphan(ownerShard);
+            if (fiber != null) {
+                onOwnedSelection(ownerShard);
+                return fiber;
+            }
+        }
+        fiber = ownerShard.localQueue.tryDequeue();
+        if (fiber != null) {
+            onOwnedSelection(ownerShard);
+            recordCounter(localSelectionCount, "owner-local selection");
+            return fiber;
+        }
+        // A due probe may have missed just before this attempt spent time checking orphaned and
+        // owner-local work. Recheck the injection queue so an arrival in that interval does not
+        // wait for another Worker-loop pass; only the scheduled probe above changes the cadence.
+        fiber = runQueue.tryDequeue();
+        if (fiber != null) {
+            onOwnedSelection(ownerShard);
+            recordCounter(globalSelectionCount, "global selection");
+            return fiber;
+        }
+        if (ownerWorkerCount > 1) {
+            final Shard victim = nextVictim(ownerShard);
+            fiber = victim.localQueue.tryDequeue();
+            if (victim.ownerState.get() == Shard.ORPHANED) {
+                clearOrphanIfEmpty(victim);
+            }
+            if (fiber != null) {
+                onOwnedSelection(ownerShard);
+                recordStolenSelection(victim);
+                return fiber;
+            }
+        }
+        return null;
+    }
+
+    private @Nullable Fiber tryDequeueAdvertisedOrphan(Shard ownerShard) {
+        int workerId = ownerShard.stealCursor;
+        for (int i = 0; i < ownerWorkerCount; i++) {
+            final int wordIndex = workerId >>> 6;
+            final long bit = 1L << (workerId & 63);
+            if ((Unsafe.arrayGetVolatile(orphanedWords, wordIndex) & bit) != 0) {
+                ownerShard.stealCursor = workerId + 1 == ownerWorkerCount ? 0 : workerId + 1;
+                final Shard orphanedShard = shards.getQuick(workerId);
+                final Fiber fiber = orphanedShard.localQueue.tryDequeue();
+                clearOrphanIfEmpty(orphanedShard);
+                if (fiber != null) {
+                    recordStolenSelection(orphanedShard);
+                }
+                return fiber;
+            }
+            if (++workerId == ownerWorkerCount) {
+                workerId = 0;
+            }
+        }
+        return null;
+    }
+
+    private Shard nextVictim(Shard ownerShard) {
+        int workerId = ownerShard.stealCursor;
+        if (workerId == ownerShard.workerId && ++workerId == ownerWorkerCount) {
+            workerId = 0;
+        }
+        final Shard victim = shards.getQuick(workerId);
+        if (++workerId == ownerWorkerCount) {
+            workerId = 0;
+        }
+        if (workerId == ownerShard.workerId && ++workerId == ownerWorkerCount) {
+            workerId = 0;
+        }
+        ownerShard.stealCursor = workerId;
+        return victim;
+    }
+
+    private Shard validateActiveOwner(OwnerContext ownerContext) {
+        final Shard shard = validateOwner(ownerContext);
+        if (shard.ownerState.get() != Shard.ACTIVE) {
+            throw new IllegalStateException("Fiber owner shard is not active [workerId="
+                    + shard.workerId + ", state=" + shard.ownerState.get() + ']');
+        }
+        return shard;
+    }
+
+    private void validateAttemptBudget(int attemptBudget) {
+        if (attemptBudget < 1) {
+            throw new IllegalArgumentException("attemptBudget must be positive");
+        }
+    }
+
+    private Shard validateOwner(OwnerContext ownerContext) {
+        if (ownerContext == null
+                || ownerContext.runtime != this
+                || ownerContext.workerId < 0
+                || ownerContext.workerId >= ownerWorkerCount
+                || ownerContexts.getQuick(ownerContext.workerId) != ownerContext
+                || shards.getQuick(ownerContext.workerId) != ownerContext.shard) {
+            throw new IllegalArgumentException("Fiber owner context does not belong to this runtime");
+        }
+        return ownerContext.shard;
+    }
+
+    private void wakeAfterCommit(int preferredWorkerId) {
+        try {
+            if (wakeSink.wakeOne(preferredWorkerId)) {
+                recordCounter(wakeClaimCount, "Worker wake claim");
+            }
+        } catch (Throwable th) {
+            try {
+                LOG.error().$("Fiber Worker wake failed after queue commit [error=").$(th).I$();
+            } catch (Throwable ignore) {
+            }
+        }
+    }
+
+    private void wakeAllWorkers() {
+        try {
+            wakeSink.wakeAll();
+        } catch (Throwable th) {
+            try {
+                LOG.error().$("Fiber Worker wake-all failed [error=").$(th).I$();
+            } catch (Throwable ignore) {
+            }
+        }
+    }
+
     private LaunchResult record(LaunchResult result) {
         try {
             launchCounts.getQuick(result.ordinal()).increment();
@@ -1010,6 +1671,32 @@ public final class FiberRuntime {
             LOG.error().$("fiber launch metric update failed [error=").$(th).I$();
         }
         return result;
+    }
+
+    private void recordCounter(LongAdder counter, CharSequence counterName) {
+        try {
+            counter.increment();
+        } catch (Throwable th) {
+            try {
+                LOG.error().$("Fiber scheduler counter update failed [counter=").$(counterName)
+                        .$(", error=").$(th).I$();
+            } catch (Throwable ignore) {
+            }
+        }
+    }
+
+    private void recordStolenSelection(Shard shard) {
+        recordCounter(stolenSelectionCount, "stolen local selection");
+        if (shard.ownerState.get() == Shard.ORPHANED) {
+            recordCounter(orphanedEntryRecoveryCount, "orphaned entry recovery");
+        }
+    }
+
+    private void reportSchedulerInvariant(CharSequence message, int value) {
+        try {
+            LOG.critical().$(message).$(" [value=").$(value).I$();
+        } catch (Throwable ignore) {
+        }
     }
 
     private void releaseFiber(Fiber fiber) {
@@ -1061,7 +1748,7 @@ public final class FiberRuntime {
                 && isPoolQuiesced
                 && outstandingTaskCount.get() == 0
                 && finalizerCount.get() == 0
-                && !runQueue.hasAvailable()
+                && !hasQueuedWork()
                 && fiberPool.getCreatedCount() == fiberPool.getRetiredCount()
                 && !fiberPool.hasInFlightWaitRegistrations()) {
             state = FiberRuntimeState.CLOSED;
@@ -1085,7 +1772,28 @@ public final class FiberRuntime {
     }
 
     void enqueue(Fiber fiber) {
-        runQueue.put(fiber);
+        final OwnerContext ownerContext = currentOwnerContext();
+        if (fiber.isShutdownRequested()) {
+            // Retirement and runtime-shutdown continuations are cleanup, not affinity work. Keep
+            // them on the global queue so they do not jump ahead of older injected tasks through
+            // owner-local priority, and do not reuse a stale last-mounter wake hint.
+            publish(fiber, ownerContext, PublicationMode.SHUTDOWN_CLEANUP);
+            return;
+        }
+        publish(fiber, ownerContext, PublicationMode.REQUEST_RUN);
+    }
+
+    void enqueueAfterProcessing(Fiber fiber, @Nullable OwnerContext ownerContext) {
+        if (ownerContext != null) {
+            validateOwner(ownerContext);
+        }
+        if (fiber.isShutdownRequested()) {
+            publish(fiber, ownerContext, PublicationMode.SHUTDOWN_CLEANUP);
+            return;
+        }
+        // A null explicit context is DETACHED, not an arbitrary external publisher, so it must not
+        // reuse the Fiber's previous owner as a wake preference.
+        publish(fiber, ownerContext, PublicationMode.POST_PROCESS_RESIGNAL);
     }
 
     void onFiberPoolReleaseFailure(Throwable th) {
@@ -1122,6 +1830,25 @@ public final class FiberRuntime {
         }
     }
 
+    private enum BindingRole {
+        POOL_BOUND,
+        STANDALONE_TEST
+    }
+
+    private enum PublicationMode {
+        POST_PROCESS_RESIGNAL(true, false),
+        REQUEST_RUN(true, true),
+        SHUTDOWN_CLEANUP(false, false);
+
+        private final boolean isLastMountPreferenceAllowed;
+        private final boolean isLocalPublicationAllowed;
+
+        PublicationMode(boolean isLocalPublicationAllowed, boolean isLastMountPreferenceAllowed) {
+            this.isLocalPublicationAllowed = isLocalPublicationAllowed;
+            this.isLastMountPreferenceAllowed = isLastMountPreferenceAllowed;
+        }
+    }
+
     private static final class Configuration {
         private final int maxLiveFiberCount;
         private final int maxRetainedFiberCount;
@@ -1131,6 +1858,45 @@ public final class FiberRuntime {
             this.maxLiveFiberCount = maxLiveFiberCount;
             this.maxRetainedFiberCount = maxRetainedFiberCount;
             this.mountBudget = mountBudget;
+        }
+    }
+
+    public static final class OwnerContext {
+        private final int workerId;
+        private final FiberRuntime runtime;
+        private final Shard shard;
+
+        private OwnerContext(FiberRuntime runtime, int workerId, Shard shard) {
+            this.runtime = runtime;
+            this.workerId = workerId;
+            this.shard = shard;
+        }
+
+        public int getWorkerId() {
+            return workerId;
+        }
+
+        public boolean isOwnedBy(FiberRuntime runtime) {
+            return this.runtime == runtime;
+        }
+    }
+
+    private static final class Shard {
+        private static final int ACTIVE = 1;
+        private static final int ORPHANED = 2;
+        private static final int STOPPED = 3;
+        private static final int UNSTARTED = 0;
+        private final FiberLocalRunQueue localQueue;
+        private final AtomicInteger ownerState = new AtomicInteger(UNSTARTED);
+        private int globalProbeCountdown;
+        private int stealCursor;
+        private final int workerId;
+
+        private Shard(int workerId, int capacity, int globalProbeCountdown, int stealCursor) {
+            this.workerId = workerId;
+            this.localQueue = new FiberLocalRunQueue(capacity);
+            this.globalProbeCountdown = globalProbeCountdown;
+            this.stealCursor = stealCursor;
         }
     }
 }

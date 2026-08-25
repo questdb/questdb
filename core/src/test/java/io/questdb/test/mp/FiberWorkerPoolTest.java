@@ -727,6 +727,13 @@ public class FiberWorkerPoolTest {
         final TestWorkerPool pool = new TestWorkerPool(legacyConfiguration("legacy-pool-test", 1));
         Assert.assertEquals(WorkerPoolMode.LEGACY, pool.getWorkerPoolMode());
         Assert.assertFalse(pool.isFiberHost());
+        Assert.assertEquals(0, pool.getReadyWorkerCountForTesting());
+        Assert.assertFalse(pool.registerReadyWorkerForTesting(0));
+        Assert.assertFalse(pool.wakeOneForTesting(0));
+        Assert.assertThrows(
+                IllegalStateException.class,
+                () -> pool.registerWakeTargetForTesting(0, Thread.currentThread())
+        );
         try {
             pool.getFiberRuntime();
             Assert.fail();

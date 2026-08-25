@@ -30,7 +30,10 @@ import io.questdb.cairo.O3PartitionJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.WorkerMetrics;
+import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberWakeSink;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -74,6 +77,7 @@ public class WorkerPool implements Closeable {
     private final int[] workerAffinity;
     private final int workerCount;
     private final ObjList<ObjHashSet<Job>> workerJobs;
+    private final @Nullable WorkerWakeController workerWakeController;
     private final ObjList<Worker> workers = new ObjList<>();
     // Guards every mutation of and iteration over the workers list so halt()'s first pass can never
     // read it torn while start() is still adding. ObjList.add reallocates a non-volatile buffer and
@@ -90,7 +94,7 @@ public class WorkerPool implements Closeable {
     private volatile Runnable beforeStartedSignalForTesting;
     @TestOnly
     private volatile Runnable beforeWorkerAddedForTesting;
-    private boolean isHaltComplete;
+    private volatile boolean isHaltComplete;
     private volatile boolean isStartAttempted;
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
@@ -147,11 +151,16 @@ public class WorkerPool implements Closeable {
             threadLocalCleaners.add(new ObjList<>());
         }
 
+        this.workerWakeController = isFiberHost && workerCount > 0
+                ? new WorkerWakeController(workerCount)
+                : null;
         this.fiberRuntime = isFiberHost
                 ? new FiberRuntime(
                 fiberRetainedCount,
                 fiberMaxLiveCount,
-                fiberMountBudget
+                fiberMountBudget,
+                workerCount,
+                workerWakeController != null ? workerWakeController : FiberWakeSink.NO_OP
         )
                 : null;
         if (fiberRuntime != null) {
@@ -325,6 +334,56 @@ public class WorkerPool implements Closeable {
     }
 
     @TestOnly
+    public int getReadyWorkerCountForTesting() {
+        return workerWakeController != null ? workerWakeController.getReadyCount() : 0;
+    }
+
+    @TestOnly
+    public boolean registerReadyWorkerForTesting(int workerId) {
+        return workerWakeController != null && workerWakeController.registerReady(workerId);
+    }
+
+    @TestOnly
+    public void registerWakeTargetForTesting(int workerId, Thread target) {
+        if (workerWakeController == null) {
+            throw new IllegalStateException("worker pool has no wake controller");
+        }
+        workerWakeController.registerTarget(workerId, target);
+    }
+
+    @TestOnly
+    public void setWakeCursorForTesting(int wakeCursor) {
+        if (workerWakeController == null) {
+            throw new IllegalStateException("worker pool has no wake controller");
+        }
+        workerWakeController.setWakeCursorForTesting(wakeCursor);
+    }
+
+    @TestOnly
+    public boolean isWorkerReadyForTesting(int workerId) {
+        return workerWakeController != null && workerWakeController.isReady(workerId);
+    }
+
+    @TestOnly
+    public boolean wakeOneForTesting(int preferredWorkerId) {
+        return workerWakeController != null && workerWakeController.wakeOne(preferredWorkerId);
+    }
+
+    @TestOnly
+    public void wakeAllForTesting() {
+        if (workerWakeController != null) {
+            workerWakeController.wakeAll();
+        }
+    }
+
+    @TestOnly
+    public void unregisterReadyWorkerForTesting(int workerId) {
+        if (workerWakeController != null) {
+            workerWakeController.unregisterReady(workerId);
+        }
+    }
+
+    @TestOnly
     public void pause() {
         if (running.compareAndSet(true, false)) {
             started.await();
@@ -416,8 +475,13 @@ public class WorkerPool implements Closeable {
                             sleepMs,
                             metrics,
                             fiberRuntime,
+                            fiberRuntime != null ? fiberRuntime.getOwnerContext(i) : null,
+                            workerWakeController,
                             log
                     );
+                    if (workerWakeController != null) {
+                        workerWakeController.registerTarget(i, worker);
+                    }
                     worker.setPriority(priority);
                     worker.setDaemon(daemons);
                     // Add + spawn under workersLock so a concurrent halt() first pass never reads the list
@@ -550,6 +614,13 @@ public class WorkerPool implements Closeable {
     }
 
     private boolean isHaltComplete(boolean isBounded, long deadlineNanos, boolean isStrict) {
+        // Preserve the terminal operation's idempotent no-op without making an unsafe Worker
+        // wait for haltLock. A Worker blocked on that lock may itself be needed by the active
+        // halter to drain the runtime and exit.
+        if (isHaltComplete) {
+            return true;
+        }
+        preflightTerminalFiberHalt();
         final long timeoutNanos = isBounded ? Math.max(0, deadlineNanos - System.nanoTime()) : 0;
         boolean isInterrupted = false;
         if (isBounded) {
@@ -702,6 +773,9 @@ public class WorkerPool implements Closeable {
                 return false;
             }
             Throwable cleanupFailure = null;
+            if (workerWakeController != null) {
+                workerWakeController.deactivate();
+            }
             if (runtime != null) {
                 if (dynamicFiberConfiguration != null) {
                     try {
@@ -772,6 +846,9 @@ public class WorkerPool implements Closeable {
         } catch (Throwable th) {
             addCleanupFailure(failure, th);
         }
+        if (workerWakeController != null) {
+            workerWakeController.deactivate();
+        }
     }
 
     private void setupPathCleaner() {
@@ -792,6 +869,27 @@ public class WorkerPool implements Closeable {
                     worker.halt();
                 }
             }
+        }
+        if (workerWakeController != null) {
+            workerWakeController.wakeAll();
+        }
+    }
+
+    private void preflightTerminalFiberHalt() {
+        if (fiberRuntime == null) {
+            return;
+        }
+        if (Worker.current() != null) {
+            throw new IllegalStateException("terminal Fiber-host halt requires a non-Worker carrier [pool="
+                    + poolName + ']');
+        }
+        if (Fiber.isMounted()) {
+            throw new IllegalStateException("terminal Fiber-host halt cannot run from a mounted Fiber [pool="
+                    + poolName + ']');
+        }
+        if (SuspensionScope.hasAnyRoleSwitchLock()) {
+            throw new IllegalStateException("terminal Fiber-host halt requires a clean carrier role [pool="
+                    + poolName + ']');
         }
     }
 
