@@ -1179,9 +1179,15 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testUnsupportedCharOrdering() throws Exception {
+    public void testCharOrdering() throws Exception {
         // https://github.com/questdb/questdb/issues/7549
-        assertOrderingComparisonRejected("achar", "CHAR");
+        serialize("achar < '\uffff'");
+        assertIR(
+                "(i16 0L)(i16 achar)(<>)(i16 0L)(i16 -1L)(<>)(&&)" +
+                        "(i16 0L)(i16 achar)(>=)(i16 0L)(i16 -1L)(<)(&&)" +
+                        "(i16 0L)(i16 achar)(<)(i16 0L)(i16 -1L)(<)(=)" +
+                        "(i16 -1L)(i16 achar)(<)(&&)(||)(&&)(ret)"
+        );
     }
 
     @Test(expected = SqlException.class)
@@ -1245,9 +1251,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testUnsupportedIPv4Ordering() throws Exception {
+    public void testIPv4Ordering() throws Exception {
         // https://github.com/questdb/questdb/issues/7547
-        assertOrderingComparisonRejected("anipv4", "IPv4");
+        for (String operator : new String[]{"<", "<=", ">", ">="}) {
+            serialize("anipv4 " + operator + " anipv4");
+        }
     }
 
     @Test

@@ -114,34 +114,72 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // Equality still compiles: the IR compares the raw 16-bit lane, which
             // matches EqCharCharFunctionFactory.
             assertQueryNotNullNoLeakCheck("x where ch = 'A' or ch = 'Z'");
-            // Ordering falls back to the Java filter - see rejectOrderingComparison().
-            assertJitMatchesJava("x where ch > 'A' and ch < 'Z'", false);
+            assertJitMatchesJava("x where ch > 'A' and ch < 'Z'", true);
         });
     }
 
     @Test
-    public void testCharOrderingFallsBackToJavaFilter() throws Exception {
+    public void testCharOrderingUsesCompiledFilter() throws Exception {
         // https://github.com/questdb/questdb/issues/7549
-        // The backends sign-extend the 16-bit lane and mask nulls for 32- and
-        // 64-bit lanes only, so a CHAR ordering comparison kept the CHAR_NULL
-        // rows that LtCharFunctionFactory drops, and ordered chars at or above
-        // 0x8000 as negative. Ordering now falls back to the Java filter.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (c CHAR, c2 CHAR, k TIMESTAMP) TIMESTAMP(k)");
             execute(
-                    "INSERT INTO x VALUES " +
-                            "('a', 'b', 0), " +
-                            "(null, 'b', 1), " +
-                            "('a', null, 2), " +
-                            "(null, null, 3), " +
-                            "(cast(65535 AS CHAR), 'b', 4)"
+                    """
+                            INSERT INTO x VALUES
+                            ('a', 'b', 0),
+                            (null, 'b', 1),
+                            ('a', null, 2),
+                            (null, null, 3),
+                            (32_767::CHAR, 32_768::CHAR, 4),
+                            (32_768::CHAR, 32_767::CHAR, 5),
+                            (65_535::CHAR, 'b', 6),
+                            ('A', 'A', 7),
+                            ('z', 'A', 8),
+                            (1::CHAR, 2::CHAR, 9),
+                            ('b', 'a', 10),
+                            ('A', 'z', 11),
+                            (2::CHAR, 1::CHAR, 12),
+                            ('m', 'n', 13),
+                            ('n', 'm', 14),
+                            ('q', 'q', 15),
+                            (null, 'b', 16),
+                            ('a', null, 17),
+                            (null, null, 18),
+                            (32_767::CHAR, 32_768::CHAR, 19),
+                            (32_768::CHAR, 32_767::CHAR, 20),
+                            (65_535::CHAR, 'b', 21)
+                            """
             );
 
-            assertJitMatchesJava("x WHERE c >= c", false);
-            assertJitMatchesJava("x WHERE c > c2", false);
-            assertJitMatchesJava("x WHERE c < c2", false);
-            assertJitMatchesJava("x WHERE c <= c2", false);
-            assertJitMatchesJava("x WHERE c > 'A'", false);
+            assertJitMatchesJavaInAllModes("x WHERE c > c2");
+            assertJitMatchesJavaInAllModes("x WHERE c >= c2");
+            assertJitMatchesJavaInAllModes("x WHERE c < c2");
+            assertJitMatchesJavaInAllModes("x WHERE c <= c2");
+            assertJitMatchesJavaInAllModes("x WHERE c > 'A'");
+            assertJitMatchesJavaInAllModes("x WHERE c >= 'A'");
+            assertJitMatchesJavaInAllModes("x WHERE c < 'A'");
+            assertJitMatchesJavaInAllModes("x WHERE c <= 'A'");
+
+            assertJitMatchesJavaInAllModes("x WHERE c > '\u8000'");
+            assertJitMatchesJavaInAllModes("x WHERE c >= '\u8000'");
+            assertJitMatchesJavaInAllModes("x WHERE c < '\u8000'");
+            assertJitMatchesJavaInAllModes("x WHERE c <= '\u8000'");
+            assertJitMatchesJavaInAllModes("x WHERE '\u8000' > c");
+            assertJitMatchesJavaInAllModes("x WHERE '\u8000' >= c");
+            assertJitMatchesJavaInAllModes("x WHERE '\u8000' < c");
+            assertJitMatchesJavaInAllModes("x WHERE '\u8000' <= c");
+
+            assertJitMatchesJavaInAllModes("x WHERE c > '\uffff'");
+            assertJitMatchesJavaInAllModes("x WHERE c >= '\uffff'");
+            assertJitMatchesJavaInAllModes("x WHERE c < '\uffff'");
+            assertJitMatchesJavaInAllModes("x WHERE c <= '\uffff'");
+            assertJitMatchesJavaInAllModes("x WHERE '\uffff' > c");
+            assertJitMatchesJavaInAllModes("x WHERE '\uffff' >= c");
+            assertJitMatchesJavaInAllModes("x WHERE '\uffff' < c");
+            assertJitMatchesJavaInAllModes("x WHERE '\uffff' <= c");
+
+            bindVariableService.setChar("highChar", '\uffff');
+            assertJitMatchesJavaInAllModes("x WHERE c < :highChar");
 
             // Equality compares the raw lane and still matches Java, so it keeps compiling.
             assertJitMatchesJava("x WHERE c = 'a'", true);
@@ -1100,26 +1138,47 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIPv4OrderingFallsBackToJavaFilter() throws Exception {
+    public void testIPv4OrderingUsesCompiledFilter() throws Exception {
         // https://github.com/questdb/questdb/issues/7547
-        // The backends emitted a signed i32 compare, while Numbers.lessThanIPv4()
-        // compares unsigned and keeps a row when both sides are IPv4_NULL.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (ip IPv4, ip2 IPv4, k TIMESTAMP) TIMESTAMP(k)");
             execute(
-                    "INSERT INTO x VALUES " +
-                            "('255.255.255.255', '10.0.0.1', 0), " +
-                            "('10.0.0.1', '255.255.255.255', 1), " +
-                            "(null, '10.0.0.1', 2), " +
-                            "('10.0.0.1', null, 3), " +
-                            "(null, null, 4)"
+                    """
+                            INSERT INTO x
+                            SELECT
+                                (CASE x % 8
+                                    WHEN 0 THEN 0
+                                    WHEN 1 THEN 2_147_483_647
+                                    WHEN 2 THEN -2_147_483_648
+                                    WHEN 3 THEN -1
+                                    WHEN 4 THEN 167_772_161
+                                    WHEN 5 THEN -2_147_483_647
+                                    WHEN 6 THEN 1
+                                    ELSE 2_130_706_433
+                                END)::INT::IPv4,
+                                (CASE x % 8
+                                    WHEN 0 THEN 2_147_483_647
+                                    WHEN 1 THEN 2_147_483_647
+                                    WHEN 2 THEN -1
+                                    WHEN 3 THEN 0
+                                    WHEN 4 THEN -2_147_483_647
+                                    WHEN 5 THEN 167_772_161
+                                    WHEN 6 THEN 2_130_706_433
+                                    ELSE 1
+                                END)::INT::IPv4,
+                                timestamp_sequence(0, 1)
+                            FROM long_sequence(""" + N_SIMD_WITH_SCALAR_TAIL + ")"
             );
 
-            assertJitMatchesJava("x WHERE ip > ip2", false);
-            assertJitMatchesJava("x WHERE ip >= ip2", false);
-            assertJitMatchesJava("x WHERE ip < ip2", false);
-            assertJitMatchesJava("x WHERE ip <= ip2", false);
-            assertJitMatchesJava("x WHERE null <= ip", false);
+            assertJitMatchesJavaInAllModes("x WHERE ip > ip2");
+            assertJitMatchesJavaInAllModes("x WHERE ip >= ip2");
+            assertJitMatchesJavaInAllModes("x WHERE ip < ip2");
+            assertJitMatchesJavaInAllModes("x WHERE ip <= ip2");
+            assertJitMatchesJavaInAllModes("x WHERE ip > null");
+            assertJitMatchesJavaInAllModes("x WHERE ip >= null");
+            assertJitMatchesJavaInAllModes("x WHERE ip < null");
+            assertJitMatchesJavaInAllModes("x WHERE ip <= null");
+            assertJitMatchesJavaInAllModes("x WHERE null <= ip");
             // Already fell back before this change - serializeConstant() has no
             // IPv4 arm for a quoted literal, so only column-vs-column ordering
             // ever reached the backends.
@@ -1673,6 +1732,29 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     private void assertGeneratedQueryNullable(CharSequence ddl, FilterGenerator gen) throws Exception {
         assertGeneratedQuery(ddl, gen, false);
+    }
+
+    private void assertJitMatchesJavaInAllModes(CharSequence query) throws SqlException {
+        StringSink javaSink = new StringSink();
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        try (RecordCursorFactory factory = select(query)) {
+            Assert.assertFalse("JIT was enabled for query: " + query, factory.usesCompiledFilter());
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                CursorPrinter.println(cursor, factory.getMetadata(), javaSink);
+            }
+        }
+
+        for (int jitMode : new int[]{SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED}) {
+            StringSink jitSink = new StringSink();
+            sqlExecutionContext.setJitMode(jitMode);
+            try (RecordCursorFactory factory = select(query)) {
+                Assert.assertTrue("JIT was disabled for query: " + query, factory.usesCompiledFilter());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    CursorPrinter.println(cursor, factory.getMetadata(), jitSink);
+                }
+            }
+            TestUtils.assertEquals("JIT vs Java result mismatch for query: " + query, javaSink, jitSink);
+        }
     }
 
     /**

@@ -320,7 +320,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             .put(node.token);
             }
         } else {
-            serializeOperator(node.position, node.token, argCount, node.type);
+            serializeOperator(node, argCount, node.type);
         }
 
         boolean predicateLeft = predicateContext.onNodeVisited(node);
@@ -1139,13 +1139,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * which evaluates the predicate correctly.
      * <p>
      * SYMBOL compares the symbol strings, while the IR only carries the int
-     * key. CHAR compares chars as unsigned 16-bit values and drops
-     * {@link Numbers#CHAR_NULL} rows, while the backends sign-extend the 16-bit
-     * lane and mask nulls for 32- and 64-bit lanes only. IPv4 goes through
-     * {@link Numbers#lessThanIPv4(int, int, boolean)}, which compares unsigned
-     * and keeps a row when both sides are {@link Numbers#IPv4_NULL}, while the
-     * backends emit a signed i32 compare. UUID and LONG128 compare the string
-     * representations in Java, while the backends carry no 128-bit ordering
+     * key. UUID and LONG128 compare the string representations in Java, while
+     * the backends carry no 128-bit ordering
      * comparator at all - the i128 lane falls through the comparator's
      * {@code default: __builtin_unreachable()} and crashes the JVM.
      */
@@ -1153,8 +1148,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final short tag = ColumnType.tagOf(predicateContext.columnType);
         switch (tag) {
             case ColumnType.SYMBOL:
-            case ColumnType.CHAR:
-            case ColumnType.IPv4:
             case ColumnType.UUID:
             case ColumnType.LONG128:
                 throw SqlException.position(position)
@@ -1278,7 +1271,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     throw SqlException.position(position).put("char constant in non-char expression: ").put(token);
                 }
                 // this is 'x' - char
-                putOperand(offset, IMM, I2_TYPE, token.charAt(1));
+                putOperand(offset, IMM, I2_TYPE, (short) token.charAt(1));
                 return;
             } else if (len == 2 + Uuid.UUID_LENGTH) {
                 if (predicateContext.columnType != ColumnType.UUID) {
@@ -1597,7 +1590,125 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeOperator(int position, final CharSequence token, int argCount, int type) throws SqlException {
+    private void serializeCharOrdering(ExpressionNode node, int opcode) throws SqlException {
+        ExpressionNode left = node.lhs;
+        ExpressionNode right = node.rhs;
+        if (opcode == GT || opcode == GE) {
+            ExpressionNode swap = left;
+            left = right;
+            right = swap;
+        }
+
+        memory.jumpTo(predicateContext.memoryStartOffset);
+        bindVarFunctions.setPos(predicateContext.bindVarFunctionsStartSize);
+        backfillNodes.clear();
+
+        // Neither operand may be CHAR_NULL (zero).
+        serializeCharSignTest(left, NE);
+        serializeCharSignTest(right, NE);
+        putOperator(AND);
+
+        // A non-negative signed i16 precedes a negative signed i16 in the
+        // unsigned char order.
+        serializeCharSignTest(left, GE);
+        serializeCharSignTest(right, LT);
+        putOperator(AND);
+
+        // Otherwise the operands share a sign and signed ordering is valid.
+        serializeCharSignTest(left, LT);
+        serializeCharSignTest(right, LT);
+        putOperator(EQ);
+        traverseAlgo.traverse(right, this);
+        traverseAlgo.traverse(left, this);
+        putOperator(opcode == LE || opcode == GE ? LE : LT);
+        putOperator(AND);
+        putOperator(OR);
+
+        putOperator(AND);
+    }
+
+    private void serializeCharSignTest(ExpressionNode operand, int opcode) throws SqlException {
+        putOperand(IMM, I2_TYPE, Numbers.CHAR_NULL);
+        traverseAlgo.traverse(operand, this);
+        putOperator(opcode);
+    }
+
+    private void serializeIPv4NegativeTest(ExpressionNode operand) throws SqlException {
+        putOperand(IMM, I4_TYPE, Numbers.IPv4_NULL);
+        traverseAlgo.traverse(operand, this);
+        putOperator(LT);
+
+        // Native i32 order comparisons treat INT_MIN as the INT null sentinel,
+        // but it represents the valid IPv4 value 128.0.0.0.
+        putOperand(IMM, I4_TYPE, Integer.MIN_VALUE);
+        traverseAlgo.traverse(operand, this);
+        putOperator(EQ);
+        putOperator(OR);
+    }
+
+    private void serializeIPv4Ordering(ExpressionNode node, int opcode) throws SqlException {
+        ExpressionNode left = node.lhs;
+        ExpressionNode right = node.rhs;
+        if (opcode == GT || opcode == GE) {
+            ExpressionNode swap = left;
+            left = right;
+            right = swap;
+        }
+
+        memory.jumpTo(predicateContext.memoryStartOffset);
+        bindVarFunctions.setPos(predicateContext.bindVarFunctionsStartSize);
+        backfillNodes.clear();
+
+        // Strict ordering excludes either-null rows.
+        serializeIPv4ZeroTest(left, NE);
+        serializeIPv4ZeroTest(right, NE);
+        putOperator(AND);
+
+        // Signed and unsigned less-than differ exactly when operand signs
+        // differ. NE acts as XOR for the boolean comparison results.
+        serializeIPv4SignedLess(left, right);
+        serializeIPv4NegativeTest(left);
+        serializeIPv4NegativeTest(right);
+        putOperator(NE);
+        putOperator(NE);
+
+        putOperator(AND);
+
+        // Numbers.lessThanIPv4() admits equality for non-strict ordering,
+        // including the case where both operands are IPv4 NULL.
+        if (opcode == LE || opcode == GE) {
+            traverseAlgo.traverse(right, this);
+            traverseAlgo.traverse(left, this);
+            putOperator(EQ);
+            putOperator(OR);
+        }
+    }
+
+    private void serializeIPv4SignedLess(ExpressionNode left, ExpressionNode right) throws SqlException {
+        // Repair the native null-check mask for the valid INT_MIN IPv4 value.
+        putOperand(IMM, I4_TYPE, Integer.MIN_VALUE);
+        traverseAlgo.traverse(left, this);
+        putOperator(EQ);
+        putOperand(IMM, I4_TYPE, Integer.MIN_VALUE);
+        traverseAlgo.traverse(right, this);
+        putOperator(NE);
+        putOperator(AND);
+
+        traverseAlgo.traverse(right, this);
+        traverseAlgo.traverse(left, this);
+        putOperator(LT);
+        putOperator(OR);
+    }
+
+    private void serializeIPv4ZeroTest(ExpressionNode operand, int opcode) throws SqlException {
+        putOperand(IMM, I4_TYPE, Numbers.IPv4_NULL);
+        traverseAlgo.traverse(operand, this);
+        putOperator(opcode);
+    }
+
+    private void serializeOperator(ExpressionNode node, int argCount, int type) throws SqlException {
+        final int position = node.position;
+        final CharSequence token = node.token;
         if (SqlKeywords.isInKeyword(token)) {
             if (type == ExpressionNode.FUNCTION) {
                 serializeIn();
@@ -1628,21 +1739,53 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
         if (Chars.equals(token, "<")) {
+            if (ColumnType.tagOf(predicateContext.columnType) == ColumnType.CHAR) {
+                serializeCharOrdering(node, LT);
+                return;
+            }
+            if (ColumnType.tagOf(predicateContext.columnType) == ColumnType.IPv4) {
+                serializeIPv4Ordering(node, LT);
+                return;
+            }
             rejectOrderingComparison(token, position);
             putOperator(LT);
             return;
         }
         if (Chars.equals(token, "<=")) {
+            if (ColumnType.tagOf(predicateContext.columnType) == ColumnType.CHAR) {
+                serializeCharOrdering(node, LE);
+                return;
+            }
+            if (ColumnType.tagOf(predicateContext.columnType) == ColumnType.IPv4) {
+                serializeIPv4Ordering(node, LE);
+                return;
+            }
             rejectOrderingComparison(token, position);
             putOperator(LE);
             return;
         }
         if (Chars.equals(token, ">")) {
+            if (ColumnType.tagOf(predicateContext.columnType) == ColumnType.CHAR) {
+                serializeCharOrdering(node, GT);
+                return;
+            }
+            if (ColumnType.tagOf(predicateContext.columnType) == ColumnType.IPv4) {
+                serializeIPv4Ordering(node, GT);
+                return;
+            }
             rejectOrderingComparison(token, position);
             putOperator(GT);
             return;
         }
         if (Chars.equals(token, ">=")) {
+            if (ColumnType.tagOf(predicateContext.columnType) == ColumnType.CHAR) {
+                serializeCharOrdering(node, GE);
+                return;
+            }
+            if (ColumnType.tagOf(predicateContext.columnType) == ColumnType.IPv4) {
+                serializeIPv4Ordering(node, GE);
+                return;
+            }
             rejectOrderingComparison(token, position);
             putOperator(GE);
             return;
@@ -2243,6 +2386,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         private boolean currentInSerialization = false;
         private boolean handledShortCircuitExit = false; // true if predicate emitted its own AND_SC/OR_SC exit
         private ExpressionNode inOperationNode = null;
+        private int bindVarFunctionsStartSize;
+        private long memoryStartOffset;
         private ExpressionNode rootNode;
 
         @Override
@@ -2263,6 +2408,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // We entered a predicate.
                     reset();
                     rootNode = node;
+                    memoryStartOffset = memory.getAppendOffset();
+                    bindVarFunctionsStartSize = bindVarFunctions.size();
                     // Pre-pass: decide whether to widen narrow integer operands
                     // to i64 at IR emission time, and remember whether any
                     // FLOAT / DOUBLE source is present anywhere in the
@@ -2383,6 +2530,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             currentInSerialization = false;
             handledShortCircuitExit = false;
             inOperationNode = null;
+            bindVarFunctionsStartSize = 0;
+            memoryStartOffset = 0;
             inIntervals.clear();
             // Note: shortCircuitMode is NOT reset here; it's managed by serializePredicates*Sc methods
         }
