@@ -60,6 +60,7 @@ public class PGParquetTest extends BasePGTest {
             )) {
                 Assert.assertFalse(ps.execute());
             }
+
             try (PreparedStatement ps = connection.prepareStatement(
                     "INSERT INTO x VALUES ('5001', '2024-01-02T02:00:00.000000Z')"
             )) {
