@@ -616,11 +616,9 @@
         supported platform. No CI job builds or tests it, so we commit and ship no darwin-x86-64
         native library, and no rt-osx-x86-64 runtime archive exists to assemble.
         A local source build still runs on Intel macOS, but it has to produce both natives
-        itself: CMake writes libquestdb.dylib to target/classes/io/questdb/bin-local/, and
-        -P build-rust-library,qdbr-release makes rust-maven-plugin write libquestdbr.dylib to
-        target/classes/io/questdb/rust/. io.questdb.std.Os reads both dev paths before it
-        looks at the platform directory. Re-run both after a mvn clean, which deletes them.
-        CONTRIBUTING.md, "Compiling the native libraries", spells this out.
+        itself: CMake writes libquestdb.dylib, and the build-rust-library profile writes
+        libquestdbr.dylib, into the target/classes paths io.questdb.std.Os reads before the
+        platform directory. See CONTRIBUTING.md, "Compiling the native libraries".
         -->
         <profile>
             <id>platform-osx-aarch64</id>

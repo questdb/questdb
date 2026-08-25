@@ -199,8 +199,8 @@ QuestDB with a debugger attached.
 QuestDB loads two native libraries: `libquestdb` (C/C++) and `libquestdbr`
 (Rust). The repository commits a prebuilt pair for every platform CI builds and
 tests, so you need this section only when you change native code, or when you
-run on a platform the repository ships no binary for — x86-64 (Intel) macOS is
-the only such case.
+run on a platform the repository ships no binary for, such as x86-64 (Intel)
+macOS.
 
 Compile the C/C++ library with CMake, which also needs `JAVA_HOME`. These
 commands work on Linux/macOS:
@@ -213,23 +213,13 @@ cmake --build build/release --config Release
 
 CMake writes `libquestdb` to `core/target/classes/io/questdb/bin-local/`.
 
-Compile the Rust library through Maven. The `build-rust-library` profile runs
-`cargo` and copies the result to `core/target/classes/io/questdb/rust/`:
+Maven builds `libquestdbr` only under the `build-rust-library` profile, which
+copies it to `core/target/classes/io/questdb/rust/`; add the `qdbr-release`
+profile for a release build. A bare `cargo build` in `core/rust/qdbr` leaves the
+library in `core/rust/qdbr/target/`, which is on no classpath.
 
-```text
-cd core
-mvn compile -P build-rust-library,qdbr-release
-```
-
-Both profiles are opt-in: without `build-rust-library` Maven builds no Rust at
-all, and without `qdbr-release` it builds a debug library. A bare `cargo build`
-in `core/rust/qdbr` leaves `libquestdbr` in `core/rust/qdbr/target/`, which is
-on no classpath, so the loader never sees it.
-
-`io.questdb.std.Os` checks both of those `core/target/classes` paths before it
-falls back to the committed platform directory, which is what makes a source
-build work on a platform QuestDB ships no binary for. `mvn clean` deletes
-`core/target`, so re-run CMake and the Rust profile after one.
+`io.questdb.std.Os` reads both of those paths before it falls back to the
+committed platform directory. `mvn clean` deletes them.
 
 For more details, see [CMake build instructions](core/CMAKE_README.md).
 
