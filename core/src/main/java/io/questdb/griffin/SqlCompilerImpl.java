@@ -1561,6 +1561,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             CharSequence columnName = tok;
+            refuseDroppingCompositePinnedColumn(tableToken, columnName, lexer.lastTokenPosition());
             dropColumnStatement.ofDropColumn(columnName);
             tok = SqlUtil.fetchNext(lexer);
 
@@ -1619,6 +1620,50 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * the designated timestamp, so {@code WHERE exch = 'E0'} fails with "Invalid column: exch". Only
      * the LIST form can name a cell today.
      */
+    /**
+     * Refuses, AT THE STATEMENT, dropping a column a composite partition pins.
+     * <p>
+     * {@code TableWriter#removeColumn} already rejects both shapes, but on a WAL table that is the
+     * APPLY side: measured 2026-08-25, {@code ALTER TABLE c DROP COLUMN exch} was accepted and then
+     * SUSPENDED the table with "cannot drop column 'exch' referenced by a composite partition
+     * dimension". That is invariant 6 -- a refusal must fire at the statement that caused it.
+     * <p>
+     * Unlike the foreign-artifact ATTACH refusal, there is no plain twin to match here: a plain table
+     * has no dimensions, so suspending is not "behaving like plain", it is simply the wrong place.
+     * <p>
+     * The writer-side guards STAY as the non-SQL backstop -- gates move rather than vanish -- and the
+     * message literals are reused verbatim so the scope-closure audit's key set is unchanged.
+     */
+    private void refuseDroppingCompositePinnedColumn(
+            TableToken tableToken,
+            CharSequence columnName,
+            int position
+    ) throws SqlException {
+        try (TableReader reader = engine.getReader(tableToken)) {
+            final PartitionSpec spec = reader.getMetadata().getPartitionSpec();
+            if (spec.getDimensionCount() == 0 && spec.getClusterColumnCount() == 0) {
+                return;
+            }
+            final int columnIndex = reader.getMetadata().getColumnIndexQuiet(columnName);
+            if (columnIndex < 0) {
+                return;
+            }
+            final int writerIndex = reader.getMetadata().getWriterIndex(columnIndex);
+            for (int i = 0, n = spec.getDimensionCount(); i < n; i++) {
+                if (spec.getDimension(i).getColumnIndex() == writerIndex) {
+                    throw SqlException.$(position, "cannot drop column '").put(columnName)
+                            .put("' referenced by a composite partition dimension");
+                }
+            }
+            for (int i = 0, n = spec.getClusterColumnCount(); i < n; i++) {
+                if (spec.getClusterColumn(i) == writerIndex) {
+                    throw SqlException.$(position, "cannot drop column '").put(columnName)
+                            .put("' referenced by a composite partition ORDER BY column");
+                }
+            }
+        }
+    }
+
     /**
      * SP1C: resolves the cell component of {@code <day>/<cell>} to a cellKey, or -1 when the name
      * names no cell at all.

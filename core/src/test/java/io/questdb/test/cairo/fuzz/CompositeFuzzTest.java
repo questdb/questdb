@@ -77,7 +77,11 @@ public class CompositeFuzzTest extends AbstractCairoTest {
             // not just that it routed cells. applyGeneratedTransactions() never generates a gated op
             // (every structural-DDL probability is 0.0 through Task 4), so this run must exercise one
             // explicitly before the floor can pass.
-            runner.applyGatedOperation("ALTER TABLE " + runner.compositeName() + " DROP COLUMN qty");
+            // DROP COLUMN became SUPPORTED on a composite table in SP2 (2026-08-25), so it is no
+            // longer a gate to prove. UPDATE replaces it deliberately: it is refused
+            // PERMANENTLY by design, not pending work, so this lock will not need swapping
+            // again the next time a capability lands.
+            runner.applyGatedOperation("UPDATE " + runner.compositeName() + " SET qty = qty + 1");
             runner.assertExercised();   // must throw if the run was vacuous
         });
     }
@@ -106,7 +110,11 @@ public class CompositeFuzzTest extends AbstractCairoTest {
             runner.assertTwinEqual();
 
             long before = runner.compositeRowCount();
-            runner.applyGatedOperation("ALTER TABLE " + runner.compositeName() + " DROP COLUMN qty");
+            // DROP COLUMN became SUPPORTED on a composite table in SP2 (2026-08-25), so it is no
+            // longer a gate to prove. UPDATE replaces it deliberately: it is refused
+            // PERMANENTLY by design, not pending work, so this lock will not need swapping
+            // again the next time a capability lands.
+            runner.applyGatedOperation("UPDATE " + runner.compositeName() + " SET qty = qty + 1");
             org.junit.Assert.assertEquals("a rejected op must not change row count",
                     before, runner.compositeRowCount());
             runner.assertTwinEqual();   // and must leave the table twin-equal

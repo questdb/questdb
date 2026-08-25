@@ -956,17 +956,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.duplicateColumn(columnName);
         }
 
-        // A new symbol writer is appended at denseSymbolMapWriters.size(), i.e. AFTER the composite
-        // interners (dedicated dicts + _cell registry). On next writer reopen configureColumnMemory()
-        // always rebuilds the dense order as [realSymbols..., <new column>, dedicatedDicts..., registry],
-        // which does not match the order the _txn symbol-count slots were written under at ALTER time.
-        // That desyncs the counts silently. Reject until interner-aware ordering is implemented.
-        if (ColumnType.isSymbol(columnType) && metadata.getPartitionSpec().getDimensionCount() > 0) {
-            throw CairoException.nonCritical()
-                    .put("ADD COLUMN of type SYMBOL is not yet supported on composite-partitioned tables [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
-
         commit();
 
         long columnNameTxn = getTxn();
@@ -1574,10 +1563,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
         
 
-        // Same interner slot-order hazard as addColumn(): converting to SYMBOL creates a brand-new
-        // SymbolMapWriter that createSymbolMapWriter() appends after the composite interners, which
-        // configureColumnMemory() will reorder ahead of them on next reopen. Reject until interner-aware
-        // ordering is implemented.
+        // ALTER COLUMN TYPE to SYMBOL stays refused, but NOT for the reason recorded before.
+        // The original reason was the interner slot-order hazard shared with addColumn(); that is now
+        // FIXED (createSymbolMapWriter inserts ahead of the interners and renumbers them), and ADD
+        // COLUMN of type SYMBOL was un-gated on the strength of it.
+        // RE-MEASURED 2026-08-25 with this gate lifted: the ALTER itself succeeds and does NOT suspend
+        // the table, and then every subsequent read of the table fails
+        //     SqlException: [14] [0]: Metadata read timeout [src=reader, timeout=5000ms]
+        // Reproduced with and without an intervening engine.releaseInactive(), so it is the conversion
+        // itself, not the writer reopen. A DDL that leaves readers hanging is worse than one that
+        // refuses, so the gate stays until that is understood.
         if (ColumnType.isSymbol(newType) && metadata.getPartitionSpec().getDimensionCount() > 0) {
             throw CairoException.nonCritical()
                     .put("ALTER COLUMN TYPE SYMBOL is not yet supported on composite-partitioned tables [table=")
@@ -3921,12 +3916,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // ShowCreateTableTest's testShowCreateCompositeAfterDropLowerIndexDimensionColumn and 2
         // siblings) -- see isRoutedComposite()'s own doc for why that predicate is wrong for a
         // DDL-safety gate.
-        if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support DROP COLUMN [table=")
-                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
-        }
-
         // A composite partition dimension pins its source SYMBOL column by stable WRITER index
         // (PartitionDimension.getColumnIndex() is documented as a writer index, never a dense
         // position -- see its javadoc). Resolve via getWriterIndex() rather than comparing the dense
@@ -8221,13 +8210,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int columnIndex
     ) {
         MapWriter.createSymbolMapFiles(ff, ddlMem, path.trimTo(pathSize), name, columnNameTxn, symbolCapacity, symbolCacheFlag);
+        // A composite table's INTERNERS (dedicated dicts + the _cell registry) occupy the LAST K slots
+        // of denseSymbolMapWriters, and configureColumnMemory() rebuilds that order on every reopen as
+        // [realSymbols..., dedicatedDicts..., registry]. Appending a new real symbol column at the end
+        // would therefore place it AFTER the interners now and BEFORE them after the next reopen, so the
+        // _txn symbol-count slots would be written under one dense order and read back under another.
+        // MEASURED before this fix: the desync surfaced on the next WAL segment roll as a bare
+        // `assert symbolCapacity > 0` inside SymbolMapReaderImpl.of, because WalWriter#refreshSymbolWatermarks
+        // resolved the new column's count through an interner's slot and hard-linked the wrong files.
+        // Insert where the reopen will put it, and renumber the interners it displaces.
+        final int internerCount = compositeInternerSlotCount();
+        final int denseIndex = denseSymbolMapWriters.size() - internerCount;
         SymbolMapWriter w = new SymbolMapWriter(
                 configuration,
                 path.trimTo(pathSize),
                 name,
                 columnNameTxn,
                 0,
-                denseSymbolMapWriters.size(),
+                denseIndex,
                 txWriter,
                 columnIndex
         );
@@ -8244,8 +8244,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         w.updateNullFlag(symbolNullFlag);
-        denseSymbolMapWriters.add(w);
+        if (internerCount == 0) {
+            denseSymbolMapWriters.add(w);
+        } else {
+            denseSymbolMapWriters.insert(denseIndex, 1, null);
+            denseSymbolMapWriters.setQuick(denseIndex, w);
+            // the displaced interners now sit one slot higher; each carries its own dense index, which
+            // is what it reports counts under at commit time
+            for (int i = denseIndex + 1, n = denseSymbolMapWriters.size(); i < n; i++) {
+                final MapWriter shifted = denseSymbolMapWriters.getQuick(i);
+                if (shifted instanceof SymbolMapWriter) {
+                    ((SymbolMapWriter) shifted).setSymbolIndexInTxWriter(i);
+                }
+            }
+        }
         symbolMapWriters.extendAndSet(columnCount, w);
+    }
+
+    /**
+     * Number of dense symbol slots this table's composite interners occupy, or 0 when there are none.
+     * Mirrors the registration in {@code configureColumnMemory}: one slot per dedicated dictionary plus
+     * one for the {@code _cell} registry, and none at all for a view.
+     */
+    private int compositeInternerSlotCount() {
+        if (tableToken.isView()) {
+            return 0;
+        }
+        final CompositeInternerLayout layout = CompositeInternerLayout.of(metadata.getPartitionSpec());
+        return layout.hasInterners() ? layout.dedicatedCount() + 1 : 0;
     }
 
     private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int columnIndex, IntList symbolMap) {

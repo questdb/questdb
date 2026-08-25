@@ -86,7 +86,11 @@ public class CompositeFuzzUnstableTest extends AbstractCairoTest {
             // A run this size has no excuse for being vacuous -- if it did not actually route cells,
             // revisit an already-populated cell, and exercise a gate, the seed produced a degenerate
             // shape and the green above means nothing.
-            runner.applyGatedOperation("ALTER TABLE " + runner.compositeName() + " DROP COLUMN qty");
+            // DROP COLUMN became SUPPORTED on a composite table in SP2 (2026-08-25), so it is no
+            // longer a gate to prove. UPDATE replaces it deliberately: it is refused
+            // PERMANENTLY by design, not pending work, so this lock will not need swapping
+            // again the next time a capability lands.
+            runner.applyGatedOperation("UPDATE " + runner.compositeName() + " SET qty = qty + 1");
             runner.assertExercised();
         });
     }

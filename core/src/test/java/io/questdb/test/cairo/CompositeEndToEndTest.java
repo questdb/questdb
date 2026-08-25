@@ -256,20 +256,19 @@ public class CompositeEndToEndTest extends AbstractCairoTest {
 
             execute("alter table c drop column q");
             drainWalQueue();
-            Assert.assertTrue(
-                    "c must be suspended after a not-yet-supported composite DROP COLUMN",
+            Assert.assertFalse(
+                    "c must not be suspended after DROP COLUMN",
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
-            printSql("select errorMessage from wal_tables() where name = 'c'");
-            TestUtils.assertContains(sink, "composite partitioning does not yet support DROP COLUMN");
-            engine.getTableSequencerAPI().resumeTable(engine.verifyTableName("c"), 0);
-            drainWalQueue();
 
             assertSqlCursors("select ts, exchange, px from p order by ts", "select ts, exchange, px from c order by ts");
-            // Explicit metadata proof DROP COLUMN did NOT complete (the gate fired before any mutation):
-            // q must still be present, one column ahead of the original 3-column shape shared with p.
+            // SP2 (2026-08-25): DROP COLUMN is SUPPORTED on a routed composite table, so this asserts the
+            // drop COMPLETED rather than that a gate fired -- q is gone and the shape is back to the
+            // 3 columns shared with p. The per-cell file purge the old gate existed to prevent leaking is
+            // covered structurally by CompositeColumnDdlSurveyTest#surveyDropColumn, which walks the cell
+            // directories and fails if any dropped-column file survives.
             try (TableReader reader = getReader("c")) {
-                Assert.assertTrue(reader.getMetadata().getColumnIndexQuiet("q") > -1);
-                Assert.assertEquals(4, reader.getMetadata().getColumnCount());
+                Assert.assertEquals(-1, reader.getMetadata().getColumnIndexQuiet("q"));
+                Assert.assertEquals(3, reader.getMetadata().getColumnCount());
             }
         });
     }

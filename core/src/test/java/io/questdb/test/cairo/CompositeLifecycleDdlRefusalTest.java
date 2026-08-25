@@ -53,6 +53,22 @@ import org.junit.Test;
  */
 public class CompositeLifecycleDdlRefusalTest extends AbstractCairoTest {
 
+    /**
+     * A composite dimension pins its source column by stable writer index, so dropping it would leave
+     * the dimension routing a live table by a column that no longer exists. {@code TableWriter} has
+     * always rejected this -- but on the APPLY side: measured 2026-08-25, once the blanket DROP COLUMN
+     * gate was lifted, {@code ALTER TABLE c DROP COLUMN exch} was ACCEPTED and then suspended the table
+     * with "cannot drop column 'exch' referenced by a composite partition dimension".
+     * <p>
+     * This is a genuine invariant-6 case rather than a twin-matching one: a plain table has no
+     * dimensions, so there is no plain behaviour for composite to be matching by suspending.
+     */
+    @Test
+    public void testDropColumnRefusesADimensionSourceAtTheStatement() throws Exception {
+        assertRefusedAtStatement("ALTER TABLE c DROP COLUMN exch",
+                "cannot drop column 'exch' referenced by a composite partition dimension");
+    }
+
     /*
      * The DETACH PARTITION refusal test that stood here is gone: sub-project 1 made DETACH cell-aware
      * once 1E unblocked it (detach calls squash internally, so it could not be reached before). A
@@ -117,6 +133,17 @@ public class CompositeLifecycleDdlRefusalTest extends AbstractCairoTest {
      * behaviour, which also raises an error — just on the apply thread, after suspending the table.
      */
     private void assertRefusedAtStatement(String ddl) throws Exception {
+        assertRefusedAtStatement(ddl, "composite partitioning");
+    }
+
+    /**
+     * As {@link #assertRefusedAtStatement(String)}, but asserting the refusal names {@code
+     * expectedFragment}. Not every composite refusal literal contains the exact words "composite
+     * partitioning" -- the column-pinning ones say "a composite partition dimension" -- and those
+     * literals are reused verbatim from {@code TableWriter} on purpose, so the scope-closure audit's
+     * key set does not change. The assertion adapts rather than the message.
+     */
+    private void assertRefusedAtStatement(String ddl, String expectedFragment) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE)"
                     + " TIMESTAMP(ts) PARTITION BY DAY, exch LAYOUT PLAIN WAL");
@@ -129,7 +156,7 @@ public class CompositeLifecycleDdlRefusalTest extends AbstractCairoTest {
                 execute(ddl);
             } catch (Throwable expected) {
                 refused = true;
-                TestUtilsBridge.assertMentionsComposite(expected);
+                TestUtilsBridge.assertMentions(expected, expectedFragment);
             }
             // the apply job would suspend the table here if the gate is on the writer side
             drainWalQueue();
@@ -157,10 +184,10 @@ public class CompositeLifecycleDdlRefusalTest extends AbstractCairoTest {
      * messages but all name composite partitioning.
      */
     private static final class TestUtilsBridge {
-        static void assertMentionsComposite(Throwable t) {
+        static void assertMentions(Throwable t, String expectedFragment) {
             final String msg = t.getMessage() == null ? "" : t.getMessage();
-            Assert.assertTrue("refusal should name composite partitioning, got: " + msg,
-                    msg.contains("composite partitioning"));
+            Assert.assertTrue("refusal should name \"" + expectedFragment + "\", got: " + msg,
+                    msg.contains(expectedFragment));
         }
     }
 }

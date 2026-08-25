@@ -429,13 +429,16 @@ public class CompositeExpressionEndToEndTest extends AbstractCairoTest {
             drainWalQueue();
             assertWalTableNotSuspended("c");
 
+            // SP2 (2026-08-25): DROP COLUMN is supported on a composite table, including one whose
+            // dimension is an EXPRESSION. x is not the expression's source column, so it drops cleanly.
             execute("alter table c drop column x");
             drainWalQueue();
-            Assert.assertTrue(
-                    "c must be suspended after a not-yet-supported composite DROP COLUMN",
+            Assert.assertFalse(
+                    "c must not be suspended after DROP COLUMN",
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
-            printSql("select errorMessage from wal_tables() where name = 'c'");
-            TestUtils.assertContains(sink, "composite partitioning does not yet support DROP COLUMN");
+            try (io.questdb.cairo.TableReader reader = getReader("c")) {
+                Assert.assertEquals(-1, reader.getMetadata().getColumnIndexQuiet("x"));
+            }
         });
     }
 

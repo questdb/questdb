@@ -61,6 +61,44 @@ import org.junit.Test;
 public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
 
     /**
+     * ADD COLUMN of type SYMBOL. The gate is narrower than the others -- it guards the composite
+     * INTERNERS, not the partition walk -- so what needs measuring is whether a new symbol column's
+     * dictionary coexists with the dedicated dimension dictionaries and the _cell registry.
+     * <p>
+     * Asserts the VALUES read back, not merely that the DDL returned: a symbol column that resolves
+     * every key to null would pass a bare "did it throw" check.
+     */
+    @Test(timeout = 60_000)
+    public void surveyAddSymbolColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins("ts TIMESTAMP, exch SYMBOL, sym SYMBOL, px DOUBLE",
+                    "PARTITION BY DAY, exch LAYOUT PLAIN");
+            seedTwoDays();
+
+            execute("ALTER TABLE c ADD COLUMN tag SYMBOL");
+            execute("ALTER TABLE p ADD COLUMN tag SYMBOL");
+            drainWalQueue();
+
+            // Force a full writer reopen. This is the path the defect ran through: configureColumnMemory()
+            // rebuilds the dense symbol order from scratch, so an ALTER-time order that disagreed with it
+            // only desyncs once the writer comes back. Without this the test can pass on the ALTER-time
+            // ordering alone.
+            engine.releaseInactive();
+
+            // rows written AFTER the add, so the new column has real values in more than one cell
+            insertIntoBoth("('2023-01-02T09:00:00.000000Z','E0','S0',99.0,'T0'),"
+                    + "('2023-01-02T10:00:00.000000Z','E1','S1',98.0,'T1')");
+            drainWalQueue();
+
+            assertTwinEqual("", " ORDER BY ts, exch");
+            // the symbol must resolve to its VALUE, not to null
+            assertQuery("SELECT tag FROM c WHERE tag IS NOT NULL ORDER BY tag")
+                    .noLeakCheck()
+                    .returns("tag\nT0\nT1\n");
+        });
+    }
+
+    /**
      * ADD INDEX on a non-dimension symbol column. Indexes are per-partition, therefore already
      * per-cell, so this may need only the gate removed — but an index is built by scanning each
      * partition, and a composite partition is a cell.
@@ -86,11 +124,6 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
      * DROP COLUMN. Column files live per partition, so on a composite table they live per CELL. The
      * question is whether the removal walks cells or days.
      */
-    @Ignore("SP2 SURVEY -- run by lifting the writer-side gate, then restoring it. FULLY MEASURED"
-            + " 2026-08-18, ZERO of five work: ADD INDEX and DROP INDEX are BOTH silent no-ops (the"
-            + " indexed flag is unchanged after each reports success), DROP COLUMN's sync path is fixed"
-            + " but its async path still leaks every cell file, RENAME COLUMN and ALTER COLUMN TYPE"
-            + " fail outright.")
     @Test(timeout = 60_000)
     public void surveyDropColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -106,6 +139,17 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
             // 2026-08-18: DROP COLUMN removed the DAY-LEVEL px.d and left E0/px.d, E1/px.d and
             // E2/px.d in place -- a per-cell disk leak invisible to any query.
             assertNoColumnFilesRemain("c", "px");
+            // ANTI-VACUITY CONTROL, kept deliberately. This class's own history is three successive
+            // false positives, each caught only by checking a different observable than the last. If
+            // assertNoColumnFilesRemain ever stops finding files -- wrong walk depth, renamed layout --
+            // it would pass for px while proving nothing, so it must still FAIL for a live column.
+            boolean caught = false;
+            try {
+                assertNoColumnFilesRemain("c", "sym");
+            } catch (AssertionError expected) {
+                caught = true;
+            }
+            org.junit.Assert.assertTrue("assertNoColumnFilesRemain is VACUOUS -- it passed for a live column", caught);
         });
     }
 
@@ -150,6 +194,43 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
      * ALTER COLUMN TYPE rewrites every partition's column file, so on a composite table it must rewrite
      * every CELL's. Expected to be the most expensive of the four.
      */
+    @Ignore("SP2: ALTER COLUMN TYPE to SYMBOL is still gated, but the RECORDED REASON WAS WRONG."
+            + " The interner slot-order hazard it shared with addColumn() is fixed, and ADD COLUMN of"
+            + " type SYMBOL shipped on that fix. RE-MEASURED 2026-08-25 with the gate lifted: the ALTER"
+            + " succeeds and does not suspend the table, then every read fails 'Metadata read timeout"
+            + " [src=reader, timeout=5000ms]'. Reproduced with and without an intervening"
+            + " engine.releaseInactive(), so it is the conversion, not the reopen. Un-ignore when that"
+            + " is understood.")
+    @Test(timeout = 60_000)
+    public void surveyAlterColumnTypeToSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins("ts TIMESTAMP, exch SYMBOL, note VARCHAR, px DOUBLE",
+                    "PARTITION BY DAY, exch LAYOUT PLAIN");
+            // seedTwoDays writes a SYMBOL in slot 3; this shape needs a VARCHAR there instead.
+            // Each commit stays SINGLE-cell on purpose: a table with a var-size column has its own,
+            // unrelated gate against an interleaved multi-cell commit, and writing E0 and E1 in one
+            // batch trips that instead of exercising the conversion.
+            insertIntoBoth("('2023-01-01T01:00:00.000000Z','E0','N0',10.0)");
+            drainWalQueue();
+            insertIntoBoth("('2023-01-01T05:00:00.000000Z','E1','N1',11.0)");
+            drainWalQueue();
+            insertIntoBoth("('2023-01-02T01:00:00.000000Z','E0','N2',20.0)");
+            drainWalQueue();
+
+            execute("ALTER TABLE c ALTER COLUMN note TYPE SYMBOL");
+            execute("ALTER TABLE p ALTER COLUMN note TYPE SYMBOL");
+            drainWalQueue();
+
+            insertIntoBoth("('2023-01-02T09:00:00.000000Z','E1','N3',21.0)");
+            drainWalQueue();
+
+            assertTwinEqual("", " ORDER BY ts, exch");
+            assertQuery("SELECT note FROM c ORDER BY note")
+                    .noLeakCheck()
+                    .returns("note\nN0\nN1\nN2\nN3\n");
+        });
+    }
+
     @Test(timeout = 60_000)
     public void surveyAlterColumnType() throws Exception {
         assertMemoryLeak(() -> {

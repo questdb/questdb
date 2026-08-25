@@ -32,6 +32,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -103,17 +104,17 @@ public class CompositeDictionariesTest extends AbstractCairoTest {
      * composite-partitioned tables.
      */
     @Test
-    public void testAddSymbolColumnRejectedOnComposite() throws Exception {
+    public void testAddSymbolColumnWorksOnComposite() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, exchange symbol, symbol symbol) " +
                     "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
+            // SP2 (2026-08-25): supported. createSymbolMapWriter now inserts a new real symbol column
+            // AHEAD of the composite interners and renumbers them, so the dense order it writes under
+            // matches the one configureColumnMemory rebuilds on reopen. This table has TWO dedicated
+            // dictionaries plus the _cell registry, so the new column is displacing three slots.
             try (TableWriter w = getWriter("t")) {
-                try {
-                    w.addColumn("x", ColumnType.SYMBOL, AllowAllSecurityContext.INSTANCE);
-                    Assert.fail();
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "composite");
-                }
+                w.addColumn("x", ColumnType.SYMBOL, AllowAllSecurityContext.INSTANCE);
+                Assert.assertTrue(w.getMetadata().getColumnIndexQuiet("x") > -1);
             }
         });
     }
@@ -341,19 +342,18 @@ public class CompositeDictionariesTest extends AbstractCairoTest {
      * instead) or the suspend mechanism itself changes.
      */
     @Test
-    public void testWalCompositeAddSymbolSuspendsRatherThanRejectsSynchronously() throws Exception {
+    public void testWalCompositeAddSymbolNoLongerSuspends() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, exchange symbol, symbol symbol) " +
                     "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
 
-            // No synchronous rejection today (I1): the ALTER "succeeds" from the client's perspective...
+            // SP2 (2026-08-25): this used to be accepted at the statement and then SUSPEND the table at
+            // WAL-apply time. ADD COLUMN of type SYMBOL is now supported, so the apply succeeds.
             execute("alter table t add column x symbol");
-
-            // ...but the queued transaction fails at WAL-apply time through the real TableWriter guard,
-            // suspending the table instead.
             drainWalQueue();
-            Assert.assertTrue(
-                    "expected table to be suspended after WAL-apply rejects the composite ADD COLUMN SYMBOL",
+
+            Assert.assertFalse(
+                    "composite ADD COLUMN SYMBOL is supported and must not suspend the table",
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t"))
             );
         });
@@ -366,16 +366,26 @@ public class CompositeDictionariesTest extends AbstractCairoTest {
      * guard rejects it, suspending the table.
      */
     @Test
-    public void testWalCompositeDropDimensionSourceSuspendsRatherThanRejectsSynchronously() throws Exception {
+    public void testWalCompositeDropDimensionSourceRejectsSynchronously() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, exchange symbol, symbol symbol) " +
                     "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
 
-            execute("alter table t drop column exchange");     // no synchronous rejection today (I1)
-
+            // SP2 (2026-08-25): the behaviour this test was named for is GONE, which is the point. It
+            // used to be accepted at the statement and then suspend the table (I1). The refusal now
+            // fires at the statement, which is invariant 6. DROP COLUMN itself is supported on a
+            // composite table; what stays refused is dropping a column a DIMENSION pins.
+            try {
+                execute("alter table t drop column exchange");
+                Assert.fail("dropping a dimension's source column must be refused");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(),
+                        "cannot drop column 'exchange' referenced by a composite partition dimension");
+            }
             drainWalQueue();
-            Assert.assertTrue(
-                    "expected table to be suspended after WAL-apply rejects the composite DROP COLUMN",
+
+            Assert.assertFalse(
+                    "a refusal at the statement must leave the table usable",
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t"))
             );
         });

@@ -346,30 +346,15 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
      * per-cell files instead).
      */
     @Test
-    public void testDropColumnGated() throws Exception {
+    public void testDropColumnIsNoLongerGated() throws Exception {
         assertMemoryLeak(() -> {
             createRoutedTwoCellTable("c");
-            assertCompositeGateFires(
-                    "alter table c drop column px",
-                    "c",
-                    "composite partitioning does not yet support DROP COLUMN");
+            execute("alter table c drop column px");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
         });
     }
 
-    /**
-     * Plan 4b feature-gate sweep. {@code TableWriter#renameColumn}'s
-     * {@code hardLinkAndPurgeColumnFiles} resolves both the old-name source path (bare 5-arg
-     * {@code setPathForNativePartition}) and the columnNameTxn to link (cellKey-0-only 2-arg
-     * {@code ColumnVersionWriter} lookups) cell-blind, AFTER the new name is already durably
-     * committed to metadata -- a worse failure shape than most gates in this sweep (a partial
-     * metadata-vs-files split, not just a clean rejection). Confirmed reachable.
-     */
-    /**
-     * SP2 (2026-08-18): RENAME COLUMN is no longer gated. Asserts the rename is REAL -- the new name
-     * reads back and the old one is gone -- rather than that the statement merely did not throw. The
-     * defect it replaces was exactly that shape: metadata renamed while every cell's file kept the old
-     * name, so the next read failed with "file does not exist: <cell>/price.d".
-     */
     @Test
     public void testRenameColumnWorks() throws Exception {
         assertMemoryLeak(() -> {

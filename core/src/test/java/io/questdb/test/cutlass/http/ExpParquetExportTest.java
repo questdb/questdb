@@ -2037,7 +2037,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withWorkerCount(4)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withPort(9019))
                 .withTelemetry(false)
                 .withSendBufferSize(2048)
                 .withCopyExportRoot(root + "/export")
@@ -2073,7 +2073,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             try {
                                 barrier.await();
                                 client = HttpClientFactory.newPlainTextInstance();
-                                HttpClient.Request req = client.newRequest("localhost", 9001);
+                                HttpClient.Request req = client.newRequest("localhost", 9019);
                                 req.GET().url("/exp")
                                         .query("query", query)
                                         .query("fmt", "parquet")
@@ -2122,7 +2122,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             DirectUtf8Sink sink = new DirectUtf8Sink(1 << 20)
                     ) {
                         for (int i = 0; i < verifyQueries.length; i++) {
-                            HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                            HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9019);
                             req.GET().url("/exp")
                                     .query("query", verifyQueries[i])
                                     .query("fmt", "parquet");
