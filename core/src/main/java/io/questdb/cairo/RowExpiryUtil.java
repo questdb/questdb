@@ -71,11 +71,21 @@ public final class RowExpiryUtil {
      * every read hides the expired rows AND the background job eventually deletes them from disk.
      * <p>
      * "Eventually" excludes the active (newest) partition, which the sweep never rewrites so that it cannot
-     * delete under the writer. An "expire old" policy such as {@code ts < T} keeps the rows there anyway, so
-     * the exclusion never shows. An "expire recent" policy such as {@code ts > T} inverts it: the active
-     * partition is precisely the one whose rows have expired, so a view that is still being written to holds
-     * one partition of expired rows on disk at all times, releasing each one only when a newer partition
-     * takes over as active. Reads are unaffected either way - the keep-filter hides those rows throughout.
+     * delete under the writer. A view holding all its rows in one partition therefore reclaims nothing at
+     * all. Past that, every policy leaves on disk whatever the active partition has expired; the policy
+     * decides how much. An "expire old" policy such as {@code ts < T} leaves the rows between {@code T} and
+     * the partition's newest row - a rolling amount that clears when the next partition takes over, and the
+     * state a clock-based retention window is in for most of each partition period. An "expire recent"
+     * policy such as {@code ts > T} expires the whole of the active partition, so a view that is still being
+     * written to holds a full partition of expired rows at all times, releasing each one only when a newer
+     * partition takes over as active.
+     * <p>
+     * A partition the job has already compacted is not swept again while its rows stay put - the job mixes a
+     * content generation per partition and skips the unchanged ones. A write that lands back inside a
+     * compacted range makes it eligible once more, and the refresh carrying that write can re-materialize
+     * rows an earlier sweep deleted, so the same partition is reclaimed more than once.
+     * <p>
+     * Reads are unaffected by all of this - the keep-filter hides the expired rows throughout.
      */
     public static final String ENFORCEMENT_FILTER_AND_RECLAIM = "FILTER_AND_RECLAIM";
 

@@ -88,9 +88,12 @@ import static org.junit.Assert.assertTrue;
  * EXPIRE ROWS is allowed on an aggregating (SAMPLE BY) view too, advisory only: reads stay correct via the
  * read filter, but physical reclamation is best-effort since a later refresh can regenerate reclaimed rows
  * ({@link #testCreateAggregatingMatViewWithExpireAllowed()}).
- * An "expire recent" policy (ts > T) is supported and reports FILTER_AND_RECLAIM, but the sweep never
- * touches the active partition, so a view still being written to keeps one partition of expired-but-hidden
- * rows on disk ({@link #testExpireNewPolicyLeavesTheActivePartitionOnDisk()}).
+ * The sweep never touches the active partition, so a view holding all its rows in one partition reclaims
+ * nothing ({@link #testSinglePartitionViewReclaimsNothing()}), and an "expire recent" policy (ts > T),
+ * whose expired rows are the newest ones, keeps one partition of expired-but-hidden rows on disk for as
+ * long as it is written to ({@link #testExpireNewPolicyLeavesTheActivePartitionOnDisk()}). A partition
+ * already compacted is swept again once a write lands back in it
+ * ({@link #testBackfillReclaimsAPartitionAgain()}).
  */
 public class MatViewExpireRowsTest extends AbstractCairoTest {
 
@@ -1213,6 +1216,139 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSinglePartitionViewReclaimsNothing() throws Exception {
+        // Active-partition protection bails out below two partitions, so a view whose data all sits in one
+        // partition never reclaims - under an ordinary "expire old" policy, on the shape a low-volume view
+        // naturally has. The expired row is hidden from every read the whole time; only its disk is kept.
+        //
+        // The second half is the control: the same row becomes reclaimable the moment a second partition
+        // exists, so what blocks the first sweep is the partition count and not the row's expiry status.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values ('A', '2024-01-05T00:00:00.000000Z'), ('B', '2024-01-05T18:00:00.000000Z')");
+            drainWalQueue();
+            execute("create materialized view mv as (select * from base) expire rows when ts < '2024-01-05T12:00:00.000000Z'");
+            drainWalAndMatViewQueues();
+
+            assertQuery("select sym from mv").noLeakCheck().returns("sym\nB\n");
+            assertQuery("select expire_enforcement from materialized_views() where view_name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("expire_enforcement\nFILTER_AND_RECLAIM\n");
+
+            assertFalse("a single-partition view has no reclaimable partition", sweepExpiredRows("mv"));
+            assertPartitions("mv", """
+                    name\tnumRows
+                    2024-01-05\t2
+                    """);
+
+            execute("insert into base values ('C', '2024-01-06T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertTrue("a second partition makes the first one reclaimable", sweepExpiredRows("mv"));
+            assertPartitions("mv", """
+                    name\tnumRows
+                    2024-01-05\t1
+                    2024-01-06\t1
+                    """);
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nB\nC\n");
+        });
+    }
+
+    @Test
+    public void testBackfillReclaimsAPartitionAgain() throws Exception {
+        // A sweep does not rewrite a partition it has already compacted: the job mixes a content generation
+        // per partition and skips one whose rows have not changed, so an immediately repeated sweep reports
+        // no work.
+        //
+        // A write that lands back inside an already-compacted range does make it eligible again, and the
+        // refresh that carries the write re-materializes the rows the earlier sweep deleted - the partition
+        // goes back to three rows, not the two that the survivor plus the new row would give. The next sweep
+        // compacts it a second time. Reclamation is therefore proportional to the writes a partition
+        // receives, not once-and-done, and reads are correct at every step.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
+            execute("""
+                    insert into base values
+                    ('OLD1', '2024-01-05T00:00:00.000000Z'),
+                    ('KEEP', '2024-01-05T18:00:00.000000Z'),
+                    ('ACTIVE', '2024-01-06T00:00:00.000000Z')""");
+            drainWalQueue();
+            execute("create materialized view mv as (select * from base) expire rows when ts < '2024-01-05T12:00:00.000000Z'");
+            drainWalAndMatViewQueues();
+            assertPartitions("mv", """
+                    name\tnumRows
+                    2024-01-05\t2
+                    2024-01-06\t1
+                    """);
+
+            assertTrue("the first sweep compacts the expired row away", sweepExpiredRows("mv"));
+            assertPartitions("mv", """
+                    name\tnumRows
+                    2024-01-05\t1
+                    2024-01-06\t1
+                    """);
+
+            assertFalse("an unchanged partition is not swept again", sweepExpiredRows("mv"));
+            assertPartitions("mv", """
+                    name\tnumRows
+                    2024-01-05\t1
+                    2024-01-06\t1
+                    """);
+
+            execute("insert into base values ('OLD2', '2024-01-05T06:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertPartitions("mv", """
+                    name\tnumRows
+                    2024-01-05\t3
+                    2024-01-06\t1
+                    """);
+
+            assertTrue("the backfilled partition is reclaimable again", sweepExpiredRows("mv"));
+            assertPartitions("mv", """
+                    name\tnumRows
+                    2024-01-05\t1
+                    2024-01-06\t1
+                    """);
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nACTIVE\nKEEP\n");
+        });
+    }
+
+    @Test
+    public void testExpireOldLeavesActivePartitionRowsOnDisk() throws Exception {
+        // Active-partition protection is not confined to exotic policies. An ordinary "expire old" policy
+        // whose threshold falls inside the active partition - the state any clock-based retention window is
+        // in for most of each partition period - reclaims the fully-expired older partition and leaves the
+        // expired rows in the active one alone. They clear when the next partition takes over.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
+            execute("""
+                    insert into base values
+                    ('OLD', '2024-01-05T00:00:00.000000Z'),
+                    ('MID', '2024-01-06T00:00:00.000000Z'),
+                    ('NEW', '2024-01-06T18:00:00.000000Z')""");
+            drainWalQueue();
+            execute("create materialized view mv as (select * from base) expire rows when ts < '2024-01-06T12:00:00.000000Z'");
+            drainWalAndMatViewQueues();
+
+            // OLD and MID have both expired; only NEW is visible.
+            assertQuery("select sym from mv").noLeakCheck().returns("sym\nNEW\n");
+            assertPartitions("mv", """
+                    name\tnumRows
+                    2024-01-05\t1
+                    2024-01-06\t2
+                    """);
+
+            assertTrue("the fully-expired older partition is reclaimable", sweepExpiredRows("mv"));
+            // 2024-01-05 is gone, but MID still occupies the active partition.
+            assertPartitions("mv", """
+                    name\tnumRows
+                    2024-01-06\t2
+                    """);
+            assertQuery("select sym from mv").noLeakCheck().returns("sym\nNEW\n");
+        });
+    }
+
+    @Test
     public void testExpireNewPolicyLeavesTheActivePartitionOnDisk() throws Exception {
         // An "expire recent" policy (ts > T) is a supported shape: reads hide the expired rows and the
         // catalogue reports FILTER_AND_RECLAIM, because a constant threshold makes the policy monotonic.
@@ -1220,14 +1356,19 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         // partitions up to partitionCount - 1 and bails out entirely below two partitions, so the writer
         // never has a sweep deleting under it.
         //
-        // For the usual "expire old" policy that protection is invisible, because the active partition
-        // holds the newest rows and those are the ones such a policy keeps. An expire-new policy inverts
-        // that: the active partition is always the one whose rows have expired, so its rows stay on disk
-        // until a newer partition takes over as active. Disk therefore trails the visible set by one
-        // partition, permanently, on a view that is still being written to.
+        // Every policy leaves on disk whatever the active partition has expired
+        // ({@code testExpireOldLeavesActivePartitionRowsOnDisk} covers the ordinary one); this shape is the
+        // extreme of it. An expire-old policy leaves only the rows between its threshold and the partition's
+        // newest row, and that clears when the next partition takes over. Here the whole active partition is
+        // expired, so disk trails the visible set by a full partition for as long as the view is written to.
         //
-        // This is bounded rather than a churn loop: each partition is written once and dropped once, and
-        // the read filter is authoritative the whole time, so no query ever sees an expired row.
+        // This is not a churn loop: the job keeps a per-partition content generation, so a partition whose
+        // rows have not changed is skipped rather than swept again. A partition is reclaimed a second time
+        // only when new rows land in it ({@code testBackfillReclaimsAPartitionAgain}). The read filter is
+        // authoritative the whole time, so no query ever sees an expired row.
+        //
+        // The assertions below pin the protection as it behaves today. A change that makes the sweep safe
+        // on the active partition is free to update them; it is not a regression.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
             execute("""
@@ -1259,7 +1400,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 job.cleanupTable(token, predicate);
             }
             drainWalAndMatViewQueues();
-            assertPartitions("""
+            assertPartitions("mv", """
                     name\tnumRows
                     2024-01-05\t1
                     2024-01-06\t1
@@ -1273,7 +1414,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 job.cleanupTable(token, predicate);
             }
             drainWalAndMatViewQueues();
-            assertPartitions("""
+            assertPartitions("mv", """
                     name\tnumRows
                     2024-01-05\t1
                     2024-01-07\t1
@@ -2233,11 +2374,25 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         });
     }
 
-    private void assertPartitions(String expected) throws Exception {
-        assertQuery("select name, numRows from table_partitions('mv') order by name")
+    private void assertPartitions(String view, String expected) throws Exception {
+        assertQuery("select name, numRows from table_partitions('" + view + "') order by name")
                 .noLeakCheck()
                 .expectSize()
                 .returns(expected);
+    }
+
+    private boolean sweepExpiredRows(String view) {
+        final TableToken token = engine.verifyTableName(view);
+        final String predicate;
+        try (TableMetadata m = engine.getTableMetadata(token)) {
+            predicate = m.getExpiryPredicate();
+        }
+        final boolean isWorkDone;
+        try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+            isWorkDone = job.cleanupTable(token, predicate);
+        }
+        drainWalAndMatViewQueues();
+        return isWorkDone;
     }
 
     private void assertCachedPlanCompiledDuringPolicyChange(
