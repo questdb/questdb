@@ -179,6 +179,10 @@ public final class ParquetIndexSeal {
 
         final int coverCount = coveredNames.size();
         final IntList groupFirstKeys = new IntList();
+        // Flat per-key start offsets for every group, back to back, plus the
+        // per-group entry counts that say where to cut it.
+        final IntList keyDirEntries = new IntList();
+        final IntList groupKeyDirCounts = new IntList();
         final LongList groupRowCounts = new LongList();
         final LongList groupRowIdMaxs = new LongList();
         final LongList groupRowIdMins = new LongList();
@@ -214,7 +218,8 @@ public final class ParquetIndexSeal {
             );
             planRowGroups(
                     keyIdsAddr, rowIdsAddr, rowCount,
-                    groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs
+                    groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs,
+                    keyDirEntries, groupKeyDirCounts
             );
             imFileSize = writeIndexArtifacts(
                     configuration, ff, path, plen, indexColumnName, indexTxn, keySpaceSize,
@@ -222,6 +227,7 @@ public final class ParquetIndexSeal {
                     coveredNames, coveredTypes, coveredWriterIndices,
                     sortedCoverAddrs, sortedCoverSizes,
                     groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs,
+                    keyDirEntries, groupKeyDirCounts,
                     dataRowGroupBoundaries
             );
         } finally {
@@ -285,7 +291,9 @@ public final class ParquetIndexSeal {
             IntList groupFirstKeys,
             LongList groupRowCounts,
             LongList groupRowIdMins,
-            LongList groupRowIdMaxs
+            LongList groupRowIdMaxs,
+            IntList keyDirEntries,
+            IntList groupKeyDirCounts
     ) {
         long min = Long.MAX_VALUE;
         long max = Long.MIN_VALUE;
@@ -298,10 +306,52 @@ public final class ParquetIndexSeal {
                 max = rowId;
             }
         }
-        groupFirstKeys.add(Unsafe.getInt(keyIdsAddr + lo * Integer.BYTES));
+        final int firstKey = Unsafe.getInt(keyIdsAddr + lo * Integer.BYTES);
+        groupFirstKeys.add(firstKey);
         groupRowCounts.add(hi - lo);
         groupRowIdMins.add(min);
         groupRowIdMaxs.add(max);
+        appendKeyDirectory(keyIdsAddr, lo, hi, firstKey, keyDirEntries, groupKeyDirCounts);
+    }
+
+    /**
+     * Appends this group's key directory: the start offset within the group of
+     * every key id from {@code firstKey} up to the largest it holds, then the
+     * group's row count as a terminator, so key {@code k} occupies
+     * {@code [d[k - firstKey], d[k - firstKey + 1])}.
+     * <p>
+     * A key id in that span that the group does not hold gets the same offset
+     * as the next one that follows it, so its range is empty and it reads as
+     * absent - which is what the sparse key space needs, since occupancy has
+     * gaps.
+     * <p>
+     * This is what lets a reader resolve a key's rows from {@code _im} alone.
+     * Format version 3 had no directory, so the reader decoded the group's
+     * whole {@code key_id} column and binary searched it, once per key
+     * looked up: 2.7 ms on a 100k-row group, paid per key rather than per row
+     * returned.
+     */
+    private static void appendKeyDirectory(
+            long keyIdsAddr,
+            long lo,
+            long hi,
+            int firstKey,
+            IntList keyDirEntries,
+            IntList groupKeyDirCounts
+    ) {
+        final int before = keyDirEntries.size();
+        int expected = firstKey;
+        for (long i = lo; i < hi; i++) {
+            final int key = Unsafe.getInt(keyIdsAddr + i * Integer.BYTES);
+            // The group is key-major, so a key's rows are one contiguous run
+            // and this fires once per distinct key, in ascending order.
+            while (expected <= key) {
+                keyDirEntries.add((int) (i - lo));
+                expected++;
+            }
+        }
+        keyDirEntries.add((int) (hi - lo));
+        groupKeyDirCounts.add(keyDirEntries.size() - before);
     }
 
     private static long drainStreamedRowGroups(FilesFacade ff, long fd, long writerPtr, long fileOffset, LPSZ fileName) {
@@ -332,7 +382,9 @@ public final class ParquetIndexSeal {
             IntList groupFirstKeys,
             LongList groupRowCounts,
             LongList groupRowIdMins,
-            LongList groupRowIdMaxs
+            LongList groupRowIdMaxs,
+            IntList keyDirEntries,
+            IntList groupKeyDirCounts
     ) {
         long groupLo = 0;
         long keyLo = 0;
@@ -345,7 +397,7 @@ public final class ParquetIndexSeal {
             // Adding this key would overflow the target, so close what is open
             // at the boundary that precedes it rather than inside it.
             if (groupLo < keyLo && keyHi - groupLo > TARGET_ROW_GROUP_ROWS) {
-                closeRowGroup(keyIdsAddr, rowIdsAddr, groupLo, keyLo, groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs);
+                closeRowGroup(keyIdsAddr, rowIdsAddr, groupLo, keyLo, groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs, keyDirEntries, groupKeyDirCounts);
                 groupLo = keyLo;
             }
             // A key of its own is larger than the target: give it consecutive
@@ -353,17 +405,17 @@ public final class ParquetIndexSeal {
             // key-alignment invariant permits.
             while (keyHi - groupLo > TARGET_ROW_GROUP_ROWS) {
                 final long splitHi = groupLo + TARGET_ROW_GROUP_ROWS;
-                closeRowGroup(keyIdsAddr, rowIdsAddr, groupLo, splitHi, groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs);
+                closeRowGroup(keyIdsAddr, rowIdsAddr, groupLo, splitHi, groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs, keyDirEntries, groupKeyDirCounts);
                 groupLo = splitHi;
             }
             if (keyHi - groupLo >= TARGET_ROW_GROUP_ROWS) {
-                closeRowGroup(keyIdsAddr, rowIdsAddr, groupLo, keyHi, groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs);
+                closeRowGroup(keyIdsAddr, rowIdsAddr, groupLo, keyHi, groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs, keyDirEntries, groupKeyDirCounts);
                 groupLo = keyHi;
             }
             keyLo = keyHi;
         }
         if (groupLo < rowCount) {
-            closeRowGroup(keyIdsAddr, rowIdsAddr, groupLo, rowCount, groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs);
+            closeRowGroup(keyIdsAddr, rowIdsAddr, groupLo, rowCount, groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs, keyDirEntries, groupKeyDirCounts);
         }
     }
 
@@ -526,6 +578,8 @@ public final class ParquetIndexSeal {
             LongList groupRowCounts,
             LongList groupRowIdMins,
             LongList groupRowIdMaxs,
+            IntList keyDirEntries,
+            IntList groupKeyDirCounts,
             LongList dataRowGroupBoundaries
     ) {
         final int coverCount = coveredNames.size();
@@ -597,7 +651,8 @@ public final class ParquetIndexSeal {
             }
             return writeIndexMeta(
                     ff, path, plen, indexColumnName, indexTxn, writerPtr, keySpaceSize,
-                    groupFirstKeys, groupRowIdMins, groupRowIdMaxs, dataRowGroupBoundaries
+                    groupFirstKeys, groupRowIdMins, groupRowIdMaxs,
+                    keyDirEntries, groupKeyDirCounts, dataRowGroupBoundaries
             );
         } finally {
             if (writerPtr != 0) {
@@ -628,6 +683,8 @@ public final class ParquetIndexSeal {
             IntList groupFirstKeys,
             LongList groupRowIdMins,
             LongList groupRowIdMaxs,
+            IntList keyDirEntries,
+            IntList groupKeyDirCounts,
             LongList dataRowGroupBoundaries
     ) {
         final int groupCount = groupFirstKeys.size();
@@ -640,17 +697,31 @@ public final class ParquetIndexSeal {
         final long firstKeysSize = (long) groupCount * Integer.BYTES;
         final long rowIdMaxsSize = (long) groupCount * Long.BYTES;
         final long rowIdMinsSize = (long) groupCount * Long.BYTES;
+        final long keyDirSize = (long) keyDirEntries.size() * Integer.BYTES;
+        final long keyDirCountsSize = (long) groupKeyDirCounts.size() * Integer.BYTES;
 
         long boundariesAddr = 0;
         long firstKeysAddr = 0;
         long rowIdMaxsAddr = 0;
         long rowIdMinsAddr = 0;
+        long keyDirAddr = 0;
+        long keyDirCountsAddr = 0;
         long resultPtr = 0;
         try {
             boundariesAddr = Unsafe.malloc(boundariesSize, MemoryTag.NATIVE_TABLE_WRITER);
             firstKeysAddr = Unsafe.malloc(firstKeysSize, MemoryTag.NATIVE_TABLE_WRITER);
             rowIdMaxsAddr = Unsafe.malloc(rowIdMaxsSize, MemoryTag.NATIVE_TABLE_WRITER);
             rowIdMinsAddr = Unsafe.malloc(rowIdMinsSize, MemoryTag.NATIVE_TABLE_WRITER);
+            keyDirCountsAddr = Unsafe.malloc(keyDirCountsSize, MemoryTag.NATIVE_TABLE_WRITER);
+            if (keyDirSize > 0) {
+                keyDirAddr = Unsafe.malloc(keyDirSize, MemoryTag.NATIVE_TABLE_WRITER);
+                for (int i = 0, n = keyDirEntries.size(); i < n; i++) {
+                    Unsafe.putInt(keyDirAddr + (long) i * Integer.BYTES, keyDirEntries.getQuick(i));
+                }
+            }
+            for (int i = 0, n = groupKeyDirCounts.size(); i < n; i++) {
+                Unsafe.putInt(keyDirCountsAddr + (long) i * Integer.BYTES, groupKeyDirCounts.getQuick(i));
+            }
             for (int i = 0; i < groupCount; i++) {
                 Unsafe.putInt(firstKeysAddr + (long) i * Integer.BYTES, groupFirstKeys.getQuick(i));
                 Unsafe.putLong(rowIdMinsAddr + (long) i * Long.BYTES, groupRowIdMins.getQuick(i));
@@ -666,6 +737,8 @@ public final class ParquetIndexSeal {
                     rowIdMinsAddr, rowIdMinsSize,
                     rowIdMaxsAddr, rowIdMaxsSize,
                     boundariesAddr, boundariesSize,
+                    keyDirAddr, keyDirSize,
+                    keyDirCountsAddr, keyDirCountsSize,
                     groupCount,
                     keySpaceSize,
                     KEY_ID_COLUMN,
@@ -695,6 +768,8 @@ public final class ParquetIndexSeal {
             if (resultPtr != 0) {
                 IndexMetaFileWriter.destroyResult(resultPtr);
             }
+            freeIfSet(keyDirCountsAddr, keyDirCountsSize);
+            freeIfSet(keyDirAddr, keyDirSize);
             freeIfSet(rowIdMinsAddr, rowIdMinsSize);
             freeIfSet(rowIdMaxsAddr, rowIdMaxsSize);
             freeIfSet(firstKeysAddr, firstKeysSize);

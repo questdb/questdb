@@ -140,7 +140,7 @@ outside the purge window while it can still reach the superseded artifacts.
 | 0 | 8 | `IM_FILE_SIZE` | u64 | total committed `_im` size; patched last by the writer and acting as the MVCC commit signal. **Not covered by the CRC.** `0` means "not yet committed" |
 | 8 | 8 | `IM_MAGIC` | u64 | `0x0300_5844_4942_4451` — the bytes `QDBIDX\0\x03`. Disambiguates `_im` from `_pm`, which carries `FEATURE_FLAGS` at this offset |
 | 16 | 8 | `FEATURE_FLAGS` | u64 | bits 0-31 optional (unknown bits may be ignored), bits 32-63 required (unknown bits must cause rejection) |
-| 24 | 4 | `FORMAT_VERSION` | u32 | `3` |
+| 24 | 4 | `FORMAT_VERSION` | u32 | `4` |
 | 28 | 4 | `PAYLOAD_KIND` | u32 | `0` = row-per-posting, `1` = row-per-key |
 | 32 | 4 | `COLUMN_COUNT` | u32 | columns in the index schema |
 | 36 | 4 | `INDEX_RG_COUNT` | u32 | row groups in `<col>.pidx.<indexTxn>.parquet` |
@@ -152,7 +152,8 @@ outside the purge window while it can still reach the superseded artifacts.
 | 64 | 8 | `PIDX_FOOTER_OFFSET` | u64 | byte offset in `<col>.pidx.<indexTxn>.parquet` where its parquet footer starts |
 | 72 | 4 | `PIDX_FOOTER_LENGTH` | u32 | length of that parquet footer in bytes |
 | 76 | 4 | `FIRST_COVER_COLUMN` | u32 | descriptor index of cover slot 0 — see "Cover slots" below |
-| 80 | 48 | `RESERVED` | | must be 0 |
+| 80 | 4 | `KEY_DIR_ENTRY_COUNT` | u32 | total `KEY_ROW_OFFSET` entries |
+| 84 | 44 | `RESERVED` | | must be 0 |
 
 The index parquet's committed size is derived, exactly as `_pm` derives the data parquet's:
 `pidx_file_size = PIDX_FOOTER_OFFSET + PIDX_FOOTER_LENGTH + 8` (4 bytes of footer length plus the
@@ -282,6 +283,8 @@ lie after the column descriptors and name strings, and the sections it implies m
 | `RG_ROW_ID_MIN` | `INDEX_RG_COUNT * 8` | i64 per row group: smallest row id present in it |
 | `RG_ROW_ID_MAX` | `INDEX_RG_COUNT * 8` | i64 per row group: largest row id present in it |
 | `DATA_RG_BOUNDARY` | `(DATA_RG_COUNT + 1) * 8` | i64: cumulative row counts of `data.parquet`'s row groups. First entry `0`, non-decreasing |
+| `RG_KEY_DIR_BASE` | `INDEX_RG_COUNT * 4` | u32: index into `KEY_ROW_OFFSET` of each row group's first directory entry |
+| `KEY_ROW_OFFSET` | `KEY_DIR_ENTRY_COUNT * 4` | u32: per-key start offsets within the group, terminated by the group's row count |
 | `CHECKSUM` | 4 | CRC32 over bytes `[8, CHECKSUM)` — everything after `IM_FILE_SIZE` |
 
 ### Redundancy is deliberate
@@ -478,7 +481,29 @@ enforces them would reject files the others accept:
 - `PIDX_FOOTER_OFFSET` / `PIDX_FOOTER_LENGTH`. The writer requires them non-zero; a reader takes them
   as given.
 
-Slack between the end of `DATA_RG_BOUNDARY` and the CRC is permitted — readers bound the sections with
+## The key directory (v4)
+
+A row group is key-major, so a key's postings are one contiguous run inside it.
+`KEY_ROW_OFFSET` records where each run starts: for row group `g`, entries
+`[RG_KEY_DIR_BASE[g], RG_KEY_DIR_BASE[g+1])` cover key ids from
+`RG_FIRST_KEY[g]` upwards, and key `k` occupies
+`[d[k - RG_FIRST_KEY[g]], d[k - RG_FIRST_KEY[g] + 1])`. The last entry of each
+group is the group's row count, so the final key has an upper bound. A key id in
+the span that the group does not hold repeats its successor's offset, giving an
+empty range — the key space is sparse, so those gaps are normal. The last
+group's directory length comes from `KEY_DIR_ENTRY_COUNT`, since it has no
+successor to bound it.
+
+**Why it exists.** v3 had no directory, so a reader resolved a key's rows by
+decoding the group's whole `key_id` column and binary searching it. That is a
+linear decode whose cost is set by the group's size, paid once per key looked
+up: measured at 2.72 ms for a 100k-row group against 0.32 ms for a 10k-row one.
+Read cost therefore scaled with the number of distinct keys a query touched
+rather than with the rows it returned. **v3 files are rejected, not
+read** — the feature is off by default and unreleased, so no deployed data
+carries the old layout, and a fallback would have kept the slow path alive.
+
+Slack between the end of the last section and the CRC is permitted — readers bound the sections with
 `sections_end <= crc_offset`, not equality.
 
 ## Validation the writer performs

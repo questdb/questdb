@@ -54,10 +54,10 @@ pub const IM_HEADER_SIZE: usize = 128;
 /// Size of the header's `RESERVED` area, which the writer zero-fills. A reader
 /// must **not** reject a non-zero value: the spec lets a later writer spend
 /// these bytes without a version bump, provided zero means "absent".
-pub const IM_HEADER_RESERVED_SIZE: usize = 48;
+pub const IM_HEADER_RESERVED_SIZE: usize = 44;
 /// Current `_im` format version. Versions 1 and 2 are not readable; see the
 /// spec's "Versioning" section.
-pub const IM_FORMAT_VERSION: u32 = 3;
+pub const IM_FORMAT_VERSION: u32 = 4;
 /// `_im` magic at offset 8: the bytes `QDBIDX\0\x03`. It disambiguates `_im`
 /// from `_pm`, which carries `FEATURE_FLAGS` at the same offset.
 pub const IM_MAGIC: u64 = 0x0300_5844_4942_4451;
@@ -91,7 +91,12 @@ const OFF_INDEX_SECTIONS_OFFSET: usize = 56;
 const OFF_PIDX_FOOTER_OFFSET: usize = 64;
 const OFF_PIDX_FOOTER_LENGTH: usize = 72;
 const OFF_FIRST_COVER_COLUMN: usize = 76;
-const OFF_RESERVED: usize = 80;
+/// Total `KEY_ROW_OFFSET` entries, taken from the reserved area at format
+/// version 4. The per-group directories are variable length, so neither the
+/// section's size nor the last group's extent is derivable from the counts
+/// already in the header.
+const OFF_KEY_DIR_ENTRY_COUNT: usize = 80;
+const OFF_RESERVED: usize = 84;
 
 /// Field offsets inside `_pm`'s 32-byte column descriptor, used to bound the
 /// name strings without materialising a descriptor before the layout has been
@@ -123,6 +128,13 @@ struct IndexRowGroup {
     first_key: u32,
     row_id_min: i64,
     row_id_max: i64,
+    /// Start offset within this group of every key id from `first_key`
+    /// upwards, terminated by the group's row count, so key `k` occupies
+    /// `[d[k - first_key], d[k - first_key + 1])`. Format version 4 carries
+    /// this so a reader resolves a key's rows from metadata; version 3 made it
+    /// decode the group's whole `key_id` column and binary search it, which
+    /// cost 2.7 ms per lookup on a 100k-row group.
+    key_row_offsets: Vec<u32>,
     block: RowGroupBlockBuilder,
 }
 
@@ -212,12 +224,14 @@ impl IndexMetaWriter {
         first_key: u32,
         row_id_min: i64,
         row_id_max: i64,
+        key_row_offsets: &[u32],
         block: RowGroupBlockBuilder,
     ) -> &mut Self {
         self.row_groups.push(IndexRowGroup {
             first_key,
             row_id_min,
             row_id_max,
+            key_row_offsets: key_row_offsets.to_vec(),
             block,
         });
         self
@@ -636,6 +650,14 @@ impl IndexMetaWriter {
         buf.extend_from_slice(&self.pidx_footer_offset.to_le_bytes());
         buf.extend_from_slice(&self.pidx_footer_length.to_le_bytes());
         buf.extend_from_slice(&self.first_cover_column.to_le_bytes());
+        let key_dir_entry_count: usize = self.row_groups.iter().map(|rg| rg.key_row_offsets.len()).sum();
+        let key_dir_entry_count = u32::try_from(key_dir_entry_count).map_err(|_| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "key directory exceeds the u32 entry range"
+            )
+        })?;
+        buf.extend_from_slice(&key_dir_entry_count.to_le_bytes());
         // RESERVED, zero-filled: the spec lets a later writer spend these bytes
         // without a version bump, provided zero means "absent".
         debug_assert_eq!(buf.len(), OFF_RESERVED);
@@ -717,6 +739,30 @@ impl IndexMetaWriter {
         for boundary in &self.data_boundaries {
             buf.extend_from_slice(&boundary.to_le_bytes());
         }
+        // RG_KEY_DIR_BASE, then KEY_ROW_OFFSET. A group's directory covers the
+        // key ids it actually holds, not its whole key span, so its length is
+        // not derivable from RG_FIRST_KEY alone -- consecutive bases give it,
+        // and the section length gives the last group's.
+        align_to_8(&mut buf);
+        let mut base = 0u32;
+        for rg in &self.row_groups {
+            buf.extend_from_slice(&base.to_le_bytes());
+            base = base
+                .checked_add(rg.key_row_offsets.len() as u32)
+                .ok_or_else(|| {
+                    parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "key directory exceeds the u32 entry range"
+                    )
+                })?;
+        }
+        align_to_8(&mut buf);
+        for rg in &self.row_groups {
+            for offset in &rg.key_row_offsets {
+                buf.extend_from_slice(&offset.to_le_bytes());
+            }
+        }
+        align_to_8(&mut buf);
 
         let crc_end = buf.len();
         buf.extend_from_slice(&0u32.to_le_bytes());
@@ -772,6 +818,9 @@ pub struct IndexMetaReader<'a> {
     rg_row_id_min_off: usize,
     rg_row_id_max_off: usize,
     data_boundary_off: usize,
+    rg_key_dir_base_off: usize,
+    key_row_offset_off: usize,
+    key_dir_entry_count: usize,
 }
 
 impl<'a> IndexMetaReader<'a> {
@@ -917,9 +966,25 @@ impl<'a> IndexMetaReader<'a> {
         let boundary_bytes = data_rg_count
             .checked_add(1)
             .and_then(|n| n.checked_mul(8))
+            .and_then(aligned_footprint)
             .ok_or_else(truncated)?;
-        let sections_end = data_boundary_off
+        let rg_key_dir_base_off = data_boundary_off
             .checked_add(boundary_bytes)
+            .ok_or_else(truncated)?;
+        let key_dir_base_bytes = index_rg_count
+            .checked_mul(4)
+            .and_then(aligned_footprint)
+            .ok_or_else(truncated)?;
+        let key_row_offset_off = rg_key_dir_base_off
+            .checked_add(key_dir_base_bytes)
+            .ok_or_else(truncated)?;
+        let key_dir_entry_count = read_u32(data, OFF_KEY_DIR_ENTRY_COUNT) as usize;
+        let key_dir_bytes = key_dir_entry_count
+            .checked_mul(4)
+            .and_then(aligned_footprint)
+            .ok_or_else(truncated)?;
+        let sections_end = key_row_offset_off
+            .checked_add(key_dir_bytes)
             .ok_or_else(truncated)?;
         // Slack between the end of DATA_RG_BOUNDARY and the CRC is permitted,
         // so this is `<=` and not equality: a writer may pad, and a reader that
@@ -1077,6 +1142,9 @@ impl<'a> IndexMetaReader<'a> {
             rg_row_id_min_off,
             rg_row_id_max_off,
             data_boundary_off,
+            rg_key_dir_base_off,
+            key_row_offset_off,
+            key_dir_entry_count,
         })
     }
 
@@ -1122,6 +1190,42 @@ impl<'a> IndexMetaReader<'a> {
     /// `keyCountIncludingNulls`, **not** a count of distinct keys present.
     /// Occupancy is sparse: a partition holding keys `{5, 900, 12_000}` has a
     /// key space of at least `12_001`.
+    /// Row range `[lo, hi)` within `row_group` holding `key`, or `None` when
+    /// the group does not hold it.
+    ///
+    /// Format version 4's replacement for decoding the group's whole `key_id`
+    /// column and binary searching it. A group's directory covers only the key
+    /// ids it actually holds, so its length comes from the next group's base -
+    /// or, for the last group, from `KEY_DIR_ENTRY_COUNT`.
+    pub fn key_row_range(&self, row_group: usize, key: u32) -> Option<(u32, u32)> {
+        if row_group >= self.index_rg_count {
+            return None;
+        }
+        let first_key = match self.row_group_first_key(row_group) {
+            Ok(k) => k,
+            Err(_) => return None,
+        };
+        if key < first_key {
+            return None;
+        }
+        let base = read_u32(self.data, self.rg_key_dir_base_off + row_group * 4) as usize;
+        let end = if row_group + 1 < self.index_rg_count {
+            read_u32(self.data, self.rg_key_dir_base_off + (row_group + 1) * 4) as usize
+        } else {
+            self.key_dir_entry_count
+        };
+        let idx = (key - first_key) as usize;
+        // The terminator is the last entry, so a key needs idx and idx+1 both
+        // inside the group's slice.
+        if base + idx + 1 >= end {
+            return None;
+        }
+        let at = self.key_row_offset_off + (base + idx) * 4;
+        let lo = read_u32(self.data, at);
+        let hi = read_u32(self.data, at + 4);
+        if lo >= hi { None } else { Some((lo, hi)) }
+    }
+
     pub fn key_space_size(&self) -> u32 {
         self.key_space_size
     }
@@ -1528,7 +1632,7 @@ mod tests {
     // Absolute layout of `build_sample`, pinned by
     // `test_absolute_byte_layout_with_padded_name_section` so the crafted
     // offsets below keep addressing what they are meant to address.
-    const SAMPLE_FILE_LEN: usize = 1_180;
+    const SAMPLE_FILE_LEN: usize = 1_196;
     const SAMPLE_SECTIONS_OFF: usize = 1_048;
     const SAMPLE_NAMES_OFF: usize = IM_HEADER_SIZE + 3 * COLUMN_DESCRIPTOR_SIZE;
     const SAMPLE_BLOCK_0_OFF: usize = 248;
@@ -1541,7 +1645,7 @@ mod tests {
     // `test_two_block_out_of_line_sample_layout`.
     const TWO_BLOCK_0_OFF: usize = 240;
     const TWO_BLOCK_1_OFF: usize = TWO_BLOCK_0_OFF + TWO_BLOCK_SIZE;
-    const TWO_BLOCK_FILE_LEN: usize = 780;
+    const TWO_BLOCK_FILE_LEN: usize = 788;
     const TWO_BLOCK_MAX_FILL: [u8; 2] = [0xEE, 0xDD];
     const TWO_BLOCK_MIN_FILL: [u8; 2] = [0x11, 0x22];
     /// Out-of-line region of each block: a 16-byte min followed by a 16-byte
@@ -1655,7 +1759,7 @@ mod tests {
             price.max_stat = 900 + i as u64;
             block.set_column_chunk(2, price).unwrap();
 
-            w.add_row_group(*first_key, *row_min, *row_max, block);
+            w.add_row_group(*first_key, *row_min, *row_max, &[], block);
         }
         w.set_data_row_group_boundaries(&[0, 500_000, 1_000_000]);
         w
@@ -1696,7 +1800,7 @@ mod tests {
                 .set_column_chunk(1, row_id_chunk(row_min, row_max, 100))
                 .unwrap();
             block.set_column_chunk(2, ColumnChunkRaw::zeroed()).unwrap();
-            w.add_row_group(*first_key, row_min, row_max, block);
+            w.add_row_group(*first_key, row_min, row_max, &[], block);
         }
         w.set_data_row_group_boundaries(&[0, 150, 300]);
         w.finish().unwrap()
@@ -1742,7 +1846,7 @@ mod tests {
             block
                 .add_out_of_line_stat(2, false, &[TWO_BLOCK_MAX_FILL[i]; 16])
                 .unwrap();
-            w.add_row_group(*first_key, row_min, row_max, block);
+            w.add_row_group(*first_key, row_min, row_max, &[], block);
         }
         w.set_data_row_group_boundaries(&[0, 128]);
         w.finish().unwrap()
@@ -1761,7 +1865,7 @@ mod tests {
             block
                 .set_column_chunk(0, key_id_chunk(*first_key, *first_key, 8))
                 .unwrap();
-            w.add_row_group(*first_key, i as i64 * 1_000, i as i64 * 1_000 + 999, block);
+            w.add_row_group(*first_key, i as i64 * 1_000, i as i64 * 1_000 + 999, &[], block);
         }
         w.set_data_row_group_boundaries(&[0, 2_000]);
         w.finish().unwrap()
@@ -1777,6 +1881,50 @@ mod tests {
         w.add_column("row_id", descriptor(-1, TYPE_LONG));
         w.set_data_row_group_boundaries(&[0, 200]);
         w
+    }
+
+    #[test]
+    fn test_key_row_directory_round_trips() {
+        // Two groups. Group 0 holds keys 3..=5, group 1 holds keys 10..=11.
+        // Directories are per-group cumulative starts, terminated by the
+        // group's row count.
+        let mut w = IndexMetaWriter::new(IM_PAYLOAD_ROW_PER_POSTING, 20, 0, 1, 2);
+        w.set_pidx_footer(8_192, 256);
+        w.add_column("key_id", descriptor(-1, TYPE_INT));
+        w.add_column("row_id", descriptor(-1, TYPE_LONG));
+        w.set_data_row_group_boundaries(&[0, 100]);
+        // key 3 -> [0,10), key 4 -> [10,10) absent, key 5 -> [10,30)
+        let mut b0 = RowGroupBlockBuilder::new(2);
+        b0.set_num_rows(30);
+        b0.set_column_chunk(0, key_id_chunk(3, 5, 30)).unwrap();
+        b0.set_column_chunk(1, row_id_chunk(0, 29, 30)).unwrap();
+        w.add_row_group(3, 0, 29, &[0, 10, 10, 30], b0);
+        // key 10 -> [0,5), key 11 -> [5,12)
+        let mut b1 = RowGroupBlockBuilder::new(2);
+        b1.set_num_rows(12);
+        b1.set_column_chunk(0, key_id_chunk(10, 11, 12)).unwrap();
+        b1.set_column_chunk(1, row_id_chunk(30, 41, 12)).unwrap();
+        w.add_row_group(10, 30, 41, &[0, 5, 12], b1);
+        let bytes = w.finish().unwrap();
+        let r = IndexMetaReader::new(&bytes).unwrap();
+
+        assert_eq!(r.key_row_range(0, 3), Some((0, 10)));
+        // lo == hi means the group's key span covers it but it holds no row.
+        assert_eq!(r.key_row_range(0, 4), None);
+        assert_eq!(r.key_row_range(0, 5), Some((10, 30)));
+        // Past the group's own directory, even though the key exists elsewhere.
+        assert_eq!(r.key_row_range(0, 10), None);
+        // Below the group's first key.
+        assert_eq!(r.key_row_range(0, 2), None);
+
+        assert_eq!(r.key_row_range(1, 10), Some((0, 5)));
+        assert_eq!(r.key_row_range(1, 11), Some((5, 12)));
+        assert_eq!(r.key_row_range(1, 12), None);
+
+        assert_eq!(r.key_row_range(2, 3), None); // no such row group
+        // The last group's directory length comes from the header count, not
+        // from a following base.
+        assert_eq!(read_u32(&bytes, OFF_KEY_DIR_ENTRY_COUNT), 7);
     }
 
     fn minimal_block(first_key: u32, rows: u64) -> RowGroupBlockBuilder {
@@ -1965,7 +2113,7 @@ mod tests {
         block.set_num_rows(10);
         block.set_column_chunk(0, key_id_chunk(0, 0, 10)).unwrap();
         block.set_column_chunk(1, row_id_chunk(0, 9, 10)).unwrap();
-        w.add_row_group(0, 0, 9, block);
+        w.add_row_group(0, 0, 9, &[], block);
         w.set_data_row_group_boundaries(&[0, 10]);
         let bytes = w.finish().unwrap();
 
@@ -2073,7 +2221,7 @@ mod tests {
             block
                 .set_column_chunk(0, key_id_chunk(*first_key, *first_key, 8))
                 .unwrap();
-            w.add_row_group(*first_key, i as i64 * 1_000, i as i64 * 1_000 + 999, block);
+            w.add_row_group(*first_key, i as i64 * 1_000, i as i64 * 1_000 + 999, &[], block);
         }
         w.set_data_row_group_boundaries(&[0, 2_000]);
         let bytes = w.finish().unwrap();
@@ -2101,7 +2249,7 @@ mod tests {
         block
             .set_column_chunk(1, row_id_chunk(i64::MIN, -1, 4))
             .unwrap();
-        w.add_row_group(0, i64::MIN, -1, block);
+        w.add_row_group(0, i64::MIN, -1, &[], block);
         w.set_data_row_group_boundaries(&[0, 4]);
         let bytes = w.finish().unwrap();
 
@@ -2119,10 +2267,10 @@ mod tests {
     fn test_absolute_byte_layout_with_padded_name_section() {
         let bytes = build_sample();
         assert_eq!(bytes.len(), SAMPLE_FILE_LEN);
-        assert_eq!(read_u64(&bytes, 0), 1_180); // IM_FILE_SIZE
+        assert_eq!(read_u64(&bytes, 0), 1_196); // IM_FILE_SIZE
         assert_eq!(read_u64(&bytes, 8), IM_MAGIC);
         assert_eq!(read_u64(&bytes, 16), 0); // FEATURE_FLAGS
-        assert_eq!(read_u32(&bytes, 24), 3); // FORMAT_VERSION
+        assert_eq!(read_u32(&bytes, 24), 4); // FORMAT_VERSION
         assert_eq!(read_u32(&bytes, 28), 0); // PAYLOAD_KIND
         assert_eq!(read_u32(&bytes, 32), 3); // COLUMN_COUNT
         assert_eq!(read_u32(&bytes, 36), 4); // INDEX_RG_COUNT
@@ -2181,11 +2329,16 @@ mod tests {
         assert_eq!(read_u64(&bytes, 1_136) as i64, 240_000);
         assert_eq!(read_u64(&bytes, 1_144) as i64, 999_999);
 
-        // DATA_RG_BOUNDARY at 1152, CRC at 1176.
+        // DATA_RG_BOUNDARY at 1152, then RG_KEY_DIR_BASE at 1176 and an empty
+        // KEY_ROW_OFFSET, so the CRC sits at 1192.
         assert_eq!(read_u64(&bytes, 1_152) as i64, 0);
         assert_eq!(read_u64(&bytes, 1_160) as i64, 500_000);
         assert_eq!(read_u64(&bytes, 1_168) as i64, 1_000_000);
-        assert_eq!(read_u32(&bytes, 1_176), crc32fast::hash(&bytes[8..1_176]));
+        // This fixture adds no key directories, so every base is 0 and the
+        // header's entry count agrees.
+        assert_eq!(read_u32(&bytes, OFF_KEY_DIR_ENTRY_COUNT), 0);
+        assert_eq!(read_u32(&bytes, 1_176), 0);
+        assert_eq!(read_u32(&bytes, 1_192), crc32fast::hash(&bytes[8..1_192]));
     }
 
     /// The complementary alignment case: names are already 8-aligned, so the
@@ -2195,7 +2348,7 @@ mod tests {
     #[test]
     fn test_absolute_byte_layout_with_aligned_name_section() {
         let bytes = build_aligned_sample();
-        assert_eq!(bytes.len(), 948);
+        assert_eq!(bytes.len(), 964);
         assert_eq!(read_u32(&bytes, 36), 3); // INDEX_RG_COUNT
         assert_eq!(read_u64(&bytes, 56), 840); // INDEX_SECTIONS_OFFSET
 
@@ -2227,10 +2380,13 @@ mod tests {
         assert_eq!(read_u64(&bytes, 904) as i64, 199);
         assert_eq!(read_u64(&bytes, 912) as i64, 299);
 
-        // DATA_RG_BOUNDARY at 920, CRC at 944.
+        // DATA_RG_BOUNDARY at 920, then RG_KEY_DIR_BASE at 944 and an empty
+        // KEY_ROW_OFFSET, so the CRC sits at 960.
         assert_eq!(read_u64(&bytes, 920) as i64, 0);
         assert_eq!(read_u64(&bytes, 936) as i64, 300);
-        assert_eq!(read_u32(&bytes, 944), crc32fast::hash(&bytes[8..944]));
+        assert_eq!(read_u32(&bytes, OFF_KEY_DIR_ENTRY_COUNT), 0);
+        assert_eq!(read_u32(&bytes, 944), 0);
+        assert_eq!(read_u32(&bytes, 960), crc32fast::hash(&bytes[8..960]));
 
         let r = IndexMetaReader::new(&bytes).unwrap();
         assert_eq!(r.index_sections_offset(), 840);
@@ -2283,7 +2439,7 @@ mod tests {
             block
                 .set_column_chunk(1, row_id_chunk(row_min, row_max, 10))
                 .unwrap();
-            w.add_row_group(*key, row_min, row_max, block);
+            w.add_row_group(*key, row_min, row_max, &[], block);
         }
         w.set_data_row_group_boundaries(&[0, 30]);
         let bytes = w.finish().unwrap();
@@ -2329,7 +2485,7 @@ mod tests {
             block
                 .set_column_chunk(1, row_id_chunk(i as i64 * 10, i as i64 * 10 + 9, 10))
                 .unwrap();
-            w.add_row_group(*key, i as i64 * 10, i as i64 * 10 + 9, block);
+            w.add_row_group(*key, i as i64 * 10, i as i64 * 10 + 9, &[], block);
         }
         w.set_data_row_group_boundaries(&[0, 30]);
         let err = w.finish().unwrap_err();
@@ -2343,8 +2499,8 @@ mod tests {
     #[test]
     fn test_key_below_first_entry_is_absent() {
         let mut w = minimal_writer();
-        w.add_row_group(5, 0, 99, minimal_block(5, 10));
-        w.add_row_group(9, 0, 99, minimal_block(9, 10));
+        w.add_row_group(5, 0, 99, &[], minimal_block(5, 10));
+        w.add_row_group(9, 0, 99, &[], minimal_block(9, 10));
         let bytes = w.finish().unwrap();
 
         let r = IndexMetaReader::new(&bytes).unwrap();
@@ -2370,8 +2526,8 @@ mod tests {
     #[test]
     fn test_key_search_never_reads_the_first_key_sentinel() {
         let mut w = minimal_writer();
-        w.add_row_group(5, 0, 99, minimal_block(5, 10));
-        w.add_row_group(9, 0, 99, minimal_block(9, 10));
+        w.add_row_group(5, 0, 99, &[], minimal_block(5, 10));
+        w.add_row_group(9, 0, 99, &[], minimal_block(9, 10));
         let mut bytes = w.finish().unwrap();
 
         // RG_FIRST_KEY follows RG_BLOCK_OFFSET, whose footprint is padded up
@@ -2451,7 +2607,7 @@ mod tests {
         block.set_column_chunk(2, uid).unwrap();
         block.add_out_of_line_stat(2, true, &min_uuid).unwrap();
         block.add_out_of_line_stat(2, false, &max_uuid).unwrap();
-        w.add_row_group(7, 0, 63, block);
+        w.add_row_group(7, 0, 63, &[], block);
         w.set_data_row_group_boundaries(&[0, 64]);
         let bytes = w.finish().unwrap();
 
@@ -2477,12 +2633,13 @@ mod tests {
         // Header 128, descriptors 96, names "key_idrow_iduid" padded 15 -> 16,
         // one block of 8 + 3 * 64 plus 32 out-of-line bytes, then the index
         // sections: RG_BLOCK_OFFSET 4 padded to 8, RG_FIRST_KEY 8,
-        // RG_ROW_ID_MIN 8, RG_ROW_ID_MAX 8, DATA_RG_BOUNDARY 16, CRC 4.
+        // RG_ROW_ID_MIN 8, RG_ROW_ID_MAX 8, DATA_RG_BOUNDARY 16,
+        // RG_KEY_DIR_BASE 4 padded to 8, KEY_ROW_OFFSET 0, CRC 4.
         assert_eq!(
             bytes.len(),
-            128 + 96 + 16 + (8 + 192 + 32) + 8 + 8 + 8 + 8 + 16 + 4
+            128 + 96 + 16 + (8 + 192 + 32) + 8 + 8 + 8 + 8 + 16 + 8 + 0 + 4
         );
-        assert_eq!(bytes.len(), 524);
+        assert_eq!(bytes.len(), 532);
     }
 
     /// A stat whose payload is over 8 bytes but not a whole number of them:
@@ -2511,7 +2668,7 @@ mod tests {
         block.set_column_chunk(2, txt).unwrap();
         block.add_out_of_line_stat(2, true, &min_bytes).unwrap();
         block.add_out_of_line_stat(2, false, &max_bytes).unwrap();
-        w.add_row_group(1, 0, 3, block);
+        w.add_row_group(1, 0, 3, &[], block);
         w.set_data_row_group_boundaries(&[0, 4]);
         let bytes = w.finish().unwrap();
 
@@ -2549,7 +2706,7 @@ mod tests {
             .0;
         uid.num_values = 64;
         block.set_column_chunk(2, uid).unwrap();
-        w.add_row_group(7, 0, 63, block);
+        w.add_row_group(7, 0, 63, &[], block);
         w.add_out_of_line_stat_to_last_row_group(2, true, &min_uuid)
             .unwrap();
         w.add_out_of_line_stat_to_last_row_group(2, false, &max_uuid)
@@ -2566,7 +2723,7 @@ mod tests {
         let max_off = (chunk.max_stat >> 16) as usize;
         assert_eq!(&ool[max_off..max_off + 16], &max_uuid);
         // Byte-identical to the block-patched fixture above.
-        assert_eq!(bytes.len(), 524);
+        assert_eq!(bytes.len(), 532);
     }
 
     /// Pins the fixture the crafted out-of-line references below patch, so a
@@ -2770,8 +2927,8 @@ mod tests {
     #[test]
     fn test_first_keys_must_be_non_decreasing() {
         let mut w = minimal_writer();
-        w.add_row_group(10, 0, 99, minimal_block(10, 5));
-        w.add_row_group(4, 0, 99, minimal_block(4, 5));
+        w.add_row_group(10, 0, 99, &[], minimal_block(10, 5));
+        w.add_row_group(4, 0, 99, &[], minimal_block(4, 5));
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(err.msg.contains("non-decreasing at index 1"), "{}", err.msg);
@@ -2780,8 +2937,8 @@ mod tests {
     #[test]
     fn test_last_first_key_must_be_below_key_space_size() {
         let mut w = minimal_writer();
-        w.add_row_group(0, 0, 99, minimal_block(0, 5));
-        w.add_row_group(100, 0, 99, minimal_block(100, 5));
+        w.add_row_group(0, 0, 99, &[], minimal_block(0, 5));
+        w.add_row_group(100, 0, 99, &[], minimal_block(100, 5));
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(
@@ -2821,7 +2978,7 @@ mod tests {
             price.encodings = EncodingMask::PLAIN;
             price.num_values = 100;
             block.set_column_chunk(2, price).unwrap();
-            w.add_row_group(first_key, row_min, row_max, block);
+            w.add_row_group(first_key, row_min, row_max, &[], block);
         }
         w.set_data_row_group_boundaries(&[0, 200]);
         let err = w.finish().unwrap_err();
@@ -2844,10 +3001,10 @@ mod tests {
     #[test]
     fn test_hot_key_over_consecutive_dedicated_row_groups_is_accepted() {
         let mut w = minimal_writer();
-        w.add_row_group(5, 0, 99, minimal_block(5, 10));
-        w.add_row_group(40, 0, 99, minimal_block(40, 10));
-        w.add_row_group(40, 0, 99, minimal_block(40, 10));
-        w.add_row_group(70, 0, 99, minimal_block(70, 10));
+        w.add_row_group(5, 0, 99, &[], minimal_block(5, 10));
+        w.add_row_group(40, 0, 99, &[], minimal_block(40, 10));
+        w.add_row_group(40, 0, 99, &[], minimal_block(40, 10));
+        w.add_row_group(70, 0, 99, &[], minimal_block(70, 10));
         let bytes = w
             .finish()
             .expect("a key spanning consecutive dedicated row groups is legal");
@@ -2873,15 +3030,15 @@ mod tests {
     #[test]
     fn test_shared_first_key_over_a_packed_row_group_is_rejected() {
         let mut w = minimal_writer();
-        w.add_row_group(5, 0, 99, minimal_block(5, 10));
+        w.add_row_group(5, 0, 99, &[], minimal_block(5, 10));
         // Row group 1 claims a dedicated run on key 40 and then holds 45 too.
         let mut packed = minimal_block(40, 10);
         packed
             .set_column_chunk(0, key_id_chunk(40, 45, 10))
             .unwrap();
-        w.add_row_group(40, 0, 99, packed);
-        w.add_row_group(40, 0, 99, minimal_block(40, 10));
-        w.add_row_group(45, 0, 99, minimal_block(45, 10));
+        w.add_row_group(40, 0, 99, &[], packed);
+        w.add_row_group(40, 0, 99, &[], minimal_block(40, 10));
+        w.add_row_group(45, 0, 99, &[], minimal_block(45, 10));
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(
@@ -2903,7 +3060,7 @@ mod tests {
         let mut w = minimal_writer();
         let mut block = minimal_block(5, 5);
         block.set_column_chunk(0, key_id_chunk(5, 100, 5)).unwrap();
-        w.add_row_group(5, 0, 99, block);
+        w.add_row_group(5, 0, 99, &[], block);
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(
@@ -2932,7 +3089,7 @@ mod tests {
         // The reference encodes as (offset 0 << 16) | length 16, which sorts
         // below the key space bound and would otherwise pass the check.
         assert_eq!(block.column_chunk_raw(0).max_stat, 16);
-        w.add_row_group(16, 0, 99, block);
+        w.add_row_group(16, 0, 99, &[], block);
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(
@@ -2948,7 +3105,7 @@ mod tests {
         let mut key_id = key_id_chunk(0, 0, 5);
         key_id.stat_flags = StatFlags::new().with_min(true, true).0;
         block.set_column_chunk(0, key_id).unwrap();
-        w.add_row_group(0, 0, 99, block);
+        w.add_row_group(0, 0, 99, &[], block);
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(
@@ -2966,7 +3123,7 @@ mod tests {
         // Directory says 3, the chunk stat says 4: the fast path and the slow
         // path would disagree.
         block.set_column_chunk(0, key_id_chunk(4, 4, 5)).unwrap();
-        w.add_row_group(3, 0, 99, block);
+        w.add_row_group(3, 0, 99, &[], block);
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(
@@ -2994,7 +3151,7 @@ mod tests {
         // The reference encodes as (offset 0 << 16) | length 16, which is the
         // collision the check has to catch.
         assert_eq!(block.column_chunk_raw(0).min_stat, 16);
-        w.add_row_group(16, 0, 99, block);
+        w.add_row_group(16, 0, 99, &[], block);
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(
@@ -3010,7 +3167,7 @@ mod tests {
         let mut key_id = key_id_chunk(0, 0, 5);
         key_id.stat_flags = StatFlags::new().with_max(true, true).0;
         block.set_column_chunk(0, key_id).unwrap();
-        w.add_row_group(0, 0, 99, block);
+        w.add_row_group(0, 0, 99, &[], block);
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(
@@ -3031,7 +3188,7 @@ mod tests {
         let mut w = minimal_writer();
         let mut block = minimal_block(0, 5);
         block.set_column_chunk(1, row_id_chunk(0, 150, 5)).unwrap();
-        w.add_row_group(0, 0, 99, block);
+        w.add_row_group(0, 0, 99, &[], block);
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(
@@ -3045,7 +3202,7 @@ mod tests {
         let mut w = minimal_writer();
         let mut block = minimal_block(0, 5);
         block.set_column_chunk(1, row_id_chunk(7, 99, 5)).unwrap();
-        w.add_row_group(0, 0, 99, block);
+        w.add_row_group(0, 0, 99, &[], block);
         let err = w.finish().unwrap_err();
         assert!(
             err.msg
@@ -3063,7 +3220,7 @@ mod tests {
         let mut row_id = row_id_chunk(0, 99, 5);
         row_id.stat_flags = StatFlags::new().0;
         block.set_column_chunk(1, row_id).unwrap();
-        w.add_row_group(0, 0, 99, block);
+        w.add_row_group(0, 0, 99, &[], block);
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(
@@ -3086,7 +3243,7 @@ mod tests {
             .0;
         block.set_column_chunk(1, row_id).unwrap();
         block.add_out_of_line_stat(1, false, &[0u8; 16]).unwrap();
-        w.add_row_group(0, 0, 16, block);
+        w.add_row_group(0, 0, 16, &[], block);
         let err = w.finish().unwrap_err();
         assert!(
             err.msg
@@ -3103,7 +3260,7 @@ mod tests {
         let mut block = RowGroupBlockBuilder::new(1);
         block.set_num_rows(5);
         block.set_column_chunk(0, key_id_chunk(0, 0, 5)).unwrap();
-        w.add_row_group(0, 0, 99, block);
+        w.add_row_group(0, 0, 99, &[], block);
         w.set_data_row_group_boundaries(&[0, 200]);
         assert!(w.finish().is_ok());
     }
@@ -3197,7 +3354,7 @@ mod tests {
     #[test]
     fn test_first_data_boundary_must_be_zero() {
         let mut w = minimal_writer();
-        w.add_row_group(0, 0, 99, minimal_block(0, 5));
+        w.add_row_group(0, 0, 99, &[], minimal_block(0, 5));
         w.set_data_row_group_boundaries(&[1, 200]);
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
@@ -3211,7 +3368,7 @@ mod tests {
     #[test]
     fn test_data_boundaries_must_be_non_decreasing() {
         let mut w = minimal_writer();
-        w.add_row_group(0, 0, 99, minimal_block(0, 5));
+        w.add_row_group(0, 0, 99, &[], minimal_block(0, 5));
         w.set_data_row_group_boundaries(&[0, 200, 150]);
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
@@ -3225,7 +3382,7 @@ mod tests {
         let mut block = RowGroupBlockBuilder::new(1);
         block.set_num_rows(5);
         block.set_column_chunk(0, key_id_chunk(0, 0, 5)).unwrap();
-        w.add_row_group(0, 0, 99, block);
+        w.add_row_group(0, 0, 99, &[], block);
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::SchemaMismatch));
         assert!(
@@ -3238,7 +3395,7 @@ mod tests {
     #[test]
     fn test_zero_row_block_is_rejected() {
         let mut w = minimal_writer();
-        w.add_row_group(0, 0, 99, minimal_block(0, 0));
+        w.add_row_group(0, 0, 99, &[], minimal_block(0, 0));
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(err.msg.contains("has zero rows"), "{}", err.msg);
@@ -3335,7 +3492,7 @@ mod tests {
             w.set_pidx_footer(1_024, 128);
             w.add_column("key_id", descriptor(-1, TYPE_INT));
             w.add_column("row_id", descriptor(-1, TYPE_LONG));
-            w.add_row_group(0, 0, 99, minimal_block(0, 5));
+            w.add_row_group(0, 0, 99, &[], minimal_block(0, 5));
             w.set_data_row_group_boundaries(&[0, 20]);
             let err = w.finish().unwrap_err();
             assert!(
@@ -3351,7 +3508,7 @@ mod tests {
 
         // The negative control: the same fixture under a known kind is written.
         let mut w = minimal_writer();
-        w.add_row_group(0, 0, 99, minimal_block(0, 5));
+        w.add_row_group(0, 0, 99, &[], minimal_block(0, 5));
         assert!(w.finish().is_ok());
     }
 
@@ -3366,7 +3523,7 @@ mod tests {
         w.set_pidx_footer(1_024, 128);
         w.add_column("key_id", descriptor(-1, TYPE_INT));
         w.add_column("row_id", descriptor(-1, TYPE_LONG));
-        w.add_row_group(0, 0, 99, minimal_block(0, 5));
+        w.add_row_group(0, 0, 99, &[], minimal_block(0, 5));
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
         assert!(err.msg.contains("boundaries not set"), "{}", err.msg);
@@ -3418,7 +3575,7 @@ mod tests {
         // inline min stat, so the cross-check against the chunk this selector
         // names passes and the bound under test is all that is left.
         block.set_column_chunk(2, key_id_chunk(4, 4, 5)).unwrap();
-        w.add_row_group(4, 0, 99, block);
+        w.add_row_group(4, 0, 99, &[], block);
         w.set_data_row_group_boundaries(&[0, 200]);
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
@@ -3447,7 +3604,7 @@ mod tests {
         block.set_column_chunk(0, key_id_chunk(4, 4, 5)).unwrap();
         block.set_column_chunk(1, row_id_chunk(0, 99, 5)).unwrap();
         block.set_column_chunk(2, row_id_chunk(0, 99, 5)).unwrap();
-        w.add_row_group(4, 0, 99, block);
+        w.add_row_group(4, 0, 99, &[], block);
         w.set_data_row_group_boundaries(&[0, 200]);
         let err = w.finish().unwrap_err();
         assert!(matches!(err.kind, ParquetMetaErrorKind::InvalidValue));
@@ -3603,14 +3760,16 @@ mod tests {
     #[test]
     fn test_version_mismatch_is_rejected() {
         let mut bytes = build_sample();
-        // Version 2 is an interim layout and is not readable.
-        patch_u32(&mut bytes, OFF_FORMAT_VERSION, 2);
+        // Versions 2 and 3 are superseded layouts and are not readable. 3 in
+        // particular carried no key directory, so a reader that accepted it
+        // would resolve every key as absent rather than fall back.
+        patch_u32(&mut bytes, OFF_FORMAT_VERSION, 3);
         let err = IndexMetaReader::new(&bytes).unwrap_err();
         assert!(matches!(
             err.kind,
             ParquetMetaErrorKind::VersionMismatch {
-                found: 2,
-                expected: 3
+                found: 3,
+                expected: 4
             }
         ));
     }

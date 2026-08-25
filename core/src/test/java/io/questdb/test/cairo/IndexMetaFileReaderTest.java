@@ -77,7 +77,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     // The number of cases the hostile sweep drives, pinned so a refactor that
     // silently stops enumerating one of the families fails rather than passing
     // with less coverage than the day it was written.
-    private static final int HOSTILE_CASE_COUNT = 7_633;
+    private static final int HOSTILE_CASE_COUNT = 7_721;
     private static final int HOSTILE_CHECKED_ADDRESS_MIN = 28_000;
     // Tally slots the sweep accumulates into: cases driven, cases the reader
     // bound to, and addresses the oracle bounded.
@@ -141,7 +141,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     private static final int TWO_BLOCK_1_OFF = 472;
     // The sections from 704: RG_BLOCK_OFFSET 8, RG_FIRST_KEY 12 padded to 16,
     // RG_ROW_ID_MIN 16, RG_ROW_ID_MAX 16, DATA_RG_BOUNDARY 16, CRC 4.
-    private static final int TWO_BLOCK_FILE_LEN = 780;
+    private static final int TWO_BLOCK_FILE_LEN = 788;
     private static final byte TWO_BLOCK_MAX_FILL_0 = (byte) 0xEE;
     private static final byte TWO_BLOCK_MAX_FILL_1 = (byte) 0xDD;
     private static final byte TWO_BLOCK_MIN_FILL_0 = 0x11;
@@ -175,7 +175,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     public void testAbsoluteByteLayoutWithAlignedNameSection() throws Exception {
         assertMemoryLeak(() -> withAlignedSample(reader -> {
             final long addr = reader.getAddr();
-            Assert.assertEquals(948, reader.getFileSize());
+            Assert.assertEquals(964, reader.getFileSize());
             Assert.assertEquals(3, Unsafe.getUnsafe().getInt(addr + 36)); // INDEX_RG_COUNT
             Assert.assertEquals(840, Unsafe.getUnsafe().getLong(addr + 56)); // INDEX_SECTIONS_OFFSET
             Assert.assertEquals(840, reader.getIndexSectionsOffset());
@@ -242,19 +242,21 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
      * 1088 RG_ROW_ID_MIN, 4 x 8 bytes
      * 1120 RG_ROW_ID_MAX, 4 x 8 bytes
      * 1152 DATA_RG_BOUNDARY, 3 x 8 bytes
-     * 1176 CRC32
-     * 1180 total
+     * 1176 RG_KEY_DIR_BASE, 4 x 4 bytes, already aligned
+     * 1192 KEY_ROW_OFFSET, empty in this fixture
+     * 1192 CRC32
+     * 1196 total
      * </pre>
      */
     @Test
     public void testAbsoluteByteLayoutWithPaddedNameSection() throws Exception {
         assertMemoryLeak(() -> withSample(reader -> {
             final long addr = reader.getAddr();
-            Assert.assertEquals(1_180, reader.getFileSize());
-            Assert.assertEquals(1_180, Unsafe.getUnsafe().getLong(addr)); // IM_FILE_SIZE
+            Assert.assertEquals(1_196, reader.getFileSize());
+            Assert.assertEquals(1_196, Unsafe.getUnsafe().getLong(addr)); // IM_FILE_SIZE
             Assert.assertEquals(0x0300_5844_4942_4451L, Unsafe.getUnsafe().getLong(addr + 8)); // IM_MAGIC
             Assert.assertEquals(0, Unsafe.getUnsafe().getLong(addr + 16)); // FEATURE_FLAGS
-            Assert.assertEquals(3, Unsafe.getUnsafe().getInt(addr + 24)); // FORMAT_VERSION
+            Assert.assertEquals(4, Unsafe.getUnsafe().getInt(addr + 24)); // FORMAT_VERSION
             Assert.assertEquals(0, Unsafe.getUnsafe().getInt(addr + 28)); // PAYLOAD_KIND
             Assert.assertEquals(3, Unsafe.getUnsafe().getInt(addr + 32)); // COLUMN_COUNT
             Assert.assertEquals(4, Unsafe.getUnsafe().getInt(addr + 36)); // INDEX_RG_COUNT
@@ -320,11 +322,14 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             Assert.assertEquals(240_000, Unsafe.getUnsafe().getLong(addr + 1_136));
             Assert.assertEquals(999_999, Unsafe.getUnsafe().getLong(addr + 1_144));
 
-            // DATA_RG_BOUNDARY at 1152, CRC at 1176.
+            // DATA_RG_BOUNDARY at 1152, then RG_KEY_DIR_BASE at 1176 and an
+            // empty KEY_ROW_OFFSET, so the CRC sits at 1192.
             Assert.assertEquals(0, Unsafe.getUnsafe().getLong(addr + 1_152));
             Assert.assertEquals(500_000, Unsafe.getUnsafe().getLong(addr + 1_160));
             Assert.assertEquals(1_000_000, Unsafe.getUnsafe().getLong(addr + 1_168));
-            Assert.assertEquals(Zip.crc32(0, addr + 8, 1_168), Unsafe.getUnsafe().getInt(addr + 1_176));
+            Assert.assertEquals(0, Unsafe.getUnsafe().getInt(addr + 80)); // KEY_DIR_ENTRY_COUNT
+            Assert.assertEquals(0, Unsafe.getUnsafe().getInt(addr + 1_176)); // RG_KEY_DIR_BASE[0]
+            Assert.assertEquals(Zip.crc32(0, addr + 8, 1_184), Unsafe.getUnsafe().getInt(addr + 1_192));
 
             // The reader must land on the same bytes it was pinned against.
             Assert.assertEquals(759_999, reader.getRowGroupNumRows(3));
@@ -360,7 +365,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                     // One chunk more than the buffer holds: the third chunk
                     // would come from past the end of the allocation.
                     try {
-                        IndexMetaFileWriter.addRowGroup(writerPtr, 7, 0, 63, 64, chunksPtr, chunksSize, 3);
+                        IndexMetaFileWriter.addRowGroup(writerPtr, 7, 0, 63, 64, chunksPtr, chunksSize, 3, 0, 0);
                         Assert.fail("expected CairoException from the chunk buffer length check");
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "column chunk buffer length");
@@ -368,21 +373,21 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                     // A buffer longer than the count claims is a mismatch too:
                     // it means the two sides disagree about the layout.
                     try {
-                        IndexMetaFileWriter.addRowGroup(writerPtr, 7, 0, 63, 64, chunksPtr, chunksSize, 1);
+                        IndexMetaFileWriter.addRowGroup(writerPtr, 7, 0, 63, 64, chunksPtr, chunksSize, 1, 0, 0);
                         Assert.fail("expected CairoException from the chunk buffer length check");
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "column chunk buffer length");
                     }
                     // The negative count guard still comes first.
                     try {
-                        IndexMetaFileWriter.addRowGroup(writerPtr, 7, 0, 63, 64, chunksPtr, chunksSize, -1);
+                        IndexMetaFileWriter.addRowGroup(writerPtr, 7, 0, 63, 64, chunksPtr, chunksSize, -1, 0, 0);
                         Assert.fail("expected CairoException from the negative count check");
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "count is negative");
                     }
                     // The matching length is accepted, and the row group it
                     // builds still produces a readable file.
-                    IndexMetaFileWriter.addRowGroup(writerPtr, 7, 0, 63, 64, chunksPtr, chunksSize, 2);
+                    IndexMetaFileWriter.addRowGroup(writerPtr, 7, 0, 63, 64, chunksPtr, chunksSize, 2, 0, 0);
                 } finally {
                     Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
                 }
@@ -883,7 +888,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     public void testIndexSectionsOffsetLeavingNoRoomIsRejected() throws Exception {
         assertMemoryLeak(() -> {
             // At the CRC.
-            assertOpenRejected(56, 1_176L, Long.BYTES, "_im sections do not fit");
+            assertOpenRejected(56, 1_192L, Long.BYTES, "_im sections do not fit");
             // 8 bytes short of the 128 the five sections occupy.
             assertOpenRejected(56, 1_056L, Long.BYTES, "_im sections do not fit");
             // Past the committed size entirely.
@@ -1198,7 +1203,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                 // The same buffer at its real length still binds.
                 reader.ofAddress(dataPtr, dataLen);
                 Assert.assertTrue(reader.isOpen());
-                Assert.assertEquals(1_180, reader.getFileSize());
+                Assert.assertEquals(1_196, reader.getFileSize());
             }
         }));
     }
@@ -1298,7 +1303,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                 try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
                     Assert.assertNotEquals(0L, IndexMetaFileReader.openAndMapRO(ff, path.$(), reader));
                     Assert.assertTrue(reader.isOpen());
-                    Assert.assertEquals(1_180, reader.getFileSize());
+                    Assert.assertEquals(1_196, reader.getFileSize());
                     Assert.assertEquals(1_048, reader.getIndexSectionsOffset());
                     Assert.assertEquals(0, reader.getPayloadKind());
                     Assert.assertEquals(3, reader.getColumnCount());
@@ -1551,7 +1556,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             // one block of 8 + 3 * 64 plus 32 out-of-line bytes, then the index
             // sections: RG_BLOCK_OFFSET 4 padded to 8, RG_FIRST_KEY 8,
             // RG_ROW_ID_MIN 8, RG_ROW_ID_MAX 8, DATA_RG_BOUNDARY 16, CRC 4.
-            Assert.assertEquals(524, reader.getFileSize());
+            Assert.assertEquals(532, reader.getFileSize());
             Assert.assertEquals(2, reader.getColumnIndexById(4));
 
             Assert.assertTrue(reader.hasChunkMinStat(0, 2));
@@ -1770,7 +1775,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     @Test
     public void testRoundTripHeaderFields() throws Exception {
         assertMemoryLeak(() -> withSample(reader -> {
-            Assert.assertEquals(1_180, reader.getFileSize());
+            Assert.assertEquals(1_196, reader.getFileSize());
             Assert.assertEquals(0, reader.getFeatureFlags());
             Assert.assertEquals(IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, reader.getPayloadKind());
             Assert.assertEquals(3, reader.getColumnCount());
@@ -2042,7 +2047,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                 try {
                     putKeyIdChunk(chunksPtr, 0, 7, 7, 64);
                     putRowIdChunk(chunksPtr, 1, 0, 63, 64);
-                    IndexMetaFileWriter.addRowGroup(writerPtr, 7, 0, 63, 64, chunksPtr, chunksSize, 2);
+                    IndexMetaFileWriter.addRowGroup(writerPtr, 7, 0, 63, 64, chunksPtr, chunksSize, 2, 0, 0);
                 } finally {
                     Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
                 }
@@ -2119,12 +2124,12 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             for (int slack : new int[]{8, 16, 64}) {
                 withSlackBytes(IndexMetaFileReaderTest::buildSample, slack, (dataPtr, dataLen) -> {
-                    Assert.assertEquals(1_180 + slack, dataLen);
+                    Assert.assertEquals(1_196 + slack, dataLen);
                     // The sections stop where they did; only the gap ahead of
                     // the CRC grew.
                     Assert.assertEquals(1_048, Unsafe.getUnsafe().getLong(dataPtr + 56));
                     for (int i = 0; i < slack; i++) {
-                        Assert.assertEquals(SLACK_FILL, Unsafe.getByte(dataPtr + 1_180 - 4 + i));
+                        Assert.assertEquals(SLACK_FILL, Unsafe.getByte(dataPtr + 1_196 - 4 + i));
                     }
 
                     try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
@@ -2230,7 +2235,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             // start of the index sections. The rest walk the descriptors, the
             // names, the blocks and the sections, and each one leaves the
             // header claiming more than the file holds.
-            // 1_176 is four bytes short, so the sections end exactly where the
+            // 1_192 is four bytes short, so the sections end exactly where the
             // CRC now begins. The fit bound is against the CRC offset and not
             // against IM_FILE_SIZE, and that is the only length that tells the
             // two apart: every section is 8-byte aligned, so a whole-file image
@@ -2239,7 +2244,8 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             // DATA_RG_BOUNDARY's last entry is the checksum.
             for (int len : new int[]{
                     132, 136, 140, 152, 160, 168, 176, 192, 208, 216, 220, 224, 232, 240,
-                    248, 256, 400, 448, 1_000, 1_048, 1_056, 1_172, 1_176
+                    248, 256, 400, 448, 1_000, 1_048, 1_056, 1_172, 1_176,
+                    1_180, 1_184, 1_188, 1_192
             }) {
                 assertTruncationRejected(len, "_im sections do not fit");
             }
@@ -2251,10 +2257,10 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             // The negative control: the sample at its own committed length is
             // the one image in this set that binds, so the rejections above are
             // the truncation talking and not something the fixture does anyway.
-            withTruncatedBytes(IndexMetaFileReaderTest::buildSample, 1_180, (dataPtr, dataLen) -> {
+            withTruncatedBytes(IndexMetaFileReaderTest::buildSample, 1_196, (dataPtr, dataLen) -> {
                 try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
                     reader.ofAddress(dataPtr, dataLen);
-                    Assert.assertEquals(1_180, reader.getFileSize());
+                    Assert.assertEquals(1_196, reader.getFileSize());
                     Assert.assertEquals(759_999, reader.getRowGroupNumRows(3));
                 }
             });
@@ -2504,7 +2510,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             putKeyIdChunk(chunksPtr, 0, firstKey, firstKey, rows);
             putRowIdChunk(chunksPtr, 1, rowIdMin, rowIdMax, rows);
             IndexMetaFileWriter.addRowGroup(
-                    writerPtr, firstKey, rowIdMin, rowIdMax, rows, chunksPtr, chunksSize, 2);
+                    writerPtr, firstKey, rowIdMin, rowIdMax, rows, chunksPtr, chunksSize, 2, 0, 0);
         } finally {
             Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
         }
@@ -2565,7 +2571,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                 putKeyIdChunk(chunksPtr, 0, firstKeys[i], firstKeys[i] + 99, 100);
                 putRowIdChunk(chunksPtr, 1, i * 100L, i * 100L + 99, 100);
                 IndexMetaFileWriter.addRowGroup(
-                        writerPtr, firstKeys[i], i * 100L, i * 100L + 99, 100, chunksPtr, chunksSize, 3);
+                        writerPtr, firstKeys[i], i * 100L, i * 100L + 99, 100, chunksPtr, chunksSize, 3, 0, 0);
             } finally {
                 Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
             }
@@ -2608,7 +2614,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             putRowIdChunk(chunksPtr, 1, 0, 63, 64);
             putChunk(chunksPtr, 2, CODEC_ZSTD, ENC_PLAIN, 0, 0, 64, 0, 0, 0, 0, 0, 0);
             putChunk(chunksPtr, 3, CODEC_ZSTD, ENC_PLAIN, 0, 0, 64, 0, 0, 0, 0, 0, 0);
-            IndexMetaFileWriter.addRowGroup(writerPtr, 7, 0, 63, 64, chunksPtr, chunksSize, 4);
+            IndexMetaFileWriter.addRowGroup(writerPtr, 7, 0, 63, 64, chunksPtr, chunksSize, 4, 0, 0);
         } finally {
             Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
         }
@@ -2634,7 +2640,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             putChunk(chunksPtr, 2, CODEC_ZSTD, 0,
                     STAT_MIN_PRESENT | STAT_MIN_EXACT | STAT_MAX_PRESENT | STAT_MAX_EXACT,
                     0, 64, 0, 0, 0, 0, 0, 0);
-            IndexMetaFileWriter.addRowGroup(writerPtr, 7, 0, 63, 64, chunksPtr, chunksSize, 3);
+            IndexMetaFileWriter.addRowGroup(writerPtr, 7, 0, 63, 64, chunksPtr, chunksSize, 3, 0, 0);
         } finally {
             Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
         }
@@ -2664,7 +2670,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                 // row_id column to take a range from, so the writer is given
                 // one directly and it is the only source of time pruning here.
                 IndexMetaFileWriter.addRowGroup(
-                        writerPtr, firstKeys[i], i * 1_000L, i * 1_000L + 999, 64, chunksPtr, chunksSize, 2);
+                        writerPtr, firstKeys[i], i * 1_000L, i * 1_000L + 999, 64, chunksPtr, chunksSize, 2, 0, 0);
             } finally {
                 Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
             }
@@ -2719,7 +2725,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                         900 + i
                 );
                 IndexMetaFileWriter.addRowGroup(
-                        writerPtr, (int) spec[0], spec[2], spec[3], rows, chunksPtr, chunksSize, 3);
+                        writerPtr, (int) spec[0], spec[2], spec[3], rows, chunksPtr, chunksSize, 3, 0, 0);
             } finally {
                 Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
             }
@@ -2773,7 +2779,7 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                         STAT_MIN_PRESENT | STAT_MIN_EXACT | STAT_MAX_PRESENT | STAT_MAX_EXACT,
                         0, 64, 0, 0, 0, 0, 0, 0);
                 IndexMetaFileWriter.addRowGroup(
-                        writerPtr, firstKeys[i], i * 64L, i * 64L + 63, 64, chunksPtr, chunksSize, 3);
+                        writerPtr, firstKeys[i], i * 64L, i * 64L + 63, 64, chunksPtr, chunksSize, 3, 0, 0);
             } finally {
                 Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
             }

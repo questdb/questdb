@@ -109,7 +109,7 @@ public class IndexMetaFileWriter {
      * produces an out-of-bounds native read that neither side can detect; a
      * mismatch throws instead.
      */
-    public static native void addRowGroup(long writerPtr, int firstKey, long rowIdMin, long rowIdMax, long numRows, long chunksPtr, long chunksLen, int chunkCount) throws CairoException;
+    public static native void addRowGroup(long writerPtr, int firstKey, long rowIdMin, long rowIdMax, long numRows, long chunksPtr, long chunksLen, int chunkCount, long keyDirPtr, int keyDirCount) throws CairoException;
 
     /**
      * Creates a writer. {@code keyIdColumn} and {@code rowIdColumn} are
@@ -179,6 +179,10 @@ public class IndexMetaFileWriter {
             long rowIdMaxLen,
             long dataBoundariesPtr,
             long dataBoundariesLen,
+            long keyDirPtr,
+            long keyDirLen,
+            long keyDirCountsPtr,
+            long keyDirCountsLen,
             int count,
             int keySpaceSize,
             int keyIdColumn,

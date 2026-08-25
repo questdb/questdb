@@ -92,6 +92,7 @@ pub fn generate_index_metadata<W: Write>(
     row_id_mins: &[i64],
     row_id_maxs: &[i64],
     data_boundaries: &[i64],
+    key_dirs: &[Vec<u32>],
     key_space_size: u32,
     key_id_column: i32,
     row_id_column: i32,
@@ -99,6 +100,14 @@ pub fn generate_index_metadata<W: Write>(
     payload_kind: u32,
 ) -> ParquetResult<Vec<u8>> {
     let row_groups = written.row_groups();
+    if !key_dirs.is_empty() && key_dirs.len() != row_groups.len() {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "index metadata has {} key directories but {} row groups",
+            key_dirs.len(),
+            row_groups.len()
+        ));
+    }
     if first_keys.len() != row_groups.len()
         || row_id_mins.len() != row_groups.len()
         || row_id_maxs.len() != row_groups.len()
@@ -167,7 +176,8 @@ pub fn generate_index_metadata<W: Write>(
         // directory and the data row-group boundaries -- so no bitset is
         // resolved here.
         let block = build_row_group_block(row_group, i, &NoBloomFilterSource)?;
-        writer.add_row_group(first_keys[i], row_id_mins[i], row_id_maxs[i], block);
+        let key_dir: &[u32] = key_dirs.get(i).map(|d| d.as_slice()).unwrap_or(&[]);
+        writer.add_row_group(first_keys[i], row_id_mins[i], row_id_maxs[i], key_dir, block);
     }
 
     writer.finish().map_err(ParquetError::from)
@@ -377,6 +387,7 @@ mod tests {
             &[0, 10, 20],
             &[9, 19, 29],
             &[0, 15, 30],
+            &[],
             10,
             0,
             1,
@@ -453,6 +464,7 @@ mod tests {
             &[0, 10, 20],
             &[9, 19, 29],
             &[0, 15, 30],
+            &[],
             10,
             0,
             1,

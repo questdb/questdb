@@ -332,10 +332,16 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addRowGroup(
     chunks_ptr: *const u8,
     chunks_len: jlong,
     chunk_count: jint,
+    key_dir_ptr: *const u32,
+    key_dir_count: jint,
 ) {
     ffi_guard(&mut env, "addRowGroup", |env| {
         check_not_null!(env, ptr, "IndexMetaFileWriter");
         check_not_null!(env, chunks_ptr, "IndexMetaFileWriter column chunks");
+        check_not_negative!(env, key_dir_count, "IndexMetaFileWriter key directory count");
+        if key_dir_count > 0 {
+            check_not_null!(env, key_dir_ptr, "IndexMetaFileWriter key directory");
+        }
         // A negative jint would become an enormous chunk count below.
         check_not_negative!(env, chunk_count, "IndexMetaFileWriter column chunk count");
         if num_rows < 0 {
@@ -375,8 +381,15 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addRowGroup(
                 return err.into_cairo_exception().throw(env);
             }
         }
+        // Copied element-wise for the same reason the column chunks are: the
+        // Java-side allocation carries no alignment guarantee.
+        let key_dir = if key_dir_count > 0 {
+            unsafe { copy_unaligned(key_dir_ptr, key_dir_count as usize) }
+        } else {
+            Vec::new()
+        };
         let writer = unsafe { &mut *ptr };
-        writer.add_row_group(first_key as u32, row_id_min, row_id_max, block);
+        writer.add_row_group(first_key as u32, row_id_min, row_id_max, &key_dir, block);
     })
 }
 
@@ -511,6 +524,10 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_generateIndexMe
     row_id_max_len: jlong,
     data_boundaries_ptr: *const i64,
     data_boundaries_len: jlong,
+    key_dir_ptr: *const u32,
+    key_dir_len: jlong,
+    key_dir_counts_ptr: *const i32,
+    key_dir_counts_len: jlong,
     count: jint,
     key_space_size: jint,
     key_id_column: jint,
@@ -524,6 +541,7 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_generateIndexMe
         check_not_null!(env, row_id_min_ptr, "IndexMetaFileWriter row id minima");
         check_not_null!(env, row_id_max_ptr, "IndexMetaFileWriter row id maxima");
         check_not_null!(env, data_boundaries_ptr, "IndexMetaFileWriter boundaries");
+        check_not_null!(env, key_dir_counts_ptr, "IndexMetaFileWriter key directory counts");
         // A negative jint would become an enormous slice length below.
         check_not_negative!(env, count, "IndexMetaFileWriter row group count");
         check_not_negative!(env, key_space_size, "IndexMetaFileWriter key space size");
@@ -539,6 +557,7 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_generateIndexMe
             ("first key", first_keys_len, FIRST_KEY_SIZE),
             ("row id min", row_id_min_len, ROW_ID_SIZE),
             ("row id max", row_id_max_len, ROW_ID_SIZE),
+            ("key directory count", key_dir_counts_len, FIRST_KEY_SIZE),
         ] {
             let expected_len = count as i64 * element_size as i64;
             if len != expected_len {
@@ -586,6 +605,46 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_generateIndexMe
         let row_id_maxs = unsafe { copy_unaligned(row_id_max_ptr, count as usize) };
         let data_boundaries = unsafe { copy_unaligned(data_boundaries_ptr, boundary_count) };
 
+        // One directory per row group, laid out back to back. The counts say
+        // how to cut the flat buffer, and their sum must account for exactly
+        // its byte length -- otherwise the split below reads past what the
+        // caller allocated, which nothing on either side could detect.
+        let key_dir_counts = unsafe { copy_unaligned(key_dir_counts_ptr, count as usize) };
+        if let Some(negative) = key_dir_counts.iter().find(|n| **n < 0) {
+            let err = parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "key directory count {} is negative",
+                negative
+            );
+            return err.into_cairo_exception().throw(env);
+        }
+        let key_dir_total: i64 = key_dir_counts.iter().map(|n| *n as i64).sum();
+        if key_dir_len != key_dir_total * FIRST_KEY_SIZE as i64 {
+            let err = parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "key directory buffer length {} does not match {} entries of {} bytes",
+                key_dir_len,
+                key_dir_total,
+                FIRST_KEY_SIZE
+            );
+            return err.into_cairo_exception().throw(env);
+        }
+        if key_dir_total > 0 {
+            check_not_null!(env, key_dir_ptr, "IndexMetaFileWriter key directory");
+        }
+        let key_dir_flat = if key_dir_total > 0 {
+            unsafe { copy_unaligned(key_dir_ptr, key_dir_total as usize) }
+        } else {
+            Vec::new()
+        };
+        let mut key_dirs: Vec<Vec<u32>> = Vec::with_capacity(count as usize);
+        let mut at = 0usize;
+        for n in &key_dir_counts {
+            let n = *n as usize;
+            key_dirs.push(key_dir_flat[at..at + n].to_vec());
+            at += n;
+        }
+
         // SAFETY: the pointer comes from `Box::into_raw` in
         // `createStreamingParquetWriter`; single-threaded JNI access guarantees
         // no aliasing, and generation only reads the finished writer.
@@ -595,6 +654,7 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_generateIndexMe
             &row_id_mins,
             &row_id_maxs,
             &data_boundaries,
+            &key_dirs,
             key_space_size as u32,
             key_id_column,
             row_id_column,

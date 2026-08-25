@@ -156,7 +156,7 @@ public class IndexMetaFileReader implements QuietCloseable {
     // First byte covered by the CRC; IM_FILE_SIZE at offset 0 is excluded
     // because the writer patches it last as the commit signal.
     private static final int IM_CRC_AREA_OFF = 8;
-    private static final int IM_FORMAT_VERSION = 3;
+    private static final int IM_FORMAT_VERSION = 4;
     // The bytes QDBIDX\0\3 at offset 8. Disambiguates _im from _pm, which
     // carries FEATURE_FLAGS at the same offset, and its version byte is what
     // keeps a v2 file from being read as a v3 one.
@@ -175,6 +175,10 @@ public class IndexMetaFileReader implements QuietCloseable {
     private static final int OFF_INDEX_RG_COUNT = 36;
     private static final int OFF_INDEX_SECTIONS_OFFSET = 56;
     private static final int OFF_KEY_ID_COLUMN = 48;
+    // Total KEY_ROW_OFFSET entries, taken from the reserved area at format
+    // version 4: the per-group directories are variable length, so the
+    // section's size is not derivable from the counts already in the header.
+    private static final int OFF_KEY_DIR_ENTRY_COUNT = 80;
     private static final int OFF_KEY_SPACE_SIZE = 44;
     private static final int OFF_PAYLOAD_KIND = 28;
     private static final int OFF_PIDX_FOOTER_LENGTH = 72;
@@ -200,6 +204,9 @@ public class IndexMetaFileReader implements QuietCloseable {
     private long addr;
     private int columnCount;
     private long dataBoundaryOffset;
+    private int keyDirEntryCount;
+    private long keyRowOffsetOffset;
+    private long rgKeyDirBaseOffset;
     private int dataRowGroupCount;
     private long featureFlags;
     private FilesFacade ff;
@@ -326,6 +333,9 @@ public class IndexMetaFileReader implements QuietCloseable {
         rgRowIdMinOffset = 0;
         rgRowIdMaxOffset = 0;
         dataBoundaryOffset = 0;
+        rgKeyDirBaseOffset = 0;
+        keyRowOffsetOffset = 0;
+        keyDirEntryCount = 0;
         columnCount = 0;
         indexRowGroupCount = 0;
         dataRowGroupCount = 0;
@@ -845,6 +855,45 @@ public class IndexMetaFileReader implements QuietCloseable {
     }
 
     /**
+     * The row range {@code [lo, hi)} within {@code rowGroup} holding
+     * {@code key}, packed with {@link Numbers#encodeLowHighInts(int, int)}, or
+     * {@link #KEY_ABSENT} when the group holds no row for it.
+     * <p>
+     * Format version 4's replacement for decoding the group's whole
+     * {@code key_id} column and binary searching it. That probe cost 2.7 ms on
+     * a 100k-row group and was paid once per key looked up, which made read
+     * cost scale with the number of distinct keys a query touched rather than
+     * with the rows it returned.
+     * <p>
+     * A group's directory covers only the key ids it actually holds, so its
+     * length comes from the next group's base - or, for the last group, from
+     * the header's entry count.
+     */
+    public long getKeyRowRangeInGroup(int rowGroup, int key) {
+        if (rowGroup < 0 || rowGroup >= getIndexRowGroupCount()) {
+            return KEY_ABSENT;
+        }
+        final int firstKey = getRowGroupFirstKey(rowGroup);
+        if (key < firstKey) {
+            return KEY_ABSENT;
+        }
+        final long base = Unsafe.getInt(addr + rgKeyDirBaseOffset + (long) rowGroup * Integer.BYTES) & 0xFFFFFFFFL;
+        final long end = rowGroup + 1 < getIndexRowGroupCount()
+                ? Unsafe.getInt(addr + rgKeyDirBaseOffset + (long) (rowGroup + 1) * Integer.BYTES) & 0xFFFFFFFFL
+                : keyDirEntryCount;
+        final long idx = base + (key - firstKey);
+        // The terminator is the last entry, so a key needs idx and idx+1 both
+        // inside this group's slice.
+        if (idx + 1 >= end) {
+            return KEY_ABSENT;
+        }
+        final long at = addr + keyRowOffsetOffset + idx * Integer.BYTES;
+        final int lo = Unsafe.getInt(at);
+        final int hi = Unsafe.getInt(at + Integer.BYTES);
+        return lo >= hi ? KEY_ABSENT : Numbers.encodeLowHighInts(lo, hi);
+    }
+
+    /**
      * The inclusive index row group range holding {@code key}, packed with
      * {@link Numbers#encodeLowHighInts(int, int)}: the low bound in the low
      * int, the high bound in the high int. {@link #KEY_ABSENT} when
@@ -1202,7 +1251,17 @@ public class IndexMetaFileReader implements QuietCloseable {
         final long rowIdBytes = alignUp((long) indexRowGroupCount * Long.BYTES);
         final long rgRowIdMaxOffset = rgRowIdMinOffset + rowIdBytes;
         final long dataBoundaryOffset = rgRowIdMaxOffset + rowIdBytes;
-        final long sectionsEnd = dataBoundaryOffset + (dataRowGroupCount + 1L) * Long.BYTES;
+        // RG_KEY_DIR_BASE then KEY_ROW_OFFSET. A group's directory covers only
+        // the key ids it holds, so its length is not derivable from
+        // RG_FIRST_KEY: consecutive bases give it, and KEY_DIR_ENTRY_COUNT
+        // gives the last group's.
+        final long rgKeyDirBaseOffset = dataBoundaryOffset + alignUp((dataRowGroupCount + 1L) * Long.BYTES);
+        final long keyRowOffsetOffset = rgKeyDirBaseOffset + alignUp((long) indexRowGroupCount * Integer.BYTES);
+        final int keyDirEntryCount = Unsafe.getInt(addr + OFF_KEY_DIR_ENTRY_COUNT);
+        if (keyDirEntryCount < 0) {
+            throw truncated(indexSectionsOffset, columnCount, indexRowGroupCount, dataRowGroupCount);
+        }
+        final long sectionsEnd = keyRowOffsetOffset + alignUp((long) keyDirEntryCount * Integer.BYTES);
         // Slack between the end of DATA_RG_BOUNDARY and the CRC is permitted,
         // so this is a bound and not equality: a writer may pad, and a reader
         // that demanded exactness would reject files the other reader accepts.
@@ -1344,6 +1403,9 @@ public class IndexMetaFileReader implements QuietCloseable {
         this.rgRowIdMinOffset = rgRowIdMinOffset;
         this.rgRowIdMaxOffset = rgRowIdMaxOffset;
         this.dataBoundaryOffset = dataBoundaryOffset;
+        this.rgKeyDirBaseOffset = rgKeyDirBaseOffset;
+        this.keyRowOffsetOffset = keyRowOffsetOffset;
+        this.keyDirEntryCount = keyDirEntryCount;
     }
 
     /**

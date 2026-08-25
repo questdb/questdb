@@ -191,41 +191,25 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      * <p>
      * What Java does have is {@code decodeRowGroup(..., rowLo, rowHi)}, whose
      * Rust side skips pages outside the range -- so bounding the decode to the
-     * key's rows achieves the same saving through the API that exists. Phase 3
-     * adding a page-index API would let the probe below be replaced by a
-     * lookup, not by newly written indexes.
+     * key's rows achieves the same saving through the API that exists.
      * <p>
-     * The probe decodes ONLY {@code key_id}, four bytes a row, and binary
-     * searches it: the group is key-major, so a key's rows are contiguous.
-     * That cost buys skipping {@code row_id} and every covered column for the
-     * rows belonging to other keys, which in a packed group is most of them.
+     * <b>The bound itself now comes from {@code _im}.</b> Format version 3 got
+     * it by decoding the group's whole {@code key_id} column and binary
+     * searching it, which is sound but costs a full-column decode PER KEY: 2.72
+     * ms on a 100k-row group against 0.32 ms on a 10k-row one, a linear decode
+     * whose price is set by the group's size and not by the rows the key
+     * actually has. Read cost therefore scaled with the number of distinct keys
+     * a query touched. Version 4 writes a per-key start-offset directory, so
+     * this is a metadata lookup that decodes nothing at all, and the probe
+     * cursor is gone with it.
+     *
+     * @param probe     unused since format version 4; kept so the two readers
+     *                  share one signature
+     * @param groupRows unused since format version 4: the directory's
+     *                  terminator carries the group's row count
      */
     protected long keyRowRangeInGroup(CountingCursor probe, int rowGroup, int key, long groupRows) {
-        final long keyIdPtr = probe.decodeKeyIdColumn(rowGroup, groupRows);
-        long lo = 0;
-        long hi = groupRows;
-        while (lo < hi) {
-            final long mid = (lo + hi) >>> 1;
-            if (Unsafe.getUnsafe().getInt(keyIdPtr + (mid << 2)) < key) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        final long start = lo;
-        hi = groupRows;
-        while (lo < hi) {
-            final long mid = (lo + hi) >>> 1;
-            if (Unsafe.getUnsafe().getInt(keyIdPtr + (mid << 2)) <= key) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        if (start >= lo) {
-            return IndexMetaFileReader.KEY_ABSENT;
-        }
-        return Numbers.encodeLowHighInts((int) start, (int) lo);
+        return imReader.getKeyRowRangeInGroup(rowGroup, key);
     }
 
     /**
