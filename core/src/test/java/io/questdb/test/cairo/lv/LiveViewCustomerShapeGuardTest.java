@@ -440,6 +440,12 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
         // repair that moved their output, so the next correction finds an anchor below
         // itself, the cost comparison picks the resume over the rebuild, and the read
         // collapses from the whole segment to the tail above that anchor.
+        //
+        // Keep this the Phase 1/2 splice guard. Phase 3's cold keyed head miss deliberately
+        // publishes no keyed roots until Phase 4, so enabling it here would replace the
+        // bootstrap splice with the separately covered cold-scan route and stop this case
+        // from proving that the whole-range fallback preserves the ladder.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, "false");
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, CHECKPOINT_ROWS);
         assertMemoryLeak(() -> {
             // START FROM the segment origin, which is where the reported view sits: its
@@ -469,6 +475,9 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
                 // it went in.
                 final long viewRows = rowCount(VIEW);
                 correct(job, 4, FIRST_HOUR, 1, 1);
+                // The bootstrap splice is published; re-enable the open-segment keyed
+                // route so the ordinary checkpoint resumes below still exercise it.
+                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED, "true");
 
                 Assert.assertEquals(
                         LiveViewCheckpointRepairPlan.DISPOSITION_BOUNDARY_REBUILD,

@@ -49,6 +49,125 @@ import org.junit.Test;
 public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
 
     @Test
+    public void testAHeadMissReplaysTheOpenSegmentColdByKey() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = viewInstance();
+                final long scanRowsBefore = instance.getO3ReplayScanRows();
+
+                // The seed leaves one head root. This correction sits below it, so there is
+                // no predecessor to resume from and the replay starts cold at the day origin.
+                commit(row(3, 2, 35, "acct-1"), job);
+
+                Assert.assertEquals(1, job.openSegmentColdKeyedPricedCountForTest());
+                Assert.assertEquals(0, job.openSegmentColdKeyedUnpricedCountForTest());
+                Assert.assertEquals(1, job.openSegmentColdKeyedCheaperCountForTest());
+                Assert.assertEquals(1, job.openSegmentColdKeyedReplayCountForTest());
+                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals(0, job.keyedReplaySegmentCountForTest());
+                Assert.assertTrue(
+                        job.openSegmentColdKeyedPostingRowsForTest()
+                                < job.openSegmentColdKeyedWholeRangeRowsForTest()
+                );
+                Assert.assertEquals(
+                        job.openSegmentColdKeyedPostingRowsForTest(),
+                        instance.getO3ReplayScanRows() - scanRowsBefore
+                );
+                Assert.assertTrue(job.keyedReplayMergedRowsForTest() > 0);
+                Assert.assertTrue(job.transplantedKeyCountForTest() > 0);
+                Assert.assertEquals(
+                        "Phase 3 publishes the full range; sparse publication is Phase 4",
+                        0,
+                        job.sparsePublicationCountForTest()
+                );
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAColdHeadMissDeclinesWhenEveryKeyIsAffected() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+
+                commit(
+                        row(3, 2, 35, "acct-1") + ", "
+                                + row(3, 2, 36, "acct-2") + ", "
+                                + row(3, 2, 37, "acct-3") + ", "
+                                + row(3, 2, 38, "acct-4"),
+                        job
+                );
+
+                Assert.assertEquals(1, job.openSegmentColdKeyedPricedCountForTest());
+                Assert.assertEquals(0, job.openSegmentColdKeyedCheaperCountForTest());
+                Assert.assertEquals(0, job.openSegmentColdKeyedReplayCountForTest());
+                Assert.assertEquals(0, job.transplantedKeyCountForTest());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAColdHeadMissDeclinesAnOverflowedKeyDomain() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+
+                commit(
+                        row(3, 2, 35, "acct-1") + ", "
+                                + row(3, 2, 36, "acct-2"),
+                        job
+                );
+
+                Assert.assertEquals(0, job.openSegmentColdKeyedPricedCountForTest());
+                Assert.assertEquals(1, job.openSegmentColdKeyedUnpricedCountForTest());
+                Assert.assertEquals(0, job.openSegmentColdKeyedReplayCountForTest());
+                Assert.assertEquals(0, job.transplantedKeyCountForTest());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testSuccessiveHeadMissesRemainColdUntilTheKeyedSpliceLands() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+
+                commit(row(3, 2, 35, "acct-1"), job);
+                commit(row(3, 3, 15, "acct-4"), job);
+
+                Assert.assertEquals(
+                        "Phase 3 preserves correctness but Phase 4 is what preserves Q in the ladder",
+                        2,
+                        job.openSegmentColdKeyedReplayCountForTest()
+                );
+                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
     public void testACorrectionInTheOpenSegmentCollectsItsKeysAndPricesThem() throws Exception {
         // The measurement the route rests on: one account corrected inside the open day,
         // against a resume that reads every account's rows from its anchor to the end of the
