@@ -360,6 +360,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private ColumnVersionReader attachColumnVersionReader;
     private IndexBuilder attachIndexBuilder;
     private final IntList attachCellKeys = new IntList();
+    private final IntList detachedCellKeys = new IntList();
     private final LongList attachCellSizes = new LongList();
     private long attachMaxTimestamp;
     private MemoryCMR attachMetaMem;
@@ -1223,16 +1224,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public AttachDetachStatus attachPartition(long timestamp) {
-        if (isRoutedComposite()) {
-            // SP1 (2026-08-18): DETACH is supported for composite; ATTACH is not. The attach path reads
-            // the designated-timestamp column at the artifact's CONTAINER root, but a composite
-            // artifact holds its data inside per-cell directories one level down, and re-attaching must
-            // also re-intern those directories' dimension VALUES into this table's cellKeys.
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support ATTACH PARTITION [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
-
         // -1 means unknown size
         return attachPartition(timestamp, -1L);
     }
@@ -1315,6 +1306,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (hasParquetMeta && !hasParquetData) {
                     LOG.error().$("cannot attach partition, parquet metadata present but data file missing [path=").$(detachedPath).I$();
                     return AttachDetachStatus.ATTACH_ERR_MISSING_PARQUET_DATA;
+                }
+
+                if (compositeAttach) {
+                    // Must run BEFORE the size/min-max read below: that read renders the artifact's
+                    // cellKeys through THIS table's registry, which is only meaningful for this table's
+                    // own artifact. attachPrepare has a generic table_id check, but it runs later --
+                    // by then a foreign artifact would already have been read as if it were ours.
+                    CompositeDetachedArtifact.checkSameTable(
+                            ff, configuration, detachedPath.trimTo(detachedRootLen),
+                            metadata.getTableId(), tableToken.getTableName());
+                    detachedPath.trimTo(detachedRootLen);
                 }
 
                 // detached metadata files validation
@@ -2547,13 +2549,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // all good, commit
                 txWriter.beginPartitionSizeUpdate();
+                detachedCellKeys.clear();
                 if (isRoutedComposite()) {
                     // removeAttachedPartitions(ts) resolves cellKey 0 only; a composite day holds one
                     // entry per cell and detaching the day must detach all of them, or the table keeps
                     // entries pointing into a directory that has just been moved to .detached.
+                    // The keys are captured here because the DIRECTORY removal below needs them and this
+                    // loop is the last place they exist -- afterwards _txn no longer knows about them.
                     int idx;
                     while ((idx = findCompositePartitionIndexByTimestamp(timestamp)) >= 0) {
-                        txWriter.removeAttachedPartitions(timestamp, txWriter.getPartitionCellKey(idx));
+                        final int detachedCellKey = txWriter.getPartitionCellKey(idx);
+                        detachedCellKeys.add(detachedCellKey);
+                        txWriter.removeAttachedPartitions(timestamp, detachedCellKey);
                     }
                 } else {
                     txWriter.removeAttachedPartitions(timestamp);
@@ -2588,7 +2595,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
         }
-        safeDeletePartitionDir(timestamp, partitionNameTxn);
+        if (detachedCellKeys.size() > 0) {
+            // One candidate per cell. safeDeletePartitionDir(ts, nameTxn) delegates with cellKey = 0, so
+            // it removes only the FIRST cell and silently orphans the rest -- measured: detaching a
+            // two-cell day left a live <day>/E1 behind. The orphan is invisible to queries (its _txn
+            // entries are gone, so the twin comparison still passes) but it makes the day's container
+            // already exist, and ATTACH then fails ATTACH_ERR_DIR_EXISTS -- a status TOLERATED as a WAL
+            // command failure, so the ALTER silently does nothing.
+            for (int i = 0, n = detachedCellKeys.size(); i < n; i++) {
+                safeDeletePartitionDir(timestamp, partitionNameTxn, detachedCellKeys.getQuick(i));
+            }
+            removeDetachedDayContainer(timestamp);
+        } else {
+            safeDeletePartitionDir(timestamp, partitionNameTxn);
+        }
         return AttachDetachStatus.OK;
     }
 
@@ -14423,6 +14443,67 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * counts FILES as well as directories: an emptiness guard in front of a recursive delete must not
      * treat a stray file as "empty".
      */
+    /**
+     * Removes a DETACHED day's container once its cells are gone.
+     * <p>
+     * {@link #removeEmptyDayContainer} cannot do this: a composite day container also holds ZERO-BYTE
+     * phantom {@code <column>.d} files, so its {@link #isDirectoryEmpty} guard -- which deliberately
+     * counts files, so a stray file never fronts a recursive delete -- always says "not empty".
+     * <p>
+     * This variant is narrower rather than weaker. It removes the container only when every remaining
+     * entry is a zero-length FILE: any subdirectory means a cell is still present (its removal deferred
+     * by the scoreboard), and any non-empty file means real data. Either way it leaves the container to
+     * async purge instead of deleting it. Detach owns the whole day and has already hard-linked every
+     * byte into the artifact, so there is nothing here to lose -- but not at the cost of a recursive
+     * delete over something unrecognised.
+     */
+    private void removeDetachedDayContainer(long timestamp) {
+        if (txWriter.hasAnyAttachedPartitionForTimestamp(timestamp)) {
+            return;
+        }
+        other.trimTo(pathSize);
+        setPathForNativePartition(other, timestampType, partitionBy, timestamp, -1L, null);
+        if (!ff.exists(other.$())) {
+            return;
+        }
+        final int containerLen = other.size();
+        final long findPtr = ff.findFirst(other.$());
+        if (findPtr <= 0) {
+            return;
+        }
+        boolean onlyEmptyFiles = true;
+        try {
+            do {
+                if (!Files.notDots(ff.findName(findPtr))) {
+                    continue;
+                }
+                if (ff.findType(findPtr) != Files.DT_FILE) {
+                    onlyEmptyFiles = false;
+                    break;
+                }
+                other.trimTo(containerLen).concat(ff.findName(findPtr));
+                if (ff.length(other.$()) != 0) {
+                    onlyEmptyFiles = false;
+                    break;
+                }
+            } while (ff.findNext(findPtr) > 0);
+        } finally {
+            ff.findClose(findPtr);
+            other.trimTo(containerLen);
+        }
+        if (!onlyEmptyFiles) {
+            LOG.info().$("detached day container still holds entries, leaving for async purge [path=")
+                    .$substr(pathRootSize, other).I$();
+            return;
+        }
+        if (ff.rmdir(other)) {
+            LOG.info().$("removed detached day container [path=").$substr(pathRootSize, other).I$();
+        } else {
+            LOG.info().$("could not remove detached day container, leaving for async purge [path=")
+                    .$substr(pathRootSize, other).$(", errno=").$(ff.errno()).I$();
+        }
+    }
+
     private boolean isDirectoryEmpty(Path dirPath) {
         final long findPtr = ff.findFirst(dirPath.$());
         if (findPtr <= 0) {

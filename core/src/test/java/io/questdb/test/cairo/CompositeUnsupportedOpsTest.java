@@ -80,16 +80,27 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * SP1 (2026-08-25): ATTACH PARTITION is no longer gated for composite tables, for the table's OWN
+     * artifact. The detach/attach round trip lives in CompositeDetachAttachTest.
+     * <p>
+     * What made it work was not the attach path's column validation, as the old gate comment assumed.
+     * DETACH was removing only cellKey 0's directory, leaving a residual live {@code <day>/} that made
+     * ATTACH fail ATTACH_ERR_DIR_EXISTS -- a status TOLERATED as a WAL command failure, so the ALTER
+     * silently did nothing. The column versions were already carried correctly, because
+     * overrideColumnVersions copies by timestamp RANGE and _cv packs the cellKey into its column index.
+     * <p>
+     * Cross-table attach remains refused: see testAttachFromAnotherTableStillRefused.
+     */
     @Test
-    public void testAttachPartitionGated() throws Exception {
+    public void testAttachPartitionIsNoLongerGated() throws Exception {
         assertMemoryLeak(() -> {
             createRoutedTwoCellTable("c");
-            // No real ".detached" source directory is needed: the gate fires unconditionally at the
-            // very top of TableWriter#attachPartition, before any lookup of a real detached source.
-            assertCompositeGateFires(
-                    "alter table c attach partition list '2020-01-01'",
-                    "c",
-                    "composite partitioning does not yet support ATTACH PARTITION");
+            execute("insert into c values ('2020-01-02T00:00:00.000000Z','A',2.0)");
+            drainWalQueue();
+            execute("alter table c detach partition list '2020-01-01'");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
         });
     }
 

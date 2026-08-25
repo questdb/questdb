@@ -1696,15 +1696,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 case PartitionAction.DETACH:
                     break;
                 case PartitionAction.ATTACH:
-                    // SP1: DETACH is supported (see TableWriter#detachPartition's composite branches);
-                    // ATTACH is not. Measured 2026-08-18: attach reads the designated-timestamp column
-                    // at the CONTAINER root ("cannot read min, max timestamp ... errno=2"), but a
-                    // composite artifact keeps its data one level down, inside per-cell directories --
-                    // and re-attaching also has to map those directories' dimension VALUES back to
-                    // cellKeys, which this table may number differently. That is new machinery, not
-                    // cell-awareness over existing machinery.
-                    throw SqlException.$(pos, "composite partitioning does not yet support ATTACH PARTITION [table=")
-                            .put(tableToken.getTableName()).put(']');
+                    // SP1 (2026-08-25): ATTACH is SUPPORTED for a composite table, same-table only.
+                    // Cross-table attach stays refused inside TableWriter (the artifact carries no
+                    // dimension dictionaries, so its cellKeys cannot be decoded here).
+                    break;
                 default:
                     // CONVERT TO PARQUET / NATIVE are sub-project 3's gates; left to the writer side
                     // deliberately rather than gated here on a guess about their eventual shape.

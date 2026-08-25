@@ -53,16 +53,21 @@ import org.junit.Test;
  */
 public class CompositeLifecycleDdlRefusalTest extends AbstractCairoTest {
 
-    @Test
-    public void testAttachPartitionRefusesAtTheStatement() throws Exception {
-        assertRefusedAtStatement("ALTER TABLE c ATTACH PARTITION LIST '2023-01-01'");
-    }
-
     /*
      * The DETACH PARTITION refusal test that stood here is gone: sub-project 1 made DETACH cell-aware
      * once 1E unblocked it (detach calls squash internally, so it could not be reached before). A
-     * composite day detaches as a container holding its cells -- see CompositeDetachAttachTest. ATTACH
-     * remains refused, and its test below still guards that.
+     * composite day detaches as a container holding its cells -- see CompositeDetachAttachTest.
+     *
+     * The ATTACH PARTITION test that stood here is gone too (2026-08-25): ATTACH is now SUPPORTED for
+     * the table's OWN artifact, so there is no statement-time refusal left to guard. See
+     * CompositeDetachAttachTest#testDetachThenAttachRoundTrips.
+     *
+     * What remains refused is attaching a FOREIGN artifact, and that refusal deliberately does NOT
+     * belong in this suite. It fires on the apply thread and suspends the table -- which is exactly what
+     * a PLAIN table does with a foreign artifact (measured: "no throw from execute() | suspended=true",
+     * via attachPrepare's own table_id check). This suite exists for refusals where composite suspends a
+     * table that its plain twin would not. A composite matching its twin is not an invariant-6
+     * violation, and forcing a statement-time refusal here would make composite DIVERGE from plain.
      */
 
     /*

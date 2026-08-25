@@ -79,18 +79,38 @@ public class CompositeDetachAttachTest extends AbstractCompositeTwinTest {
     }
 
     /**
+     * DETACH must remove EVERY cell directory of the day, not just cellKey 0's.
+     * <p>
+     * Measured 2026-08-25: detaching a two-cell day produced a correct artifact holding both cells, and
+     * left a residual live {@code <day>/} still containing E1. The _txn entries are all removed, so the
+     * orphan is invisible to queries and the twin comparison passes -- which is exactly why it went
+     * unnoticed. It is not harmless: the residual directory makes the day's container already exist, so
+     * re-attaching it fails ATTACH_ERR_DIR_EXISTS, and that status is TOLERATED as a WAL command failure,
+     * so the ALTER silently does nothing.
+     */
+    @Test(timeout = 60_000)
+    public void testDetachRemovesEveryCellDirectory() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedTwoDays();
+
+            execute("ALTER TABLE c DETACH PARTITION LIST '2023-01-01'");
+            execute("ALTER TABLE p DETACH PARTITION LIST '2023-01-01'");
+            drainWalQueue();
+
+            assertTwinEqual("");
+            Assert.assertFalse("detach left a residual live day directory " + dayDirs("c"),
+                    dayDirs("c").contains("2023-01-01"));
+            // and the artifact must still hold both cells
+            Assert.assertEquals("the artifact must hold both cells",
+                    2, childDirs("c", "2023-01-01.detached").size());
+        });
+    }
+
+    /**
      * DETACH then ATTACH must round-trip: the table returns to its pre-detach contents and agrees with
      * the twin, which never lost the day at all.
      */
-    @Ignore("SP1: ATTACH is not yet supported for composite. RE-MEASURED 2026-08-25 with the gates"
-            + " lifted, and it now fails LATER than it used to. The size sum, the min/max fold, the bare"
-            + " day container and the per-cell _txn registration are all in place, so attach returns OK --"
-            + " and the day's rows are then MISSING from the table. That is the exact silent shape"
-            + " attachPartition's own gate comment predicts: the per-cell column-version pinning"
-            + " (attachPartitionPinColumnVersions iterates the CONTAINER) and the three"
-            + " attachPartitionCheckFilesMatch* validators still concatenate flat, with no cell concept,"
-            + " and a missing column is recorded as a full-partition column top rather than an error."
-            + " Un-ignore when those walk cells.")
     @Test(timeout = 60_000)
     public void testDetachThenAttachRoundTrips() throws Exception {
         assertMemoryLeak(() -> {
@@ -112,7 +132,62 @@ public class CompositeDetachAttachTest extends AbstractCompositeTwinTest {
             assertTwinEqual("");
             Assert.assertTrue("no detached artifact should remain " + detachedDirs("c"),
                     detachedDirs("c").isEmpty());
+            // the day must come back as a CONTAINER holding both its cells, not as a flat directory
+            Assert.assertEquals("the re-attached day must hold both cells",
+                    2, childDirs("c", "2023-01-01").size());
         });
+    }
+
+    /**
+     * End-to-end counterpart of CompositeAttachArtifactTest's unit-level refusal: a real ATTACH of a
+     * FOREIGN artifact must fail loudly and leave the table healthy.
+     * <p>
+     * A cellKey is table-local, and the artifact carries no dimension dictionaries or _cell registry --
+     * those are table-root. Accepting one would bind its cells to whatever local cells share those
+     * ordinals: correct-looking rows under the wrong dimension value.
+     */
+    @Test(timeout = 60_000)
+    public void testAttachFromAnotherTableIsRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            execute("CREATE TABLE other (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) "
+                    + "PARTITION BY DAY, exch LAYOUT PLAIN WAL");
+            // c must NOT already hold 2023-01-01, or ATTACH stops at "partition is already attached"
+            // before it ever looks at whose artifact this is.
+            insertIntoBoth("('2023-01-02T01:00:00.000000Z','E0',1.0),"
+                    + "('2023-01-03T01:00:00.000000Z','E0',2.0)");
+            execute("INSERT INTO other VALUES ('2023-01-01T01:00:00.000000Z','E0',1.0),"
+                    + "('2023-01-01T20:00:00.000000Z','E1',2.0),"
+                    + "('2023-01-02T01:00:00.000000Z','E0',3.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            execute("ALTER TABLE other DETACH PARTITION LIST '2023-01-01'");
+            drainWalQueue();
+
+            Files.move(tableDir("other").resolve("2023-01-01.detached"),
+                    tableDir("c").resolve("2023-01-01.attachable"));
+
+            // MEASURED, and it matches the PLAIN twin exactly: an ATTACH validation failure on a WAL
+            // table does not throw from execute() -- the ALTER is applied asynchronously, so the failure
+            // surfaces on the apply thread and suspends the table. A plain table given a foreign artifact
+            // does precisely the same ("no throw from execute() | suspended=true"), via attachPrepare's
+            // own table_id check. So composite is behaving as its twin, not inventing a worse outcome.
+            execute("ALTER TABLE c ATTACH PARTITION LIST '2023-01-01'");
+            drainWalQueue();
+
+            assertQuery("SELECT suspended, errorMessage FROM wal_tables() WHERE name = 'c'")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("suspended\terrorMessage\n"
+                            + "true\tcomposite partitioning does not yet support attaching a partition "
+                            + "from another table [table=c, tableId=1, artifactTableId=3]\n");
+        });
+    }
+
+    private void assertWalTableNotSuspended(String tableName) {
+        Assert.assertFalse(
+                tableName + " must not be suspended",
+                engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
     }
 
     private List<String> childDirs(String table, String container) throws IOException {
