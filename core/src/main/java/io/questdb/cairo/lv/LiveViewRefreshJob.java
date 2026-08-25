@@ -4985,8 +4985,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *
      * @param isMeasuredCandidate whether the repair is keyed or a bounded localized
      *                            diagnostic candidate
-     * @param isKeyedRoute      whether the replay followed its keys, which makes the
-     *                          checked rows exactly the set a sparse commit would carry
+     * @param isKeyedRoute        whether the replay followed its keys, which makes the
+     *                            checked rows exactly the set a sparse commit would carry
      */
     private void reportOutputUniqueness(CharSequence viewName, boolean isMeasuredCandidate, boolean isKeyedRoute) {
         if (!isMeasuredCandidate) {
@@ -8019,7 +8019,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (isOpenSegmentKeyedReplayAvailable(instance, scanLowTs)
                     && armOpenSegmentKeyedReplay(instance, reader)
                     && instance.getCompiledPlan().getPageFrameFactory()
-                            .isIndexedForwardTimestampRangeSupported(keyedReplay.getBaseKeyColumnIndex())) {
+                    .isIndexedForwardTimestampRangeSupported(keyedReplay.getBaseKeyColumnIndex())) {
                 storedRowCursor = openStoredRowCursor(instance, emitLowTs, Long.MAX_VALUE);
                 coldKeyedRoute = storedRowCursor != null;
             }
@@ -9121,9 +9121,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     expectedRowsAfterRepair = coldKeyedRoute
                             ? Math.addExact(durableRowsBeforeRepair, insertedRowDelta)
                             : Math.addExact(
-                                    Math.subtractExact(durableRowsBeforeRepair, durableRowsReplaced),
-                                    emittedRows
-                            );
+                            Math.subtractExact(durableRowsBeforeRepair, durableRowsReplaced),
+                            emittedRows
+                    );
                 } catch (ArithmeticException e) {
                     throw CairoException.critical(0).put("live view replacement row count overflow");
                 }

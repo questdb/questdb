@@ -599,8 +599,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // replay starts from the active anchor segment's origin
                         // because no such root exists. In-memory counters, reset
                         // on restart.
-                        case COLUMN_O3_OPEN_SEGMENT_KEYED_RESUME_COUNT ->
-                                instance.getO3OpenSegmentKeyedResumeCount();
+                        case COLUMN_O3_OPEN_SEGMENT_KEYED_RESUME_COUNT -> instance.getO3OpenSegmentKeyedResumeCount();
                         case COLUMN_O3_OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT ->
                                 instance.getO3OpenSegmentColdKeyedReplayCount();
                         // Adaptive duration cadence learned from O3 correction
