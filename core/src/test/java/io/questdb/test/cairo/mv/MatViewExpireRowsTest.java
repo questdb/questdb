@@ -1185,20 +1185,92 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReadFilterTimestampNullConstantKeepsAllRows() throws Exception {
-        // ts < cast(null as timestamp) is never TRUE, so NO row expires -- all rows stay visible. The
-        // null-unsafe flip (NOT(ts < T) -> ts >= T) would have produced `ts >= NULL` and hidden EVERY row
-        // (read/cleanup divergence: cleanup keeps them). The provably-non-null guard leaves the NOT unflipped
-        // here instead.
+    public void testCreateWithNullThresholdRejected() throws Exception {
+        // A threshold that evaluates to NULL expires nothing: ts < NULL is never TRUE. That is always a
+        // mistake, and one the author cannot see, so DDL refuses the policy instead of storing a view that
+        // silently never reclaims. Three spellings of the same NULL: the explicit cast, LONG arithmetic that
+        // overflows onto Long.MIN_VALUE, and INT arithmetic that overflows onto Integer.MIN_VALUE three
+        // orders of magnitude sooner.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
-            execute("create materialized view mv as (select * from base) expire rows when ts < cast(null as timestamp)");
-            execute("""
-                    insert into base values
-                    ('A', '2024-01-05T00:00:00.000000Z'),
-                    ('B', '2024-01-20T00:00:00.000000Z')""");
+            for (String threshold : new String[]{
+                    "cast(null as timestamp)",
+                    "4611686018427387904 * 2",
+                    "1073741824 * 2",
+                    "2147483647 + 1"
+            }) {
+                assertExceptionNoLeakCheck(
+                        "create materialized view mv as (select * from base) expire rows when ts < " + threshold,
+                        25,
+                        "the threshold is NULL, so no row can ever expire"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testAlterToNullThresholdRejected() throws Exception {
+        // ALTER routes through the same validation as CREATE, so an existing policy cannot be replaced by a
+        // NULL one either. The view keeps the policy it had.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) expire rows when ts < dateadd('h', -1, now())");
             drainWalAndMatViewQueues();
-            assertQuery("select sym from mv order by ts").noLeakCheck().returns("sym\nA\nB\n");
+            assertExceptionNoLeakCheck(
+                    "alter materialized view mv set expire rows when ts < 4611686018427387904 * 2",
+                    48,
+                    "the threshold is NULL, so no row can ever expire"
+            );
+            assertQuery("select expire_clause from materialized_views() where view_name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("expire_clause\nts < dateadd('h', -1, now())\n");
+        });
+    }
+
+    @Test
+    public void testConstantArithmeticThresholdPrunesPartitions() throws Exception {
+        // A duration written as a product is a compile-time constant, so DDL has already evaluated it and
+        // proven it non-NULL. The parser can therefore flip NOT(ts < T) to the bare ts >= T, and the scan
+        // reduces to an interval. Without that, this policy would read through a full scan.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) expire rows when ts < 24*3600*1000000");
+            drainWalAndMatViewQueues();
+            printSql("explain select * from mv");
+            TestUtils.assertNotContains(sink, "not (");
+            TestUtils.assertContains(sink, "Interval forward scan");
+        });
+    }
+
+    @Test
+    public void testClockArithmeticThresholdKeepsUnflippedFilter() throws Exception {
+        // now() - c is a runtime constant: its value comes from the clock at cursor open, so the DDL check
+        // cannot evaluate it and the parser will not flip it. The policy is correct, it just reads through a
+        // full scan with the un-inverted NOT. dateadd expresses the same window and does prune.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) expire rows when ts < now() - 3_600_000_000L");
+            drainWalAndMatViewQueues();
+            printSql("explain select * from mv");
+            TestUtils.assertContains(sink, "not (");
+        });
+    }
+
+    @Test
+    public void testRetentionWindowWithNegativeStridePrunesPartitions() throws Exception {
+        // A retention window is written with a negative dateadd stride, and the parser builds that -1 as a
+        // one-operand minus over the constant 1. That subtree must count as non-null, or the whole dateadd
+        // threshold reads as possibly-NULL, the flip is refused, and the view loses the partition pruning
+        // this policy shape exists for.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv_window as (select * from base) expire rows when ts < dateadd('h', -1, now())");
+            drainWalAndMatViewQueues();
+
+            printSql("explain select * from mv_window");
+            TestUtils.assertNotContains(sink, "not (");
+            TestUtils.assertContains(sink, "Interval forward scan");
         });
     }
 

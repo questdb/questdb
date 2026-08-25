@@ -1316,8 +1316,8 @@ public class SqlParser {
      * {@code NOT(a < b)} (which is true when an operand is NULL) is NOT equivalent to {@code a >= b} (false)
      * unless both operands are guaranteed non-null. The flip is therefore allowed only when one operand is the
      * designated timestamp column (never NULL) and the other is <i>provably</i> non-NULL per
-     * {@link #isOperandProvablyNonNull} (a non-null literal, a wall-clock function such as now(), or
-     * null-preserving timestamp arithmetic over non-null operands) — exactly the {@code ts < now()} shape the
+     * {@link #isOperandProvablyNonNull} (a non-null literal, a wall-clock function such as now(), or one of a
+     * few timestamp functions applied to non-null operands) — exactly the {@code ts < now()} shape the
      * partition-pruning optimisation targets. Every other shape (including a column-free but possibly-NULL
      * constant like {@code cast(null as timestamp)}) keeps the un-inverted {@code NOT}, which is always
      * correct (it just does not prune). Without this guard, a policy like {@code EXPIRE ROWS WHEN v < 2.0} on
@@ -1342,14 +1342,15 @@ public class SqlParser {
      * Conservative "this expression can never evaluate to NULL" test, gating the null-unsafe timestamp flip
      * (see {@link #isNullSafeOrderingFlip}). Only an allowlist is treated as provably non-null: a non-null
      * constant literal; the nullary clock functions ({@link SqlKeywords#isClockFunctionKeyword}); and the
-     * null-preserving timestamp functions / arithmetic operators (e.g. {@code dateadd}, {@code date_trunc},
-     * {@code timestamp_floor}, {@code +}, {@code -}, {@code *}) applied to provably-non-null operands.
-     * Everything else — a column (LITERAL), bind variable, the NULL literal, {@code cast(...)},
-     * {@code to_timestamp(...)}, or any unknown function — is treated as possibly-NULL, so the flip falls
-     * back to the always-correct un-inverted {@code NOT}. Being conservative here only costs a partition-pruning
-     * opportunity, never correctness. (Merely "references no column" is NOT enough: a column-free constant
+     * timestamp functions {@link #isNullPreservingTimestampExpr} lists ({@code dateadd}, {@code date_trunc},
+     * {@code timestamp_floor}, {@code to_timezone}, {@code to_utc}) applied to provably-non-null operands;
+     * and constant arithmetic ({@link #isConstantArithmetic}). Everything else — a column (LITERAL), bind
+     * variable, the NULL literal, {@code cast(...)}, {@code to_timestamp(...)}, arithmetic with a clock or
+     * column under it, or any unknown function — counts as possibly-NULL, so the flip falls back to the
+     * always-correct un-inverted {@code NOT}. Being conservative here costs a partition-pruning opportunity,
+     * never correctness. Note that "references no column" is not enough on its own: a column-free constant
      * such as {@code cast(null as timestamp)} is still NULL, and flipping {@code NOT(ts < NULL)} to
-     * {@code ts >= NULL} would wrongly hide every row.)
+     * {@code ts >= NULL} would wrongly hide every row.
      */
     private static boolean isOperandProvablyNonNull(ExpressionNode node) {
         if (node == null) {
@@ -1361,6 +1362,13 @@ public class SqlParser {
         if (node.type == ExpressionNode.FUNCTION || node.type == ExpressionNode.OPERATION) {
             if (SqlKeywords.isClockFunctionKeyword(node.token)) {
                 return true;
+            }
+            if (isArithmeticOperator(node.token)) {
+                // Arithmetic can overflow onto the NULL sentinel, so it is trusted only as a compile-time
+                // constant, which SqlCompilerImpl.rejectNullConstantExpiryThreshold has already evaluated
+                // and proven non-NULL at DDL time. A clock under the operator makes the subtree a runtime
+                // constant, which that check cannot answer for, so it stays possibly-NULL here.
+                return isConstantArithmetic(node);
             }
             if (!isNullPreservingTimestampExpr(node.token)) {
                 return false;
@@ -1390,15 +1398,77 @@ public class SqlParser {
         return false;
     }
 
+    /**
+     * Whether the token names a timestamp function that returns NULL only when one of its operands is NULL.
+     * The caller uses this to decide that the whole subtree is non-null when all of its operands are.
+     * <p>
+     * The arithmetic operators {@code +}, {@code -} and {@code *} are not on the list, even though they do
+     * return NULL for a NULL operand. QuestDB stores a NULL TIMESTAMP or LONG as the value
+     * {@link io.questdb.std.Numbers#LONG_NULL} ({@code Long.MIN_VALUE}), and Java integer arithmetic wraps
+     * around on overflow without reporting it, so two non-null operands can add up to a NULL:
+     * {@code 4611686018427387904 * 2} wraps to exactly {@code Long.MIN_VALUE}. INT arithmetic overflows onto
+     * {@link io.questdb.std.Numbers#INT_NULL} three orders of magnitude sooner, at {@code 2147483647 + 1}.
+     * <p>
+     * If such a subtree counted as non-null, the flip would turn {@code NOT(ts < X)} into {@code ts >= X} for
+     * a NULL {@code X}. That comparison is false for every row, so the view reads as empty, while the cleanup
+     * sweep's {@code CASE} spelling keeps every row on disk. Reads and cleanup then disagree, and nothing
+     * reports it.
+     * <p>
+     * {@link #isOperandProvablyNonNull} accepts arithmetic by a different route: a subtree whose leaves are
+     * all constants is a compile-time constant, and
+     * {@code SqlCompilerImpl.rejectNullConstantExpiryThreshold} evaluates exactly that at DDL time and
+     * refuses to store a policy whose threshold comes out NULL. Naming the operators here as well would
+     * extend the same trust to a subtree with a clock under it, whose value depends on the read-time clock
+     * and which DDL therefore cannot evaluate.
+     * <p>
+     * The functions on the list shift a timestamp by an amount scaled to a time unit, so no realistic input
+     * reaches the NULL value. That is a judgement about the inputs, not a proof: a carefully chosen
+     * {@code dateadd} stride could wrap onto it as well. To make the check sound, evaluate the constant
+     * subtree and reject the result when it equals {@code Long.MIN_VALUE}. Do that before adding to the list.
+     * <p>
+     * The one shape this costs is {@code ts < <clock> - c}, e.g. {@code ts < now() - 3_600_000_000L}, which
+     * keeps the un-inverted {@code NOT} and scans every partition. Proving that one non-null needs a range
+     * argument rather than an evaluation: for {@code c >= 0}, {@code t - c} lands on {@code Long.MIN_VALUE}
+     * only when {@code t == Long.MIN_VALUE + c}, so bounding {@code c} bounds the clock values that would
+     * have to occur. {@code ts < dateadd('h', -1, now())} expresses the same policy and does prune.
+     */
     private static boolean isNullPreservingTimestampExpr(CharSequence token) {
-        // null-in -> null-out, non-null-in -> non-null-out, so the result is non-null iff all operands are.
         return Chars.equalsIgnoreCase(token, "dateadd")
                 || Chars.equalsIgnoreCase(token, "date_trunc")
                 || Chars.equalsIgnoreCase(token, "timestamp_floor")
                 || Chars.equalsIgnoreCase(token, "to_timezone")
-                || Chars.equalsIgnoreCase(token, "to_utc")
-                || (token != null && token.length() == 1
-                && (token.charAt(0) == '+' || token.charAt(0) == '-' || token.charAt(0) == '*'));
+                || Chars.equalsIgnoreCase(token, "to_utc");
+    }
+
+    private static boolean isArithmeticOperator(CharSequence token) {
+        return token != null && token.length() == 1
+                && (token.charAt(0) == '+' || token.charAt(0) == '-' || token.charAt(0) == '*');
+    }
+
+    /**
+     * Whether every leaf under this node is a non-null constant, with only {@code +}, {@code -} and
+     * {@code *} between them. That makes the subtree a compile-time constant, which is the only arithmetic
+     * {@link #isOperandProvablyNonNull} accepts, because DDL validation evaluates such a threshold and
+     * refuses to store it when it comes out NULL.
+     * <p>
+     * A signed numeric literal is the one-operator case: the parser builds the {@code -1} stride of
+     * {@code dateadd('h', -1, now())} as a one-operand {@code -} over the constant {@code 1}. Reading that
+     * as possibly-NULL would drop the flip for every retention window, which is the shape the whole
+     * optimisation is for.
+     */
+    private static boolean isConstantArithmetic(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.CONSTANT) {
+            return !SqlKeywords.isNullKeyword(node.token);
+        }
+        if (node.type != ExpressionNode.OPERATION || !isArithmeticOperator(node.token)) {
+            return false;
+        }
+        return (node.lhs != null || node.rhs != null)
+                && (node.lhs == null || isConstantArithmetic(node.lhs))
+                && (node.rhs == null || isConstantArithmetic(node.rhs));
     }
 
     /**

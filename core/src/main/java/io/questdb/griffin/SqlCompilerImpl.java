@@ -851,6 +851,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     new ExpiryValidationResult(hasClock, isDeterministic, isMonotonic, referencedColumnIndexes);
             // Last, because it reuses this compiler's lexer and parser and so invalidates `node`.
             validateExpiryKeepFilterBinds(executionContext, metadata, predicate, position);
+            // Also re-lexes, so it has to follow everything that reads `node`.
+            rejectNullConstantExpiryThreshold(executionContext, metadata, predicate, timestampColumn, position);
             return result;
         } finally {
             Misc.free(f);
@@ -6878,6 +6880,64 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
+     * Rejects a policy whose threshold is a compile-time constant NULL, such as
+     * {@code ts < cast(null as timestamp)}, or an arithmetic expression that overflows onto the NULL
+     * sentinel, {@code ts < 4611686018427387904 * 2}. Such a policy expires nothing, which is always a
+     * mistake, and it is one the author cannot see: the source text reads as an ordinary timestamp.
+     * <p>
+     * Binding the threshold answers this with the engine's own arithmetic. QuestDB types integer literals
+     * and promotes products by rules that are not evident from the source text - {@code 86400*1000000}
+     * comes out LONG and correct, {@code 1073741824*2} comes out INT and NULL - so a check that folded the
+     * expression itself would have to reproduce those rules to stay in step with what reads compute.
+     * <p>
+     * Only {@link Function#isConstant()} counts. A runtime constant such as {@code now() - c} evaluates
+     * against whatever clock this DDL happens to see, so a non-NULL answer now says nothing about a read
+     * a month later; {@code SqlParser.isOperandProvablyNonNull} covers that case by refusing to flip it.
+     * <p>
+     * {@link #expiryTimestampThreshold} evaluates the same subtree but cannot stand in for this: it
+     * returns {@code LONG_NULL} for a dozen unrelated reasons - no designated timestamp, the opposite
+     * comparison direction, a non-timestamp threshold type - so it cannot tell a NULL threshold from a
+     * shape it simply does not handle.
+     */
+    private void rejectNullConstantExpiryThreshold(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            CharSequence timestampColumn,
+            int position
+    ) throws SqlException {
+        final boolean isNullThreshold;
+        Function t = null;
+        try {
+            clear();
+            lexer.of(predicate);
+            final ExpressionNode node = parser.expr(lexer, (QueryModel) null, this);
+            final ExpressionNode thresholdNode = expiryTimestampThresholdNode(node, metadata, timestampColumn);
+            if (thresholdNode == null) {
+                return;
+            }
+            t = functionParser.parseFunction(thresholdNode, metadata, executionContext);
+            if (t == null || !t.isConstant()) {
+                return;
+            }
+            t.init(null, executionContext);
+            isNullThreshold = isNullConstant(t);
+        } catch (SqlException | CairoException | ImplicitCastException e) {
+            // The whole-predicate bind above already reported anything that matters; a failure here only
+            // means the threshold could not be evaluated, which is not itself a reason to reject.
+            return;
+        } finally {
+            Misc.free(t);
+        }
+        if (isNullThreshold) {
+            // The caret carries the caller's position, as every other error here does: this lexes the
+            // predicate on its own, so a node position from it would be an offset into the predicate text
+            // rather than into the statement the user wrote.
+            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: the threshold is NULL, so no row can ever expire");
+        }
+    }
+
+    /**
      * The window/keep-by read filter projects a synthetic boolean column named {@link RowExpiryUtil#KEEP_COLUMN}.
      * If the view already has a column with that name, {@code SELECT *, CASE ... <KEEP_COLUMN>} would be
      * ambiguous and every read of the view would fail, so reject the policy at definition time instead.
@@ -7216,6 +7276,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return exprReferencesColumn(node.lhs) ? null : node.lhs;
         }
         return null;
+    }
+
+    /**
+     * Whether this constant evaluates to NULL, across every type a {@code ts < T} threshold can bind to.
+     * The timestamp family, DATE, LONG and INT each carry an in-band sentinel; a bare NULL literal binds
+     * to {@link ColumnType#NULL}; a string threshold is NULL by reference.
+     */
+    private static boolean isNullConstant(Function t) {
+        final int type = t.getType();
+        if (ColumnType.isTimestamp(type)) {
+            return t.getTimestamp(null) == Numbers.LONG_NULL;
+        }
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.NULL -> true;
+            case ColumnType.DATE -> t.getDate(null) == Numbers.LONG_NULL;
+            case ColumnType.LONG -> t.getLong(null) == Numbers.LONG_NULL;
+            case ColumnType.INT -> t.getInt(null) == Numbers.INT_NULL;
+            case ColumnType.STRING -> t.getStrA(null) == null;
+            case ColumnType.VARCHAR -> t.getVarcharA(null) == null;
+            default -> false;
+        };
     }
 
     // True for a bare zero-arg wall-time clock: now(), now_ns(), sysdate(), systimestamp(), systimestamp_ns().
