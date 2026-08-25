@@ -1726,8 +1726,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // object is live AT COMMIT TIME, so the rebuild would be silently replaced by the fresh,
             // unrebuilt one the reopen just created. Reseal against the reopened columns so the object the
             // eventual commit publishes from is the one carrying the compacted directory's real state.
-            closeActivePartition(false);
-            openLastPartition();
+            // o3FinishInFlight suppresses openPartition's setCurrentTableTxn call (see its own guard),
+            // which otherwise triggers PostingIndexWriter's crash-recovery walk mid-transaction and drops
+            // the chain entries compactPartition0 just published under the txWriter.getTxn()+1 "commit in
+            // progress" convention. Nothing has crashed - this transaction is about to be committed
+            // successfully by dispatchComposite's own writer.commit() a few lines up the call stack. The
+            // dropped entries get silently rebuilt a few lines below by sealPostingIndexForPartition, so
+            // this never corrupts a read - it only wastes a rebuild finishO3Commit already knows to avoid
+            // for the identical hazard, via this same flag.
+            o3FinishInFlight = true;
+            try {
+                closeActivePartition(false);
+                openLastPartition();
+            } finally {
+                o3FinishInFlight = false;
+            }
             final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
             try {
                 if (sealPostingIndexForPartition(partitionTs, false)) {
@@ -5663,6 +5676,45 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 coveringIndices, coveringTypes, metadata.getTimestampIndex());
     }
 
+    /**
+     * A composite (or parquet) active partition leaves {@code columns[]} closed - {@link
+     * #openPartition(long, long)}, which normally reconfigures every indexer's live follower, does not
+     * run for it (see {@link #finishO3Commit}'s own {@code isLastPartitionAppendBlocked} branch). A
+     * POSTING indexer already gets its own fixup there, chain-based and independent of {@code
+     * columns[]} ({@link #sealPostingIndexesForO3Partitions}); every other indexer type (BITMAP) has no
+     * such path and relies solely on {@code openPartition}. Left alone, its underlying {@code
+     * IndexWriter} stays in whatever state an earlier {@link #closeActivePartition(boolean)} left it in
+     * - closed, unmapped - and the next commit that indexes through it (e.g. a housekeeping-only commit
+     * from {@code PartitionCompactionScanJob}, touching a DIFFERENT, non-active partition) dereferences
+     * that unmapped memory. This puts every such indexer into the same "no live follower" state {@link
+     * #openNewColumnFiles} and {@code addIndex}'s {@code indexLastPartition} already use for a
+     * composite last partition, so a later commit's indexing sees a validly reopened writer instead of
+     * a closed one.
+     */
+    private void configureIndexersForClosedActivePartition() {
+        final long lastPartitionTs = txWriter.getLastPartitionTimestamp();
+        final long lastPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(lastPartitionTs);
+        setStateForTimestamp(path, lastPartitionTs);
+        final int plen = path.size();
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)
+                        && !IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                    final ColumnIndexer indexer = indexers.getQuick(i);
+                    if (indexer == null) {
+                        continue;
+                    }
+                    final CharSequence name = metadata.getColumnName(i);
+                    final long columnNameTxn = columnVersionWriter.getColumnNameTxn(lastPartitionTs, i);
+                    final long columnTop = columnVersionWriter.getColumnTopQuick(lastPartitionTs, i);
+                    indexer.configureWriter(path.trimTo(plen), name, columnNameTxn, columnTop, lastPartitionTs, lastPartitionNameTxn);
+                }
+            }
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
     private void configureTimestampSetter() {
         int index = metadata.getTimestampIndex();
         if (index == -1) {
@@ -7238,18 +7290,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (!isEmptyTable() && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)) {
                 if (!isLastPartitionAppendBlocked()) {
                     openPartition(txWriter.getLastPartitionTimestamp(), getLastPartitionFileRowCount());
-                } else if (!isLastPartitionClosed()) {
-                    // The last partition just became append-blocked (composite or parquet) and columns[]
-                    // is STILL open from before that - a commit earlier in this same WAL batch legitimately
-                    // opened it while the partition was still ordinary. Nothing repositions it now (see
-                    // below), so it is left pointing at a stale, pre-promotion append offset. Left alone,
-                    // the next unrelated openPartition - switching columns[] to whatever partition becomes
-                    // active next, since these MemoryMA objects are reused across partitions - would call
-                    // MemoryMA.of() on it, which closes the CURRENT mapping first, and that close truncates
-                    // the file to the stale offset, discarding every byte the composite frame executor
-                    // appended since. Closing it now, without truncating, retires the stale position before
-                    // anything can act on it.
-                    closeActivePartition(false);
+                } else {
+                    if (!isLastPartitionClosed()) {
+                        // The last partition just became append-blocked (composite or parquet) and columns[]
+                        // is STILL open from before that - a commit earlier in this same WAL batch legitimately
+                        // opened it while the partition was still ordinary. Nothing repositions it now (see
+                        // below), so it is left pointing at a stale, pre-promotion append offset. Left alone,
+                        // the next unrelated openPartition - switching columns[] to whatever partition becomes
+                        // active next, since these MemoryMA objects are reused across partitions - would call
+                        // MemoryMA.of() on it, which closes the CURRENT mapping first, and that close truncates
+                        // the file to the stale offset, discarding every byte the composite frame executor
+                        // appended since. Closing it now, without truncating, retires the stale position before
+                        // anything can act on it.
+                        closeActivePartition(false);
+                    }
+                    // openPartition above is skipped for this append-blocked partition, but it is also the
+                    // only thing that reconfigures a BITMAP indexer's live writer - see
+                    // configureIndexersForClosedActivePartition's own javadoc for why leaving it at
+                    // whatever closeActivePartition (here or in an earlier commit) left it in is unsafe.
+                    configureIndexersForClosedActivePartition();
                 }
             }
 
@@ -9992,6 +10051,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // in place. Its own writes go through processCompositePartition, which opens its own frames, and a
         // merge-append table takes no LAG, which is the only other thing the mapping is for.
         if (isLastPartitionAppendBlocked()) {
+            // columns[] stays closed, but every indexed column's ColumnIndexer still needs a configured
+            // BitmapIndexWriter - see configureIndexersForClosedActivePartition's own javadoc. That method
+            // already covers a commit that finds the active partition freshly composite
+            // (finishO3Commit's own call), but a writer built by this constructor - a cold open, e.g. the
+            // writer pool evicting and later re-opening a table mid-fuzz-run - reaches this point with the
+            // active partition ALREADY composite and no earlier commit in THIS instance to have run that
+            // fixup, so it has to run here too.
+            configureIndexersForClosedActivePartition();
             return;
         }
         // Not composite past this point (isLastPartitionAppendBlocked() above already ruled it out), so
@@ -10225,6 +10292,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
         }
+    }
+
+    /**
+     * True if this composite directory holds two neighbouring pieces that TOUCH - the earlier one's
+     * {@code tsHi} equal to the next one's {@code tsLo}. Built only by
+     * {@link O3CompositeMergeStrategy#computeActions}'s tie-avoids-merge optimisation, which only ever
+     * fires when a commit has no DEDUP key to compare against - a dedup MERGE run later against a piece
+     * that touches a neighbour this way would compare an incoming row only against the ONE piece
+     * {@code computeActions} claims it with, missing a duplicate sitting in the other.
+     */
+    private boolean partitionHasTouchingPieces(int partitionIndex) {
+        final PartitionGeometry geometry = getGeometry();
+        final int pieceCount = geometry.getPieceCount(partitionIndex);
+        long previousTsHi = geometry.getPieceTimestampHi(partitionIndex, 0);
+        for (int p = 1; p < pieceCount; p++) {
+            final long tsLo = geometry.getPieceTimestampLo(partitionIndex, p);
+            if (tsLo == previousTsHi) {
+                return true;
+            }
+            previousTsHi = geometry.getPieceTimestampHi(partitionIndex, p);
+        }
+        return false;
     }
 
     private void performRecovery() {
@@ -10598,9 +10687,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     srcOoo = srcOooHi + 1;
 
+                    final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
+
+                    // A composite directory can hold two pieces that TOUCH at one timestamp - a real
+                    // piece ending at V and a single-point piece [V,V] right after it, both built while
+                    // this table had no DEDUP key. A dedup MERGE later in this same commit only compares
+                    // an incoming row against the ONE piece computeActions claims it with, so a row tied
+                    // to V would miss whichever of the two pieces it does not land in and a duplicate
+                    // could survive undetected. Folding the directory back to one plain piece now, before
+                    // anything below reads this partition's state, removes the touching boundary before
+                    // planning ever sees it - cheap and rare: composite directories without a touching
+                    // pair (the ordinary case) cost one geometry scan and nothing else, and a directory
+                    // already compacted once under dedup can never grow a new touching pair, because the
+                    // optimisation that creates one is itself gated on dedup being off for the commit that
+                    // ties a piece.
+                    if (partitionIndexRaw > -1 && isCommitDedupMode()
+                            && txWriter.isPartitionCompositeByRawIndex(partitionIndexRaw)
+                            && partitionHasTouchingPieces(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION)) {
+                        compactPartitionToPlain(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION, "dedup touching pieces");
+                    }
+
                     final long srcDataMax;
                     final long srcNameTxn;
-                    final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
                     if (partitionIndexRaw > -1) {
                         if (last) {
                             srcDataMax = transientRowCount;

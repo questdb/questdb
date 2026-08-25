@@ -30,7 +30,9 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -72,6 +74,48 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TimeFrameCursorTest extends AbstractCairoTest {
+
+    /**
+     * {@code addNativePartitionFrames} pre-computes, per partition, how many page frames a forward scan
+     * will produce, WITHOUT opening the partition - column-top splits only, no piece awareness. A
+     * COMPOSITE partition's real frame cursor ({@code FwdTableReaderPageFrameCursor#computeNativeFrame})
+     * additionally cuts a frame at every piece boundary, since a piece's physical rows are not in
+     * timestamp order relative to its siblings. The backfill below leaves the ACTIVE partition composite
+     * with 2 pieces, so the real scan below produces one MORE frame than the pre-computation predicts -
+     * {@code ensurePartitionOpened} used to assert on that mismatch instead of the two counts agreeing.
+     */
+    @Test
+    public void testCompositePartitionFrameCount() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x::INT, timestamp_sequence('2020-02-01', 15*1000000L) ts" +
+                    " FROM long_sequence(400)");
+            drainWalQueue();
+            // Lands inside the same, still-active day - forces a merge-append there, leaving it composite.
+            execute("INSERT INTO x SELECT x::INT + 70000, timestamp_sequence('2020-02-01T00:20:07', 1000000L) ts" +
+                    " FROM long_sequence(3)");
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            final PartitionGeometry geometry;
+            try (TableReader reader = engine.getReader(xt)) {
+                geometry = reader.getGeometry();
+                Assert.assertTrue("2020-02-01 should be composite with more than one piece",
+                        geometry.getPieceCount(0) > 1);
+            }
+
+            try (RecordCursorFactory factory = select("x")) {
+                Assert.assertTrue(factory.supportsTimeFrameCursor());
+                try (TimeFrameCursor cursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
+                    assertForwardScan(cursor, 403);
+                }
+                testWithConcurrentCursor(factory, cursor -> assertForwardScan(cursor, 403));
+            }
+        });
+    }
 
     @Test
     public void testAlreadyOpenPartitionFastPath() throws Exception {

@@ -399,6 +399,166 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
+     * A composite ACTIVE partition leaves {@code columns[]} closed, so {@code TableWriter#finishO3Commit}
+     * skips its usual {@code openPartition} call for it - the one call that reconfigures every indexer's
+     * live writer. POSTING indexers get their own fixup there ({@code sealPostingIndexesForO3Partitions},
+     * chain-based, independent of {@code columns[]}); a BITMAP indexer has no such path and relied solely
+     * on {@code openPartition}, so its underlying {@code BitmapIndexWriter} was left exactly as an earlier
+     * {@code closeActivePartition} call left it - closed, its key-file memory unmapped.
+     * <p>
+     * Shape: {@code sym_late} (BITMAP) is added while day0 is still plain, a real follower gets wired up.
+     * A backfill inside day0 then forces a merge-append there, making it composite while still active -
+     * closing that follower with nothing to reopen it, since day0 stays the active partition. day1 is then
+     * created and becomes composite shortly after its own birth (a row landing earlier within day1 itself).
+     * With day1 now active and day0 idle, {@link PartitionCompactionScanJob} REWRITE-compacts day0 (the
+     * non-active branch, which does not reopen the ACTIVE partition's indexers) and commits - and that
+     * commit's own indexing pass dereferences {@code sym_late}'s still-unmapped {@code BitmapIndexWriter}.
+     */
+    @Test
+    public void testScanCompactsIdleNonActiveCompositePartitionSurvivesStaleBitmapIndexerAcrossPartitionSwitch() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("1970-01-01T00:00:00.000000Z"));
+
+            final String day0Base = "SELECT x::INT i, timestamp_sequence(0, 15*1000000L) ts FROM long_sequence(400)";
+
+            execute("CREATE TABLE cx AS (" + day0Base + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            // Column added while day0 is still plain - a real follower gets wired up.
+            execute("ALTER TABLE cx ADD COLUMN sym_late SYMBOL INDEX");
+            drainWalQueue();
+
+            // Backfill inside day0 - forces a merge-append there, leaving it composite while still active.
+            execute("INSERT INTO cx SELECT x::INT + 70000 i, timestamp_sequence('1970-01-01T00:20:07', 1000000L) ts," +
+                    " NULL sym_late FROM long_sequence(3)");
+            drainWalQueue();
+
+            final TableToken cxToken = engine.verifyTableName("cx");
+            try (TableReader cxReader = engine.getReader(cxToken)) {
+                final TxReader cxTx = cxReader.getTxFile();
+                Assert.assertEquals("cx must have exactly one, the active, partition", 1, cxTx.getPartitionCount());
+                Assert.assertTrue("day0 should be composite", cxTx.isPartitionComposite(0));
+            }
+
+            // day1's own first commit creates it; the second lands earlier within day1 itself - a real
+            // merge-append there, so day1 is composite from shortly after its own birth, not plain.
+            execute("INSERT INTO cx SELECT x::INT + 80000 i, timestamp_sequence('1970-01-02T00:00:10', 1000000L) ts," +
+                    " NULL sym_late FROM long_sequence(50)");
+            drainWalQueue();
+            execute("INSERT INTO cx SELECT x::INT + 90000 i, timestamp_sequence('1970-01-02T00:00:00', 1000000L) ts," +
+                    " NULL sym_late FROM long_sequence(3)");
+            drainWalQueue();
+
+            try (TableReader cxReader = engine.getReader(cxToken)) {
+                final TxReader cxTx = cxReader.getTxFile();
+                Assert.assertEquals("cx must have two partitions now", 2, cxTx.getPartitionCount());
+                Assert.assertTrue("day0 should still be composite", cxTx.isPartitionComposite(0));
+            }
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("1970-01-05T00:00:00.000000Z"));
+
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                job.run();
+            }
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            final TableToken cxTokenAfter = engine.verifyTableName("cx");
+            Assert.assertFalse("the compaction commit suspended the table",
+                    engine.getTableSequencerAPI().isSuspended(cxTokenAfter));
+        });
+    }
+
+    /**
+     * A cold-opened {@link TableWriter} - the writer pool had evicted it, so the next access builds a fresh
+     * instance - never configures a BITMAP indexer for its own ACTIVE partition when that partition is
+     * ALREADY composite at open time: {@code initLastPartition} calls
+     * {@code openLastPartitionAndSetAppendPosition}, which is a no-op for a composite last partition (see
+     * its own javadoc - nothing appends to one in place), so {@code openPartition}'s
+     * {@code indexer.configureFollowerAndWriter} call never runs. But {@code initLastPartition} calls
+     * {@code populateDenseIndexerList()} right after regardless, which adds every non-null
+     * {@code ColumnIndexer} to {@code denseIndexers} without checking whether it was ever configured - so
+     * the still-pristine indexer, its {@code BitmapIndexWriter} never {@code of()}-ed, lands in the set
+     * {@code commit()} indexes on. Any later commit on this writer - even
+     * {@link PartitionCompactionScanJob#dispatchComposite}'s, compacting a wholly different, non-active,
+     * idle partition - reaches {@code updateIndexesSlow} and dereferences that indexer's unmapped key file,
+     * an {@link AssertionError} deep in {@code AbstractMemoryCR.addressOf}.
+     */
+    @Test
+    public void testScanCommitCrashesOnColdOpenedWriterWithComposedActivePartition() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("1970-01-01T00:00:00.000000Z"));
+
+            execute("CREATE TABLE cx AS (" +
+                    "SELECT x::INT i, timestamp_sequence(0, 15*1000000L) ts FROM long_sequence(400)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            // Added after the table already holds rows - carries a real column top, matching a
+            // fuzz-generated table's own "_top" column idiom.
+            execute("ALTER TABLE cx ADD COLUMN sym_top SYMBOL INDEX");
+            drainWalQueue();
+
+            // Backfill inside day0 - forces a merge-append there, leaving it composite. day0 is still the
+            // only, active, partition at this point.
+            execute("INSERT INTO cx SELECT x::INT + 70000 i, timestamp_sequence('1970-01-01T00:20:07', 1000000L) ts," +
+                    " ('sym' || (x % 7))::symbol sym_top FROM long_sequence(3)");
+            drainWalQueue();
+
+            // day1's own first commit creates it, pushing day0 out of the active slot. The second lands
+            // earlier within day1 itself - a real merge-append there, so the NEW active partition, day1,
+            // is ALSO composite - the shape a cold-opened writer never initializes an indexer for.
+            execute("INSERT INTO cx SELECT x::INT + 80000 i, timestamp_sequence('1970-01-02T00:00:10', 1000000L) ts," +
+                    " ('sym' || (x % 7))::symbol sym_top FROM long_sequence(50)");
+            drainWalQueue();
+            execute("INSERT INTO cx SELECT x::INT + 90000 i, timestamp_sequence('1970-01-02T00:00:00', 1000000L) ts," +
+                    " ('sym' || (x % 7))::symbol sym_top FROM long_sequence(3)");
+            drainWalQueue();
+
+            final TableToken cxToken = engine.verifyTableName("cx");
+            try (TableReader cxReader = engine.getReader(cxToken)) {
+                final TxReader cxTx = cxReader.getTxFile();
+                Assert.assertEquals("cx must have two partitions now", 2, cxTx.getPartitionCount());
+                Assert.assertTrue("day0 should be composite", cxTx.isPartitionComposite(0));
+                Assert.assertTrue("day1, the active partition, should also be composite", cxTx.isPartitionComposite(1));
+            }
+
+            // Evict the writer from the pool - the writer pool does this itself once WAL apply's own
+            // time-quota ejects a table mid-fuzz-run (see the "WriterPool closed [... reason=IDLE]" log
+            // line that precedes the crash in the wild). The NEXT access below cold-opens a fresh
+            // TableWriter while day1 is still composite.
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("1970-01-05T00:00:00.000000Z"));
+
+            // Only day0 (non-active, composite, idle) is a candidate here - day1 is still the active
+            // partition and stays well inside the recency window. dispatchComposite cold-opens the writer
+            // (day1 still composite at that point), compacts day0 (unrelated to day1), then commits - the
+            // commit is where indexing dereferences day1's never-configured sym_top indexer.
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                job.run();
+            }
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            final TableToken cxTokenAfter = engine.verifyTableName("cx");
+            Assert.assertFalse("the compaction commit suspended the table",
+                    engine.getTableSequencerAPI().isSuspended(cxTokenAfter));
+        });
+    }
+
+    /**
      * A Parquet partition with dead row-group bytes below the automatic rewrite ratio gets rewritten once
      * idle; a second, never-updated Parquet partition - equally idle, but with nothing to reclaim - is left
      * exactly as it was (same name txn, zero dead bytes throughout).

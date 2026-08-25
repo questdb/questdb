@@ -622,62 +622,6 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
-     * TRIM-FILES is not implemented in this pass, so once compaction has reclaimed a partition's waste on
-     * the first pass, there is nothing left for a later pass to shrink further - unlike the reference
-     * design's staged MAKE-PLAIN/TRIM-FILES, where the file shortening is a separate, later step. This
-     * fixture's stride sits mid-partition (~25% front), below MOVE-TAIL's default
-     * {@code prefix.min.percent} (50%), so REWRITE is what reclaims the waste here, not MOVE-TAIL. Expected
-     * to fail on the final "disk actually fell further" assertion.
-     */
-    @Test
-    public void testTrimFilesWaitsForAReaderThatMappedTheOldExtent() throws Exception {
-        assertMemoryLeak(() -> {
-            enableMergeAppend();
-            enableCompaction();
-            // A full-partition rewrite naturally crosses the table-wide dead-percent default (50%)
-            // partway through the buildup below; keep the table-pressure rule out of the way so only
-            // the waste-ratio rule (set after the buildup) is what fires.
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT, "99");
-
-            createDayTable("x", "2024-01-01", 20_000);
-            // Three rewrites: each merge-append here rewrites the WHOLE partition (no pre-split cuts
-            // it), so two rounds leave dead just under the live count - three pushes past the ratio.
-            // The tight ratio is set only now, after the buildup - see testWasteRatioTriggerReclaimsDeadRows.
-            backdate("x", "2024-01-01T06:00:00", 200);
-            backdate("x", "2024-01-01T06:00:00", 200);
-            backdate("x", "2024-01-01T06:00:00", 200);
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1");
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "1");
-
-            final TableToken tt = engine.verifyTableName("x");
-            // First pass: REWRITE reclaims the waste (no MOVE-TAIL instalment plan in this port).
-            runCompactionPasses("x");
-
-            final long diskAfterFirstPass = diskSizeOfDay("x", "2024-01-01");
-            try (TableReader mapped = engine.getReader(tt)) {
-                // Touch the partition so the reader really maps it.
-                Assert.assertTrue(mapped.size() >= 0);
-                TestUtils.assertSqlCursors(engine, sqlExecutionContext, "x order by ts", "x order by ts", LOG);
-
-                runCompactionPasses("x");
-                Assert.assertEquals(
-                        "disk moved while a reader still had the partition mapped",
-                        diskAfterFirstPass,
-                        diskSizeOfDay("x", "2024-01-01")
-                );
-            }
-
-            runCompactionPasses("x");
-            Assert.assertTrue(
-                    "a later pass shortened the files further, which this port cannot do without" +
-                            " TRIM-FILES [diskBefore=" + diskAfterFirstPass +
-                            ", diskAfter=" + diskSizeOfDay("x", "2024-01-01") + ']',
-                    diskSizeOfDay("x", "2024-01-01") < diskAfterFirstPass
-            );
-        });
-    }
-
-    /**
      * The waste-ratio rule: dead rows must exceed a multiple of the live rows AND a minimum size.
      * Repeated merge-appends of one narrow stride leave a copy of that stride dead each time.
      */

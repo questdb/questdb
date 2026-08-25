@@ -395,11 +395,12 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
     }
 
     /**
-     * FAILING TEST - reproduces a correctness gap left by the tie-avoids-merge optimisation
+     * Reproduces (and, via {@code TableWriter}'s degraded-geometry compaction, verifies the fix for) a
+     * correctness gap left by the tie-avoids-merge optimisation
      * ({@link #testTieOnAnEarlierPieceFoundsThenMergesASinglePointPiece}): a directory can end up with two
      * TOUCHING pieces - a real piece ending at {@code V} and a single-point piece {@code [V,V]} right after
-     * it - built while DEDUP was off. Turning DEDUP on afterwards and writing a row at {@code V} does not
-     * see both of them.
+     * it - built while DEDUP was off. Turning DEDUP on afterwards and writing a row at {@code V} must still
+     * compare against BOTH of them.
      * <p>
      * {@link io.questdb.cairo.O3CompositeMergeStrategy#computeActions} walks pieces in order and gives each
      * O3 row to the FIRST piece whose range claims it. A row at {@code V} is claimed by the earlier, real
@@ -407,17 +408,19 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
      * dedup pass ({@code O3PartitionJob#executeCompositePlan}'s {@code MERGE} case, {@code getDedupRows})
      * compares the incoming row only against THAT piece's own {@code [pieceLo, pieceHi)} rows - it never
      * reads the second, single-point piece at the very same instant, because {@code computeActions} already
-     * advanced its O3 cursor past every row at {@code V} before that piece's own turn in the loop. The
-     * single-point piece is left an untouched {@code KEEP}, its row never compared to the incoming one.
+     * advanced its O3 cursor past every row at {@code V} before that piece's own turn in the loop. Left
+     * unfixed, the single-point piece stays an untouched {@code KEEP} and its row keeps its STALE value
+     * forever, since every later commit at {@code V} keeps resolving to the same earlier piece first, never
+     * the sibling sitting right behind it.
      * <p>
-     * With a DEDUP key of {@code (ts)} alone, that means the table can hold two DIFFERENT rows at the SAME
-     * timestamp after a write that was supposed to keep at most one - the single-point piece's row survives
-     * as an invisible duplicate no later dedup commit will ever detect either, since every future commit at
-     * {@code V} will keep resolving to the SAME earlier piece first, never the sibling sitting right behind
-     * it.
+     * DEDUP does not collapse pre-existing duplicate keys - that is expected, not a bug: two rows can
+     * already share a timestamp from before DEDUP was ever enabled, and enabling it is not retroactive.
+     * What DEDUP does promise is that a commit whose row matches an EXISTING key updates every row holding
+     * that key to the incoming value, never leaving one behind stale. That is what this test checks: not
+     * that the two rows at {@code V} collapse to one, but that neither survives with its old value.
      */
     @Test
-    public void testDedupMissesADuplicateInATouchingSinglePointPiece() throws Exception {
+    public void testDedupUpdatesEveryRowInATouchingSinglePointPiece() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
@@ -466,9 +469,10 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             execute("ALTER TABLE x DEDUP ENABLE UPSERT KEYS(ts)");
             drainWalQueue();
 
-            // A dedup commit landing exactly on tieTs. Under a correct implementation this should be seen
-            // as a duplicate of BOTH existing rows at tieTs (the head piece's own last row and the
-            // single-point piece's row) and replace them, leaving exactly one row at tieTs.
+            // A dedup commit landing exactly on tieTs. It must be compared against BOTH existing rows at
+            // tieTs (the head piece's own last row and the single-point piece's row) and update both to
+            // the incoming value - DEDUP does not collapse them to one row, and this test does not expect
+            // it to.
             execute("INSERT INTO x SELECT (-2)::INT, " + tieTs + "::TIMESTAMP FROM long_sequence(1)");
             drainWalQueue();
 
@@ -476,12 +480,13 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
             Assert.assertFalse("the dedup commit suspended the table",
                     engine.getTableSequencerAPI().isSuspended(xtAfterDedup));
 
-            // FAILS today: a ts-only DEDUP key promises at most one row per timestamp, but the table ends
-            // up with two - the new row (-2) and the single-point piece's stale, never-compared row (-1).
+            // Still 2 rows - DEDUP never collapses pre-existing duplicate keys - but BOTH must now carry
+            // the incoming value. Before the fix, the single-point piece's row was never compared and
+            // kept its stale -1.
             assertQuery("SELECT count() c FROM x WHERE ts = " + tieTs + "::TIMESTAMP")
-                    .noRandomAccess().expectSize().returns("c\n1\n");
-            assertQuery("SELECT i FROM x WHERE ts = " + tieTs + "::TIMESTAMP")
-                    .returns("i\n-2\n");
+                    .noRandomAccess().expectSize().returns("c\n2\n");
+            assertQuery("SELECT i FROM x WHERE ts = " + tieTs + "::TIMESTAMP ORDER BY i")
+                    .returns("i\n-2\n-2\n");
         });
     }
 

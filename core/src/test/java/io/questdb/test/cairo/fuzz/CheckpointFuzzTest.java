@@ -26,6 +26,7 @@ package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlException;
@@ -374,6 +375,13 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                     } catch (Throwable th) {
                         ex.set(th);
                     } finally {
+                        // drainWalQueue() runs O3PartitionJob inline on this thread, outside any
+                        // WorkerPool - so the O3PartitionJob.COMPOSITE_CONTEXT/PARQUET_MERGE_CONTEXT
+                        // CarrierLocal slots it may have populated (e.g. a composite-partition merge's
+                        // _geometry scratch buffer) never see WorkerPool's worker-halt cleanup. This
+                        // thread is single-use, so free them here, the same way a WorkerPool worker
+                        // would on halt.
+                        Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                         Path.clearThreadLocals();
                     }
                 });
