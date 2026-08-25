@@ -973,6 +973,15 @@ public class SqlParser {
      * expiring-view draft's expandExpiringView. The caller MUST have already added {@code tableName}
      * to {@link #expiringTablesBeingExpanded} so the synthetic inner {@code FROM "t"} resolves as a
      * plain table rather than re-expanding (infinite recursion).
+     * <p>
+     * Every synthetic sub-query here parses with no declarations in scope. The keep-filter is enforcement
+     * text that DDL validated on its own terms, so the declarations a read happens to carry must stay out
+     * of it: column names may legally start with {@code '@'}, and a declared name matching one substitutes
+     * a reader-supplied expression into the filter. Under a policy such as {@code ts < @c} the filter would
+     * then compare against whatever the query declared instead of against the column, and the read would
+     * hand itself expired rows. Declarations still reach everything the caller wrote around the reference,
+     * which keeps {@code DECLARE @x := 5 SELECT * FROM mv WHERE v > @x} working: the caller's own model
+     * holds them.
      */
     private void expandExpiringTable(
             IQueryModel model,
@@ -996,7 +1005,7 @@ public class SqlParser {
                     + RowExpiryUtil.quoteIdentifier(designatedTimestampColumn) + " PARTITION BY " + keys;
             final GenericLexer latestLexer = viewLexers.next();
             latestLexer.of(latestSql);
-            final IQueryModel latestSubQuery = parseAsSubQuery(latestLexer, null, false, sqlParserCallback, model.getDecls(), true);
+            final IQueryModel latestSubQuery = parseAsSubQuery(latestLexer, null, false, sqlParserCallback, null, true);
             model.setNestedModel(latestSubQuery);
             model.setNestedModelIsSubQuery(true);
             if (model.getAlias() == null) {
@@ -1034,7 +1043,7 @@ public class SqlParser {
                     + RowExpiryUtil.quoteIdentifier(designatedTimestampColumn) + ") WHERE " + RowExpiryUtil.KEEP_COLUMN;
             final GenericLexer windowLexer = viewLexers.next();
             windowLexer.of(windowSql);
-            final IQueryModel windowSubQuery = parseAsSubQuery(windowLexer, null, false, sqlParserCallback, model.getDecls(), true);
+            final IQueryModel windowSubQuery = parseAsSubQuery(windowLexer, null, false, sqlParserCallback, null, true);
             markExpiryWindowBarrier(windowSubQuery);
             model.setExpiryWindowBarrier(true);
             model.getExpiryWindowPartitionBy().addAll(windowSubQuery.getExpiryWindowPartitionBy());
@@ -1050,20 +1059,16 @@ public class SqlParser {
         // reference becomes "SELECT * FROM "t" WHERE <keep-filter>" so only rows that have NOT expired are
         // visible. The keep-filter is parsed inline (so the sub-query model processes it like any WHERE);
         // see keepFilterWhereText for the NULL-operand and partition-pruning details.
-        // The flip verdict is a pure function of (predicate, designated timestamp) for a DECLARE-free
-        // compile, so the probe parse runs once per CairoTable instance and every later compile reads the
-        // memo. A DECLARE-carrying compile neither trusts nor populates it, and always gets flip=false:
-        // a declared name can capture a column reference in the predicate and substitute an expression
-        // DDL validation never saw (see isTimestampFlippablePredicate).
+        // The flip verdict is a pure function of (predicate, designated timestamp): the probe parse and the
+        // filter parse both run with no declarations in scope, so no query can steer it. It is therefore
+        // computed once per CairoTable instance and every later compile reads the memo.
         final boolean flip;
-        final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = model.getDecls();
-        final boolean isMemoUsable = policyTable != null && (decls == null || decls.size() == 0);
-        final int memoizedFlip = isMemoUsable ? policyTable.getExpiryFlipEligibility() : CairoTable.EXPIRY_FLIP_UNKNOWN;
+        final int memoizedFlip = policyTable != null ? policyTable.getExpiryFlipEligibility() : CairoTable.EXPIRY_FLIP_UNKNOWN;
         if (memoizedFlip != CairoTable.EXPIRY_FLIP_UNKNOWN) {
             flip = memoizedFlip == CairoTable.EXPIRY_FLIP_YES;
         } else {
-            flip = isTimestampFlippablePredicate(predicate, designatedTimestampColumn, sqlParserCallback, decls);
-            if (isMemoUsable) {
+            flip = isTimestampFlippablePredicate(predicate, designatedTimestampColumn, sqlParserCallback);
+            if (policyTable != null) {
                 policyTable.setExpiryFlipEligibility(flip ? CairoTable.EXPIRY_FLIP_YES : CairoTable.EXPIRY_FLIP_NO);
             }
         }
@@ -1073,7 +1078,7 @@ public class SqlParser {
         final GenericLexer subLexer = viewLexers.next();
         subLexer.of(syntheticSql);
 
-        final IQueryModel subQuery = parseAsSubQuery(subLexer, null, false, sqlParserCallback, model.getDecls(), true);
+        final IQueryModel subQuery = parseAsSubQuery(subLexer, null, false, sqlParserCallback, null, true);
         if (!flip) {
             markExpiryKeepFilter(subQuery);
         }
@@ -1293,27 +1298,23 @@ public class SqlParser {
      * discarded). Returns false for everything else, which leaves the {@code NOT} un-inverted - always
      * correct, just unable to prune.
      * <p>
-     * A DECLARE-carrying compile never flips. Column names may legally start with {@code '@'}, so a
-     * declared name can capture an unquoted such column reference in the predicate, and the probe then
-     * inspects a tree containing whatever expression the query declared — one DDL validation never saw.
-     * That breaks the premise {@link #isOperandProvablyNonNull} rests on for arithmetic: a declared
-     * {@code @c := 4611686018427387904 * 2} substitutes constant arithmetic that folds to the NULL
-     * sentinel, and flipping {@code NOT(ts < @c)} to {@code ts >= @c} would hide every row for that
-     * query. Refusing the flip keeps the always-correct {@code NOT}; the only cost is partition pruning
-     * on a DECLARE-carrying read of a policied view.
+     * The probe parses with no declarations in scope, the same way the keep-filter itself does (see
+     * {@link #expandExpiringTable}), so it inspects exactly the tree the filter will carry. That is what
+     * the premise {@link #isOperandProvablyNonNull} rests on for arithmetic: the expression it judges is
+     * the DDL-validated one, whose constant threshold
+     * {@code SqlCompilerImpl.rejectNullConstantExpiryThreshold} has already evaluated and proven non-NULL.
      */
     private boolean isTimestampFlippablePredicate(
             String predicate,
             CharSequence designatedTimestampColumn,
-            SqlParserCallback sqlParserCallback,
-            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+            SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        if (designatedTimestampColumn == null || (decls != null && decls.size() > 0)) {
+        if (designatedTimestampColumn == null) {
             return false;
         }
         final GenericLexer probeLexer = viewLexers.next();
         probeLexer.of(predicate);
-        final ExpressionNode pred = expr(probeLexer, (IQueryModel) null, sqlParserCallback, decls);
+        final ExpressionNode pred = expr(probeLexer, (IQueryModel) null, sqlParserCallback, null);
         return pred != null && pred.type == ExpressionNode.OPERATION && pred.paramCount == 2
                 && invertOrderingOperator(pred.token) != null
                 && isNullSafeOrderingFlip(pred.lhs, pred.rhs, designatedTimestampColumn);
@@ -1381,8 +1382,9 @@ public class SqlParser {
                 // constant, which SqlCompilerImpl.rejectNullConstantExpiryThreshold has already evaluated
                 // and proven non-NULL at DDL time. A clock under the operator makes the subtree a runtime
                 // constant, which that check cannot answer for, so it stays possibly-NULL here. The DDL
-                // premise holds because only trees parsed without DECLAREs reach this point: a
-                // DECLARE-carrying compile is refused up front in isTimestampFlippablePredicate.
+                // premise covers every tree that reaches this point: the probe parse carries no
+                // declarations, so this is the stored predicate, and the check spans all four orientations
+                // the flip accepts.
                 return isConstantArithmetic(node);
             }
             if (!isNullPreservingTimestampExpr(node.token)) {

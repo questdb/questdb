@@ -6885,6 +6885,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * sentinel, {@code ts < 4611686018427387904 * 2}. Such a policy expires nothing, which is always a
      * mistake, and it is one the author cannot see: the source text reads as an ordinary timestamp.
      * <p>
+     * The threshold comes from {@link #expiryOrderingThresholdNode}, which spans all four ordering
+     * operators with the timestamp on either side. That is what makes this check the whole answer for
+     * {@code SqlParser.isOperandProvablyNonNull}: the parser flips {@code NOT(ts <op> T)} to the bare
+     * comparison on the strength of DDL having evaluated {@code T}, and it flips every one of those
+     * orientations. A check that saw only {@code ts < T} would leave {@code ts > T} storing a NULL
+     * threshold that reads as an empty view while every row stays on disk.
+     * <p>
      * Binding the threshold answers this with the engine's own arithmetic. QuestDB types integer literals
      * and promotes products by rules that are not evident from the source text - {@code 86400*1000000}
      * comes out LONG and correct, {@code 1073741824*2} comes out INT and NULL - so a check that folded the
@@ -6894,7 +6901,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * against whatever clock this DDL happens to see, so a non-NULL answer now says nothing about a read
      * a month later; {@code SqlParser.isOperandProvablyNonNull} covers that case by refusing to flip it.
      * <p>
-     * {@link #expiryTimestampThreshold} evaluates the same subtree but cannot stand in for this: it
+     * {@link #expiryTimestampThreshold} evaluates a threshold too but cannot stand in for this: it
      * returns {@code LONG_NULL} for a dozen unrelated reasons - no designated timestamp, the opposite
      * comparison direction, a non-timestamp threshold type - so it cannot tell a NULL threshold from a
      * shape it simply does not handle.
@@ -6912,7 +6919,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             clear();
             lexer.of(predicate);
             final ExpressionNode node = parser.expr(lexer, (QueryModel) null, this);
-            final ExpressionNode thresholdNode = expiryTimestampThresholdNode(node, metadata, timestampColumn);
+            final ExpressionNode thresholdNode = expiryOrderingThresholdNode(node, metadata, timestampColumn);
             if (thresholdNode == null) {
                 return;
             }
@@ -7255,6 +7262,42 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return false;
     }
 
+    /**
+     * The threshold operand of a designated-timestamp ordering comparison, in either direction and with the
+     * timestamp on either side, or null when the predicate is not that shape or the other operand references
+     * a column.
+     * <p>
+     * {@link #expiryTimestampThresholdNode} recognises only the expire-old direction, because that is the one
+     * whose threshold drives the partition-bounds fast path. A NULL check has to span every shape
+     * {@code SqlParser.isNullSafeOrderingFlip} will flip, which is all four ordering operators with the
+     * timestamp on either side: a NULL threshold makes the comparison false for every row whichever way it
+     * points, and the flip then turns the keep-filter into a predicate that hides every row.
+     */
+    private static ExpressionNode expiryOrderingThresholdNode(
+            ExpressionNode node,
+            RecordMetadata metadata,
+            CharSequence timestampColumn
+    ) {
+        if (node == null || timestampColumn == null || node.type != ExpressionNode.OPERATION || node.paramCount != 2
+                || node.lhs == null || node.rhs == null) {
+            return null;
+        }
+        if (!Chars.equals(node.token, "<") && !Chars.equals(node.token, "<=")
+                && !Chars.equals(node.token, ">") && !Chars.equals(node.token, ">=")) {
+            return null;
+        }
+        final int timestampIndex = metadata.getColumnIndexQuiet(timestampColumn);
+        if (node.lhs.type == ExpressionNode.LITERAL
+                && resolvePredicateColumnIndex(metadata, node.lhs.token) == timestampIndex) {
+            return exprReferencesColumn(node.rhs) ? null : node.rhs;
+        }
+        if (node.rhs.type == ExpressionNode.LITERAL
+                && resolvePredicateColumnIndex(metadata, node.rhs.token) == timestampIndex) {
+            return exprReferencesColumn(node.lhs) ? null : node.lhs;
+        }
+        return null;
+    }
+
     private static ExpressionNode expiryTimestampThresholdNode(
             ExpressionNode node,
             RecordMetadata metadata,
@@ -7283,6 +7326,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * The timestamp family, DATE, LONG and INT each carry an in-band sentinel; DOUBLE and FLOAT spell
      * NULL as NaN (the way {@code 0.0/0.0} folds); a bare NULL literal binds to {@link ColumnType#NULL};
      * a string threshold is NULL by reference.
+     * <p>
+     * NaN is the whole of the DOUBLE/FLOAT case. {@code TIMESTAMP < DOUBLE} resolves to the {@code <(DD)}
+     * overload, which widens the timestamp instead of casting the threshold, so a double outside long
+     * range compares as the extreme bound it is and never lands on the sentinel: {@code ts < -9.3e18} is
+     * an always-false bound in double space, the same kind of legal-but-inert policy as a threshold set
+     * before the epoch, not a NULL. A double literal that would need converting does not get this far -
+     * the constant fold reports "Invalid date" during the whole-predicate bind.
+     * <p>
+     * SHORT, BYTE, CHAR and BOOLEAN have no arm because none of them has a null sentinel to test:
+     * {@code cast(null as short)} is the value 0, which is an ordinary threshold.
      */
     private static boolean isNullConstant(Function t) {
         final int type = t.getType();

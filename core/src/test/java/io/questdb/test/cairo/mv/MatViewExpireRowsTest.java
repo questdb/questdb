@@ -1210,6 +1210,33 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullThresholdRejectedInEveryOrientation() throws Exception {
+        // The read-filter flip accepts all four ordering operators with the timestamp on either side, and
+        // trusts constant arithmetic on the strength of DDL having evaluated it, so the rejection has to
+        // span the same set. A NULL threshold expires nothing whichever way the comparison points, and
+        // once flipped it reads as an empty view while every row stays on disk.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
+            for (String predicate : new String[]{
+                    "ts < 4611686018427387904 * 2",
+                    "ts <= 4611686018427387904 * 2",
+                    "ts > 4611686018427387904 * 2",
+                    "ts >= 4611686018427387904 * 2",
+                    "4611686018427387904 * 2 < ts",
+                    "4611686018427387904 * 2 <= ts",
+                    "4611686018427387904 * 2 > ts",
+                    "4611686018427387904 * 2 >= ts"
+            }) {
+                assertExceptionNoLeakCheck(
+                        "create materialized view mv as (select * from base) expire rows when " + predicate,
+                        25,
+                        "the threshold is NULL, so no row can ever expire"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testAlterToNullThresholdRejected() throws Exception {
         // ALTER routes through the same validation as CREATE, so an existing policy cannot be replaced by a
         // NULL one either. The view keeps the policy it had.
@@ -1259,28 +1286,38 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDeclareSubstitutedThresholdNeverFlips() throws Exception {
-        // Column names may start with '@', so a read-time DECLARE can capture a column reference in the
-        // stored predicate and substitute an expression DDL validation never saw. Here the substituted
-        // expression is constant arithmetic that folds to the NULL timestamp, so flipping NOT(ts < @c)
-        // to ts >= @c would hide every row for that query. A DECLARE-carrying compile therefore never
-        // flips: the plan keeps the un-inverted NOT and both rows stay visible.
+    public void testDeclareCannotSteerKeepFilter() throws Exception {
+        // Column names may legally start with '@', so a stored predicate like "ts < @c" reads a column
+        // named '@c'. The keep-filter parses with no declarations in scope, so a read that declares that
+        // same name is filtered by the policy DDL validated rather than by one of its own making. The
+        // policy here expires a row whose ts falls below its own '@c', and a declaration that would push
+        // that threshold back to the epoch - exposing the expired row - leaves the visible set alone.
         assertMemoryLeak(() -> {
-            execute("create table base (\"@c\" long, sym symbol, ts timestamp) timestamp(ts) partition by day wal");
-            execute("create materialized view mv as (select * from base) expire rows when ts < @c");
+            execute("create table base (sym symbol, \"@c\" timestamp, ts timestamp) timestamp(ts) partition by day wal");
             execute("""
                     insert into base values
-                    (1, 'A', '2024-01-05T00:00:00.000000Z'),
-                    (2, 'B', '2024-01-20T00:00:00.000000Z')""");
+                    ('OLD', '2025-01-01T00:00:00.000000Z', '2024-01-05T00:00:00.000000Z'),
+                    ('NEW', '2020-01-01T00:00:00.000000Z', '2024-01-06T00:00:00.000000Z')""");
+            drainWalQueue();
+            execute("create materialized view mv as (select * from base) expire rows when ts < @c");
             drainWalAndMatViewQueues();
 
-            // Without a DECLARE, @c is the column: a per-row predicate, never flipped, all rows kept
-            // (ts < 1 microsecond after epoch is false for both).
-            assertQuery("select sym from mv order by ts").noLeakCheck().returns("sym\nA\nB\n");
+            // OLD's ts is below its own threshold, so it has expired; NEW's is above.
+            assertQuery("select sym from mv").noLeakCheck().returns("sym\nNEW\n");
 
-            assertQuery("declare @c := 4611686018427387904 * 2 select sym from mv order by ts")
+            assertQuery("declare @c := '1970-01-01T00:00:00.000000Z'::timestamp select sym from mv order by sym")
                     .noLeakCheck()
-                    .returns("sym\nA\nB\n");
+                    .returns("sym\nNEW\n");
+
+            // Constant arithmetic folding to the NULL timestamp cannot hide the surviving row either.
+            assertQuery("declare @c := 4611686018427387904 * 2 select sym from mv order by sym")
+                    .noLeakCheck()
+                    .returns("sym\nNEW\n");
+
+            // A declaration the caller uses in its own predicate still substitutes normally.
+            assertQuery("declare @s := 'NEW' select sym from mv where sym = @s")
+                    .noLeakCheck()
+                    .returns("sym\nNEW\n");
         });
     }
 
@@ -1706,13 +1743,12 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             assertNotNull(table);
             assertEquals(CairoTable.EXPIRY_FLIP_UNKNOWN, table.getExpiryFlipEligibility());
 
-            // A DECLARE-carrying compile neither trusts nor populates the memo, and never flips: a
-            // declared name can capture an unquoted '@'-prefixed column reference in the predicate and
-            // substitute an expression DDL validation never saw, so the parser keeps the always-correct
-            // un-inverted NOT for it (testDeclareSubstitutedThresholdNeverFlips shows why).
+            // A DECLARE-carrying compile shares the memo with every other compile: the keep-filter and the
+            // flip probe both parse with no declarations in scope, so the verdict cannot vary by query
+            // (testDeclareCannotSteerKeepFilter covers the visibility side of that).
             printSql("explain declare @unused := 1 select * from mv");
-            TestUtils.assertContains(sink, "not (");
-            assertEquals(CairoTable.EXPIRY_FLIP_UNKNOWN, table.getExpiryFlipEligibility());
+            TestUtils.assertContains(sink, "Interval forward scan");
+            assertEquals(CairoTable.EXPIRY_FLIP_YES, table.getExpiryFlipEligibility());
 
             printSql("explain select * from mv");
             TestUtils.assertContains(sink, "Interval forward scan");

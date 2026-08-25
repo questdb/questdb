@@ -57,6 +57,27 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeclareCannotSteerKeepLatestKeys() throws Exception {
+        // The PARTITION BY keys are stored as raw policy text, so a key named '@k' would be captured by a
+        // read that declares the same name. The rewrite parses with no declarations in scope, so the keys
+        // stay the ones DDL validated and the superseded row stays hidden.
+        assertMemoryLeak(() -> {
+            execute("create table base (\"@k\" symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("""
+                    insert into base values
+                    ('A', 1.0, '2024-01-05T00:00:00.000000Z'),
+                    ('A', 2.0, '2024-01-06T00:00:00.000000Z'),
+                    ('B', 3.0, '2024-01-07T00:00:00.000000Z')""");
+            drainWalQueue();
+            execute("create materialized view mv as (select * from base) expire rows keep latest partition by \"@k\"");
+            drainWalAndMatViewQueues();
+
+            assertQuery("select v from mv order by v").noLeakCheck().expectSize().returns("v\n2.0\n3.0\n");
+            assertQuery("declare @k := v select v from mv order by v").noLeakCheck().expectSize().returns("v\n2.0\n3.0\n");
+        });
+    }
+
+    @Test
     public void testKeepLatestCatalogueRendersClause() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");

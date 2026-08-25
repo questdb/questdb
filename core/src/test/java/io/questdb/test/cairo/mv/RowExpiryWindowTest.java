@@ -1248,6 +1248,27 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         drainWalAndMatViewQueues();
     }
 
+    @Test
+    public void testDeclareCannotSteerWindowPartitionKeys() throws Exception {
+        // The window keep-filter embeds the policy's PARTITION BY text, so a key named '@k' would be
+        // captured by a read that declares the same name, regrouping the window and exposing rows the
+        // policy expired. The rewrite parses with no declarations in scope, so the grouping is fixed.
+        assertMemoryLeak(() -> {
+            execute("create table base (\"@k\" symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("""
+                    insert into base values
+                    ('A', 1.0, '2024-01-05T00:00:00.000000Z'),
+                    ('A', 2.0, '2024-01-06T00:00:00.000000Z'),
+                    ('B', 3.0, '2024-01-07T00:00:00.000000Z')""");
+            drainWalQueue();
+            execute("create materialized view mv as (select * from base) expire rows keep highest v partition by \"@k\"");
+            drainWalAndMatViewQueues();
+
+            assertQuery("select v from mv order by v").noLeakCheck().returns("v\n2.0\n3.0\n");
+            assertQuery("declare @k := v select v from mv order by v").noLeakCheck().returns("v\n2.0\n3.0\n");
+        });
+    }
+
     private void createViewWith(String expireClause) throws Exception {
         createBase();
         execute("create materialized view mv as (select * from base) " + expireClause);
