@@ -1266,6 +1266,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     throw SqlException.invalidDate(token, position);
                 }
                 return;
+            } else if (predicateContext.columnType == ColumnType.IPv4) {
+                try {
+                    final int ipv4 = Chars.equalsIgnoreCase("null", token, 1, len - 1)
+                            ? Numbers.IPv4_NULL
+                            : Numbers.parseIPv4_0(token, 1, len - 1);
+                    putOperand(offset, IMM, I4_TYPE, ipv4);
+                } catch (NumericException e) {
+                    throw SqlException.position(position).put("invalid IPv4 constant: ").put(token);
+                }
+                return;
             } else if (len == 3) {
                 if (predicateContext.columnType != ColumnType.CHAR) {
                     throw SqlException.position(position).put("char constant in non-char expression: ").put(token);

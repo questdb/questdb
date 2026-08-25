@@ -1141,34 +1141,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testIPv4OrderingUsesCompiledFilter() throws Exception {
         // https://github.com/questdb/questdb/issues/7547
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ip IPv4, ip2 IPv4, k TIMESTAMP) TIMESTAMP(k)");
-            execute(
-                    """
-                            INSERT INTO x
-                            SELECT
-                                (CASE x % 8
-                                    WHEN 0 THEN 0
-                                    WHEN 1 THEN 2_147_483_647
-                                    WHEN 2 THEN -2_147_483_648
-                                    WHEN 3 THEN -1
-                                    WHEN 4 THEN 167_772_161
-                                    WHEN 5 THEN -2_147_483_647
-                                    WHEN 6 THEN 1
-                                    ELSE 2_130_706_433
-                                END)::INT::IPv4,
-                                (CASE x % 8
-                                    WHEN 0 THEN 2_147_483_647
-                                    WHEN 1 THEN 2_147_483_647
-                                    WHEN 2 THEN -1
-                                    WHEN 3 THEN 0
-                                    WHEN 4 THEN -2_147_483_647
-                                    WHEN 5 THEN 167_772_161
-                                    WHEN 6 THEN 2_130_706_433
-                                    ELSE 1
-                                END)::INT::IPv4,
-                                timestamp_sequence(0, 1)
-                            FROM long_sequence(""" + N_SIMD_WITH_SCALAR_TAIL + ")"
-            );
+            createIPv4TestTable();
 
             assertJitMatchesJavaInAllModes("x WHERE ip > ip2");
             assertJitMatchesJavaInAllModes("x WHERE ip >= ip2");
@@ -1179,15 +1152,64 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitMatchesJavaInAllModes("x WHERE ip < null");
             assertJitMatchesJavaInAllModes("x WHERE ip <= null");
             assertJitMatchesJavaInAllModes("x WHERE null <= ip");
-            // Already fell back before this change - serializeConstant() has no
-            // IPv4 arm for a quoted literal, so only column-vs-column ordering
-            // ever reached the backends.
-            assertJitMatchesJava("x WHERE ip > '128.0.0.0'", false);
+            for (String literal : new String[]{
+                    "'127.255.255.255'",
+                    "'128.0.0.0'",
+                    "'255.255.255.255'",
+                    "'0.0.0.0'",
+                    "'null'"
+            }) {
+                for (String operator : new String[]{"<", "<=", ">", ">="}) {
+                    assertJitMatchesJavaInAllModes("x WHERE ip " + operator + " " + literal);
+                    assertJitMatchesJavaInAllModes("x WHERE " + literal + " " + operator + " ip");
+                }
+            }
 
             // Equality agrees with the Java filter, so it keeps compiling.
             assertJitMatchesJava("x WHERE ip = ip2", true);
             assertJitMatchesJava("x WHERE ip != ip2", true);
             assertJitMatchesJava("x WHERE ip = null", true);
+        });
+    }
+
+    @Test
+    public void testIPv4QuotedLiteralPredicatesUseCompiledFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createIPv4TestTable();
+
+            for (String predicate : new String[]{
+                    "ip = '128.0.0.0'",
+                    "'128.0.0.0' = ip",
+                    "ip != '255.255.255.255'",
+                    "'255.255.255.255' != ip",
+                    "ip <> '127.255.255.255'",
+                    "'127.255.255.255' <> ip",
+                    "ip = 'NuLl'",
+                    "'NuLl' = ip",
+                    "ip IN ('128.0.0.0')",
+                    "ip NOT IN ('128.0.0.0')",
+                    "ip IN ('127.255.255.255', '128.0.0.0', '255.255.255.255', 'NuLl')",
+                    "ip NOT IN ('127.255.255.255', '128.0.0.0', '255.255.255.255', 'NuLl')",
+                    "k >= 0 AND ip IN ('NuLl')",
+                    "k >= 0 AND ip NOT IN ('128.0.0.0')",
+                    "k >= 0 AND ip IN ('127.255.255.255', '128.0.0.0', '255.255.255.255', 'NuLl')",
+                    "k >= 0 AND ip NOT IN ('127.255.255.255', '128.0.0.0', '255.255.255.255', 'NuLl')"
+            }) {
+                assertJitMatchesJavaInAllModes("x WHERE " + predicate);
+            }
+
+            for (int jitMode : new int[]{
+                    SqlJitMode.JIT_MODE_DISABLED,
+                    SqlJitMode.JIT_MODE_FORCE_SCALAR,
+                    SqlJitMode.JIT_MODE_ENABLED
+            }) {
+                sqlExecutionContext.setJitMode(jitMode);
+                assertExceptionNoLeakCheck(
+                        "x WHERE ip = '999.1.1.1'",
+                        0,
+                        "invalid IPv4 format: 999.1.1.1"
+                );
+            }
         });
     }
 
@@ -1732,6 +1754,37 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     private void assertGeneratedQueryNullable(CharSequence ddl, FilterGenerator gen) throws Exception {
         assertGeneratedQuery(ddl, gen, false);
+    }
+
+    private void createIPv4TestTable() throws SqlException {
+        execute("CREATE TABLE x (ip IPv4, ip2 IPv4, k TIMESTAMP) TIMESTAMP(k)");
+        execute(
+                """
+                        INSERT INTO x
+                        SELECT
+                            (CASE x % 8
+                                WHEN 0 THEN 0
+                                WHEN 1 THEN 2_147_483_647
+                                WHEN 2 THEN -2_147_483_648
+                                WHEN 3 THEN -1
+                                WHEN 4 THEN 167_772_161
+                                WHEN 5 THEN -2_147_483_647
+                                WHEN 6 THEN 1
+                                ELSE 2_130_706_433
+                            END)::INT::IPv4,
+                            (CASE x % 8
+                                WHEN 0 THEN 2_147_483_647
+                                WHEN 1 THEN 2_147_483_647
+                                WHEN 2 THEN -1
+                                WHEN 3 THEN 0
+                                WHEN 4 THEN -2_147_483_647
+                                WHEN 5 THEN 167_772_161
+                                WHEN 6 THEN 2_130_706_433
+                                ELSE 1
+                            END)::INT::IPv4,
+                            timestamp_sequence(0, 1)
+                        FROM long_sequence(""" + N_SIMD_WITH_SCALAR_TAIL + ")"
+        );
     }
 
     private void assertJitMatchesJavaInAllModes(CharSequence query) throws SqlException {

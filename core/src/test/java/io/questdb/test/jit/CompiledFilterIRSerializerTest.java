@@ -1255,6 +1255,78 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // https://github.com/questdb/questdb/issues/7547
         for (String operator : new String[]{"<", "<=", ">", ">="}) {
             serialize("anipv4 " + operator + " anipv4");
+            for (String literal : new String[]{
+                    "'127.255.255.255'",
+                    "'128.0.0.0'",
+                    "'255.255.255.255'",
+                    "'0.0.0.0'",
+                    "'null'"
+            }) {
+                serialize("anipv4 " + operator + " " + literal);
+                serialize(literal + " " + operator + " anipv4");
+            }
+        }
+    }
+
+    @Test
+    public void testIPv4QuotedLiteralPredicates() throws Exception {
+        serialize("anipv4 = '127.255.255.255'");
+        assertIR("(i32 2147483647L)(i32 anipv4)(=)(ret)");
+
+        serialize("anipv4 != '128.0.0.0'");
+        assertIR("(i32 -2147483648L)(i32 anipv4)(<>)(ret)");
+
+        serialize("anipv4 <> '255.255.255.255'");
+        assertIR("(i32 -1L)(i32 anipv4)(<>)(ret)");
+
+        serialize("anipv4 = 'NuLl'");
+        assertIR("(i32 0L)(i32 anipv4)(=)(ret)");
+
+        serialize("anipv4 IN ('128.0.0.0')");
+        assertIR("(i32 -2147483648L)(i32 anipv4)(=)(ret)");
+
+        serialize("anipv4 NOT IN ('255.255.255.255')");
+        assertIR("(i32 -1L)(i32 anipv4)(=)(!)(ret)");
+
+        serialize("anipv4 IN ('127.255.255.255', '128.0.0.0', '255.255.255.255', 'NuLl')");
+        assertIR(
+                "(i32 0L)(i32 anipv4)(=)(i32 -1L)(i32 anipv4)(=)" +
+                        "(i32 -2147483648L)(i32 anipv4)(=)(i32 2147483647L)(i32 anipv4)(=)(||)(||)(||)(ret)"
+        );
+
+        serialize("anipv4 NOT IN ('127.255.255.255', '128.0.0.0', '255.255.255.255', 'NuLl')");
+        assertIR(
+                "(i32 0L)(i32 anipv4)(=)(i32 -1L)(i32 anipv4)(=)" +
+                        "(i32 -2147483648L)(i32 anipv4)(=)(i32 2147483647L)(i32 anipv4)(=)(||)(||)(||)(!)(ret)"
+        );
+
+        serialize("along = 1 and anipv4 IN ('NuLl')");
+        assertIR("(i64 1L)(i64 along)(=)(&&_sc)(i32 0L)(i32 anipv4)(=)(&&_sc)(ret)");
+
+        serialize("along = 1 and anipv4 IN ('127.255.255.255', '128.0.0.0', '255.255.255.255', 'NuLl')");
+        assertIR(
+                "(i64 1L)(i64 along)(=)(&&_sc)(begin_sc 2)" +
+                        "(i32 0L)(i32 anipv4)(=)(||_sc 2)(i32 -1L)(i32 anipv4)(=)(||_sc 2)" +
+                        "(i32 -2147483648L)(i32 anipv4)(=)(||_sc 2)" +
+                        "(i32 2147483647L)(i32 anipv4)(=)(&&_sc)(end_sc 2)(ret)"
+        );
+
+        serialize("along = 1 and anipv4 NOT IN ('128.0.0.0', 'NuLl')");
+        assertIR(
+                "(i64 1L)(i64 along)(=)(&&_sc)" +
+                        "(i32 0L)(i32 anipv4)(=)(i32 -2147483648L)(i32 anipv4)(=)(||)(!)(ret)"
+        );
+    }
+
+    @Test
+    public void testInvalidIPv4QuotedLiteral() throws Exception {
+        final String filter = "anipv4 = '999.1.1.1'";
+        try {
+            serialize(filter);
+            Assert.fail("expected invalid quoted IPv4 literal to decline JIT serialization");
+        } catch (SqlException e) {
+            Assert.assertEquals(filter.indexOf('\''), e.getPosition());
+            TestUtils.assertEquals("invalid IPv4 constant: '999.1.1.1'", e.getFlyweightMessage());
         }
     }
 
