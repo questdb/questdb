@@ -1874,6 +1874,58 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterTableAddIndexIncludesColumnPredatingKeyColumnTop() throws Exception {
+        // Regression test: the INDEXED (key) column itself can have a column
+        // top -- added via ALTER TABLE ADD COLUMN after rows already exist --
+        // while an INCLUDEd column predates it with real data. Rows below the
+        // key's column top match a NULL-key scan via the reader's synthetic
+        // null-prefix (NullCursor), which never touches the sidecar decode
+        // state (cachedSidecarIdx / keyBlockAddrs). The covering read must
+        // still surface the real INCLUDE column value for those rows, not
+        // whatever stale/default state the cursor is sitting on.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_key_top (
+                        ts TIMESTAMP,
+                        tag VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 2 rows before sym2 exists -- tag has real data here.
+            execute("""
+                    INSERT INTO t_key_top VALUES
+                    ('2024-01-01T00:00:00', 'HELLO'),
+                    ('2024-01-01T01:00:00', 'WORLD')
+                    """);
+
+            execute("ALTER TABLE t_key_top ADD COLUMN sym2 SYMBOL");
+
+            // 2 rows after ADD COLUMN, sym2 populated.
+            execute("""
+                    INSERT INTO t_key_top VALUES
+                    ('2024-01-01T02:00:00', 'FOO', 'A'),
+                    ('2024-01-01T03:00:00', 'BAR', 'B')
+                    """);
+
+            execute("ALTER TABLE t_key_top ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (tag)");
+            engine.releaseAllWriters();
+
+            // Rows at ts 00:00 and 01:00 are below sym2's column top, so they
+            // implicitly match sym2 = null. Their tag values are real ('HELLO',
+            // 'WORLD'), not null -- tag has no column top of its own.
+            assertQuery("SELECT sym2, tag FROM t_key_top WHERE sym2 = null ORDER BY ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            sym2\ttag
+                            \tHELLO
+                            \tWORLD
+                            """);
+        });
+    }
+
+    @Test
     public void testAlterTableAddIndexIncludesGeoIpv4ColumnsWithColumnTop() throws Exception {
         // Regression: CoveringPageFrameCursor.writeColumnRow uses Long.MIN_VALUE,
         // Integer.MIN_VALUE, and zeros as the "null" sentinel for rows below

@@ -115,8 +115,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     private long chainSequence;
     private MillisecondClock clock;
     private long columnTxn;
-    private ColumnVersionReader columnVersionReader;
-    private FilesFacade ff;
+    // Widened to protected: NullCursor (PostingIndexFwdReader/PostingIndexBwdReader)
+    // needs these to open a covered column's raw .d/.i files directly, for the
+    // implicit-null-prefix rows the posting chain never carries entries for.
+    protected ColumnVersionReader columnVersionReader;
+    protected FilesFacade ff;
     // While true, reloadConditionally() is a no-op. Set by the parallel-decode
     // pipeline for the duration that async worker cursors hold raw page
     // addresses into valueMem / sidecar mappings, so a concurrent writer's
@@ -135,7 +138,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     // Id of the thread that last checked a cursor out of this reader; see
     // isOperatingThread() / stampOperatingThread().
     private long operatingThreadId = -1L;
-    private long partitionTimestamp;
+    // Widened to protected: see columnVersionReader/ff above.
+    protected long partitionTimestamp;
     private long partitionTxn;
     // Strict-pin: the table txn this reader is pinned at via the scoreboard.
     // Picker selects the entry with the largest {@code txnAtSeal <= pinnedTableTxn};
@@ -870,7 +874,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return false;
     }
 
-    private static int denseIndexFromWriter(RecordMetadata metadata, int writerIdx) {
+    // Widened to protected static: NullCursor's raw-column open needs this to map
+    // a covered column's writer index to metadata's dense column index.
+    protected static int denseIndexFromWriter(RecordMetadata metadata, int writerIdx) {
         for (int d = 0, n = metadata.getColumnCount(); d < n; d++) {
             if (metadata.getColumnMetadata(d).getWriterIndex() == writerIdx) {
                 return d;

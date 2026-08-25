@@ -26,16 +26,28 @@ package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.DirectBinarySequence;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectString;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 
 public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     private static final int MIN_BUFFER_CAPACITY = 4;
@@ -1049,6 +1061,26 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     private class NullCursor extends Cursor {
         private long nullCount;
         private long nullPos;
+        // Raw-column fallback for the implicit null-prefix (rows [minValue, columnTop)
+        // of the INDEXED column, which the posting chain carries no entries for). An
+        // INCLUDEd column can predate the indexed column -- have real, non-null data
+        // over that same row range -- so the covered read for these synthetic rows
+        // cannot use the sidecar (built only from the chain's real postings): it must
+        // read the INCLUDEd column's own .d/.i files directly, honouring THAT column's
+        // own column top. Opened lazily, once per checkout; freed in
+        // closeCoveringResources() (called on every close, pooled or final -- see
+        // Cursor.close()/releaseResources()), so a reused cursor always re-resolves
+        // against whatever partition the outer reader is currently bound to.
+        private long[] npAuxAddrs;
+        private long[] npAuxSizes;
+        private long[] npColAddrs;
+        private long[] npColSizes;
+        private long[] npColTops;
+        private boolean npColumnsOpened;
+        // True only while hasNext() is currently serving a synthetic null-prefix row
+        // (as opposed to a real posting reached via super.hasNext()). Gates every
+        // getCoveredXxx override below: false means behave exactly as inherited.
+        private boolean isNullPrefixRow;
 
         @Override
         public void close() {
@@ -1076,12 +1108,169 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         }
 
         @Override
+        public ArrayView getCoveredArray(int includeIdx, int columnType) {
+            // No raw-array reader (multi-dimensional header format) -- fail loud
+            // rather than silently return null/wrong data for a row that has a
+            // real array value on disk.
+            if (isNullPrefixRow) {
+                long top = rawColTopFor(includeIdx);
+                if (top >= 0 && next >= top) {
+                    throw CairoException.critical(0)
+                            .put("covering index: reading an ARRAY INCLUDE column for a row below the ")
+                            .put("indexed key column's own column top is not supported [includeIdx=")
+                            .put(includeIdx).put(", row=").put(next).put(']');
+                }
+            }
+            return super.getCoveredArray(includeIdx, columnType);
+        }
+
+        @Override
+        public BinarySequence getCoveredBin(int includeIdx) {
+            if (isNullPrefixRow) {
+                BinarySequence v = readRawCoveredBin(includeIdx, next, binView);
+                if (v != null) {
+                    return v;
+                }
+            }
+            return super.getCoveredBin(includeIdx);
+        }
+
+        @Override
+        public long getCoveredBinLen(int includeIdx) {
+            if (isNullPrefixRow) {
+                BinarySequence v = readRawCoveredBin(includeIdx, next, binView);
+                if (v != null) {
+                    return v.length();
+                }
+            }
+            return super.getCoveredBinLen(includeIdx);
+        }
+
+        @Override
+        public byte getCoveredByte(int includeIdx) {
+            long addr = resolveRawFixedAddr(includeIdx, next, Byte.BYTES);
+            return addr != 0 ? Unsafe.getByte(addr) : super.getCoveredByte(includeIdx);
+        }
+
+        @Override
+        public double getCoveredDouble(int includeIdx) {
+            long addr = resolveRawFixedAddr(includeIdx, next, Double.BYTES);
+            return addr != 0 ? Unsafe.getDouble(addr) : super.getCoveredDouble(includeIdx);
+        }
+
+        @Override
+        public float getCoveredFloat(int includeIdx) {
+            long addr = resolveRawFixedAddr(includeIdx, next, Float.BYTES);
+            return addr != 0 ? Unsafe.getFloat(addr) : super.getCoveredFloat(includeIdx);
+        }
+
+        @Override
+        public int getCoveredInt(int includeIdx) {
+            long addr = resolveRawFixedAddr(includeIdx, next, Integer.BYTES);
+            return addr != 0 ? Unsafe.getInt(addr) : super.getCoveredInt(includeIdx);
+        }
+
+        @Override
+        public long getCoveredLong(int includeIdx) {
+            long addr = resolveRawFixedAddr(includeIdx, next, Long.BYTES);
+            return addr != 0 ? Unsafe.getLong(addr) : super.getCoveredLong(includeIdx);
+        }
+
+        @Override
+        public long getCoveredLong128Hi(int includeIdx) {
+            long addr = resolveRawFixedAddr(includeIdx, next, 16);
+            return addr != 0 ? Unsafe.getLong(addr + 8) : super.getCoveredLong128Hi(includeIdx);
+        }
+
+        @Override
+        public long getCoveredLong128Lo(int includeIdx) {
+            long addr = resolveRawFixedAddr(includeIdx, next, 16);
+            return addr != 0 ? Unsafe.getLong(addr) : super.getCoveredLong128Lo(includeIdx);
+        }
+
+        @Override
+        public long getCoveredLong256_0(int includeIdx) {
+            long addr = resolveRawFixedAddr(includeIdx, next, 32);
+            return addr != 0 ? Unsafe.getLong(addr) : super.getCoveredLong256_0(includeIdx);
+        }
+
+        @Override
+        public long getCoveredLong256_1(int includeIdx) {
+            long addr = resolveRawFixedAddr(includeIdx, next, 32);
+            return addr != 0 ? Unsafe.getLong(addr + 8) : super.getCoveredLong256_1(includeIdx);
+        }
+
+        @Override
+        public long getCoveredLong256_2(int includeIdx) {
+            long addr = resolveRawFixedAddr(includeIdx, next, 32);
+            return addr != 0 ? Unsafe.getLong(addr + 16) : super.getCoveredLong256_2(includeIdx);
+        }
+
+        @Override
+        public long getCoveredLong256_3(int includeIdx) {
+            long addr = resolveRawFixedAddr(includeIdx, next, 32);
+            return addr != 0 ? Unsafe.getLong(addr + 24) : super.getCoveredLong256_3(includeIdx);
+        }
+
+        @Override
+        public short getCoveredShort(int includeIdx) {
+            long addr = resolveRawFixedAddr(includeIdx, next, Short.BYTES);
+            return addr != 0 ? Unsafe.getShort(addr) : super.getCoveredShort(includeIdx);
+        }
+
+        @Override
+        public CharSequence getCoveredStrA(int includeIdx) {
+            if (isNullPrefixRow) {
+                CharSequence v = readRawCoveredStr(includeIdx, next, stringViewA);
+                if (v != null) {
+                    return v;
+                }
+            }
+            return super.getCoveredStrA(includeIdx);
+        }
+
+        @Override
+        public CharSequence getCoveredStrB(int includeIdx) {
+            if (isNullPrefixRow) {
+                CharSequence v = readRawCoveredStr(includeIdx, next, stringViewB);
+                if (v != null) {
+                    return v;
+                }
+            }
+            return super.getCoveredStrB(includeIdx);
+        }
+
+        @Override
+        public Utf8Sequence getCoveredVarcharA(int includeIdx) {
+            if (isNullPrefixRow) {
+                Utf8Sequence v = readRawCoveredVarchar(includeIdx, next, varcharViewA);
+                if (v != null) {
+                    return v;
+                }
+            }
+            return super.getCoveredVarcharA(includeIdx);
+        }
+
+        @Override
+        public Utf8Sequence getCoveredVarcharB(int includeIdx) {
+            if (isNullPrefixRow) {
+                Utf8Sequence v = readRawCoveredVarchar(includeIdx, next, varcharViewB);
+                if (v != null) {
+                    return v;
+                }
+            }
+            return super.getCoveredVarcharB(includeIdx);
+        }
+
+        @Override
         public boolean hasNext() {
             if (super.hasNext()) {
+                isNullPrefixRow = false;
                 return true;
             }
             if (--nullPos >= minValue) {
                 next = nullPos;
+                isNullPrefixRow = true;
                 return true;
             }
             return false;
@@ -1095,6 +1284,242 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // bound and would under-count nulls when entryMaxValue < columnTop.
             long indexSize = super.size();
             return indexSize < 0 ? -1 : indexSize + Math.max(0L, nullCount - minValue);
+        }
+
+        @Override
+        protected void closeCoveringResources() {
+            super.closeCoveringResources();
+            if (npColAddrs != null) {
+                for (int i = 0; i < npColAddrs.length; i++) {
+                    if (npColAddrs[i] != 0) {
+                        ff.munmap(npColAddrs[i], npColSizes[i], MemoryTag.MMAP_INDEX_READER);
+                        npColAddrs[i] = 0;
+                    }
+                    if (npAuxAddrs[i] != 0) {
+                        ff.munmap(npAuxAddrs[i], npAuxSizes[i], MemoryTag.MMAP_INDEX_READER);
+                        npAuxAddrs[i] = 0;
+                    }
+                }
+            }
+            npAuxAddrs = null;
+            npAuxSizes = null;
+            npColAddrs = null;
+            npColSizes = null;
+            npColTops = null;
+            npColumnsOpened = false;
+        }
+
+        /**
+         * Lazily opens every INCLUDEd column's own raw .d (and .i, for var-size
+         * types) file for this partition, read-only, mmapped whole. Runs at most
+         * once per checkout (see closeCoveringResources(), which resets
+         * npColumnsOpened on every close -- pooled or final -- so a reused cursor
+         * always re-resolves against whatever partition the outer reader is
+         * currently bound to). Mirrors PostingIndexWriter#mapCoveredColumn /
+         * #mapColumnFile, which build the sidecar from these same files.
+         *
+         * @return true iff at least the per-column top/address arrays were
+         * populated (individual columns can still be unavailable -- dropped,
+         * or genuinely missing their .d file -- tracked by a 0 address).
+         */
+        private boolean ensureNullPrefixColumnsOpen() {
+            if (npColumnsOpened) {
+                return npColAddrs != null;
+            }
+            npColumnsOpened = true;
+            if (coverCount <= 0 || metadata == null || columnVersionReader == null) {
+                return false;
+            }
+            long[] auxAddrs = new long[coverCount];
+            long[] auxSizes = new long[coverCount];
+            long[] colAddrs = new long[coverCount];
+            long[] colSizes = new long[coverCount];
+            long[] colTops = new long[coverCount];
+            Path p = Path.getThreadLocal(sidecarBasePath);
+            int pLen = p.size();
+            try {
+                for (int c = 0; c < coverCount; c++) {
+                    int writerIdx = sidecarColumnIndices.getQuick(c);
+                    int colType = sidecarColumnTypes.getQuick(c);
+                    if (writerIdx < 0 || colType < 0) {
+                        continue; // column dropped, or absent from this chain entry
+                    }
+                    int denseIdx = denseIndexFromWriter(metadata, writerIdx);
+                    if (denseIdx < 0) {
+                        continue;
+                    }
+                    colTops[c] = columnVersionReader.getColumnTop(partitionTimestamp, writerIdx);
+                    CharSequence name = metadata.getColumnName(denseIdx);
+                    long nameTxn = sidecarCovTs.getQuick(c);
+                    p.trimTo(pLen);
+                    openRawColumnFile(p, name, nameTxn, false, colAddrs, colSizes, c);
+                    if (ColumnType.isVarSize(colType)) {
+                        p.trimTo(pLen);
+                        openRawColumnFile(p, name, nameTxn, true, auxAddrs, auxSizes, c);
+                    }
+                }
+            } finally {
+                p.trimTo(pLen);
+            }
+            npAuxAddrs = auxAddrs;
+            npAuxSizes = auxSizes;
+            npColAddrs = colAddrs;
+            npColSizes = colSizes;
+            npColTops = colTops;
+            return true;
+        }
+
+        private void openRawColumnFile(Path p, CharSequence name, long nameTxn, boolean isAux, long[] addrs, long[] sizes, int idx) {
+            LPSZ fileName = isAux ? TableUtils.iFile(p, name, nameTxn) : TableUtils.dFile(p, name, nameTxn);
+            long fd = ff.openRO(fileName);
+            if (fd < 0) {
+                return; // no data below the indexed column's top for this column -- normal
+            }
+            try {
+                long fileSize = ff.length(fd);
+                if (fileSize > 0) {
+                    long mapped = ff.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_READER);
+                    if (mapped == FilesFacade.MAP_FAILED) {
+                        throw CairoException.critical(ff.errno())
+                                .put("could not mmap covering INCLUDE column for null-prefix read [file=").put(fileName)
+                                .put(", size=").put(fileSize).put(']');
+                    }
+                    addrs[idx] = mapped;
+                    sizes[idx] = fileSize;
+                }
+            } finally {
+                ff.close(fd);
+            }
+        }
+
+        private BinarySequence readRawCoveredBin(int includeIdx, long row, DirectBinarySequence view) {
+            if (!ensureNullPrefixColumnsOpen() || includeIdx < 0 || npColTops == null || includeIdx >= npColTops.length) {
+                return null;
+            }
+            long fileRow = row - npColTops[includeIdx];
+            if (fileRow < 0) {
+                return null;
+            }
+            long auxAddr = resolveRawAuxAddr(includeIdx, fileRow << 3, Long.BYTES);
+            if (auxAddr == 0) {
+                return null;
+            }
+            long dataOffset = Unsafe.getLong(auxAddr);
+            long lenAddr = resolveRawDataAddr(includeIdx, dataOffset, Long.BYTES);
+            if (lenAddr == 0) {
+                return null;
+            }
+            long len = Unsafe.getLong(lenAddr);
+            if (len < 0) {
+                return null;
+            }
+            long dataAddr = resolveRawDataAddr(includeIdx, dataOffset, Long.BYTES + len);
+            if (dataAddr == 0) {
+                return null;
+            }
+            return view.of(dataAddr + Long.BYTES, len);
+        }
+
+        private CharSequence readRawCoveredStr(int includeIdx, long row, DirectString view) {
+            if (!ensureNullPrefixColumnsOpen() || includeIdx < 0 || npColTops == null || includeIdx >= npColTops.length) {
+                return null;
+            }
+            long fileRow = row - npColTops[includeIdx];
+            if (fileRow < 0) {
+                return null;
+            }
+            long auxAddr = resolveRawAuxAddr(includeIdx, fileRow << 3, Long.BYTES);
+            if (auxAddr == 0) {
+                return null;
+            }
+            long dataOffset = Unsafe.getLong(auxAddr);
+            long lenAddr = resolveRawDataAddr(includeIdx, dataOffset, Integer.BYTES);
+            if (lenAddr == 0) {
+                return null;
+            }
+            int len = Unsafe.getInt(lenAddr);
+            if (len < 0) {
+                return null;
+            }
+            long dataAddr = resolveRawDataAddr(includeIdx, dataOffset, (long) Integer.BYTES + (long) len * Character.BYTES);
+            if (dataAddr == 0) {
+                return null;
+            }
+            return view.of(dataAddr + Integer.BYTES, len);
+        }
+
+        private Utf8Sequence readRawCoveredVarchar(int includeIdx, long row, DirectUtf8String view) {
+            if (!ensureNullPrefixColumnsOpen() || includeIdx < 0 || npColTops == null || includeIdx >= npColTops.length) {
+                return null;
+            }
+            long fileRow = row - npColTops[includeIdx];
+            if (fileRow < 0) {
+                return null;
+            }
+            long auxAddr = resolveRawAuxAddr(includeIdx, VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES * fileRow, VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES);
+            if (auxAddr == 0) {
+                return null;
+            }
+            int header = Unsafe.getInt(auxAddr);
+            if ((header & VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL) != 0) {
+                return null;
+            }
+            if ((header & 1) != 0) {
+                // inlined: up to 15 bytes live directly after the 4-byte header
+                int size = (header >>> 4) & 0xF;
+                return view.of(auxAddr + 1, auxAddr + 1 + size);
+            }
+            int size = (header >>> 4) & 0x0FFFFFFF;
+            if (size <= 0) {
+                return view.of(auxAddr, auxAddr);
+            }
+            long dataOffset = Unsafe.getLong(auxAddr + 8) >>> 16;
+            long dataAddr = resolveRawDataAddr(includeIdx, dataOffset, size);
+            if (dataAddr == 0) {
+                return null;
+            }
+            return view.of(dataAddr, dataAddr + size);
+        }
+
+        private long rawColTopFor(int includeIdx) {
+            if (!ensureNullPrefixColumnsOpen() || includeIdx < 0 || npColTops == null || includeIdx >= npColTops.length) {
+                return -1;
+            }
+            return npColTops[includeIdx];
+        }
+
+        private long resolveRawAuxAddr(int includeIdx, long offset, long needed) {
+            if (includeIdx < 0 || npAuxAddrs == null || includeIdx >= npAuxAddrs.length) {
+                return 0;
+            }
+            long addr = npAuxAddrs[includeIdx];
+            if (addr == 0 || offset < 0 || offset + needed > npAuxSizes[includeIdx]) {
+                return 0;
+            }
+            return addr + offset;
+        }
+
+        private long resolveRawDataAddr(int includeIdx, long offset, long needed) {
+            if (includeIdx < 0 || npColAddrs == null || includeIdx >= npColAddrs.length) {
+                return 0;
+            }
+            long addr = npColAddrs[includeIdx];
+            if (addr == 0 || offset < 0 || offset + needed > npColSizes[includeIdx]) {
+                return 0;
+            }
+            return addr + offset;
+        }
+
+        private long resolveRawFixedAddr(int includeIdx, long row, int size) {
+            if (!isNullPrefixRow || !ensureNullPrefixColumnsOpen()
+                    || includeIdx < 0 || npColTops == null || includeIdx >= npColTops.length) {
+                return 0;
+            }
+            long fileRow = row - npColTops[includeIdx];
+            if (fileRow < 0) {
+                return 0; // genuinely null (below the INCLUDEd column's own top) -- caller falls back
+            }
+            return resolveRawDataAddr(includeIdx, fileRow * size, size);
         }
     }
 }
