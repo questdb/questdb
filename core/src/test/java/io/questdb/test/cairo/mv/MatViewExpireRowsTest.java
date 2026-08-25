@@ -1256,9 +1256,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
     @Test
     public void testBackfillReclaimsAPartitionAgain() throws Exception {
-        // A sweep does not rewrite a partition it has already compacted: the job mixes a content generation
-        // per partition and skips one whose rows have not changed, so an immediately repeated sweep reports
-        // no work.
+        // A sweep does not keep deleting from a partition it has already compacted: repeating it reports no
+        // work, because the survivor count comes back equal to the row count and the partition classifies as
+        // SKIP. That second sweep does still scan the partition. The job can skip the scan too, from the
+        // sweep after that, using its per-partition content generation - but not here, since
+        // sweepExpiredRows builds a fresh job each time and that cache lives on the job instance.
         //
         // A write that lands back inside an already-compacted range does make it eligible again, and the
         // refresh that carries the write re-materializes the rows the earlier sweep deleted - the partition
@@ -1362,10 +1364,10 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         // newest row, and that clears when the next partition takes over. Here the whole active partition is
         // expired, so disk trails the visible set by a full partition for as long as the view is written to.
         //
-        // This is not a churn loop: the job keeps a per-partition content generation, so a partition whose
-        // rows have not changed is skipped rather than swept again. A partition is reclaimed a second time
-        // only when new rows land in it ({@code testBackfillReclaimsAPartitionAgain}). The read filter is
-        // authoritative the whole time, so no query ever sees an expired row.
+        // This is not a churn loop: once a partition has nothing left to expire a sweep finds every row in
+        // it is a survivor and leaves it alone, and a partition is reclaimed a second time only when new
+        // rows land in it ({@code testBackfillReclaimsAPartitionAgain}). The read filter is authoritative
+        // the whole time, so no query ever sees an expired row.
         //
         // The assertions below pin the protection as it behaves today. A change that makes the sweep safe
         // on the active partition is free to update them; it is not a regression.

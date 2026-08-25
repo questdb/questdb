@@ -80,10 +80,16 @@ public final class RowExpiryUtil {
      * written to holds a full partition of expired rows at all times, releasing each one only when a newer
      * partition takes over as active.
      * <p>
-     * A partition the job has already compacted is not swept again while its rows stay put - the job mixes a
-     * content generation per partition and skips the unchanged ones. A write that lands back inside a
-     * compacted range makes it eligible once more, and the refresh carrying that write can re-materialize
-     * rows an earlier sweep deleted, so the same partition is reclaimed more than once.
+     * The job does not keep deleting from a partition it has already compacted. The sweep right after a
+     * compaction still scans that partition, finds every row left in it is a survivor and does nothing; from
+     * then on the job's per-partition content generation lets it skip even that scan, for as long as the
+     * rows stay put and the generation is still cached (the job drops the whole cache once it holds more
+     * than 16,384 partitions, and each job instance starts with an empty one).
+     * <p>
+     * A write that lands back inside a compacted range makes that partition eligible once more, and the
+     * refresh carrying the write can re-materialize rows an earlier sweep deleted, so the same partition is
+     * reclaimed more than once. Reclamation is proportional to the writes a partition receives rather than
+     * once and done.
      * <p>
      * Reads are unaffected by all of this - the keep-filter hides the expired rows throughout.
      */
