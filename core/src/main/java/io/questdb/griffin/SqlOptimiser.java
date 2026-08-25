@@ -623,9 +623,13 @@ public class SqlOptimiser implements Mutable {
         final CharSequence columnName = column.token;
         final int dot = Chars.indexOfLastUnquoted(columnName, '.');
         final int columnIndex = metadata.getColumnIndexQuiet(columnName, dot + 1, columnName.length());
+        // A covering index already serves a negative limit through the parallel filter path, which
+        // absorbs the limit into the scan instead of materialising the retained rows. Rewriting
+        // those queries replaces that plan with a sort, so they keep the path they had.
         return columnIndex > -1
                 && ColumnType.isSymbol(metadata.getColumnType(columnIndex))
-                && metadata.isColumnIndexed(columnIndex);
+                && metadata.isColumnIndexed(columnIndex)
+                && !metadata.getColumnMetadata(columnIndex).isCovering();
     }
 
     /**
@@ -5002,14 +5006,17 @@ public class SqlOptimiser implements Mutable {
                     found = true;
                     break;
                 }
-                for (int i = 0, n = node.args.size(); i < n; i++) {
-                    sqlNodeStack.push(node.args.getQuick(i));
-                }
-                if (node.lhs != null) {
-                    sqlNodeStack.push(node.lhs);
-                }
-                if (node.rhs != null) {
-                    sqlNodeStack.push(node.rhs);
+                // Descend through conjunctions only. An equality nested under OR does not restrict
+                // the row set to the indexed key, so the code generator is free to serve the query
+                // with a plain forward scan. The rewrite would then move the limit onto a cursor
+                // that never scanned backwards and return the first N rows instead of the last N.
+                if (node.type == OPERATION && SqlKeywords.isAndKeyword(node.token)) {
+                    if (node.lhs != null) {
+                        sqlNodeStack.push(node.lhs);
+                    }
+                    if (node.rhs != null) {
+                        sqlNodeStack.push(node.rhs);
+                    }
                 }
             }
         } finally {
@@ -5394,6 +5401,31 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    /**
+     * Returns true when a one-argument negative limit is a compile-time constant whose magnitude
+     * fits the configured negative limit budget.
+     * <p>
+     * The rewrite replays the retained rows through a sort, which materialises them, while the
+     * streaming path it replaces does not. {@code cairo.sql.max.negative.limit} is the budget the
+     * engine already applies to the buffer in {@link io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory},
+     * so a larger limit keeps the streaming path rather than failing the query on the query memory
+     * limit. A runtime constant does not qualify: its value can differ from the one seen here by
+     * the time the compiled query runs.
+     *
+     * @param limitLo          the negative limit expression
+     * @param executionContext execution context
+     * @return true when the rewrite may materialise this many rows
+     */
+    private boolean isNegativeLimitWithinBudget(ExpressionNode limitLo, SqlExecutionContext executionContext) throws SqlException {
+        final Function loFunction = getLoFunction(limitLo, executionContext);
+        if (loFunction == null || !loFunction.isConstant()) {
+            return false;
+        }
+        final long limitValue = loFunction.getLong(null);
+        return limitValue < 0
+                && limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit();
     }
 
     private boolean isResolvableColumn(
@@ -8928,7 +8960,7 @@ public class SqlOptimiser implements Mutable {
      *
      * @param model input model
      */
-    private void rewriteMultipleTermLimitedOrderByPart1(IQueryModel model, SqlExecutionContext executionContext) {
+    private void rewriteMultipleTermLimitedOrderByPart1(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model == null || !model.isOptimisable()) {
             return;
         }
@@ -8952,6 +8984,7 @@ public class SqlOptimiser implements Mutable {
                         && model.getLimitLo() != null
                         && model.getLimitHi() == null
                         && Chars.equals(model.getLimitLo().token, '-')
+                        && isNegativeLimitWithinBudget(model.getLimitLo(), executionContext)
                         && hasIndexedSymbolEquality(model.getNestedModel(), executionContext)
         ) {
             final IQueryModel nested = model.getNestedModel();
