@@ -1160,7 +1160,31 @@ public class CompositeFuzzRunner {
      * Delegates to {@link FuzzTransactionGenerator#generateSet} against the plain table's
      * metadata: the two schemas are identical, and the plain reader is never itself under test.
      * Task 1 keeps this to plain data inserts (no structural DDL, no O3, no replace-range) so the
-     * skeleton has the fewest moving parts; later tasks randomize these axes.
+     * skeleton had the fewest moving parts, with "later tasks randomize these axes" as the plan. That
+ * never happened, so EVERY structural DDL below still sits at 0.0 and this fuzz exercises no DDL at
+ * all -- including operations that became supported in 2026-08. The scope-closure index claims
+ * (invariant 5) that flipping an operation to SUPPORTED "enrols the operation in the differential
+ * fuzz automatically": it does NOT. The Support map is read only by CompositeFuzzOpCoverageTest to
+ * check the map is COMPLETE, never by the generator. Enrolment is these probabilities and nothing
+ * else.
+ * <p>
+ * UNATTRIBUTED, and why DROP PARTITION is still 0.0. Enabled, a run fails a later read of the
+ * composite table with "Partition '2023-01-01' does not exist in table 'gated_composite' directory"
+ * -- _txn referencing a directory that is gone. That is the shape of a real defect, but FIVE
+ * hand-written shapes are all clean, so do not re-try them: (1) a WHERE-form drop of a two-cell day;
+ * (2) drop / re-create both cells / drop again; (3) re-insert into the dropped day afterwards;
+ * (4) this runner's own mechanism -- one TableWriterAPI, an AlterOperation applied via
+ * w.apply(op, false) mid-stream, commit per transaction, drain only every 8, 24 transactions across
+ * 3 days; (5) the same with NULL dimension values, since the generator emits them at
+ * probabilityOfAssigningNull = 0.1 and a NULL cell was the most plausible trigger left.
+ * Still NOT ruled out: O3 inserts (this runner passes o3 = false), the SKEWEARLY/SKEWLATE
+ * time-skewed cells inserted either side of the generated traffic, and the generated interleaving of
+ * same-timestamp rows. Left disabled, reported as neither a product bug nor a harness artifact.
+ * <p>
+ * SCHEMA-CHANGING DDL is blocked for a separate, plainer reason: this runner's SQL is fixed-shape
+ * (5-column INSERTs, fixed literals), so a generated ADD/DROP COLUMN gives "row value count does not
+ * match column count [expected=7, actual=5]" and a type change gives "inconvertible types:
+ * DOUBLE -> TIMESTAMP_NS". Enabling it means making the harness schema-adaptive first.
      * <p>
      * {@code probabilityOfUnassignedColumnValue} and {@code probabilityOfAssigningNull} were kept
      * at 0.0 in Task 1 to dodge a hang: {@code generateSet} applies both uniformly across every
@@ -1213,7 +1237,7 @@ public class CompositeFuzzRunner {
                     0.0,   // probabilityOfColumnTypeChange     (supported; blocked by this harness)
                     1.0,   // probabilityOfDataInsert
                     0.1,   // probabilityOfSameTimestamp
-                    0.0,   // probabilityOfDropPartition             (see UNATTRIBUTED note above)
+                    0.0,   // probabilityOfDropPartition             (supported; UNATTRIBUTED, see javadoc)
                     0.0,   // probabilityOfConvertPartitionToParquet  (SP3: supported, per cell)
                     0.0,   // probabilityOfConvertPartitionToNative   (SP3: supported, per cell)
                     0.0,   // probabilityOfTruncate
