@@ -150,7 +150,7 @@ public class PostingIndexBenchmarkSuite {
             // Without this a focused arm comparison has to run every scenario
             // the state declares. Only pass a param the selected benchmark
             // actually declares; JMH rejects an unknown one.
-            for (String param : new String[]{"scenario", "format", "mode", "columnType"}) {
+            for (String param : new String[]{"scenario", "format", "mode", "columnType", "queryType", "storage"}) {
                 String values = System.getProperty("questdb.suite.bench." + param);
                 if (values != null) {
                     builder.param(param, values.split(","));
@@ -567,6 +567,23 @@ public class PostingIndexBenchmarkSuite {
         return sum;
     }
 
+    /**
+     * Cost of SEALING a covering index, native chain against parquet form, over
+     * an identical set of postings.
+     * <p>
+     * The read benchmarks say what the parquet form costs to query; this is the
+     * other half. It matters more here than for the native chain because a
+     * parquet-form index is republished WHOLESALE -- there is no append path
+     * into a parquet partition, so every commit that touches one re-seals the
+     * whole thing.
+     */
+    @Benchmark
+    @BenchmarkMode(Mode.SingleShotTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public void sealCost(SealState s) {
+        s.seal();
+    }
+
     @Benchmark
     public void writeInsert(WriteState s) throws Exception {
         s.engine.execute(s.ddl, s.ctx);
@@ -772,6 +789,74 @@ public class PostingIndexBenchmarkSuite {
     }
 
     /**
+     * Storage arms for the SQL benchmarks, which decompose the parquet form's
+     * cost into its two independent parts.
+     * <p>
+     * {@code native} is a native partition with a native index. {@code
+     * parquet_data} converts the partition but keeps the native index, whose
+     * sidecars are hard-linked into the parquet directory. {@code
+     * parquet_index} converts the partition AND seals the index into parquet.
+     * Comparing the first two isolates the cost of the parquet DATA format;
+     * comparing the last two isolates the cost of the parquet INDEX form, which
+     * is the thing under test. A single native-vs-parquet_index number confounds
+     * the two.
+     */
+    /** Query types whose table covers a VARCHAR, which the parquet seal refuses. */
+    private static final java.util.Set<String> VARCHAR_COVERED_QUERIES = java.util.Set.of(
+            "varchar_fsst", "varchar_non_covering", "varchar_in_covering",
+            "bulk_covering", "bulk_non_covering"
+    );
+    /** Timestamp of the one-row trailing partition every SQL table carries. */
+    private static final String TRAILING_TS = "2024-06-01T00:00:00.000000Z";
+    private static final String STORAGE_NATIVE = "native";
+    private static final String STORAGE_PARQUET_DATA = "parquet_data";
+    private static final String STORAGE_PARQUET_INDEX = "parquet_index";
+
+    /**
+     * Converts every partition of {@code table} to parquet.
+     * <p>
+     * Under {@code parquet_index} the seal writes the covering index into
+     * parquet as part of the conversion, so this is also where a refusal would
+     * surface -- which is why the caller verifies the artifacts afterwards
+     * rather than trusting the statement to have done what the property asked.
+     */
+    private static void convertPartitionsToParquet(
+            SqlCompilerImpl compiler, SqlExecutionContextImpl ctx, String table
+    ) throws Exception {
+        // Everything before the trailing partition, which stays native in every
+        // arm because the active partition cannot be converted.
+        compiler.compile("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET WHERE ts < '"
+                + TRAILING_TS + '\'', ctx).execute(null).await();
+    }
+
+    /**
+     * Fails unless {@code table}'s partitions carry a parquet-form covering
+     * index, that is a {@code <col>.pidx.<indexTxn>.parquet} artifact.
+     * <p>
+     * The seal REFUSES var-size and symbol covered columns, and a refused seal
+     * leaves the native chain in place. Without this check the
+     * {@code parquet_index} arm would quietly measure the native index and
+     * report it as the parquet one -- the arm would be vacuous, and vacuously
+     * fast in exactly the way that looks like a good result.
+     */
+    private static void assertParquetIndexPresent(CairoEngine engine, String table) {
+        final java.io.File tableDir = new java.io.File(engine.getConfiguration().getDbRoot(), engine.verifyTableName(table).getDirName());
+        final java.io.File[] partitions = tableDir.listFiles(java.io.File::isDirectory);
+        if (partitions == null) {
+            throw new IllegalStateException("no partition directories under " + tableDir);
+        }
+        for (java.io.File partition : partitions) {
+            final String[] pidx = partition.list((d, n) -> n.contains(".pidx.") && n.endsWith(".parquet"));
+            if (pidx != null && pidx.length > 0) {
+                return;
+            }
+        }
+        throw new IllegalStateException(
+                "table " + table + " has no parquet-form covering index; the seal refused it and left the"
+                        + " native chain, so this arm would measure the native index while claiming to be parquet");
+    }
+
+    /**
      * Counts every posting the arm can reach and fails the trial if it is not
      * {@code expected}. Without this an arm that resolves no postings at all -
      * a mis-bound {@code index_txn}, a key space read as empty - reports as the
@@ -868,6 +953,25 @@ public class PostingIndexBenchmarkSuite {
             LongList coveredAddrs,
             LongList coveredColumnTops
     ) {
+        return sealParquetArm(config, dir, keys, totalRows, keyCount, firstRowId,
+                coveredNames, coveredTypes, coveredWriterIndices, coveredAddrs, coveredColumnTops,
+                PARQUET_INDEX_TXN);
+    }
+
+    private static long sealParquetArm(
+            CairoConfiguration config,
+            String dir,
+            int[] keys,
+            int totalRows,
+            int keyCount,
+            long firstRowId,
+            ObjList<CharSequence> coveredNames,
+            IntList coveredTypes,
+            IntList coveredWriterIndices,
+            LongList coveredAddrs,
+            LongList coveredColumnTops,
+            long indexTxn
+    ) {
         final DirectIntList rowKeys = new DirectIntList(totalRows, MemoryTag.NATIVE_DEFAULT);
         try (Path path = new Path().of(dir)) {
             for (int i = 0; i < totalRows; i++) {
@@ -878,7 +982,7 @@ public class PostingIndexBenchmarkSuite {
                     config.getFilesFacade(),
                     path,
                     "test",
-                    PARQUET_INDEX_TXN,
+                    indexTxn,
                     keyCount,
                     rowKeys,
                     firstRowId,
@@ -1769,12 +1873,22 @@ public class PostingIndexBenchmarkSuite {
         })
         String queryType;
         String sql;
+        @Param({STORAGE_NATIVE, STORAGE_PARQUET_DATA, STORAGE_PARQUET_INDEX})
+        String storage;
         java.nio.file.Path tmpDir;
 
         @Setup(Level.Trial)
         public void setup() throws Exception {
             tmpDir = Files.createTempDirectory("suite-sql");
+            final boolean parquetIndex = STORAGE_PARQUET_INDEX.equals(storage);
             CairoConfiguration config = new DefaultCairoConfiguration(tmpDir.toString()) {
+                @Override
+                public byte getPostingIndexParquetPartitionFormat() {
+                    return parquetIndex
+                            ? PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET
+                            : PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE;
+                }
+
                 @Override
                 public byte getPostingIndexRowIdEncoding() {
                     return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
@@ -1850,6 +1964,48 @@ public class PostingIndexBenchmarkSuite {
             // O3 insert: timestamps interleaved with existing data
             engine.execute("INSERT INTO o3bench SELECT dateadd('s', x::INT, '2024-01-01T00:00:00.500000')::TIMESTAMP, " +
                     "rnd_symbol(50, 4, 8, 0), rnd_double() * 1000 FROM long_sequence(100000)", ctx);
+
+            // One row per table in a far-later partition, in EVERY arm so the
+            // data is identical across them. QuestDB refuses to convert the
+            // ACTIVE partition and reports nothing when it declines, so without
+            // a trailing partition the conversion below is a silent no-op and
+            // the parquet arms measure native storage under a parquet label.
+            engine.execute("INSERT INTO bench VALUES ('" + TRAILING_TS + "', 'zzz', 1.0)", ctx);
+            engine.execute("INSERT INTO bench_noidx VALUES ('" + TRAILING_TS + "', 'zzz', 1.0)", ctx);
+            engine.execute("INSERT INTO bench_nc VALUES ('" + TRAILING_TS + "', 'zzz', 1.0)", ctx);
+            engine.execute("INSERT INTO wide VALUES ('" + TRAILING_TS + "', 'zzz', 1.0, 1, 1.0, 1, 1.0, 1, 1.0, 1)", ctx);
+            engine.execute("INSERT INTO vchar VALUES ('" + TRAILING_TS + "', 'zzz', 'zzz', 1.0)", ctx);
+            engine.execute("INSERT INTO bulk VALUES ('" + TRAILING_TS + "', 'zzz', 'zzz', 1.0)", ctx);
+            engine.execute("INSERT INTO o3bench VALUES ('" + TRAILING_TS + "', 'zzz', 1.0)", ctx);
+
+            if (!STORAGE_NATIVE.equals(storage)) {
+                // The seal refuses var-size covered columns, so vchar and bulk
+                // -- both covering a VARCHAR -- have no parquet-index arm at
+                // all. Failing here is deliberate: silently leaving them native
+                // would report a native measurement under a parquet label.
+                if (parquetIndex && VARCHAR_COVERED_QUERIES.contains(queryType)) {
+                    throw new UnsupportedOperationException(
+                            "query type " + queryType + " covers a VARCHAR, which the parquet index seal refuses;"
+                                    + " run it under storage=native or storage=parquet_data only");
+                }
+                for (String table : new String[]{"bench", "bench_noidx", "bench_nc", "wide", "o3bench"}) {
+                    convertPartitionsToParquet(compiler, ctx, table);
+                }
+                if (!parquetIndex) {
+                    // Under parquet_data the VARCHAR tables convert too: the
+                    // native index simply hard-links into the parquet directory.
+                    for (String table : new String[]{"vchar", "bulk"}) {
+                        convertPartitionsToParquet(compiler, ctx, table);
+                    }
+                } else {
+                    // The conversion itself reseals the covering index in the
+                    // configured format, so no rebuild is needed -- but a
+                    // refusal would leave the native chain, so verify.
+                    for (String table : new String[]{"bench", "wide", "o3bench"}) {
+                        assertParquetIndexPresent(engine, table);
+                    }
+                }
+            }
 
             engine.releaseAllWriters();
 
@@ -2790,6 +2946,88 @@ public class PostingIndexBenchmarkSuite {
             Misc.free(compiler);
             Misc.free(engine);
             deleteDirRecursive(tmpDir.toFile());
+        }
+    }
+
+    @State(Scope.Benchmark)
+    @BenchmarkMode(Mode.SingleShotTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public static class SealState {
+        CairoConfiguration config;
+        String dir;
+        @Param({"POSTING", "POSTING_PARQUET"})
+        String format;
+        boolean isParquet;
+        int[] keys;
+        int keyCount;
+        long coverAddr;
+        int rowCount;
+        @Param({"400000", "2000000"})
+        int rows;
+        @Param({"16", "2000"})
+        int distinctKeys;
+        private int sealSeq;
+
+        @Setup(Level.Trial)
+        public void setup() {
+            String tmpDir = System.getProperty("java.io.tmpdir");
+            config = benchConfig(tmpDir);
+            isParquet = "POSTING_PARQUET".equals(format);
+            rowCount = rows;
+            keyCount = distinctKeys;
+            keys = buildRoundRobin(rowCount, keyCount);
+            // One fixed-width covered column, the shape the parquet seal
+            // supports and the native chain writes to a .pc sidecar.
+            coverAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Random rng = new Random(7);
+            for (int i = 0; i < rowCount; i++) {
+                Unsafe.putDouble(coverAddr + (long) i * Double.BYTES, rng.nextDouble() * 1000);
+            }
+            dir = tmpDir + File.separator + "suite_seal_" + format + '_' + rows + '_' + distinctKeys
+                    + '_' + System.nanoTime();
+            new File(dir).mkdirs();
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            Unsafe.free(coverAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+            deleteDir(dir);
+        }
+
+        void seal() {
+            // A fresh index txn per invocation: the artifacts are named by it,
+            // so reusing one would have each seal overwrite the last and
+            // measure a rewrite rather than a write.
+            final int seq = ++sealSeq;
+            if (isParquet) {
+                final ObjList<CharSequence> names = new ObjList<>();
+                names.add("price");
+                final IntList types = new IntList();
+                types.add(ColumnType.DOUBLE);
+                final IntList writerIndices = new IntList();
+                writerIndices.add(2);
+                final LongList addrs = new LongList();
+                addrs.add(coverAddr);
+                final LongList tops = new LongList();
+                tops.add(0);
+                sealParquetArm(config, dir, keys, rowCount, keyCount, 0,
+                        names, types, writerIndices, addrs, tops, seq);
+            } else {
+                try (Path path = new Path().of(dir)) {
+                    try (PostingIndexWriter writer =
+                                 new PostingIndexWriter(config, path, "test" + seq, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{coverAddr}, new long[]{0},
+                                new int[]{3}, new int[]{2},
+                                new int[]{ColumnType.DOUBLE}, 1);
+                        for (int i = 0; i < rowCount; i++) {
+                            writer.add(keys[i], i);
+                        }
+                        writer.setMaxValue(rowCount - 1);
+                        writer.seal();
+                    }
+                }
+            }
         }
     }
 

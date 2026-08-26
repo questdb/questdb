@@ -449,14 +449,25 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         }
 
         long countInGroup(int rowGroup, int key, long minValue, long maxValue) {
-            final long rows = decodeGroup(rowGroup);
-            final long keyIdPtr = rowGroupBuffers.getChunkDataPtr(0);
-            final long rowIdPtr = rowGroupBuffers.getChunkDataPtr(1);
+            final long range = imReader.getKeyRowRangeInGroup(rowGroup, key);
+            if (range == IndexMetaFileReader.KEY_ABSENT) {
+                return 0;
+            }
+            final long lo = Numbers.decodeLowInt(range);
+            final long hi = Numbers.decodeHighInt(range);
+            if (isWholeGroupInRange(rowGroup, minValue, maxValue)) {
+                // Every row in the group is inside the caller's window, so
+                // every row of the key's run is too, and the directory already
+                // says how many that is. The whole answer, with no decode at
+                // all -- which is what makes count() over a covering index
+                // cheap.
+                return hi - lo;
+            }
+            // Only the key's own rows, and only row_id: the run is the key's by
+            // construction, so nothing here needs key_id to filter on.
+            final long rowIdPtr = decodeRowIdRange(rowGroup, lo, hi);
             long n = 0;
-            for (long i = 0; i < rows; i++) {
-                if (Unsafe.getUnsafe().getInt(keyIdPtr + (i << 2)) != key) {
-                    continue;
-                }
+            for (long i = 0, count = hi - lo; i < count; i++) {
                 final long rowId = Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
                 if (rowId >= minValue && rowId <= maxValue) {
                     n++;
@@ -466,14 +477,15 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         }
 
         long selectInGroup(int rowGroup, int key, long minValue, long maxValue, long j) {
-            final long rows = decodeGroup(rowGroup);
-            final long keyIdPtr = rowGroupBuffers.getChunkDataPtr(0);
-            final long rowIdPtr = rowGroupBuffers.getChunkDataPtr(1);
+            final long range = imReader.getKeyRowRangeInGroup(rowGroup, key);
+            if (range == IndexMetaFileReader.KEY_ABSENT) {
+                return Numbers.LONG_NULL;
+            }
+            final long lo = Numbers.decodeLowInt(range);
+            final long hi = Numbers.decodeHighInt(range);
+            final long rowIdPtr = decodeRowIdRange(rowGroup, lo, hi);
             long seen = 0;
-            for (long i = 0; i < rows; i++) {
-                if (Unsafe.getUnsafe().getInt(keyIdPtr + (i << 2)) != key) {
-                    continue;
-                }
+            for (long i = 0, count = hi - lo; i < count; i++) {
                 final long rowId = Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
                 if (rowId < minValue || rowId > maxValue) {
                     continue;
@@ -483,6 +495,26 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                 }
             }
             return Numbers.LONG_NULL;
+        }
+
+        /**
+         * Decodes {@code row_id} alone for {@code [lo, hi)} of {@code rowGroup},
+         * returning its chunk pointer.
+         * <p>
+         * Replaces decoding the whole group's {@code key_id} and {@code row_id}
+         * and filtering: since format version 4 the directory gives the key's
+         * exact run, so both the wider window and the {@code key_id} column
+         * that filtered it are avoidable. With 16 keys to a group that is 16x
+         * less to decompress, and decompression is what a lookup costs.
+         */
+        private long decodeRowIdRange(int rowGroup, long lo, long hi) {
+            projection.clear();
+            projection.add(imReader.getRowIdColumn());
+            projection.add(ColumnType.LONG);
+            rowGroupBuffers.reopen();
+            decoder().decodeRowGroup(rowGroupBuffers, projection, rowGroup, (int) lo, (int) hi);
+            onRowGroupDecoded(hi - lo);
+            return rowGroupBuffers.getChunkDataPtr(0);
         }
 
         long decodeKeyIdColumn(int rowGroup, long rows) {
