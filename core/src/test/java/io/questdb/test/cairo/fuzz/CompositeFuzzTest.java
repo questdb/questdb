@@ -120,4 +120,50 @@ public class CompositeFuzzTest extends AbstractCairoTest {
             runner.assertTwinEqual();   // and must leave the table twin-equal
         });
     }
+
+    /**
+     * ANTI-VACUITY LOCK for the ADD COLUMN enrolment (2026-08-26).
+     * <p>
+     * {@code CompositeFuzzRunner#dropUnsupportedAddColumnOps} filters out generated adds that would
+     * hit a gate the subject already declares unsupported (var-size column, POSTING index). A filter
+     * like that has two silent failure modes, and a passing twin-equality assertion catches NEITHER:
+     * <ul>
+     *   <li><b>Dead filter</b> -- never fires, so the green says nothing about the gates it exists
+     *       for.</li>
+     *   <li><b>Total filter</b> -- removes EVERY add, so ADD COLUMN is nominally enrolled at
+     *       probability 0.05 while contributing exactly no coverage, and the suite stays green
+     *       forever.</li>
+     * </ul>
+     * The total-filter mode is the dangerous one: it is indistinguishable from success unless
+     * something asserts that columns really did arrive. So both sides are asserted -- the filter fired
+     * at least once, AND at least one add survived it and reached the table.
+     * <p>
+     * The seed is fixed, and is one measured to generate both kinds. Filtering happens after
+     * generation and consumes no {@code Rnd}, so a given seed's generated op stream is unchanged by
+     * the filter's existence: this is reproducible, not probabilistic.
+     */
+    @Test
+    public void testAddColumnEnrolmentIsNeitherFilteredAwayNorUnfiltered() throws Exception {
+        assertMemoryLeak(() -> {
+            CompositeFuzzRunner runner = CompositeFuzzRunner.of(engine, new Rnd(1333L, 1319L));
+            runner.createTables("addcol");
+            final long columnsBefore = runner.compositeColumnCount();
+            runner.applyGeneratedTransactions(600, 30);
+
+            org.junit.Assert.assertTrue(
+                    "the unsupported-add filter never fired for a seed measured to generate both a "
+                            + "var-size and a POSTING add -- either the generator changed or the filter "
+                            + "is dead; re-measure before weakening this assertion",
+                    runner.droppedAddColumnOps() > 0);
+
+            final long columnsAfter = runner.compositeColumnCount();
+            org.junit.Assert.assertTrue(
+                    "every generated ADD COLUMN was filtered out (" + runner.droppedAddColumnOps()
+                            + " dropped, columns " + columnsBefore + " -> " + columnsAfter
+                            + "), so enrolling ADD COLUMN bought no coverage at all",
+                    columnsAfter > columnsBefore);
+
+            runner.assertTwinEqual();
+        });
+    }
 }

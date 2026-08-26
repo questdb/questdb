@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TableWriter;
@@ -99,6 +100,7 @@ public class CompositeFuzzRunner {
     private long baselineMultiCellFastAppendEligibleCount;
     private long baselineO3MergeCommitCount;
     private int comparedShapeCount;
+    private int droppedAddColumnOps;
     private String compositeName;
     private int gatedAttempted;
     private String plainName;
@@ -377,18 +379,65 @@ public class CompositeFuzzRunner {
      * below a later interval.
      */
     private void insertTimeSkewedCell(String dimensionValue, String hourPrefix, int rows) throws SqlException {
-        final StringBuilder values = new StringBuilder();
-        for (int i = 0; i < rows; i++) {
-            if (i > 0) {
-                values.append(',');
+        // Column list resolved from LIVE metadata rather than hardcoded, because the generator can
+        // ADD a column mid-run and this helper is called AFTER the generated traffic. A positional
+        // "VALUES (a,b,c,d,e)" against a widened table fails the whole statement with
+        // "row value count does not match column count [expected=6, actual=5]" -- measured, and the
+        // reason this helper, not the product, was what kept probabilityOfAddingNewColumn at 0.0.
+        //
+        // Naming the columns leaves every column this helper does not know how to fill at NULL. That
+        // is identical in both twins, so it cannot bias the comparison. Intersecting with live
+        // metadata on top of that means a column later removed or renamed drops out of the list
+        // instead of failing the statement.
+        //
+        // Resolved from the PLAIN twin (the reference) and used verbatim for BOTH, deliberately: if
+        // the two ever diverged structurally, the composite statement would fail loudly here rather
+        // than quietly inserting a different row shape into each side.
+        final ObjList<String> cols = new ObjList<>();
+        try (TableMetadata meta = engine.getTableMetadata(engine.verifyTableName(plainName))) {
+            for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
+                if (meta.getColumnType(i) > 0 && isSkewColumn(meta.getColumnName(i))) {
+                    cols.add(Chars.toString(meta.getColumnName(i)));
+                }
             }
-            values.append("('").append(hourPrefix).append(String.format("%02d", i * 7 % 60))
-                    .append(":00.000000Z','").append(dimensionValue).append("','")
-                    .append(dimensionValue).append("',").append(i).append(".5,").append(i).append(')');
         }
-        engine.execute("INSERT INTO " + compositeName + " VALUES " + values, sqlExecutionContext);
-        engine.execute("INSERT INTO " + plainName + " VALUES " + values, sqlExecutionContext);
+
+        final StringBuilder sql = new StringBuilder(" (");
+        for (int i = 0, n = cols.size(); i < n; i++) {
+            sql.append(i > 0 ? "," : "").append(cols.getQuick(i));
+        }
+        sql.append(") VALUES ");
+        for (int r = 0; r < rows; r++) {
+            sql.append(r > 0 ? ",(" : "(");
+            for (int i = 0, n = cols.size(); i < n; i++) {
+                appendSkewValue(sql.append(i > 0 ? "," : ""), cols.getQuick(i), dimensionValue, hourPrefix, r);
+            }
+            sql.append(')');
+        }
+        engine.execute("INSERT INTO " + compositeName + sql, sqlExecutionContext);
+        engine.execute("INSERT INTO " + plainName + sql, sqlExecutionContext);
         TestUtils.drainWalQueue(engine);
+    }
+
+    /**
+     * The five columns {@link #insertTimeSkewedCell} knows how to fill -- i.e. the ones the twins are
+     * created with. Anything the generator adds is deliberately NOT in this set.
+     */
+    private static boolean isSkewColumn(CharSequence name) {
+        return Chars.equals(name, "ts") || Chars.equals(name, "exch") || Chars.equals(name, "sym")
+                || Chars.equals(name, "px") || Chars.equals(name, "qty");
+    }
+
+    private static void appendSkewValue(StringBuilder sink, CharSequence col, String dimensionValue, String hourPrefix, int row) {
+        if (Chars.equals(col, "ts")) {
+            sink.append('\'').append(hourPrefix).append(String.format("%02d", row * 7 % 60)).append(":00.000000Z'");
+        } else if (Chars.equals(col, "px")) {
+            sink.append(row).append(".5");
+        } else if (Chars.equals(col, "qty")) {
+            sink.append(row);
+        } else {
+            sink.append('\'').append(dimensionValue).append('\'');
+        }
     }
 
     /**
@@ -589,6 +638,15 @@ public class CompositeFuzzRunner {
      */
     public long compositeRowCount() throws SqlException {
         return queryLong("SELECT count() FROM " + compositeName);
+    }
+
+    /**
+     * Live column count of the subject. Used to prove a generated ADD COLUMN actually reached the
+     * table rather than being filtered away -- see
+     * {@code CompositeFuzzTest#testAddColumnEnrolmentIsNeitherFilteredAwayNorUnfiltered}.
+     */
+    public long compositeColumnCount() throws SqlException {
+        return queryLong("SELECT count() FROM table_columns('" + compositeName + "')");
     }
 
     /**
@@ -1210,7 +1268,7 @@ public class CompositeFuzzRunner {
             for (int i = 0; i < axes.cardinality; i++) {
                 symbols[i] = "SYM" + i;
             }
-            return FuzzTransactionGenerator.generateSet(
+            return dropUnsupportedAddColumnOps(FuzzTransactionGenerator.generateSet(
                     0, // initialRowCount: tables are created empty
                     sequencerMetadata,
                     tableMetadata,
@@ -1224,17 +1282,30 @@ public class CompositeFuzzRunner {
                     0.1,   // probabilityOfUnassignedColumnValue (restored: hang fixed, see note above)
                     0.1,   // probabilityOfAssigningNull (restored: hang fixed, see note above)
                     0.0,   // probabilityOfTransactionRollback
-                    // SCHEMA-CHANGING DDL stays at 0.0, and NOT because it is unsupported -- all four
-                    // are supported for composite now. It is this RUNNER that cannot take them: its
-                    // helpers issue fixed 5-column INSERTs and fixed literals, so a generated ADD/DROP
-                    // COLUMN produces "row value count does not match column count [expected=7,
-                    // actual=5]" and a generated type change produces "inconvertible types: DOUBLE ->
-                    // TIMESTAMP_NS". MEASURED by switching them on. Enabling them means making the
-                    // runner's SQL schema-adaptive first -- a harness change, not a probability.
-                    0.0,   // probabilityOfAddingNewColumn      (supported; blocked by this harness)
-                    0.0,   // probabilityOfRemovingColumn       (supported; blocked by this harness)
-                    0.0,   // probabilityOfRenamingColumn       (supported; blocked by this harness)
-                    0.0,   // probabilityOfColumnTypeChange     (supported; blocked by this harness)
+                    // ADD COLUMN is ENROLLED: insertTimeSkewedCell is schema-adaptive now, so a
+                    // widened table no longer breaks its INSERT. This is the DDL worth fuzzing first
+                    // -- it is the operation that reorders denseSymbolMapWriters against the composite
+                    // interner slots, which is exactly what createSymbolMapWriter's insert-at-
+                    // (size - internerCount) fix exists to keep straight.
+                    //
+                    // The other three stay at 0.0, and NOT because they are unsupported -- all three
+                    // are supported for composite now. Each has its own remaining blocker:
+                    //   REMOVE  -- MEASURED: "table 'x' column 'exch' is pinned by composite
+                    //              partitioning". The generator picks a column uniformly, so it
+                    //              eventually picks a dimension column; the composite refuses that
+                    //              drop (by design, refuseDroppingCompositePinnedColumn) while the
+                    //              plain twin drops it happily, so the twins diverge structurally.
+                    //              Needs pinned-column drops routed through applyGatedOperation and
+                    //              SKIPPED on the reference too.
+                    //   RENAME  -- DERIVED, not measured: same shape as REMOVE (rename retargets the
+                    //              same pinned column), so it is expected to diverge the same way for
+                    //              the same reason. Verify before relying on this.
+                    //   TYPE    -- MEASURED: "inconvertible types: DOUBLE -> TIMESTAMP_NS". A
+                    //              FuzzTransactionGenerator-level literal problem, not a composite one.
+                    0.05,  // probabilityOfAddingNewColumn      (ENROLLED)
+                    0.0,   // probabilityOfRemovingColumn       (supported; twins diverge on pinned cols)
+                    0.0,   // probabilityOfRenamingColumn       (supported; twins diverge on pinned cols)
+                    0.0,   // probabilityOfColumnTypeChange     (supported; generator literal problem)
                     1.0,   // probabilityOfDataInsert
                     0.1,   // probabilityOfSameTimestamp
                     0.0,   // probabilityOfDropPartition             (supported; UNATTRIBUTED, see javadoc)
@@ -1252,7 +1323,73 @@ public class CompositeFuzzRunner {
                     0.0,   // probabilityOfSetParquetEncoding
                     0.0,   // probabilityOfAddCoveringIndex
                     0.0    // probabilityOfSetTableFormat
-            );
+            ));
         }
+    }
+
+    /**
+     * Removes generated ADD COLUMN operations that would land the subject on a gate it already
+     * declares unsupported, and COUNTS what it removed so the lost coverage is never silent (see
+     * {@link #droppedAddColumnOps()}).
+     * <p>
+     * Two kinds are dropped, and BOTH were found by measurement, not inspection. Enrolling ADD COLUMN
+     * failed 5 of 24 sweep seeds; every failure was one of these two ALREADY-KNOWN gates, and none was
+     * a new defect:
+     * <ol>
+     *   <li><b>4 seeds -- var-size column.</b> The generator adds columns of arbitrary type, and the
+     *       twins' base schema (ts, exch, sym, px, qty) contains no var-size column at all. The moment
+     *       one is added, an interleaved multi-cell commit hits "composite partitioning: an interleaved
+     *       multi-cell commit is not yet supported for a table with a var-size column" --
+     *       remaining-work item 2, blocked on the per-cell scratch gather having no per-driver way to
+     *       copy a single var-size value.</li>
+     *   <li><b>1 seed -- POSTING index.</b> {@link io.questdb.cairo.IndexType#POSTING} and its
+     *       DELTA/EF variants reach {@code TableWriter#sealPostingIndexForPartition}, which refuses on
+     *       a routed composite table (Task 16).</li>
+     * </ol>
+     * Both gates SUSPEND the table rather than failing the statement, and a suspended twin stops
+     * applying transactions while the reference carries on. That is why the symptoms looked so varied
+     * -- "Column count must be same expected:&lt;10&gt; but was:&lt;7&gt;" on some seeds, a row
+     * mismatch on others. Downstream drift, not distinct defects. Do not chase them separately.
+     * <p>
+     * CORRECTION worth keeping, because the same trap is easy to re-enter: the first version of this
+     * filter dropped only the POSTING ops, and its comment asserted all 5 seeds were that gate.
+     * Re-running showed 5 -> 4 -- exactly ONE was. The majority cause was the var-size gate. Establish
+     * which gate a seed hit by grepping its table name in the run log for "not yet supported"; do NOT
+     * infer it from the comparison failure message, which reports drift, not cause.
+     * <p>
+     * What this enrolment BUYS: fixed-width and SYMBOL adds are deliberately NOT filtered, and SYMBOL
+     * adds are the ones that reorder {@code denseSymbolMapWriters} against the composite interner
+     * slots -- exactly what {@code createSymbolMapWriter}'s insert-at-(size - internerCount) fix exists
+     * to keep straight. That path had no fuzz coverage before and has it now.
+     * <p>
+     * Neither gate is hidden by this filter: item 2 is in the remaining-work plan, and the POSTING one
+     * is pinned in code by {@code CompositeAddColumnPostingGateTest}, which additionally records that
+     * it bricks the table instead of refusing the ALTER (invariant 6).
+     */
+    private ObjList<FuzzTransaction> dropUnsupportedAddColumnOps(ObjList<FuzzTransaction> transactions) {
+        for (int i = 0, n = transactions.size(); i < n; i++) {
+            final ObjList<FuzzTransactionOperation> ops = transactions.getQuick(i).operationList;
+            for (int j = ops.size() - 1; j >= 0; j--) {
+                final FuzzTransactionOperation op = ops.getQuick(j);
+                if (!(op instanceof FuzzAddColumnOperation)) {
+                    continue;
+                }
+                final FuzzAddColumnOperation add = (FuzzAddColumnOperation) op;
+                if (ColumnType.isVarSize(add.getNewType()) || IndexType.isPosting(add.getIndexType())) {
+                    ops.remove(j);
+                    droppedAddColumnOps++;
+                }
+            }
+        }
+        return transactions;
+    }
+
+    /**
+     * How many ADD COLUMN operations {@link #dropUnsupportedAddColumnOps} removed from this run.
+     * Exposed so a test can assert the filter is neither dead nor runaway -- a filter that silently
+     * removed EVERY generated add would leave this enrolment worthless while still reporting green.
+     */
+    public int droppedAddColumnOps() {
+        return droppedAddColumnOps;
     }
 }
