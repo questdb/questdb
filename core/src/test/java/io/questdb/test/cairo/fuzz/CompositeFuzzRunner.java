@@ -1385,6 +1385,35 @@ public class CompositeFuzzRunner {
  * remains, and this is the first hypothesis all session that moved the number at all -- the four
  * below moved it by zero, which is what disqualified them.
  * <p>
+ * <b>SECOND MECHANISM CHARACTERISED (read side) -- this is what the remaining 9 of 24 seeds hit.</b>
+ * After the fix above, the surviving failure has a DIFFERENT shape: the message carries no cell
+ * segment at all, and the reader logs
+ * {@code open partition failed ... [path=.../d3x1037_composite~4/2023-01-02.7]} -- the BARE DAY path.
+ * Meanwhile _txn for that day is entirely self-consistent, including the victim entry
+ * ({@code cellKey=15 seg=25/SKE nameTxn=7}), and {@code 2023-01-02/25/SKE.7} IS on disk. So nothing is
+ * corrupt: the READER simply failed to apply the cell segment.
+ * <p>
+ * The culprit is {@code TableReader#resolveCellSegmentOrNullIfDormant}:
+ * <pre>
+ *   if (cellKey &gt;= getCompositeDictionaries().cellRegistry().size()) {
+ *       return null;   // -&gt; bare day path
+ *   }
+ * </pre>
+ * That guard conflates two unrelated states. {@code registry.size() == 0} is genuinely DORMANT, where
+ * the bare path is right. {@code cellKey >= size > 0} is a STALE SNAPSHOT -- the reader's _txn knows a
+ * cell its registry has never heard of -- and silently rendering the bare path there is wrong.
+ * <p>
+ * Why it goes stale: {@code compositeDicts} is built in {@code openSymbolMaps()} and released in
+ * {@code freeSymbolMapReaders()}, i.e. it rides the symbol-map/METADATA lifecycle. A new cell is
+ * created by an ordinary DATA write, which bumps _txn and does not touch metadata -- so a reader can
+ * reload _txn, see a brand-new cellKey, and still hold a registry from before it existed. That is
+ * exactly why the victim is always the newest/highest cellKey (here the SKEWLATE cell inserted after
+ * the generated traffic).
+ * <p>
+ * Fix direction: refresh the cell registry when a _txn reload reveals a cellKey beyond it, and split
+ * the dormant test ({@code size == 0}) from the staleness test rather than treating both as "dormant".
+ * That is a change to reader reload semantics, so it wants doing deliberately.
+ * <p>
  * <b>ELIMINATED -- do not re-chase:</b>
  * <ol>
  *   <li><b>Empty-component cell paths.</b> The same runs logged ENOENT purge failures, 14 of 742 with
