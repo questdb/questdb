@@ -100,7 +100,7 @@ public class CompositeFuzzRunner {
     private long baselineMultiCellFastAppendEligibleCount;
     private long baselineO3MergeCommitCount;
     private int comparedShapeCount;
-    private double dropPartitionProbability;
+    private double dropPartitionProbability = 0.05;
     private int droppedAddColumnOps;
     private String compositeName;
     private int gatedAttempted;
@@ -1279,12 +1279,20 @@ public class CompositeFuzzRunner {
  * check the map is COMPLETE, never by the generator. Enrolment is these probabilities and nothing
  * else.
  * <p>
- * DROP PARTITION: <b>THREE causes FIXED 2026-08-26 -- but NOT enrolled by default, and the reason
- * matters.</b> It failed 12 of 24 fixed sweep seeds when this investigation started and all 24 pass
- * now. I turned it on by default on that basis; the very next wide run,
- * {@code CompositeFuzzUnstableTest} -- which draws its seeds from the clock precisely to explore
- * shapes the fixed seeds do not -- found a fresh divergence at a SKEWEARLY row. So "all 24 fixed seeds
- * pass" is NOT "safe to enable by default", and the default is back to 0.0 with the knob retained.
+ * DROP PARTITION: <b>FOUR causes FIXED 2026-08-26, and ENROLLED at 0.05.</b> It failed 12 of 24 fixed
+ * sweep seeds when this investigation started.
+ * <p>
+ * Enrolled ONCE, un-enrolled, then re-enrolled -- the middle step is the instructive one. The first
+ * enrolment rested on "all 24 fixed seeds pass"; the very next wide run,
+ * {@code CompositeFuzzUnstableTest} (clock seeds, precisely to explore what fixed seeds do not), found
+ * a fresh divergence, so that basis was wrong and it came back off. The fourth cause -- the drop
+ * path's active-tail reopen -- was then found and fixed, and the evidence now is: 24 fixed seeds, plus
+ * roughly 28 random-seed explorations across 4 independent unstable runs, all green.
+ * <p>
+ * That is EVIDENCE, not proof, and it is recorded as such deliberately. If CI ever goes intermittently
+ * red here, {@link #withDropPartitionProbability} makes it a one-line revert -- but prefer chasing the
+ * seed, because the reproduction recipe is now correct (use {@code TestUtils.generateRandom}, never a
+ * bare {@code new Rnd}) and every failure this generation has produced so far has been a real bug.
  * <p>
  * That is worth stating plainly: the fixed sweep is a regression guard, not evidence of absence. Use
  * {@link #withDropPartitionProbability}(0.05) to keep hunting; expect the unstable test to keep
@@ -1438,7 +1446,7 @@ public class CompositeFuzzRunner {
                     0.0,   // probabilityOfColumnTypeChange     (supported; generator literal problem)
                     1.0,   // probabilityOfDataInsert
                     0.1,   // probabilityOfSameTimestamp
-                    dropPartitionProbability, // OFF by default -- see javadoc; knob is withDropPartitionProbability
+                    dropPartitionProbability, // ENROLLED at 0.05; knob is withDropPartitionProbability
                     0.0,   // probabilityOfConvertPartitionToParquet  (SP3: supported, per cell)
                     0.0,   // probabilityOfConvertPartitionToNative   (SP3: supported, per cell)
                     0.0,   // probabilityOfTruncate
