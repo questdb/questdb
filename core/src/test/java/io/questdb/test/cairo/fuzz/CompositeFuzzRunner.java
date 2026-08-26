@@ -1332,8 +1332,16 @@ public class CompositeFuzzRunner {
  *   disk:  2023-01-01/13/SYM.0        (no .5 anywhere under the cell)
  *          2023-01-01.5               &lt;-- the .5 version, written at the DAY level
  * </pre>
- * The cell's new version was written to the BARE DAY path instead of inside the cell. Nothing was
- * deleted; it was created in the wrong place, and _txn was pointed at it.
+ * Nothing was deleted -- {@code 13/SYM.0} is still there. _txn points at a {@code .5} version of that
+ * cell which was never created under the cell.
+ * <p>
+ * <b>Do NOT read the bare {@code 2023-01-01.5} as "the misplaced version" -- I did, and it is wrong.</b>
+ * Bare {@code <day>.<txn>} containers on a composite table are a KNOWN, DOCUMENTED, HARMLESS artifact:
+ * see {@code TableWriter#openLastPartitionAndSetAppendPosition}, which already guards against creating
+ * them and records that they are "never read by anything" and never reclaimed (O3PartitionPurgeJob
+ * skips composite tables), with a measurement of three left behind by 20 rounds of O3 writes. So the
+ * bare container is unrelated debris, and the real question is narrower than it first looks: what
+ * stamps nameTxn=5 onto that cell's _txn entry without a corresponding directory.
  * <p>
  * The prime suspect is {@code TableWriter#setStateForTimestamp(Path, long)}. It resolves
  * {@code getPartitionNameTxnByPartitionTimestamp} (cellKey 0 ONLY) and then builds the path with the
