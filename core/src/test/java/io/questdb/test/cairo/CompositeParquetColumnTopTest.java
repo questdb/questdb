@@ -189,6 +189,41 @@ public class CompositeParquetColumnTopTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * IN-ORDER append into a cell that has been converted to PARQUET.
+     * <p>
+     * Composite fast-append writes straight into a cell's NATIVE column files, bypassing the O3
+     * machinery entirely. Its eligibility predicates ({@code isCompositeSingleCellFastAppendPossible},
+     * {@code isCompositeMultiCellFastAppendPossible}) contain no reference to parquet anywhere -- the
+     * whole family has zero parquet awareness -- because a composite table could not hold a parquet
+     * cell when that code was written. CONVERT PARTITION TO PARQUET makes it possible now.
+     * <p>
+     * If fast-append takes a parquet cell, it appends native bytes to a partition the reader decodes
+     * as parquet. This asserts the twin instead of guessing which way that fails.
+     */
+    @Test
+    public void testInOrderAppendIntoConvertedCell() throws Exception {
+        assertMemoryLeak(() -> {
+            createUnevenCells("c_fa", ", exch");
+            createUnevenCells("p_fa", "");
+            execute("ALTER TABLE c_fa CONVERT PARTITION TO PARQUET LIST '2023-10-01'");
+            execute("ALTER TABLE p_fa CONVERT PARTITION TO PARQUET LIST '2023-10-01'");
+            drainWalQueue();
+            assertMatchesTwin("c_fa", "p_fa");   // precondition
+
+            // STRICTLY IN ORDER -- later than every existing row, same day, same cells. This is the
+            // shape fast-append is for.
+            execute("INSERT INTO c_fa VALUES ('2023-10-01T20:00:00.000000Z','BTC',20.0,'B9'),"
+                    + "('2023-10-01T21:00:00.000000Z','ETH',21.0,'E9')");
+            execute("INSERT INTO p_fa VALUES ('2023-10-01T20:00:00.000000Z','BTC',20.0,'B9'),"
+                    + "('2023-10-01T21:00:00.000000Z','ETH',21.0,'E9')");
+            drainWalQueue();
+            assertNotSuspended("c_fa");
+
+            assertMatchesTwin("c_fa", "p_fa");
+        });
+    }
+
     private void assertMatchesTwin(String composite, String plain) throws Exception {
         final StringSink c = new StringSink();
         final StringSink p = new StringSink();

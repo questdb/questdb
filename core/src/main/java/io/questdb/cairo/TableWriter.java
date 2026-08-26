@@ -6110,6 +6110,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         final boolean appendOnly;
         final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(lastPartitionTimestamp, cellKey);
+        // PARQUET cells can never fast-append -- see the identical guard in
+        // isCompositeMultiCellFastAppendPossible for the measurement. Checked BEFORE the
+        // empty-cell branch: a parquet cell reporting size 0 must still be refused, not treated as
+        // trivially append-only.
+        if (partitionIndexRaw > -1 && txWriter.isPartitionParquetByRawIndex(partitionIndexRaw)) {
+            return -1;
+        }
         if (partitionIndexRaw < 0 || txWriter.getPartitionSizeByRawIndex(partitionIndexRaw) == 0L) {
             // Cell genuinely has no committed rows yet (today, in this day partition) -- trivially
             // append-only.
@@ -6319,6 +6326,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(lastPartitionTimestamp, cellKey);
                 if (partitionIndexRaw < 0 || txWriter.getPartitionSizeByRawIndex(partitionIndexRaw) == 0L) {
                     eligible = false; // brand-new/empty cell -- not pre-existing
+                    break;
+                }
+                // PARQUET cells can never fast-append. This path writes straight into a cell's NATIVE
+                // column files and bumps the partition size; a parquet cell's rows live in data.parquet,
+                // which it does not touch. MEASURED before this guard, on a converted day taking an
+                // ordinary IN-ORDER insert: _txn said 5 rows, the parquet file held 4, and every read of
+                // that partition then threw
+                //     parquet partition row count mismatch [partitionHi=5, parquetRowCount=4]
+                // i.e. the partition became unreadable. Covered by
+                // CompositeParquetColumnTopTest#testInOrderAppendIntoConvertedCell.
+                //
+                // The whole fast-append family had NO parquet awareness, which was correct while a
+                // composite table could not hold a parquet cell. CONVERT PARTITION TO PARQUET made that
+                // false without the family being re-audited -- the third time in this branch that an
+                // assumption outlived the restriction it rested on.
+                if (txWriter.isPartitionParquetByRawIndex(partitionIndexRaw)) {
+                    eligible = false;
                     break;
                 }
                 final long cachedMax = compositeCellMaxTimestamp != null ? compositeCellMaxTimestamp.get(cellKey) : -1;
