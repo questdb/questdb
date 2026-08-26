@@ -57,6 +57,87 @@ public class FiberAffinitySchedulingTest {
     private static final long AWAIT_SECONDS = 10;
 
     @Test
+    public void testExternalPublicationRacesIdleRegistrationStress() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int roundCount = 10_000;
+            final long scheduleSeed = 0x51A7_E5E2_77C3_4D19L;
+            final WorkerPool pool = new WorkerPool(fiberConfiguration("fiber-pre-ready-stress", 1));
+            final FiberRuntime runtime = pool.getFiberRuntime();
+            final AtomicInteger taskRunCount = new AtomicInteger();
+            final AtomicReference<Throwable> taskError = new AtomicReference<>();
+            long schedule = scheduleSeed;
+            pool.start();
+            try {
+                for (int round = 0; round < roundCount; round++) {
+                    awaitReadyCount(pool, 1);
+                    final int currentRound = round;
+                    final CountDownLatch triggerStarted = new CountDownLatch(1);
+                    final CountDownLatch victimRan = new CountDownLatch(1);
+                    final AtomicBoolean isTriggerReleased = new AtomicBoolean();
+                    final AtomicBoolean isVictimExecuted = new AtomicBoolean();
+                    try {
+                        Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(new FiberTask() {
+                            @Override
+                            protected boolean runStep() {
+                                taskRunCount.incrementAndGet();
+                                triggerStarted.countDown();
+                                while (!isTriggerReleased.get()) {
+                                    Os.pause();
+                                }
+                                return true;
+                            }
+                        }));
+                        if (!triggerStarted.await(AWAIT_SECONDS, TimeUnit.SECONDS)) {
+                            Assert.fail("trigger did not run [seed=" + scheduleSeed + ", round=" + currentRound + ']');
+                        }
+
+                        schedule ^= schedule << 13;
+                        schedule ^= schedule >>> 7;
+                        schedule ^= schedule << 17;
+                        final int pauseCount = (int) (schedule & 1_023);
+                        isTriggerReleased.set(true);
+                        for (int i = 0; i < pauseCount; i++) {
+                            Os.pause();
+                        }
+                        Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(new FiberTask() {
+                            @Override
+                            protected boolean runStep() {
+                                if (!isVictimExecuted.compareAndSet(false, true)) {
+                                    taskError.compareAndSet(
+                                            null,
+                                            new AssertionError("victim ran more than once [round=" + currentRound + ']')
+                                    );
+                                }
+                                taskRunCount.incrementAndGet();
+                                victimRan.countDown();
+                                return true;
+                            }
+                        }));
+                        if (!victimRan.await(AWAIT_SECONDS, TimeUnit.SECONDS)) {
+                            Assert.fail("victim made no progress [seed=" + scheduleSeed
+                                    + ", round=" + currentRound
+                                    + ", pauses=" + pauseCount
+                                    + ", ready=" + pool.getReadyWorkerCountForTesting()
+                                    + ", queued=" + runtime.getQueuedCount() + ']');
+                        }
+                        rethrow(taskError);
+                        Assert.assertTrue(isVictimExecuted.get());
+                    } finally {
+                        isTriggerReleased.set(true);
+                    }
+                }
+                awaitOutstanding(runtime, 0);
+                Assert.assertEquals(2 * roundCount, taskRunCount.get());
+                Assert.assertEquals(0, runtime.getQueuedCount());
+                Assert.assertEquals(0, runtime.getMountedCount());
+            } finally {
+                pool.halt();
+            }
+            rethrow(taskError);
+        });
+    }
+
+    @Test
     public void testExternalPublicationWakesLongParkedWorker() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(fiberConfiguration("fiber-external-wake", 1));

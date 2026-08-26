@@ -25,17 +25,114 @@
 package io.questdb.test.metrics;
 
 import io.questdb.metrics.FiberMetrics;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+
 public class FiberMetricsTest {
+    private static final long AWAIT_SECONDS = 10;
+
+    @Test
+    public void testScrapeLocalFallbackPublicationAndClear() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestWorkerPool pool = new TestWorkerPool(4, WorkerPoolMode.FIBER_HOST);
+            final FiberRuntime runtime = pool.getFiberRuntime();
+            final FiberMetrics metrics = new FiberMetrics();
+            metrics.register("test", runtime);
+
+            final int taskCount = runtime.getLocalQueueCapacityForTesting(0) + 1;
+            final CountDownLatch allTasksRan = new CountDownLatch(taskCount);
+            final CountDownLatch peersBlocked = new CountDownLatch(pool.getWorkerCount() - 1);
+            final CountDownLatch publicationCommitted = new CountDownLatch(1);
+            final CountDownLatch releasePublisher = new CountDownLatch(1);
+            final AtomicBoolean isLaunched = new AtomicBoolean();
+            final AtomicReference<Throwable> jobError = new AtomicReference<>();
+            for (int workerId = 1; workerId < pool.getWorkerCount(); workerId++) {
+                final AtomicBoolean isPeerBlocked = new AtomicBoolean();
+                pool.assign(workerId, workerContext -> {
+                    if (isPeerBlocked.compareAndSet(false, true)) {
+                        peersBlocked.countDown();
+                        try {
+                            if (!releasePublisher.await(AWAIT_SECONDS, TimeUnit.SECONDS)) {
+                                throw new AssertionError("timed out waiting to release peer Worker");
+                            }
+                        } catch (Throwable th) {
+                            jobError.compareAndSet(null, th);
+                        }
+                    }
+                    return false;
+                });
+            }
+            pool.assign(0, workerContext -> {
+                if (isLaunched.compareAndSet(false, true)) {
+                    try {
+                        if (!peersBlocked.await(AWAIT_SECONDS, TimeUnit.SECONDS)) {
+                            throw new AssertionError("timed out waiting for peer Workers to block");
+                        }
+                        for (int i = 0; i < taskCount; i++) {
+                            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(new FiberTask() {
+                                @Override
+                                protected boolean runStep() {
+                                    allTasksRan.countDown();
+                                    return true;
+                                }
+                            }));
+                        }
+                        publicationCommitted.countDown();
+                        if (!releasePublisher.await(AWAIT_SECONDS, TimeUnit.SECONDS)) {
+                            throw new AssertionError("timed out waiting to release publishing Worker");
+                        }
+                    } catch (Throwable th) {
+                        jobError.compareAndSet(null, th);
+                        publicationCommitted.countDown();
+                    }
+                }
+                return false;
+            });
+            pool.start();
+            try {
+                Assert.assertTrue(publicationCommitted.await(AWAIT_SECONDS, TimeUnit.SECONDS));
+                TestUtils.rethrowFirst(jobError);
+                Assert.assertEquals(1, runtime.getLocalFallbackPublicationCount());
+
+                try (DirectUtf8Sink sink = new DirectUtf8Sink(2048)) {
+                    metrics.scrapeIntoPrometheus(sink);
+                    assertOccursExactlyOnce(
+                            sink.toString(),
+                            "questdb_worker_pool_fiber_scheduler_publication_total{worker_pool=\"test\",route=\"local_fallback\"} 1\n"
+                    );
+
+                    metrics.clear();
+                    sink.clear();
+                    metrics.scrapeIntoPrometheus(sink);
+                    assertOccursExactlyOnce(
+                            sink.toString(),
+                            "questdb_worker_pool_fiber_scheduler_publication_total{worker_pool=\"test\",route=\"local_fallback\"} 0\n"
+                    );
+                }
+
+                releasePublisher.countDown();
+                Assert.assertTrue(allTasksRan.await(AWAIT_SECONDS, TimeUnit.SECONDS));
+            } finally {
+                releasePublisher.countDown();
+                pool.halt();
+            }
+            TestUtils.rethrowFirst(jobError);
+        });
+    }
 
     @Test
     public void testScrapeClearAndUnregister() throws Exception {
@@ -129,6 +226,16 @@ public class FiberMetricsTest {
                 close(runtime);
             }
         });
+    }
+
+    private static void assertOccursExactlyOnce(String value, String expected) {
+        int occurrenceCount = 0;
+        int fromIndex = 0;
+        while ((fromIndex = value.indexOf(expected, fromIndex)) != -1) {
+            occurrenceCount++;
+            fromIndex += expected.length();
+        }
+        Assert.assertEquals("unexpected sample occurrence count", 1, occurrenceCount);
     }
 
     private static void close(FiberRuntime runtime) {
