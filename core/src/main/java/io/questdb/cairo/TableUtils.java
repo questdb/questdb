@@ -2952,7 +2952,14 @@ public final class TableUtils {
     public static void putPathSafe(CharSink<?> sink, CharSequence value) {
         for (int i = 0, n = value.length(); i < n; i++) {
             char c = value.charAt(i);
-            if (c == '/' || c == '\\' || c == '.' || c == '%' || c < 0x20 || c == 0x7f) {
+            // Windows additionally forbids * ? : | " < > in a filename. A cell segment is rendered
+            // from arbitrary user data (a SYMBOL value or TRUNCATE prefix), so without these a
+            // value like "a?b" names a directory Windows cannot create -- invisible to OSS CI,
+            // which is Linux-only. Escaping preserves injectivity for the same reason the %NULL
+            // and %EMPTY tokens do: '%' is itself escaped, so no real value collides with an
+            // escaped form.
+            if (c == '/' || c == '\\' || c == '.' || c == '%' || c < 0x20 || c == 0x7f
+                    || c == '*' || c == '?' || c == ':' || c == '|' || c == '"' || c == '<' || c == '>') {
                 sink.put('%').put(Numbers.hexDigits[(c >> 4) & 0xF]).put(Numbers.hexDigits[c & 0xF]);
             } else {
                 sink.put(c);
