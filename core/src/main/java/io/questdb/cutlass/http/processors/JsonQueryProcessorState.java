@@ -123,6 +123,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private int errorPosition;
     private long executeStartNanos;
     private boolean explain = false;
+    private long waitAccumNanos;
+    // -1 when not parked; doubles as the isParked flag.
+    private long waitStartNanos = -1;
     private boolean noMeta = false;
     // Operation is stored here to be retried
     private Operation operation;
@@ -209,6 +212,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         containsSecret = false;
         errorMessage.clear();
         updateRecords = 0;
+        waitAccumNanos = 0;
+        waitStartNanos = -1;
     }
 
     public void clearFactory() {
@@ -365,6 +370,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.sendChunk(true);
     }
 
+    public void resumeExecutionTimer() {
+        if (waitStartNanos != -1) {
+            waitAccumNanos += nanosecondClock.getTicks() - waitStartNanos;
+            waitStartNanos = -1;
+        }
+        if (cursor != null) {
+            cursor.resumeTimer();
+        }
+    }
+
     public void setCompilerNanos(long compilerNanos) {
         this.compilerNanos = compilerNanos;
     }
@@ -399,6 +414,17 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void startExecutionTimer() {
         this.executeStartNanos = nanosecondClock.getTicks();
+        waitAccumNanos = 0;
+        waitStartNanos = -1;
+    }
+
+    public void suspendExecutionTimer() {
+        if (waitStartNanos == -1) {
+            waitStartNanos = nanosecondClock.getTicks();
+        }
+        if (cursor != null) {
+            cursor.suspendTimer();
+        }
     }
 
     public void storeConfirmation() {
@@ -1284,7 +1310,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                         .putAsciiQuoted("authentication").putAscii(':').put(httpConnectionContext.getAuthenticationNanos()).putAscii(',')
                         .putAsciiQuoted("compiler").putAscii(':').put(compilerNanos).putAscii(',')
                         .putAsciiQuoted("execute").putAscii(':').put(nanosecondClock.getTicks() - executeStartNanos).putAscii(',')
-                        .putAsciiQuoted("count").putAscii(':').put(recordCountNanos)
+                        .putAsciiQuoted("count").putAscii(':').put(recordCountNanos).putAscii(',')
+                        .putAsciiQuoted("wait").putAscii(':').put(waitAccumNanos)
                         .putAscii('}');
             }
             if (explain) {

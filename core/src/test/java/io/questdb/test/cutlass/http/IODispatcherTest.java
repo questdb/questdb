@@ -6866,8 +6866,8 @@ public class IODispatcherTest extends AbstractTest {
                 Content-Type: application/json; charset=utf-8\r
                 Keep-Alive: timeout=5, max=10000\r
                 \r
-                02f2\r
-                {"query":"x where i = 'A'","columns":[{"name":"a","type":"BYTE"},{"name":"b","type":"SHORT"},{"name":"c","type":"INT"},{"name":"d","type":"LONG"},{"name":"e","type":"DATE"},{"name":"f","type":"TIMESTAMP"},{"name":"g","type":"FLOAT"},{"name":"h","type":"DOUBLE"},{"name":"i","type":"STRING"},{"name":"j","type":"SYMBOL"},{"name":"k","type":"BOOLEAN"},{"name":"l","type":"BINARY"},{"name":"m","type":"UUID"},{"name":"n","type":"VARCHAR"},{"name":"o","type":"DECIMAL(2,0)"},{"name":"p","type":"DECIMAL(4,0)"},{"name":"q","type":"DECIMAL(9,0)"},{"name":"r","type":"DECIMAL(18,0)"},{"name":"s","type":"DECIMAL(38,0)"},{"name":"t","type":"DECIMAL(76,0)"}],"timestamp":-1,"dataset":[],"count":0,"timings":{"authentication":0,"compiler":0,"execute":0,"count":0}}\r
+                02fb\r
+                {"query":"x where i = 'A'","columns":[{"name":"a","type":"BYTE"},{"name":"b","type":"SHORT"},{"name":"c","type":"INT"},{"name":"d","type":"LONG"},{"name":"e","type":"DATE"},{"name":"f","type":"TIMESTAMP"},{"name":"g","type":"FLOAT"},{"name":"h","type":"DOUBLE"},{"name":"i","type":"STRING"},{"name":"j","type":"SYMBOL"},{"name":"k","type":"BOOLEAN"},{"name":"l","type":"BINARY"},{"name":"m","type":"UUID"},{"name":"n","type":"VARCHAR"},{"name":"o","type":"DECIMAL(2,0)"},{"name":"p","type":"DECIMAL(4,0)"},{"name":"q","type":"DECIMAL(9,0)"},{"name":"r","type":"DECIMAL(18,0)"},{"name":"s","type":"DECIMAL(38,0)"},{"name":"t","type":"DECIMAL(76,0)"}],"timestamp":-1,"dataset":[],"count":0,"timings":{"authentication":0,"compiler":0,"execute":0,"count":0,"wait":0}}\r
                 00\r
                 \r
                 """);

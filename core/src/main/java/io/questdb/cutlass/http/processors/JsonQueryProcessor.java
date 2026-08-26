@@ -300,6 +300,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     @Override
     public void onRequestRetry(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         JsonQueryProcessorState state = LV.get(context);
+        state.resumeExecutionTimer();
         execute0(state);
     }
 
@@ -307,6 +308,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     public void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
         final JsonQueryProcessorState state = LV.get(context);
         if (state != null) {
+            state.suspendExecutionTimer();
             state.setPausedQuery(pausedQuery);
             // preserve random when we park the context
             SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
@@ -332,6 +334,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
             SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             sqlExecutionContext.with(context.getSecurityContext(), null, state.getRnd(), context.getFd(), circuitBreaker.of(context.getFd()));
+            state.resumeExecutionTimer();
             if (!state.isPausedQuery()) {
                 context.resumeResponseSend();
             } else {
