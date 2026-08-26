@@ -1403,45 +1403,29 @@ public class CompositeFuzzRunner {
  * the bare path is right. {@code cellKey >= size > 0} is a STALE SNAPSHOT -- the reader's _txn knows a
  * cell its registry has never heard of -- and silently rendering the bare path there is wrong.
  * <p>
- * <b>MEASURED AT THE FALLBACK, and this is the sharpest statement of the residual bug.</b>
- * Instrumenting the guard itself, rather than theorising about it, gives one value set, three times:
+ * <b>ROOT CAUSE OF THE RESIDUAL: the READER tears across a txn boundary.</b> Established by printing
+ * every symbol-count provider at every commit, alongside the max cellKey then present in _txn:
  * <pre>
- *   cellKey=15  registrySize=15  symbolColumnCount=4  internerReaders=2  partitionCount=31  txn=9
+ *   txn=2..8   maxCellKey=14   providerCounts=[17,17,2,15]    registry=15 covers keys 0..14  OK
+ *   txn=9      maxCellKey=15   providerCounts=[18,18,2,16]    registry=16 covers keys 0..15  OK
  * </pre>
- * The registry holds 15 cells, so valid cellKeys are 0..14 -- and _txn's OWN partition entry
- * references cellKey 15. Off by exactly one, at the boundary. Note {@code symbolColumnCount -
- * internerReaders == 2} is self-consistent, so the interner base calculation is NOT the problem.
+ * <b>The WRITER is internally consistent at every single txn</b> -- the registry's symbol count always
+ * covers the highest cellKey committed in that same transaction. (Interner slots are the last
+ * {@code internerCount} providers, so with 4 symbol columns and 2 interners the registry is index 3,
+ * value 15 then 16.)
  * <p>
- * That reframes it decisively: this is an inconsistency <b>inside _txn</b>, not a stale reader. The
- * reader is faithfully reporting what _txn says -- _txn simultaneously claims "this day has a
- * partition at cellKey 15" and "the cell registry interner has 15 symbols". One of those two writes
- * is wrong or they are not landing in the same commit.
+ * The reader, meanwhile, observed {@code cellKey=15  registrySize=15}. Those two numbers never
+ * co-exist in any single commit: cellKey 15 first appears at txn 9, where the registry is already 16;
+ * registry 15 belongs to txn 8, where no cellKey 15 exists. So the reader combined a txn-9 PARTITION
+ * LIST with txn-8 SYMBOL COUNTS -- a torn view across a reload, not corruption on disk.
  * <p>
- * NOT established: which. A missed symbol-count bump for the registry interner and an ordering
- * problem between the partition write and the interner write would both produce exactly this. Decide
- * that before writing any fix -- and note the victim is always the highest cellKey, i.e. the cell
- * most recently interned.
+ * This CORRECTS the previous note, which concluded the inconsistency lived inside _txn. It does not.
+ * Both halves are individually correct on disk; only the reader's combination of them is not.
  * <p>
- * <b>CORRECTION -- my first explanation of WHY was wrong.</b> I wrote that {@code compositeDicts}
- * rides the symbol-map/METADATA lifecycle and therefore cannot see cells created by ordinary data
- * writes. That is false, and checkable in two lines: {@code CellRegistry#size()} returns
- * {@code reader.getSymbolCount()} LIVE (it caches nothing), and {@code reloadSymbolMapCounts()}
- * already refreshes every composite interner reader -- the registry reader included -- on each _txn
- * reload. So there is no missing reload.
- * <p>
- * What IS established: at the moment of failure the reader took the bare path, so
- * {@code cellKey >= registry.size()} genuinely held then. WHY it held is NOT established. One
- * untested candidate worth a look: {@code reloadSymbolMapCounts()} recomputes the interner base as
- * {@code txFile.getSymbolColumnCount() - internerCount}, so the slot it reads shifts whenever a
- * symbol column is added or dropped -- if that base is ever resolved against a different _txn state
- * than the metadata it was derived from, the registry would read some other column's count.
- * <p>
- * <b>METHOD WARNING, learned the hard way here.</b> Do NOT compare failure counts across runs with
- * different PROBABILITIES. Every probability feeds the same {@code Rnd}, so changing one reshuffles
- * the entire generated workload -- the runs are not the same traffic with a variable toggled, they
- * are different traffic. Turning ADD COLUMN off "raised" failures from 35 to 75, which says nothing
- * about ADD COLUMN. Count comparisons are only meaningful when the probabilities are IDENTICAL and
- * only PRODUCT code changed (as in the 50 -> 35 measurement above).
+ * Where to look: {@code TableReader}'s reload path updates the partition list and the symbol counts
+ * ({@code reloadSymbolMapCounts()}) as separate steps. Any path that refreshes partitions without
+ * refreshing interner counts in the same txn window reproduces this exactly. The victim is always the
+ * newest cellKey because that is the only key whose coverage differs between two adjacent txns.
  * <p>
  * <b>ELIMINATED -- do not re-chase:</b>
  * <ol>
