@@ -82,6 +82,18 @@ public enum ColumnKind {
     }
 
     /**
+     * Whether a column of this kind is accepted as a LATEST ON PARTITION BY key.
+     * {@code SqlCodeGenerator#prepareLatestByColumnIndexes} takes BOOLEAN, BYTE, SHORT, INT, LONG,
+     * DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID,
+     * GEOHASH and IPv4, and rejects everything else - DECIMAL and ARRAY among them. A generator
+     * that draws a rejected kind emits SQL the engine cannot compile.
+     */
+    public boolean isLatestByKey() {
+        return this == NUMERIC || this == TEMPORAL || this == BOOLEAN
+                || this == CHAR || this == STRING_LIKE || isIdentifier();
+    }
+
+    /**
      * LONG256 is absent on purpose: its Java {@code <} accepts only another
      * LONG256 column, and a LONG256 literal is a quoted hex string that the
      * comparison coerces to LONG, so every generated {@code long256Col <
