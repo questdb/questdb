@@ -8,13 +8,17 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.idx.AbstractParquetPostingIndexReader;
+import io.questdb.cairo.idx.BitmapIndexBwdReader;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.idx.BitpackUtils;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.ParquetIndexSeal;
+import io.questdb.cairo.idx.ParquetPostingIndexBwdReader;
 import io.questdb.cairo.idx.ParquetPostingIndexFwdReader;
+import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexNative;
 import io.questdb.cairo.idx.PostingIndexReader;
@@ -151,7 +155,7 @@ public class PostingIndexBenchmarkSuite {
             // Without this a focused arm comparison has to run every scenario
             // the state declares. Only pass a param the selected benchmark
             // actually declares; JMH rejects an unknown one.
-            for (String param : new String[]{"scenario", "format", "mode", "columnType", "queryType", "storage"}) {
+            for (String param : new String[]{"scenario", "format", "mode", "columnType", "queryType", "storage", "direction"}) {
                 String values = System.getProperty("questdb.suite.bench." + param);
                 if (values != null) {
                     builder.param(param, values.split(","));
@@ -799,18 +803,42 @@ public class PostingIndexBenchmarkSuite {
      * their files from the column name alone.
      */
     private static IndexReader openReader(IndexState s, Path path) {
+        final boolean backward = "BACKWARD".equals(s.direction);
         if (!s.isParquet) {
-            return openReader(s.config, path, s.isPosting);
+            if (!backward) {
+                return openReader(s.config, path, s.isPosting);
+            }
+            return s.isPosting
+                    ? new PostingIndexBwdReader(s.config, path, "test", COL_TXN, -1, 0, null, null, 0)
+                    : new BitmapIndexBwdReader(s.config, path, "test", COL_TXN, -1, 0);
         }
-        ParquetPostingIndexFwdReader reader = new ParquetPostingIndexFwdReader();
+        AbstractParquetPostingIndexReader reader = backward
+                ? new ParquetPostingIndexBwdReader()
+                : new ParquetPostingIndexFwdReader();
         try {
             reader.ofParquet(
                     s.config, path, "test", COL_TXN, PARQUET_PARTITION_TXN, 0,
                     s.parquetMetadata, s.parquetCvr, 0, PARQUET_INDEX_TXN, s.imFileSize);
+            assertDirection(reader, backward, s);
             return reader;
         } catch (Throwable th) {
             Misc.free(reader);
             throw th;
+        }
+    }
+
+    /**
+     * A direction axis that does not actually change the reader is 90 cells
+     * measuring nothing twice. Assert the class, not the intent.
+     */
+    private static void assertDirection(IndexReader reader, boolean backward, IndexState s) {
+        final boolean isBwd = reader instanceof ParquetPostingIndexBwdReader;
+        if (isBwd != backward) {
+            throw new IllegalStateException(
+                    "arm " + s.format + "/" + s.scenario + "/" + s.direction
+                            + " asked for direction=" + s.direction + " but bound a "
+                            + reader.getClass().getSimpleName()
+                            + "; this cell would measure the wrong direction while reporting the right one");
         }
     }
 
@@ -1586,6 +1614,8 @@ public class PostingIndexBenchmarkSuite {
         CairoConfiguration config;
         // Written index directory
         String dir;
+        @Param({"FORWARD", "BACKWARD"})
+        String direction;
         @Param({"LEGACY", "POSTING", "POSTING_PARQUET"})
         String format;
         long imFileSize;
