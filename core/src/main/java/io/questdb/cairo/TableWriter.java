@@ -13934,26 +13934,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean isParquet = partitionIndexRaw > -1
                 ? txWriter.isPartitionParquetByRawIndex(partitionIndexRaw)
                 : metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
-        if (isParquet) {
-            // THE COLD-STORAGE BLOCKER. CONVERT PARTITION TO PARQUET already works per cell, so a
-            // composite table CAN hold parquet cells; this refusal is what the next late-arriving row
-            // then hits. Measured: plain count=4/not-suspended vs composite count=3/SUSPENDED, with the
-            // row lost. Pinned by CompositeParquetStateTest.
+        if (isParquet && partitionIndexRaw < 0) {
+            // A brand-new partition on a FORMAT-PARQUET table, which reaches
+            // O3PartitionJob#writeFreshParquetFromO3 -- still cell-blind, and refused there too.
+            // FORMAT PARQUET is rejected at CREATE for composite, so this is defence in depth.
             //
-            // ATTEMPTED AND REVERTED 2026-08-26. O3PartitionJob#processParquetPartition was made
-            // cell-aware (cellSegment + cellKey threaded through all nine bare path builds and the
-            // cellKey-0 getPartitionIndexByTimestamp) and this gate narrowed to the brand-new-partition
-            // case. That is necessary but NOT SUFFICIENT: the write then runs
-            //     o3 composite cell task [cellKey=0, srcDataMax=1, newSize=2]
-            // and produces a partition update carrying
-            //     isParquet=true, parquetFileSize=-1, timestampMin=1970-01-01
-            // after which the commit suspends the table with an EMPTY error message -- strictly worse
-            // than this refusal, which is why the narrowing was reverted and the threading kept.
+            // An EXISTING parquet cell is no longer refused. That refusal was the cold-storage
+            // blocker: CONVERT PARTITION TO PARQUET already worked per cell, and the next
+            // late-arriving row then SUSPENDED the table and LOST the row (measured: plain
+            // count=4/not-suspended vs composite count=3/suspended). Pinned by
+            // CompositeParquetStateTest.
             //
-            // What remains: the partition-update SINK does not carry a per-cell parquet file size, and
-            // the composite sink-consumption path (o3ConsumePartitionUpdateSink, which already keeps
-            // o3PartitionUpdateSinkCellKeys) does not apply one. That is a multi-site migration of the
-            // parquet commit bookkeeping, not more path threading.
+            // Two things were needed. O3PartitionJob#processParquetPartition was cell-blind -- nine
+            // bare path builds and a cellKey-0 getPartitionIndexByTimestamp -- and the dispatch below
+            // hardcoded isParquet=false, which was only safe while this gate refused every parquet
+            // cell. Fixing the paths alone sent the write down the NATIVE path into a parquet cell and
+            // suspended the table with an EMPTY error message; both had to change together.
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support FORMAT PARQUET [table=")
                     .put(tableToken.getTableName()).put(']');
@@ -14077,7 +14073,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     srcDataMax,
                     partitionUpdateSinkAddr,
                     dedupColSinkAddr,
-                    false, // isParquet -- guarded above
+                    // The CELL's own format, resolved from its attached-partition record. Hardcoded
+                    // false until 2026-08-26, which was safe only while the gate above refused every
+                    // parquet cell outright; with the gate narrowed, a false here sent the write down
+                    // the NATIVE path into a cell _txn marks parquet, and the commit then read
+                    // isParquet=true with a parquetFileSize the native path never writes (-1) and
+                    // suspended with an empty message.
+                    isParquet,
                     o3TimestampLo,
                     o3TimestampHi,
                     oooColumnsForCell,
