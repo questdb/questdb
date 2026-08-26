@@ -592,11 +592,16 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
         @Override
         public @Nullable PageFrame next(long skipTarget) {
-            final PageFrame frame = baseCursor.next(skipTarget);
-            if (frame != null && firstRowNanos == -1) {
-                firstRowNanos = clock.getTicks() - beginNanos;
+            try {
+                final PageFrame frame = baseCursor.next(skipTarget);
+                if (frame != null && firstRowNanos == -1) {
+                    firstRowNanos = clock.getTicks() - beginNanos;
+                }
+                return frame;
+            } catch (Throwable th) {
+                close0(th);
+                throw th;
             }
-            return frame;
         }
 
         public void of(PageFrameCursor baseCursor) {
