@@ -62,40 +62,33 @@ cost is not charged to the index form:
 | `avg()` | 1.14x |
 | covered gather (`sidecarRead`) | parity; INT faster |
 
-**Index-level reads depend on how WIDE the keys are.** Parquet against native
-over the posting suite's cardinality scenarios:
+**Index-level reads.** Parquet against native over the posting suite's
+cardinality scenarios:
 
 | Rows / distinct keys | point read | scan | range |
 | --- | --- | --- | --- |
-| 400k / 16 | **1.64x faster** | 3.9x | 4.1x |
-| 1.02M / 512 | **1.18x faster** | 3.9x | 5.7x |
-| 1M / 500 (zipf) | **1.96x faster** | 1.4x | 1.8x |
-| 2M / 2,000 | 1.09x | 4.4x | 7.5x |
-| 1M / 5,000 | 2.3x | 4.2x | 7.1x |
-| 1M / 10,000 | 6.0x | 2.0x | 7.5x |
-| 1.2M / 200,000 | 8.1x | 2.0x | 8.3x |
-| 2M / 500,000 | 11.6x | 2.2x | 8.2x |
-| 2M / 1,000,000 | 10.0x | 2.4x | 8.2x |
+| 400k / 16 | **1.59x faster** | 3.8x | 3.7x |
+| 1.02M / 512 | **1.19x faster** | 3.9x | 4.9x |
+| 1M / 500 (zipf) | **1.97x faster** | 1.3x | 1.6x |
+| 2M / 2,000 | 1.05x | 4.2x | 7.8x |
+| 1M / 5,000 | 2.0x | 3.7x | 7.0x |
+| 1M / 10,000 | 5.0x | 1.08x | 6.8x |
+| 1.2M / 200,000 | 7.3x | **1.49x faster** | 8.5x |
+| 2M / 500,000 | 8.0x | **1.60x faster** | 8.7x |
+| 2M / 1,000,000 | 8.8x | **1.65x faster** | 8.7x |
 
-**Two costs set those numbers, and neither is a defect.**
+Scans at high cardinality BEAT the native chain, and point reads beat it below a
+few thousand keys.
 
-*One decode call per key.* A lookup crosses JNI, parses a thrift page header and
-sets up a buffer, where the native index follows a pointer into a mapping. That
-fixed cost vanishes into the work when a key is wide, which is why the index
-BEATS native below a few thousand keys. It dominates when keys are narrow: at a
-million distinct keys a key holds two rows and the call costs more than the rows
-it returns. Profiling puts the floor near 430ns of JNI and setup against native's
-~100ns for the whole lookup, so trimming the thrift parse alone would not close
-it. Scans escape it -- consecutive keys share a row group, which is decoded once
-and served from -- and hold near 2x however narrow the keys get.
-
-*`row_id` is PLAIN.* The native chain delta-FoR packs its postings; parquet
-spends 8 bytes each, so a scan moves several times the bytes. Delta packing was
-tried and reverted: a delta block must be decoded from its start, so random
-access into a key's run pays for every posting ahead of it -- point reads went to
-40-44x and ranges to 15-32x. Parquet offers no random-access-friendly packed
-integer encoding, so this one is a format limit rather than a tuning choice.
-`key_id` IS delta packed, since nothing reads it back.
+**Where it is still slower it is the ACCESS PATTERN, not the format.** Walking a
+partition's keys in order costs 34ns a key -- consecutive keys share a row group,
+whose values are read straight from the mapping. Jumping between random keys over
+a very high cardinality column costs about 1us, because each lands in a different
+row group and neither the `_im` directory nor the mapping has locality to offer;
+the native chain's bitpacked index is several times smaller and so keeps more of
+itself in cache. The benchmark that shows the widest gap, `indexPointRead`, is
+also the harshest version of this: 5,000 uniformly random keys against a
+freshly-opened reader every iteration.
 
 Reproduce with `PostingIndexBenchmarkSuite`, whose `POSTING_PARQUET` and
 `covering_parquet` arms build the same fixture through `ParquetIndexSeal`, and
