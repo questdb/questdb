@@ -32,12 +32,19 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import java.util.Arrays;
 
 /**
  * {@link IndexReader#DIR_FORWARD} reader over a parquet-form covering index.
  * Serves a key's postings in ascending {@code row_id} order.
  */
 public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexReader {
+    /**
+     * Keys a row group must hold before a scan over it is served by decoding
+     * the group whole rather than each key's run in turn. Below it the two read
+     * the same number of rows and the whole-group buffer is pure overhead.
+     */
+    private static final int WHOLE_GROUP_KEY_THRESHOLD = 8;
     /**
      * Every pooled cursor this reader has handed out, free or checked out, so
      * that close() releases them all without depending on a caller having
@@ -157,6 +164,12 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
         private boolean hasNext;
         private int key;
         private boolean decodedGroup;
+        /** Row group {@link #rowGroupBuffers} currently holds, or -1. */
+        private int cachedRowGroup = -1;
+        /** Cover slots the cached decode projected, so a different ask re-decodes. */
+        private int[] cachedCovers;
+        /** The group the PREVIOUS lookup touched, which is how a scan is spotted. */
+        private int lastTouchedRowGroup = -1;
         private long maxValue;
         private long minValue;
         private long next;
@@ -181,12 +194,26 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
          * reader stays reusable.
          */
         @Override
+        protected void freeResources() {
+            cachedRowGroup = -1;
+            cachedCovers = null;
+            lastTouchedRowGroup = -1;
+            super.freeResources();
+        }
+
+        @Override
         public void close() {
             keyProbe = Misc.free(keyProbe);
             if (detached) {
                 freeResources();
             } else {
-                rowGroupBuffers.close();
+                // The decoded group is KEPT for a pooled cursor. Keys arrive in
+                // ascending order and a row group is key-major, so the next
+                // lookup usually wants the group this one just decoded --
+                // scanning 1M keys otherwise pays 1M decodes where a few hundred
+                // would do. Freed when the reader closes, which frees every
+                // pooled cursor; a detached cursor still releases immediately,
+                // since nothing comes back for it.
                 if (!pooled) {
                     // Guarded so a double close cannot put one cursor on the
                     // free list twice and have two callers handed the same
@@ -293,18 +320,63 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 }
                 rowLo = Numbers.decodeLowInt(keyRange);
                 rowHi = Numbers.decodeHighInt(keyRange);
+                // Three ways to serve the key's run, and which one is cheapest
+                // depends on whether this is a scan or a point read.
+                //
+                // A bounded decode reads only the key's rows, which is right for
+                // a point read: the whole cost is the one page header it parses,
+                // and decoding 4 rows costs no more than decoding 8192.
+                //
+                // But that same fixed cost is ruinous for a SCAN, which asks for
+                // every key in turn: a group holding 2048 keys is decoded 2048
+                // times. Decoding it ONCE and serving every key from the buffer
+                // turns that into one decode -- and the _im directory gives each
+                // key's offsets within the group, so no key_id is needed to find
+                // them.
+                //
+                // A scan is spotted by the previous lookup having landed in this
+                // same group. Random point reads over many groups almost never
+                // do, so they keep the bounded decode.
+                final boolean coversMatch = cachedCovers == requiredCoverColumns
+                        || Arrays.equals(cachedCovers, requiredCoverColumns);
+                if (cachedRowGroup == rg && coversMatch) {
+                    // Already in the buffer, whole. No decode at all.
+                    decodedGroup = true;
+                    rowIdPtr = rowGroupBuffers.getChunkDataPtr(0);
+                    rowInGroup = rowLo;
+                    groupRows = rowHi;
+                    lastTouchedRowGroup = rg;
+                    return true;
+                }
                 final DirectIntList columns = coveringProjection(requiredCoverColumns, false);
                 rowGroupBuffers.reopen();
-                decoder().decodeRowGroup(rowGroupBuffers, columns, rg, (int) rowLo, (int) rowHi);
-                onRowGroupDecoded(rowHi - rowLo);
-                groupRows = rowHi - rowLo;
-                // Chunk ordinals follow the projection's order, not the parquet
-                // file's: key_id was added first, row_id second.
-                // key_id is not in the projection: the decoded window is the
-                // key's own run, so there is nothing to filter against.
+                // Amortising needs keys to amortise OVER. A group holding a
+                // handful of wide keys decodes just as many rows either way, so
+                // the whole-group read buys nothing and costs one large buffer:
+                // on a 16-key, 400k-row fixture it measured 2x SLOWER than the
+                // bounded decode it replaced.
+                if (rg == lastTouchedRowGroup && imReader.getRowGroupKeyCount(rg) >= WHOLE_GROUP_KEY_THRESHOLD) {
+                    // Second consecutive key from a group with many keys: a
+                    // scan. Decode it whole and keep it, so the rest come free.
+                    decoder().decodeRowGroup(rowGroupBuffers, columns, rg, 0, (int) groupRows);
+                    onRowGroupDecoded(groupRows);
+                    cachedRowGroup = rg;
+                    cachedCovers = requiredCoverColumns;
+                    rowIdPtr = rowGroupBuffers.getChunkDataPtr(0);
+                    rowInGroup = rowLo;
+                    groupRows = rowHi;
+                } else {
+                    decoder().decodeRowGroup(rowGroupBuffers, columns, rg, (int) rowLo, (int) rowHi);
+                    onRowGroupDecoded(rowHi - rowLo);
+                    // The buffer holds the key's run alone, so indices restart.
+                    cachedRowGroup = -1;
+                    cachedCovers = null;
+                    rowIdPtr = rowGroupBuffers.getChunkDataPtr(0);
+                    rowInGroup = 0;
+                    groupRows = rowHi - rowLo;
+                }
                 decodedGroup = true;
-                rowIdPtr = rowGroupBuffers.getChunkDataPtr(0);
-                rowInGroup = 0;
+                lastTouchedRowGroup = rg;
                 return true;
             }
             return false;
