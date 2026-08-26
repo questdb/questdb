@@ -52,6 +52,18 @@ public enum ColumnKind {
                 || this == BOOLEAN || this == IDENTIFIER || this == TEMPORAL;
     }
 
+    /**
+     * Whether a column of this kind is accepted as a LATEST ON PARTITION BY key.
+     * {@code SqlCodeGenerator#prepareLatestByColumnIndexes} takes BOOLEAN, BYTE, SHORT, INT, LONG,
+     * DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID,
+     * GEOHASH and IPv4, and rejects everything else - DECIMAL and ARRAY among them. A generator
+     * that draws a rejected kind emits SQL the engine cannot compile.
+     */
+    public boolean isLatestByKey() {
+        return this == NUMERIC || this == TEMPORAL || this == BOOLEAN
+                || this == CHAR || this == STRING_LIKE || this == IDENTIFIER;
+    }
+
     public boolean isOrderable() {
         return this == NUMERIC || this == DECIMAL || this == TEMPORAL
                 || this == CHAR || this == STRING_LIKE;

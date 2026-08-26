@@ -64,8 +64,10 @@ public class NullIfDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return Numbers.equals(doubleFunc1.getDouble(rec), doubleFunc2.getDouble(rec)) ? Double.NaN : doubleFunc1.getDouble(rec);
-
+            // Read once: a second read of a non-deterministic argument is a fresh draw, and
+            // returning that draw hands back the very value the comparison just excluded.
+            final double value = doubleFunc1.getDouble(rec);
+            return Numbers.equals(value, doubleFunc2.getDouble(rec)) ? Double.NaN : value;
         }
 
         @Override
