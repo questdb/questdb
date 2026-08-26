@@ -10961,7 +10961,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @param pathLen            length to trim {@code path} to before resolving each cover file
      * @param coverCount         length of the covering set
      */
-    private void mapCoveringColumnsForSeal(IntList coveringCols, long partitionTimestamp, int pathLen, int coverCount) {
+    private void mapCoveringColumnsForSeal(IntList coveringCols, long partitionTimestamp, int cellKey, int pathLen, int coverCount) {
         o3SealAddrs.setPos(coverCount);
         o3SealAuxAddrs.setPos(coverCount);
         o3SealAuxMappedSizes.setPos(coverCount);
@@ -10986,8 +10986,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isVarSize = ColumnType.isVarSize(covType);
             o3SealTypes.setQuick(c, covType);
             o3SealShifts.setQuick(c, ColumnType.pow2SizeOf(covType));
-            o3SealTops.setQuick(c, columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
-            long covColNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol);
+            o3SealTops.setQuick(c, columnVersionWriter.getColumnTopQuick(partitionTimestamp, cellKey, covCol));
+            long covColNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, covCol);
             o3SealNameTxns.setQuick(c, covColNameTxn);
             LPSZ colFile = TableUtils.dFile(path.trimTo(pathLen), metadata.getColumnName(covCol), covColNameTxn);
             long fd = ff.openRO(colFile);
@@ -16679,7 +16679,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     path.trimTo(coveringPathLen);
                     int coverCount = coveringCols.size();
                     try {
-                        mapCoveringColumnsForSeal(coveringCols, lastPartitionTimestamp, coveringPathLen, coverCount);
+                        // cellKey 0: the FAST-LAG publish is unreachable for a routed composite table
+                        // (applyFromWalLagToLastPartitionPossible returns false for dimCount > 0, and
+                        // applyLagToLastPartition carries an assert to that effect -- measured, 0 fires
+                        // against a 180-fire control). Only one-cell-per-day tables reach here.
+                        mapCoveringColumnsForSeal(coveringCols, lastPartitionTimestamp, 0, coveringPathLen, coverCount);
                         // configureFollowerAndWriter would close+reopen the
                         // writer, dropping pending entries from
                         // updateIndexesParallel. configureCovering wires the
@@ -18508,6 +18512,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // The caller's per-partition seal loop may have left partitionPath pointing
         // at a partition the next housekeep step squashes or deletes; a stale path
         // strands the next rollback's openSealValueFile on a missing dir.
+        // ACTIVE-TAIL family: skipped for a routed composite table. This restores the indexers to
+        // lastOpenPartitionTs via a bare day path, and finishO3Commit documents that
+        // lastOpenPartitionTs / this.columns / the indexers are "NEVER a valid target" there -- they
+        // describe the bare, non-cell day container. MEASURED: without this guard the FIRST ordinary
+        // commit suspends on "index does not exist [.../2023-07-01.1/sym.pk]".
+        //
+        // Safe to skip rather than make cell-aware: the purpose is to leave partitionPath pointing at
+        // the last open partition so a later rollback/append does not strand on a stale path, and the
+        // composite write path re-resolves its own per-cell handles on every dispatch. Same shape as
+        // openLastPartitionAndSetAppendPosition's own `if (isRoutedComposite()) return;`.
+        if (isRoutedComposite()) {
+            return;
+        }
         if (lastOpenPartitionTs == Long.MIN_VALUE || !PartitionBy.isPartitioned(partitionBy)
                 || txWriter.isPartitionParquetByPartitionTimestamp(lastOpenPartitionTs)) {
             return;
@@ -18889,7 +18906,42 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *
      * @return true if at least one column indexer was touched.
      */
-    private boolean sealPostingIndexForPartition(long partitionTimestamp, boolean canSkipRebuild) {
+    /**
+     * Points a seal-time indexer at the partition it is about to reseal.
+     * <p>
+     * {@code configureFollowerAndWriter} additionally takes the writer's ACTIVE-TAIL column memory
+     * ({@code getPrimaryColumn}) and keeps its {@code FilesFacade} and fd. For a routed composite table
+     * that memory describes the bare, non-cell day container, which {@code finishO3Commit} documents is
+     * never a valid target. So composite takes {@code configureWriter} -- the sibling that opens
+     * nothing and leaves the caller to supply the file -- exactly as {@code IndexBuilder} and
+     * {@code TableSnapshotRestore} already do.
+     * <p>
+     * The seal never needs the borrowed fd anyway (it indexes from an explicitly-opened {@code dataFd},
+     * and the {@code canSkipRebuild} branch indexes nothing), so this could be {@code configureWriter}
+     * for both. It is not, deliberately: plain tables keep the byte-identical path they had, because a
+     * posting index returning wrong rows is the worst failure class here and "it should be equivalent"
+     * has been wrong repeatedly on this branch. Unifying them is a separate change with its own evidence.
+     */
+    private void configureSealIndexer(
+            ColumnIndexer indexer,
+            int colIdx,
+            CharSequence colName,
+            long colNameTxn,
+            long columnTop,
+            int plen,
+            long partitionTimestamp,
+            long partitionNameTxn
+    ) {
+        if (isRoutedComposite()) {
+            indexer.configureWriter(path.trimTo(plen), colName, colNameTxn, columnTop,
+                    partitionTimestamp, partitionNameTxn);
+        } else {
+            indexer.configureFollowerAndWriter(path.trimTo(plen), colName, colNameTxn,
+                    getPrimaryColumn(colIdx), columnTop, partitionTimestamp, partitionNameTxn);
+        }
+    }
+
+    private boolean sealPostingIndexForPartition(long partitionTimestamp, int cellKey, boolean canSkipRebuild) {
         // Invariant: posting seal runs only after every O3 partition worker has
         // joined (finishO3Commit / post-await, or a writer-thread squash). It reads
         // the just-written partition column data and rotates value files; a worker
@@ -18902,91 +18954,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (!hasPostingIndex()) {
             return false;
         }
-        // Plan 4b feature-gate sweep: this whole method -- not just the PARQUET-covering branch
-        // gated below in resealParquetCoveringForPartition -- is cell-blind, and unlike that branch's
-        // rare dormant-to-real-transition trigger, this one is reachable on EVERY ordinary O3 commit
-        // that touches an indexed partition of any composite table with a POSTING index (a normal,
-        // documented feature, not an edge case): (1) the very next line's
-        // getPartitionNameTxnByPartitionTimestamp is the cellKey-0-only findAttachedPartitionRawIndexByLoTimestamp
-        // wrapper, so it can wrongly report a live non-zero-cellKey partition as "dropped" and skip
-        // sealing it entirely; (2) the native (non-parquet) branch's own path resolution,
-        // setStateForTimestamp (below), also calls that same cellKey-0-only lookup and then the bare
-        // 5-arg TableUtils#setPathForNativePartition (no cell segment). Either way the posting index
-        // chain for a non-zero-cellKey partition is sealed at the wrong (or a phantom) location, or
-        // simply never resealed at all -- a genuine wrong-answer risk for that index (stale/incomplete
-        // rowid chain), not merely an un-consolidated file count, so this is rejected loudly rather than
-        // skipped, mirroring resealParquetCoveringForPartition's own severity call just below. Plain and
-        // dormant-composite tables are completely unaffected.
-        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
-        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
-        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
-        // WHAT IT WOULD TAKE. An earlier version of this comment said the sink block "carries slots
-        // 0..6 and NO cellKey, so there is nothing to thread through" and concluded that the sink
-        // LAYOUT would have to be widened. That is WRONG, and it is why this gate looked far more
-        // expensive than it is. Re-derived and verified 2026-08-26:
+        // CELL-AWARE as of 2026-08-26. This refused a routed composite table outright, because it was
+        // cell-blind twice over: its _txn/_cv lookups resolved cellKey 0 only, and it sourced column
+        // memory from getPrimaryColumn(colIdx) -- the writer's ACTIVE TAIL, which finishO3Commit
+        // documents is "NEVER a valid target" for a routed composite table.
         //
-        //   o3PartitionUpdateSinkCellKeys ALREADY maps a sink block's own address -> the cellKey it
-        //   was dispatched for. It exists precisely because the shared block layout has no spare slot,
-        //   and o3ConsumePartitionUpdateSink resolves cellKey through it today (two call sites). The
-        //   sink layout does NOT need widening.
+        // What the gate was NOT: a sign that per-cell indexing was missing. MEASURED -- ingestion
+        // already writes per-cell index files (2023-07-01/BTC/sym.pk, /ETH/sym.pk, /SOL/sym.pk). The
+        // day-level 2023-07-01/sym.pk that also appears is openPartition's bare-container DEBRIS, the
+        // same harmless artefact composite already leaves for ordinary columns -- a smaller, unused
+        // file, not the real index. Reading it as evidence of cell-blind creation is what made this
+        // look like a whole lifecycle migration; it is not.
         //
-        // Ordering checked, since the map is the whole basis for this: it is cleared at the TOP of
-        // processO3BlockComposite and populated during dispatchCompositeCellRange, and
-        // processWalCommitFinishApply calls processO3Block(...) and THEN finishO3Commit(...)
-        // sequentially (o3Commit does the same). So the map is live, holding this commit's entries,
-        // at the moment sealPostingIndexesForO3Partitions runs.
-        //
-        // All three callers can supply a cellKey:
-        //   - the two in sealPostingIndexesForO3Partitions already hold blockAddress -> map lookup,
-        //     absent meaning cellKey 0, exactly as the existing consumers read it;
-        //   - squashSplitPartitions resolves partitions by INDEX, and a raw index already identifies
-        //     one specific cell.
-        //
-        // Every primitive the cell-aware body needs also already exists: findAttachedPartitionRawIndexBy
-        // (ts, cellKey), getPartitionNameTxnByRawIndex, isPartitionParquetByRawIndex, the 6-arg
-        // setPathForNativePartition(..., cellSegment), and ColumnVersionReader#packColIndex for the _cv
-        // lookups (which carry cellKey in the columnIndex hi-32 bits rather than in the timestamp).
-        //
-        // The cellKey-blind LOOKUPS are the easy half. Counted honestly, because this note has now
-        // understated the work twice -- it first said "two", then "four":
-        //   1. txWriter.getPartitionNameTxnByPartitionTimestamp  (the dropped-partition wrapper)
-        //   2. txWriter.isPartitionParquetByPartitionTimestamp
-        //   3. txWriter.getPartitionRowCountByTimestamp
-        //   4. columnVersionWriter.getColumnTop(partitionTimestamp, colIdx)
-        //   5. columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx)
-        //   6. mapCoveringColumnsForSeal(coveringCols, partitionTimestamp, ...)
-        // plus setStateForTimestamp + the bare 5-arg path build, which the 6-arg overload covers.
-        // 4 and 5 need packColIndex(cellKey, colIdx), NOT a different timestamp.
-        //
-        // AND THEN THE ACTUAL COST, which is structural and is why this is still not a small task:
-        // the seal feeds the indexer getPrimaryColumn(colIdx), i.e. columns.getQuick(...) -- the
-        // WRITER'S ACTIVE-TAIL column memory. finishO3Commit documents (see its `composite` branch)
-        // that for a real, routed composite table this.columns / lastOpenPartitionTs / the indexers
-        // are NEVER a valid target: processO3BlockComposite never touches this.columns, so the "last
-        // partition" they describe is the bare, non-cell day directory, and that branch deliberately
-        // skips reopening them. Sizing or reading them for a routed composite table is the same
-        // mistake that corrupted the native heap there ("malloc(): corrupted top size").
-        //
-        // So a cell-aware seal cannot simply be handed a cellKey: it has to obtain each cell's column
-        // data ITSELF (open the cell's own files, as every other composite dispatch does) instead of
-        // borrowing the writer's active tail. That is a restructure of how this method sources column
-        // memory, not a parameter change -- do it as its own piece of work, test-first.
-        //
-        // Treat that as a task worth doing, NOT as a blocked one -- but do it test-first: this gate
-        // guards a stale/incomplete rowid chain, i.e. silently wrong answers from an index, which is
-        // the worst failure class to get wrong.
-        if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support a POSTING index seal on this partition [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
+        // The recorded "structural cost" was likewise overstated: configureFollowerAndWriter consumes
+        // the MemoryMA for exactly getFilesFacade() and getFd(), and the seal uses NEITHER -- it
+        // indexes from an explicitly-opened dataFd and the canSkipRebuild branch indexes nothing. The
+        // sibling configureWriter(), already used by IndexBuilder and TableSnapshotRestore for the same
+        // open-it-yourself pattern, drops the active-tail dependency with no restructuring.
         // Range-replace can fully drop a partition during this commit; the
         // sink block still references the defunct partition, but there is
         // nothing left to index.
-        if (txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp, Long.MIN_VALUE) == Long.MIN_VALUE) {
+        // Resolved ONCE by (ts, cellKey); every lookup below reads off this raw index instead of
+        // re-deriving from the timestamp. The by-timestamp wrappers are the cellKey-0-only variants:
+        // on a multi-cell day they report a live non-zero cell as "dropped", or seal at a phantom
+        // location. Identical resolution for a plain table, where cellKey is 0 and a day has one entry.
+        final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTimestamp, cellKey);
+        if (partitionIndexRaw < 0) {
             return false;
         }
-        if (txWriter.isPartitionParquetByPartitionTimestamp(partitionTimestamp)) {
+        if (txWriter.isPartitionParquetByRawIndex(partitionIndexRaw)) {
             // The native reseal below reads native column files, which a parquet
             // partition lacks. But an O3/squash rewrite that produces a new parquet
             // version with a COVERING posting index still needs that version's covering
@@ -18998,7 +18994,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         boolean processed = false;
-        long partitionNameTxn = setStateForTimestamp(path, partitionTimestamp);
+        // Cell-aware path build: setStateForTimestamp resolves cellKey 0 and builds the bare 5-arg
+        // day path with no <day>/<cell> segment, which for a routed composite table addresses the
+        // debris container rather than the cell holding the data.
+        long partitionNameTxn = txWriter.getPartitionNameTxnByRawIndex(partitionIndexRaw);
+        if (isRoutedComposite()) {
+            final StringSink cellSink = Misc.getThreadLocalSink();
+            cellSink.clear();
+            renderCellSegment(cellSink, cellKey);
+            path.trimTo(pathSize);
+            setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp,
+                    partitionNameTxn, cellSink);
+        } else {
+            partitionNameTxn = setStateForTimestamp(path, partitionTimestamp);
+        }
         int plen = path.size();
         // For new partitions created during O3, the partition directory may
         // have a txn suffix that setStateForTimestamp doesn't resolve (the
@@ -19011,7 +19020,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             plen = path.size();
         }
-        long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+        long partitionSize = txWriter.getPartitionSize(partitionIndexRaw / txWriter.getLongsPerAttachedPartition());
         try {
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
                 if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
@@ -19021,12 +19030,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // Column added after this partition (getColumnTop == -1) or partition has no
                 // column data (columnTop >= partitionSize) has no .pk file here - skip.
-                long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, colIdx);
+                // _cv packs the cellKey into the COLUMN INDEX's high bits, not the timestamp
+                // (ColumnVersionReader#packColIndex), so the cell-aware overload takes cellKey next to
+                // colIdx. Identical to the 2-arg form when cellKey is 0.
+                long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, colIdx);
                 if (columnTop == -1 || columnTop >= partitionSize) {
                     continue;
                 }
                 CharSequence colName = metadata.getColumnName(colIdx);
-                long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx);
+                long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, colIdx);
                 ColumnIndexer indexer = indexers.getQuick(colIdx);
                 if (indexer == null) {
                     continue;
@@ -19040,13 +19052,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     int coverCount = coveringCols.size();
 
                     try {
-                        mapCoveringColumnsForSeal(coveringCols, partitionTimestamp, plen, coverCount);
+                        mapCoveringColumnsForSeal(coveringCols, partitionTimestamp, cellKey, plen, coverCount);
 
-                        indexer.configureFollowerAndWriter(
-                                path.trimTo(plen), colName, colNameTxn,
-                                getPrimaryColumn(colIdx), columnTop,
-                                partitionTimestamp, partitionNameTxn
-                        );
+                        configureSealIndexer(indexer, colIdx, colName, colNameTxn, columnTop, plen,
+                                partitionTimestamp, partitionNameTxn);
                         // REBUILD intermediate entry: getTxn()+1 keeps it
                         // invisible to T-pinned readers (it lacks a cover
                         // footer until rebuildSidecars() supersedes it),
@@ -19134,11 +19143,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                     }
                 } else {
-                    indexer.configureFollowerAndWriter(
-                            path.trimTo(plen), colName, colNameTxn,
-                            getPrimaryColumn(colIdx), columnTop,
-                            partitionTimestamp, partitionNameTxn
-                    );
+                    configureSealIndexer(indexer, colIdx, colName, colNameTxn, columnTop, plen,
+                            partitionTimestamp, partitionNameTxn);
                     try {
                         // Same getTxn()+1 convention as O3CopyJob and the
                         // covering branch above. See comment there.
@@ -19213,11 +19219,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     && o3SplitPartitionSize == 0
                     && newPartitionSize >= oldPartitionSize;
 
-            if (partitionTimestamp != -1L && sealPostingIndexForPartition(partitionTimestamp, canSkipRebuildForPartition)) {
+            // Which CELL this block was dispatched for -- same side-table and absent-means-zero
+            // convention as o3ConsumePartitionUpdateSink's own resolution. A plain table records no
+            // entry, so it reads 0 and every lookup stays byte-identical.
+            final int sinkCellKey0 = o3PartitionUpdateSinkCellKeys != null
+                    ? o3PartitionUpdateSinkCellKeys.get(blockAddress)
+                    : LongIntHashMap.NO_ENTRY_VALUE;
+            final int sinkCellKey = sinkCellKey0 == LongIntHashMap.NO_ENTRY_VALUE ? 0 : sinkCellKey0;
+
+            if (partitionTimestamp != -1L && sealPostingIndexForPartition(partitionTimestamp, sinkCellKey, canSkipRebuildForPartition)) {
                 anyPartitionProcessed = true;
             }
             if (dataPartitionTimestamp != -1L && dataPartitionTimestamp != partitionTimestamp
-                    && sealPostingIndexForPartition(dataPartitionTimestamp, false)) {
+                    && sealPostingIndexForPartition(dataPartitionTimestamp, sinkCellKey, false)) {
                 anyPartitionProcessed = true;
             }
         }
@@ -20110,7 +20124,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // so distress it before propagating so the pool replaces it instead of
         // handing it back to the next caller.
         try {
-            if (sealPostingIndexForPartition(targetPartition, false)) {
+            // A raw partition INDEX identifies one cell by construction, so the cellKey comes straight
+            // off it -- no (ts, cellKey) resolution needed, unlike the O3 sweep. 0 for a plain table.
+            if (sealPostingIndexForPartition(targetPartition,
+                    txWriter.getPartitionCellKey(targetPartitionIndex), false)) {
                 restorePostingIndexersToLastPartition();
             }
         } catch (Throwable e) {

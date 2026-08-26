@@ -1092,15 +1092,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // CREATE for ANY composite table rather than only a routed one: a dormant composite table
         // accepting a POSTING index works only until a second cell routes, at which point it bricks.
         // Refusing up front prevents planting the landmine rather than waiting for it.
-        if (gateTableToken != null && IndexType.isPosting(indexType)) {
-            try (TableReader compositeCheckReader = engine.getReader(gateTableToken)) {
-                if (compositeCheckReader.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
-                    throw SqlException.$(columnNamePosition,
-                                    "composite partitioning does not yet support a POSTING index [table=")
-                            .put(gateTableToken.getTableName()).put(']');
-                }
-            }
-        }
         if (addColumn != null) {
             addColumn.addColumnToList(
                     columnName,
@@ -2981,18 +2972,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
 
                         // Third and last SQL route to a POSTING index on a composite table (ADD COLUMN
-                        // and ALTER COLUMN TYPE were closed first, then CREATE). Accepted here, the
-                        // table SUSPENDS on the next merge commit when sealPostingIndexForPartition
-                        // refuses. Same message and same reader idiom as the other two.
-                        if (IndexType.isPosting(indexType)) {
-                            try (TableReader compositeCheckReader = engine.getReader(tableToken)) {
-                                if (compositeCheckReader.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
-                                    throw SqlException.$(columnNamePosition,
-                                                    "composite partitioning does not yet support a POSTING index [table=")
-                                            .put(tableToken.getTableName()).put(']');
-                                }
-                            }
-                        }
                         alterTableColumnAddIndex(
                                 executionContext,
                                 tableNamePosition,

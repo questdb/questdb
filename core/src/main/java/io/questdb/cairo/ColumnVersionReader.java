@@ -260,6 +260,17 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return getColumnTopByIndex(index);
     }
 
+    /**
+     * Cell-aware {@link #getColumnTopQuick(long, int)}. _cv stores one record per
+     * (partitionTimestamp, cellKey, columnIndex) with the cellKey packed into the column index's high
+     * 32 bits, so the 2-arg form can only ever match a cellKey-0 record. Byte-identical to it for a
+     * plain table, where cellKey is always 0.
+     */
+    public long getColumnTopQuick(long partitionTimestamp, int cellKey, int columnIndex) {
+        int index = getRecordIndex(partitionTimestamp, cellKey, columnIndex);
+        return getColumnTopByIndex(index);
+    }
+
     public long getDefaultColumnNameTxn(int columnIndex) {
         int index = getRecordIndex(COL_TOP_DEFAULT_PARTITION, columnIndex);
         return index > -1 ? getColumnNameTxnByIndex(index) : -1L;

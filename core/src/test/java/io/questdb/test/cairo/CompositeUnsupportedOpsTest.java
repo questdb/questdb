@@ -332,22 +332,21 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
     }
 
     /**
-     * MOVED TO THE STATEMENT, 2026-08-26. This test used to document the worst gate in this class:
-     * {@code TableWriter#sealPostingIndexForPartition} was reached by an ORDINARY INSERT rather than
-     * by any DDL, because {@code TYPE POSTING} is a normal documented feature and the seal is
-     * cell-blind (cellKey-0-only nameTxn lookup, then {@code setStateForTimestamp}'s bare 5-arg path
-     * build). Creating such a table and inserting into a routed 2-cell day suspended it.
+     * NARROWED 2026-08-26: a POSTING index is now SUPPORTED on a composite table, on an ordinary
+     * symbol column. What stays refused -- and what this test covers -- is indexing a column that is
+     * itself a partition DIMENSION, as `exch` is here.
      * <p>
-     * The remedy was not to make the seal cell-aware -- that is a restructure of how it sources column
-     * memory (Task 16) -- but to stop a composite table acquiring a POSTING index at all. All four SQL
-     * routes now refuse: CREATE, ADD COLUMN, ALTER COLUMN TYPE, and ALTER COLUMN ADD INDEX. See
-     * {@code CompositePostingEntryPointsTest}, which covers all of them plus a BITMAP positive
-     * control.
+     * The reason is degeneracy, not danger: rows are already grouped by that column's value, so within
+     * a cell every row shares the one key. The partitioning IS the access path, and an index over it
+     * stores a single key spanning the whole cell.
      * <p>
-     * Gates move rather than vanish: the writer-side seal gate STAYS as the non-SQL backstop, since
-     * {@code TableWriterAPI#addColumn} takes an index type directly and bypasses every SQL check --
-     * which is also why {@code CompositeFuzzRunner} filters POSTING adds out of its generated
-     * operations.
+     * History, because it reversed: this documented the worst gate in the class. The seal
+     * ({@code TableWriter#sealPostingIndexForPartition}) was cell-blind and was reached by an ORDINARY
+     * INSERT rather than any DDL, so creating such a table and inserting into a routed 2-cell day
+     * suspended it. The remedy was recorded as "stop composite tables acquiring a POSTING index at
+     * all", on the belief that a cell-aware seal meant restructuring how it sources column memory. That
+     * belief was wrong -- the seal needed the cellKey threading plus one guard, and ingestion already
+     * wrote per-cell index files. See {@code CompositePostingIndexSealTest}.
      */
     @Test
     public void testPostingIndexRefusedAtCreate() throws Exception {
@@ -357,7 +356,7 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
                 Assert.fail("expected a POSTING index to be refused on a composite table");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(),
-                        "composite partitioning does not yet support a POSTING index");
+                        "composite partitioning does not yet support a POSTING index on a partition dimension");
             }
             // refused at the statement, so nothing was created to be broken
             assertQuery("SELECT count() FROM tables() WHERE table_name = 'c'")
