@@ -60,6 +60,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.model.ExportModel;
@@ -209,7 +210,16 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                         // when unwrapped instanceof VirtualRecordCursorFactory.
                                         RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
                                         VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
-                                        state.pageFrameCursor = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
+                                        RecordCursorFactory pageFrameCursorFactory = vf.getBaseFactory();
+                                        if (state.recordCursorFactory instanceof QueryProgress queryProgress) {
+                                            state.pageFrameCursor = queryProgress.getPageFrameCursorFrom(
+                                                    pageFrameCursorFactory,
+                                                    sqlExecutionContext,
+                                                    ORDER_ASC
+                                            );
+                                        } else {
+                                            state.pageFrameCursor = pageFrameCursorFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
+                                        }
                                     }
                                     case CURSOR_BASED ->
                                             state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
@@ -321,6 +331,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     public void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
         ExportQueryProcessorState state = LV.get(context);
         if (state != null) {
+            state.suspendCursorTimer();
             state.pausedQuery = pausedQuery;
             SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             state.rnd = sqlExecutionContext.getRandom();
@@ -857,6 +868,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         } else {
             state.pausedQuery = false;
         }
+        state.resumeCursorTimer();
 
         final HttpChunkedResponse response = context.getChunkedResponse();
 

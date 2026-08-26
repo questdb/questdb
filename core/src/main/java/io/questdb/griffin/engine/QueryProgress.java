@@ -339,7 +339,20 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
-        if (!base.supportsPageFrameCursor()) {
+        return getPageFrameCursorFrom(base, executionContext, order);
+    }
+
+    /**
+     * Opens a page-frame cursor from a factory below this query's immediate base while retaining
+     * this query's registration, timing, and cursor ownership lifecycle. Parquet export uses this
+     * for virtual projections whose base factory supplies the physical page frames.
+     */
+    public PageFrameCursor getPageFrameCursorFrom(
+            RecordCursorFactory pageFrameCursorFactory,
+            SqlExecutionContext executionContext,
+            int order
+    ) throws SqlException {
+        if (!pageFrameCursorFactory.supportsPageFrameCursor()) {
             return null;
         }
         // IMPORTANT: getPageFrameCursor() and getCursor() are mutually exclusive in QueryProgress because it is TOP RecordCursorFactory.
@@ -369,7 +382,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             final ResourcePoolSupervisor<TableReader> prevSupervisor = executionContext.getReaderPoolSupervisor();
             executionContext.setReaderPoolSupervisor(this);
             try {
-                final PageFrameCursor baseCursor = base.getPageFrameCursor(executionContext, order);
+                final PageFrameCursor baseCursor = pageFrameCursorFactory.getPageFrameCursor(executionContext, order);
                 pageFrameCursor.of(baseCursor);
             } catch (Throwable th) {
                 pageFrameCursor.close0(th);

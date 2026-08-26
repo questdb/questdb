@@ -194,12 +194,32 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         return queryCacheable;
     }
 
+    public void resumeCursorTimer() {
+        if (cursor != null) {
+            cursor.resumeTimer();
+        } else if (pageFrameCursor != null) {
+            pageFrameCursor.resumeTimer();
+        } else if (serialParquetExporter != null) {
+            serialParquetExporter.resumeCursorTimer();
+        }
+    }
+
     public void setParquetExportTableName(String tableName) {
         this.parquetExportTableName = tableName;
     }
 
     public void setParquetTempTableCreate(CreateTableOperation createOp) {
         this.createParquetOp = createOp;
+    }
+
+    public void suspendCursorTimer() {
+        if (cursor != null) {
+            cursor.suspendTimer();
+        } else if (pageFrameCursor != null) {
+            pageFrameCursor.suspendTimer();
+        } else if (serialParquetExporter != null) {
+            serialParquetExporter.suspendCursorTimer();
+        }
     }
 
     @TestOnly

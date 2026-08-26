@@ -187,6 +187,19 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         return phase;
     }
 
+    public void resumeCursorTimer() {
+        if (fullCursor != null) {
+            fullCursor.resumeTimer();
+        }
+        if (streamingPfc != null) {
+            streamingPfc.resumeTimer();
+        }
+        PageFrameCursor taskPageFrameCursor = task != null ? task.getPageFrameCursor() : null;
+        if (taskPageFrameCursor != null && taskPageFrameCursor != streamingPfc) {
+            taskPageFrameCursor.resumeTimer();
+        }
+    }
+
     public void setExportMode(ParquetExportMode exportMode) {
         this.exportMode = exportMode;
     }
@@ -201,6 +214,19 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         this.streamingPfc = pfc;
         this.materializer = materializer;
         this.materializerColumnData = materializerColumnData;
+    }
+
+    public void suspendCursorTimer() {
+        if (fullCursor != null) {
+            fullCursor.suspendTimer();
+        }
+        if (streamingPfc != null) {
+            streamingPfc.suspendTimer();
+        }
+        PageFrameCursor taskPageFrameCursor = task != null ? task.getPageFrameCursor() : null;
+        if (taskPageFrameCursor != null && taskPageFrameCursor != streamingPfc) {
+            taskPageFrameCursor.suspendTimer();
+        }
     }
 
     private void processHybridStreamExport() throws Exception {
