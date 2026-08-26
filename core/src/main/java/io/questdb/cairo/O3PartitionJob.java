@@ -797,7 +797,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         seqTxn,
                         partitionUpdateSinkAddr,
                         o3Basket,
-                        newPartitionSize
+                        newPartitionSize,
+                        cellSegment
                 );
                 return;
             }
@@ -3859,8 +3860,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long seqTxn,
             long partitionUpdateSinkAddr,
             O3Basket o3Basket,
-            long newPartitionSize
-    ) {
+            long newPartitionSize,
+            // Composite: the CELL this fresh parquet belongs to. Every path build below used the bare
+            // overload, so on a composite table the day's parquet would be written at the DAY container
+            // instead of <day>/<cell>. Unreachable while FORMAT PARQUET is refused at CREATE, but the
+            // refusal is a shadow, not a guarantee -- and this branch has twice seen a "cannot happen"
+            // assumption become live the moment its gate moved. null for a plain table.
+            @Nullable CharSequence cellSegment    ) {
         assert !tableWriter.getTableToken().isMatView() : "FORMAT PARQUET should be rejected on mat views at SQL level";
         // DEFENCE IN DEPTH, added 2026-08-26 after auditing every path into the native parquet encoder.
         // This method builds its target with the bare setPathForParquetPartition overload and never
@@ -3872,6 +3878,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // exposed exactly this kind of site the moment their outer gate came off. Fail loudly here so
         // that lifting FORMAT PARQUET produces a refusal rather than a wrong-path write.
         // The message literal is reused verbatim, so the scope-closure audit's key set is unchanged.
+        // The paths below are now cell-aware, so this refusal is no longer about THIS method being
+        // unable to place the file. It stands because FORMAT PARQUET is refused at CREATE for a
+        // composite table and nothing else has been audited for an all-parquet composite table --
+        // lifting the CREATE gate is what needs the audit, not this line.
         if (tableWriter.isComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support FORMAT PARQUET [table=")
@@ -3916,7 +3926,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long parquetMetaFd = -1;
         boolean partitionDirCreated = false;
         try {
-            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
             createDirsOrFail(ff, path.slash(), configuration.getMkDirMode());
             partitionDirCreated = true;
 
@@ -3938,10 +3948,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             // Open _pm so the Rust encoder writes parquet metadata alongside
             // the data file.
-            setPathForParquetPartitionMetadata(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForParquetPartitionMetadata(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
             parquetMetaFd = TableUtils.openRW(ff, parquetPath.$(), LOG, configuration.getWriterFileOpenOpts());
 
-            setPathForParquetPartition(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForParquetPartition(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
 
             final int compressionCodec = configuration.getPartitionEncoderParquetCompressionCodec();
             final int compressionLevel = configuration.getPartitionEncoderParquetCompressionLevel();
@@ -3989,7 +3999,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
 
             // Stat _pm size and release the writer fd before mmap RO for indexing.
-            setPathForParquetPartitionMetadata(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForParquetPartitionMetadata(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
             final long parquetMetaFileSize = ff.length(parquetPath.$());
             ff.close(parquetMetaFd);
             parquetMetaFd = -1;
@@ -3999,7 +4009,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // existing parquet partitions via updateParquetIndexes; the fresh
             // path must do the same or readers will SIGABRT trying to open
             // missing index files on the first query against this partition.
-            setPathForParquetPartition(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForParquetPartition(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
             // Encoder already cleared the descriptor; clearing the rest of the
             // context resets transient scratch lists before indexing.
             ctx.clear();
@@ -4046,7 +4056,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 parquetMetaFd = -1;
             }
             if (partitionDirCreated) {
-                setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
                 if (!ff.rmdir(path.slash())) {
                     LOG.error().$("could not remove fresh parquet partition dir [path=").$(path).I$();
                 }
