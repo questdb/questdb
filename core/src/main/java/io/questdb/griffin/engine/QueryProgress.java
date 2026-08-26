@@ -61,6 +61,7 @@ import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.NanosecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -77,6 +78,13 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     private final ObjList<TableReader> readers = new ObjList<>();
     private final QueryRegistry registry;
     private long beginNanos;
+    // Nanosecond clock cached at cursor open; used by the timer methods,
+    // which may run after executionContext is nulled.
+    private NanosecondClock clock;
+    private long firstRowNanos;
+    private long waitAccumNanos;
+    // -1 when the timer is running (not suspended); doubles as the flag.
+    private long waitStartNanos;
     private SqlExecutionContext executionContext;
     private long sqlId;
 
@@ -137,6 +145,10 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                     .$("`, ").$(executionContext)
                     .$(", jit=").$(isJit)
                     .$(", time=").$(durationNanos);
+            if (queryTrace != null) {
+                log.$(", wait=").$(queryTrace.waitNanos)
+                        .$(", ttfr=").$(queryTrace.firstRowNanos);
+            }
 
             appendLeakedReaderNames(leakedReaders, leakedReadersCount, log);
         } catch (Throwable e) {
@@ -288,7 +300,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             this.executionContext = executionContext;
             CharSequence sqlText = queryTrace.queryText;
             sqlId = registry.register(sqlText, executionContext);
-            beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
+            clock = executionContext.getCairoEngine().getConfiguration().getNanosecondClock();
+            beginNanos = clock.getTicks();
+            waitAccumNanos = 0;
+            waitStartNanos = -1;
+            firstRowNanos = -1;
             logStart(sqlId, sqlText, executionContext, jit);
             final ExecutionState executionState = executionContext.getExecutionState();
             if (executionState != null) {
@@ -338,7 +354,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             this.executionContext = executionContext;
             CharSequence sqlText = queryTrace.queryText;
             sqlId = registry.register(sqlText, executionContext);
-            beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
+            clock = executionContext.getCairoEngine().getConfiguration().getNanosecondClock();
+            beginNanos = clock.getTicks();
+            waitAccumNanos = 0;
+            waitStartNanos = -1;
+            firstRowNanos = -1;
             logStart(sqlId, sqlText, executionContext, jit);
             final ExecutionState executionState = executionContext.getExecutionState();
             if (executionState != null) {
@@ -452,12 +472,30 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
     }
 
+    private void onConsumerResume() {
+        if (waitStartNanos != -1) {
+            waitAccumNanos += clock.getTicks() - waitStartNanos;
+            waitStartNanos = -1;
+        }
+    }
+
+    private void onConsumerSuspend() {
+        if (waitStartNanos == -1 && executionContext != null) {
+            waitStartNanos = clock.getTicks();
+        }
+    }
+
     private void unregisterAndCleanup(@Nullable Throwable th) {
         // When execution context is null, the cursor has never been opened.
         // Otherwise, cursor open attempt has been made, but may not have fully succeeded.
         // In this case we must be certain that we still track the reader leak
         if (executionContext != null) {
             try {
+                // A close during suspension (client disconnect, abandoned portal) ends
+                // the terminal wait interval here so it is counted.
+                onConsumerResume();
+                queryTrace.waitNanos = waitAccumNanos;
+                queryTrace.firstRowNanos = firstRowNanos;
                 String sqlText = queryTrace.queryText;
                 if (th == null) {
                     logEnd(sqlId, sqlText, executionContext, beginNanos, readers, queryTrace);
@@ -554,7 +592,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
         @Override
         public @Nullable PageFrame next(long skipTarget) {
-            return baseCursor.next(skipTarget);
+            final PageFrame frame = baseCursor.next(skipTarget);
+            if (frame != null && firstRowNanos == -1) {
+                firstRowNanos = clock.getTicks() - beginNanos;
+            }
+            return frame;
         }
 
         public void of(PageFrameCursor baseCursor) {
@@ -567,6 +609,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         @Override
         public void releaseOpenPartitions() {
             baseCursor.releaseOpenPartitions();
+        }
+
+        @Override
+        public void resumeTimer() {
+            onConsumerResume();
         }
 
         // Qodana false positive
@@ -584,6 +631,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         @Override
         public boolean supportsSizeCalculation() {
             return baseCursor.supportsSizeCalculation();
+        }
+
+        @Override
+        public void suspendTimer() {
+            onConsumerSuspend();
         }
 
         @Override
@@ -643,7 +695,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         @Override
         public boolean hasNext() {
             try {
-                return base.hasNext();
+                final boolean hasNext = base.hasNext();
+                if (hasNext && firstRowNanos == -1) {
+                    firstRowNanos = clock.getTicks() - beginNanos;
+                }
+                return hasNext;
             } catch (Throwable th) {
                 close0(th);
                 throw th;
@@ -676,6 +732,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
+        public void resumeTimer() {
+            onConsumerResume();
+        }
+
+        @Override
         public void setParentUsedColumns(@Nullable IntHashSet columnIndexes) {
             base.setParentUsedColumns(columnIndexes);
         }
@@ -693,6 +754,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         @Override
         public long size() {
             return base.size();
+        }
+
+        @Override
+        public void suspendTimer() {
+            onConsumerSuspend();
         }
 
         @Override
