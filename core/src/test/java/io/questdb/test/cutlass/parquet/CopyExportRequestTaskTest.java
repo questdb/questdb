@@ -49,6 +49,7 @@ import io.questdb.test.tools.TestNetworkSqlExecutionCircuitBreaker;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 // A copy/export failing while the client has disconnected must classify as CANCELLED even when a
@@ -121,6 +122,15 @@ public class CopyExportRequestTaskTest extends AbstractCairoTest {
 
     @Test
     public void testClearReleasesDecodeBuffersBeforeThrowingFactory() throws Exception {
+        assertReleasesDecodeBuffersBeforeThrowingFactory(false);
+    }
+
+    @Test
+    public void testCloseReleasesDecodeBuffersBeforeThrowingFactories() throws Exception {
+        assertReleasesDecodeBuffersBeforeThrowingFactory(true);
+    }
+
+    private void assertReleasesDecodeBuffersBeforeThrowingFactory(boolean isClose) throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select x id, timestamp_sequence(400000000000, 500) ts from long_sequence(10)) timestamp(ts) partition by day");
 
@@ -163,16 +173,32 @@ public class CopyExportRequestTaskTest extends AbstractCairoTest {
                 final RuntimeException closeFailure = new RuntimeException("injected select factory close failure");
                 final ThrowingFactory selectFactory = new ThrowingFactory(closeFailure);
                 task.setSelectFactory(selectFactory);
+                final RuntimeException tempCloseFailure = new RuntimeException("injected temp factory close failure");
+                final ThrowingFactory tempTableFactory = new ThrowingFactory(tempCloseFailure);
+                if (isClose) {
+                    final Field tempTableFactoryField = CopyExportRequestTask.class.getDeclaredField("tempTableFactory");
+                    tempTableFactoryField.setAccessible(true);
+                    tempTableFactoryField.set(task, tempTableFactory);
+                }
 
-                final RuntimeException thrown = Assert.assertThrows(RuntimeException.class, task::clear);
+                final RuntimeException thrown = Assert.assertThrows(
+                        RuntimeException.class,
+                        isClose ? task::close : task::clear
+                );
                 Assert.assertSame("cleanup must preserve the first failure", closeFailure, thrown);
                 Assert.assertEquals("decode buffers must credit the tracker before it is recycled", 0, tracker.getUsed());
-                Assert.assertNull("task must not retain a tracker after clear", task.getMemoryTracker());
+                Assert.assertNull("task must not retain a tracker after cleanup", task.getMemoryTracker());
                 Assert.assertNull("throwing factory must be detached before close", task.getSelectFactory());
                 Assert.assertEquals(1, selectFactory.closeCount);
-
-                task.clear();
-                Assert.assertEquals("a second clear must not retry the failed factory", 1, selectFactory.closeCount);
+                if (isClose) {
+                    Assert.assertEquals(1, tempTableFactory.closeCount);
+                    Assert.assertEquals(1, thrown.getSuppressed().length);
+                    Assert.assertSame(tempCloseFailure, thrown.getSuppressed()[0]);
+                    task.close();
+                } else {
+                    task.clear();
+                }
+                Assert.assertEquals("a second cleanup must not retry the failed factory", 1, selectFactory.closeCount);
 
                 tracker.close();
                 tracker = null;

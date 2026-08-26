@@ -274,12 +274,13 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     }
 
     private void releaseExportEntry() {
+        final long copyID = this.copyID;
+        this.copyID = -1;
         if (copyID != -1) {
             CopyExportContext.ExportTaskEntry entry = copyExportContext.getEntry(copyID);
             if (entry != null) {
                 copyExportContext.releaseEntry(entry);
             }
-            copyID = -1;
         }
     }
 
