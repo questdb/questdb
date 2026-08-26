@@ -256,10 +256,34 @@ public class CompositeConvertSplitDayTest extends AbstractCompositeTwinTest {
      *       after releasing all readers and writers leaves the directory in place.</li>
      *   <li>NOT an empty-container remnant: the directory still holds the cell {@code E0.1}.</li>
      *   <li>NOT a wrong enqueue: the merge queues {@code (fragTs, srcNameTxn, cellKey)}, the fragment's
-     *       own timestamp. The only purge failure logged in the drain is a DIFFERENT candidate,
-     *       {@code /c~1/2023-01-01/E0 errno=2} -- the day cell at a name-txn that no longer exists.
-     *       Why the fragment's own candidate never produces an unlink attempt is the open question.</li>
+     *       own timestamp, unconditionally right after {@code removeAttachedPartitions}. All 18
+     *       {@code partitionRemoveCandidates.add} sites in TableWriter are 3-arg, so the triples the
+     *       drain reads with {@code i += 3} are not desynchronised either.</li>
+     *   <li>NOT a path-rendering difference: the 5-arg and 6-arg {@code setSinkForNativePartition}
+     *       overloads share one {@code PartitionBy.setSinkForPartition} call, so the cell-aware form
+     *       does not drop the split timestamp's {@code T010000-000001} component.</li>
      * </ul>
+     * <p>
+     * <b>LOCALISED by instrumenting the drain.</b> Logging every candidate at the top of
+     * {@code processPartitionRemoveCandidates0} shows only TWO non-empty drains in the whole test, and
+     * the only one for {@code c} carries a different candidate entirely:
+     * <pre>
+     *   INSTR-DRAIN     n=3, anyReaders=false, ckpt=false
+     *   INSTR-CANDIDATE path=.../c~1/2023-01-01/E0, ts=2023-01-01T00:00:00, txn=-1, cellKey=0
+     * </pre>
+     * The fragment's candidate NEVER REACHES A DRAIN. It is queued by the squash, no drain follows the
+     * squash's commit, and the next insert's {@code processO3BlockComposite} calls
+     * {@code partitionRemoveCandidates.clear()} (TableWriter ~13639) as part of its per-block reset --
+     * discarding it. So the leak is a missing drain, not a bad path or a bad candidate.
+     * <p>
+     * <b>The obvious fix is unsafe -- do not take it.</b> Draining at the end of
+     * {@code squashPartitions()} would delete the fragment directory BEFORE the transaction recording
+     * its detachment is durable, which is exactly the hazard the merge documents at its own
+     * "NO eager removeEmptyDayContainer here" comment: a reload then sees the txn still listing
+     * {@code <fragment>/<cell>} while the directory is gone. The fix needs a drain at a point that is
+     * already past the commit -- i.e. reaching {@code housekeep()}'s
+     * {@code processPartitionRemoveCandidates()} on the composite squash's commit path -- or a
+     * per-block reset in {@code processO3BlockComposite} that does not discard undrained candidates.
      * <p>
      * Non-corrupting -- nothing reads the stale directory and no query sees it -- but it wastes disk
      * permanently, growing with every split that gets squashed. Pinned rather than left silent so the
