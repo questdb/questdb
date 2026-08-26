@@ -101,6 +101,16 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      * over one frozen reader, and a lazy shared init is a race on that path.
      */
     protected final ParquetFileDecoder sourceDecoder = new ParquetFileDecoder();
+    /**
+     * Per row group, the absolute offset of {@code row_id}'s values in the
+     * mapping, {@code -1} where they cannot be read directly, and
+     * {@code Long.MIN_VALUE} where it has not been asked yet.
+     * <p>
+     * Resolved lazily and once: the answer is a property of the file, and asking
+     * costs a page-header parse -- which is exactly what the answer lets every
+     * later lookup skip.
+     */
+    private long[] rowIdDataOffsets;
     protected long columnTop;
     /**
      * Pruning instrumentation, and shared by every cursor this reader serves.
@@ -133,6 +143,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         // Before the munmap below: the decoder's parsed footer addresses the
         // mapping it was built over.
         sourceDecoder.close();
+        rowIdDataOffsets = null;
         if (pidxAddr != 0) {
             ff.munmap(pidxAddr, pidxSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             pidxAddr = 0;
@@ -164,6 +175,27 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      */
     public long getDecodedRowCount() {
         return decodedRowCount.get();
+    }
+
+    /**
+     * Offset of {@code row_id}'s values in {@code rowGroup}, or -1 when the
+     * chunk is not a single uncompressed PLAIN page and so has to be decoded.
+     */
+    protected long rowIdDataOffset(int rowGroup) {
+        if (rowIdDataOffsets == null) {
+            final int groups = imReader.getIndexRowGroupCount();
+            rowIdDataOffsets = new long[Math.max(groups, 1)];
+            Arrays.fill(rowIdDataOffsets, Long.MIN_VALUE);
+        }
+        if (rowGroup < 0 || rowGroup >= rowIdDataOffsets.length) {
+            return -1;
+        }
+        long offset = rowIdDataOffsets[rowGroup];
+        if (offset == Long.MIN_VALUE) {
+            offset = sourceDecoder.plainColumnDataOffset(rowGroup, imReader.getRowIdColumn());
+            rowIdDataOffsets[rowGroup] = offset;
+        }
+        return offset;
     }
 
     /**

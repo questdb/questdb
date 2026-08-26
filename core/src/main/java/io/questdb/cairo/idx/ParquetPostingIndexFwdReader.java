@@ -164,6 +164,8 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
         private boolean hasNext;
         private int key;
         private boolean decodedGroup;
+        /** True while {@link #rowIdPtr} addresses the mapping, not a decode buffer. */
+        private boolean directRowIds;
         /** Row group {@link #rowGroupBuffers} currently holds, or -1. */
         private int cachedRowGroup = -1;
         /** Cover slots the cached decode projected, so a different ask re-decodes. */
@@ -223,6 +225,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 }
             }
             decodedGroup = false;
+            directRowIds = false;
             rowIdPtr = 0;
             hasNext = false;
         }
@@ -337,11 +340,30 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 // A scan is spotted by the previous lookup having landed in this
                 // same group. Random point reads over many groups almost never
                 // do, so they keep the bounded decode.
+                // Fastest path of all: when the caller wants no covered value
+                // and row_id's chunk is a single uncompressed PLAIN page, its
+                // values are just int64s in the mapping, so the key's run is
+                // read straight from there. No JNI crossing, no thrift page
+                // header, no buffer -- which is the entire cost of a point read
+                // once pruning has narrowed it to a handful of rows.
+                if (requiredCoverColumns == null || requiredCoverColumns.length == 0) {
+                    final long dataOffset = rowIdDataOffset(rg);
+                    if (dataOffset >= 0) {
+                        decodedGroup = true;
+                        directRowIds = true;
+                        rowIdPtr = pidxAddr + dataOffset;
+                        rowInGroup = rowLo;
+                        groupRows = rowHi;
+                        lastTouchedRowGroup = rg;
+                        return true;
+                    }
+                }
                 final boolean coversMatch = cachedCovers == requiredCoverColumns
                         || Arrays.equals(cachedCovers, requiredCoverColumns);
                 if (cachedRowGroup == rg && coversMatch) {
                     // Already in the buffer, whole. No decode at all.
                     decodedGroup = true;
+                    directRowIds = false;
                     rowIdPtr = rowGroupBuffers.getChunkDataPtr(0);
                     rowInGroup = rowLo;
                     groupRows = rowHi;
@@ -376,6 +398,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     groupRows = rowHi - rowLo;
                 }
                 decodedGroup = true;
+                directRowIds = false;
                 lastTouchedRowGroup = rg;
                 return true;
             }
