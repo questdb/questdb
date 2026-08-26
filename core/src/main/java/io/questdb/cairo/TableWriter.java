@@ -9513,7 +9513,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             closeActivePartition(false);
 
             if (index != 0) {
-                if (!isLastPartitionParquet()) {
+                // A routed composite table has no day-level "active tail" to reopen. this.columns /
+                // lastOpenPartitionTs describe the BARE, non-cell day directory -- finishO3Commit and
+                // openLastPartitionAndSetAppendPosition both document this and both skip the reopen for
+                // exactly this reason. Doing it here opens that bare directory and then sizes its
+                // never-written column files to a PER-CELL transient row count.
+                //
+                // MEASURED: that assertion-fails inside MemoryPARWImpl#jumpTo via
+                // setColumnAppendPosition, suspending the table mid-drop --
+                //   AssertionError at MemoryPARWImpl.jumpTo
+                //     <- setColumnAppendPosition <- setAppendPosition <- dropPartitionByExactTimestamp
+                // -- which then leaves the twin missing every row committed after that point.
+                // Reproduce with CompositeFuzzRunner + TestUtils.generateRandom(null, 345549849791363L,
+                // 1787735726165L) and withDropPartitionProbability(0.05).
+                //
+                // Same hazard finishO3Commit warns of, where sizing those files corrupted the native
+                // heap ("malloc(): corrupted top size"). Plain and dormant-composite tables unaffected.
+                if (isRoutedComposite()) {
+                    partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(nextMaxTimestamp);
+                } else if (!isLastPartitionParquet()) {
                     openPartition(prevTimestamp, newTransientRowCount);
                     setAppendPosition(newTransientRowCount, false);
                 } else {
