@@ -1613,7 +1613,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t SELECT rnd_symbol('AA','AB','BA','BB'), x, timestamp_sequence(0, 60_000_000) FROM long_sequence(1_000)");
-            execute("INSERT INTO t SELECT null, x, timestamp_sequence(1_000*60_000_000, 60_000_000) FROM long_sequence(100)");
+            execute("INSERT INTO t SELECT null, x, timestamp_sequence(1_000L*60_000_000, 60_000_000) FROM long_sequence(100)");
 
             // control: without a hint both the positive and the negated pattern take the adaptive route
             assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'A%'").noLeakCheck().assertsPlanContaining("AdaptiveSymbolPattern");
@@ -1687,7 +1687,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x, timestamp_sequence(0, 60000000) from long_sequence(2000)");
-            execute("insert into t select null, x, timestamp_sequence(2000*60000000, 60000000) from long_sequence(300)");
+            execute("insert into t select null, x, timestamp_sequence(2000L*60_000_000, 60_000_000) from long_sequence(300)");
             String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym not like 'A%' order by ts, v");
             String actual = select("select sym, v, ts from t where sym not like 'A%' order by ts, v");
             io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
@@ -1720,7 +1720,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x, timestamp_sequence(0, 60000000) from long_sequence(2000)");
-            execute("insert into t select null, x, timestamp_sequence(2000*60000000, 60000000) from long_sequence(300)");
+            execute("insert into t select null, x, timestamp_sequence(2000L*60_000_000, 60_000_000) from long_sequence(300)");
             assertQuery("select sym, v from t where sym !~ '^A'").noLeakCheck().assertsPlanContaining("SymbolPatternIndex");
             assertQuery("select /*+ no_symbol_pattern_index(t) */ sym, v from t where sym !~ '^A'").noLeakCheck().assertsPlanNotContaining("SymbolPatternIndex");
             String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym !~ '^A' order by ts, v");
@@ -2062,7 +2062,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
             // 3 non-null symbols + explicit NULL symbols
             execute("insert into t select rnd_symbol('alpha','beta','gamma'), x, timestamp_sequence(0, 60000000) from long_sequence(300)");
-            execute("insert into t select null, x, timestamp_sequence(300*60000000, 60000000) from long_sequence(50)");
+            execute("insert into t select null, x, timestamp_sequence(300L*60_000_000, 60_000_000) from long_sequence(50)");
             // Ground truth: NOT LIKE 'al%' must INCLUDE the 50 null-symbol rows (like(null)=false -> not=true).
             long notLikeCount = countOf("select count() from t where sym not like 'al%'");
             long nullCount = countOf("select count() from t where sym is null");
@@ -2234,7 +2234,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (sym symbol index type posting include (price), price double, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x::double, timestamp_sequence(0, 60000000) from long_sequence(1500)");
-            execute("insert into t select null, x::double, timestamp_sequence(1500*60000000, 60000000) from long_sequence(200)");
+            execute("insert into t select null, x::double, timestamp_sequence(1500L*60_000_000, 60_000_000) from long_sequence(200)");
             assertQuery("select sym, price from t where sym not like 'A%'").noLeakCheck().assertsPlanContaining("SymbolPatternIndex");
             assertQuery("select sym, price from t where sym not like 'A%'").noLeakCheck().assertsPlanNotContaining("CoveringIndex");
             String expected = select("select /*+ no_symbol_pattern_index(t) no_covering(t) */ price, sym, ts from t where sym not like 'A%' order by ts, price");
