@@ -2348,6 +2348,93 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullFatTemporalJoinRejectsIntervalSlaveColumn() throws Exception {
+        // A full-fat ASOF/LT join materializes the slave's non-key columns into the map
+        // value via RecordValueSinkFactory. MapValue cannot hold an INTERVAL (there is no
+        // putInterval), and INTERVAL is not comparable so it is never a join key, so a
+        // projected interval slave column reached the factory's default branch and threw a
+        // bare UnsupportedOperationException at compile time. The full-fat guard now rejects
+        // any slave column the value sink cannot store up front with a user-facing
+        // SqlException, matching the graceful array rejection. INTERVAL is expression-only
+        // (no stored column), so an interval slave column only comes from a sub-query
+        // projection with no random access - always full-fat, always rejected (unlike a
+        // var-size array, which still has a light path that returns the row).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES (1, '1970-01-01T00:00:00.000002Z')");
+            execute("INSERT INTO s VALUES (1, '1970-01-01T00:00:00.000001Z')");
+
+            for (String join : new String[]{"LT", "ASOF"}) {
+                final String sql = "SELECT a.ts, b.iv FROM m a " + join
+                        + " JOIN (SELECT k, ts, rnd_interval() iv FROM s) b ON a.k = b.k";
+                // The position points at the join keyword; the prefix "SELECT a.ts, b.iv
+                // FROM m a " is identical for LT and ASOF, so the keyword starts at 27.
+                assertExceptionNoLeakCheck(sql, 27, "right side column 'iv' is of unsupported type", true);
+            }
+        });
+    }
+
+    @Test
+    public void testFullFatTemporalJoinSinksUuidAndLong256SlaveColumns() throws Exception {
+        // A full-fat ASOF/LT join materializes the slave's non-key columns into the map
+        // value via RecordValueSinkFactory. That factory had no case for UUID/LONG128 or
+        // LONG256, so its default branch threw a bare UnsupportedOperationException at
+        // compile time - even though MapValue can store both (putLong128/putLong256) and
+        // the light (random-access) path reads them straight from the slave cursor. The
+        // value sink now handles them, so the full-fat path returns the same rows as the
+        // light path. A var-size slave column (e.g. an array) still rejects with a
+        // user-facing SqlException, since the map value cannot hold a variable-length type.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k INT, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s (k INT, sym SYMBOL, u UUID, l LONG256, arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES " +
+                    "(1, 'a', '1970-01-01T00:00:00.000002Z'), " +
+                    "(1, 'a', '1970-01-01T00:00:00.000004Z'), " +
+                    "(2, 'a', '1970-01-01T00:00:00.000006Z')");
+            execute("INSERT INTO s VALUES " +
+                    "(1, 'a', '11111111-1111-1111-1111-111111111111', '0x01', ARRAY[1.0], '1970-01-01T00:00:00.000001Z'), " +
+                    "(1, 'a', '22222222-2222-2222-2222-222222222222', '0x02', ARRAY[2.0], '1970-01-01T00:00:00.000003Z')");
+
+            // The last master row (k=2) has no slave key, so the map lookup misses and both the UUID
+            // and LONG256 must NULL-extend - the sentinel path most likely to mishandle these
+            // fixed-size types. The full-fat and light paths must still agree on it.
+            final String expected = "ts\tu\tl\n" +
+                    "1970-01-01T00:00:00.000002Z\t11111111-1111-1111-1111-111111111111\t0x01\n" +
+                    "1970-01-01T00:00:00.000004Z\t22222222-2222-2222-2222-222222222222\t0x02\n" +
+                    "1970-01-01T00:00:00.000006Z\t\t\n";
+
+            for (String join : new String[]{"LT", "ASOF"}) {
+                final String sql = "SELECT a.ts, b.u, b.l FROM m a " + join + " JOIN s b ON a.k = b.k AND a.sym = b.sym";
+                // Full-fat path: the slave UUID and LONG256 are sunk into the map value
+                // (the path the storage shadow takes when the slave has no random access).
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fullFatJoins()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+                // Light path: the same rows read from the slave cursor.
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+
+                // A var-size slave column (the array) still cannot enter the map value, so
+                // the full-fat path rejects it with a user-facing SqlException rather than
+                // a bare runtime exception.
+                final String arraySql = "SELECT a.ts, b.arr FROM m a " + join + " JOIN s b ON a.k = b.k AND a.sym = b.sym";
+                // The position points at the join keyword; the prefix "SELECT a.ts, b.arr
+                // FROM m a " is identical for LT and ASOF, so the keyword starts at 28.
+                assertExceptionNoLeakCheck(arraySql, 28, "right side column 'arr' is of unsupported type", true);
+            }
+        });
+    }
+
+    @Test
     public void testHashJoinLightdNoLeaks() throws Exception {
         testJoinForCursorLeaks("with crj as (select * from xx latest by x) select xx.x from xx join crj on xx.x = crj.x ", false);
     }

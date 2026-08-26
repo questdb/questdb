@@ -22299,6 +22299,25 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAnchorExpressionWithParserRewrittenOperator() throws Exception {
+        // ANCHOR EXPRESSION is the one production position that SqlParser.rewriteKnownStatements
+        // skips, so the anchor node reaches LvAnchorSpec still carrying '||' as an OPERATION node.
+        // SqlParser.captureAnchoredWindow renders it back to SQL with toSink, and both consumers -
+        // the CREATE-time pass-2 validator in CairoEngine and LiveViewRefreshJob.ensureAnchorFunction
+        // - re-parse that text through the rewriting SqlParser.expr(...) overload, where
+        // rewriteConcat finally folds the chain into concat(). A maintainer who deletes that
+        // round-trip hands FunctionParser a '||' node no factory answers to, and this CREATE stops
+        // compiling. See core/src/main/java/io/questdb/griffin/CLAUDE.md.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, s STRING, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, s, x, sum(x) OVER w AS sm FROM base " +
+                    "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION length('a' || 'b' || s))");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRejectAnchorWithSystimestamp() throws Exception {
         // systimestamp() is the second runtime-state function named
         // alongside now() / current_timestamp; the validator surfaces it via
