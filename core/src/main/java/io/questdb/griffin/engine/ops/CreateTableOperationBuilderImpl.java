@@ -308,6 +308,25 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     .put(tableNameExpr.token).put(']');
         }
 
+        // Same defect class, same remedy (2026-08-26). A POSTING-family index on a composite table is
+        // accepted here and the table then SUSPENDS on the first merge commit, when
+        // sealPostingIndexForPartition refuses -- that seal is cell-blind and cannot seal a routed
+        // composite's per-cell chains.
+        //
+        // ADD COLUMN and ALTER COLUMN TYPE were closed first; a probe then showed CREATE was still
+        // wide open, so closing only those two shut one route out of several rather than the class.
+        // The writer-side seal gate STAYS as the non-SQL backstop -- gates move rather than vanish.
+        if (dimCount > 0) {
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                final CreateTableColumnModel model = columnModels.get(columnNames.getQuick(i));
+                if (model != null && IndexType.isPosting(model.getIndexType())) {
+                    throw SqlException.$(model.getColumnNamePos(),
+                            "composite partitioning does not yet support a POSTING index [table=")
+                            .put(tableNameExpr.token).put(']');
+                }
+            }
+        }
+
         // Plan 4b feature-gate sweep: DEDUP UPSERT KEYS is not yet cell-aware for a real composite
         // table. O3PartitionJob#getDedupRowsWithAdditionalKeys (reached whenever the upsert-key list
         // has any column besides the designated timestamp) resolves per-partition columnTop/nameTxn

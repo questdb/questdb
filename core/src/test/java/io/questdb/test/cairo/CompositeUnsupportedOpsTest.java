@@ -371,23 +371,37 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
     }
 
     /**
-     * Plan 4b feature-gate sweep. Unlike every other gate in this class, this one is reached by an
-     * ORDINARY INSERT, not a discrete DDL command: {@code TableWriter#sealPostingIndexForPartition}
-     * (run after every O3 commit that touches an indexed partition, for any table with a POSTING
-     * index -- {@code TYPE POSTING} is a normal, documented feature, not an edge case) resolves the
-     * partition's nameTxn via the cellKey-0-only {@code TxReader#getPartitionNameTxnByPartitionTimestamp}
-     * wrapper, then (for the common, non-PARQUET case) builds the on-disk path via
-     * {@code TableWriter#setStateForTimestamp}'s own bare 5-arg {@code setPathForNativePartition} --
-     * cell-blind either way, and confirmed reachable simply by inserting into a routed 2-cell day.
+     * MOVED TO THE STATEMENT, 2026-08-26. This test used to document the worst gate in this class:
+     * {@code TableWriter#sealPostingIndexForPartition} was reached by an ORDINARY INSERT rather than
+     * by any DDL, because {@code TYPE POSTING} is a normal documented feature and the seal is
+     * cell-blind (cellKey-0-only nameTxn lookup, then {@code setStateForTimestamp}'s bare 5-arg path
+     * build). Creating such a table and inserting into a routed 2-cell day suspended it.
+     * <p>
+     * The remedy was not to make the seal cell-aware -- that is a restructure of how it sources column
+     * memory (Task 16) -- but to stop a composite table acquiring a POSTING index at all. All four SQL
+     * routes now refuse: CREATE, ADD COLUMN, ALTER COLUMN TYPE, and ALTER COLUMN ADD INDEX. See
+     * {@code CompositePostingEntryPointsTest}, which covers all of them plus a BITMAP positive
+     * control.
+     * <p>
+     * Gates move rather than vanish: the writer-side seal gate STAYS as the non-SQL backstop, since
+     * {@code TableWriterAPI#addColumn} takes an index type directly and bypasses every SQL check --
+     * which is also why {@code CompositeFuzzRunner} filters POSTING adds out of its generated
+     * operations.
      */
     @Test
-    public void testPostingIndexSealGated() throws Exception {
+    public void testPostingIndexRefusedAtCreate() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table c (ts timestamp, exch symbol index type posting, px double) timestamp(ts) partition by day, exch wal");
-            assertCompositeGateFires(
-                    "insert into c values ('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','B',1.5)",
-                    "c",
-                    "composite partitioning does not yet support a POSTING index seal");
+            try {
+                execute("create table c (ts timestamp, exch symbol index type posting, px double) timestamp(ts) partition by day, exch wal");
+                Assert.fail("expected a POSTING index to be refused on a composite table");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(),
+                        "composite partitioning does not yet support a POSTING index");
+            }
+            // refused at the statement, so nothing was created to be broken
+            assertQuery("SELECT count() FROM tables() WHERE table_name = 'c'")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n0\n");
         });
     }
 

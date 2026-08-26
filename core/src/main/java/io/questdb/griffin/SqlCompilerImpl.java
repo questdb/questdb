@@ -2955,6 +2955,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             }
                         }
 
+                        // Third and last SQL route to a POSTING index on a composite table (ADD COLUMN
+                        // and ALTER COLUMN TYPE were closed first, then CREATE). Accepted here, the
+                        // table SUSPENDS on the next merge commit when sealPostingIndexForPartition
+                        // refuses. Same message and same reader idiom as the other two.
+                        if (IndexType.isPosting(indexType)) {
+                            try (TableReader compositeCheckReader = engine.getReader(tableToken)) {
+                                if (compositeCheckReader.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
+                                    throw SqlException.$(columnNamePosition,
+                                                    "composite partitioning does not yet support a POSTING index [table=")
+                                            .put(tableToken.getTableName()).put(']');
+                                }
+                            }
+                        }
                         alterTableColumnAddIndex(
                                 executionContext,
                                 tableNamePosition,
