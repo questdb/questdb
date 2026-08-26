@@ -1403,6 +1403,25 @@ public class CompositeFuzzRunner {
  * the bare path is right. {@code cellKey >= size > 0} is a STALE SNAPSHOT -- the reader's _txn knows a
  * cell its registry has never heard of -- and silently rendering the bare path there is wrong.
  * <p>
+ * <b>MEASURED AT THE FALLBACK, and this is the sharpest statement of the residual bug.</b>
+ * Instrumenting the guard itself, rather than theorising about it, gives one value set, three times:
+ * <pre>
+ *   cellKey=15  registrySize=15  symbolColumnCount=4  internerReaders=2  partitionCount=31  txn=9
+ * </pre>
+ * The registry holds 15 cells, so valid cellKeys are 0..14 -- and _txn's OWN partition entry
+ * references cellKey 15. Off by exactly one, at the boundary. Note {@code symbolColumnCount -
+ * internerReaders == 2} is self-consistent, so the interner base calculation is NOT the problem.
+ * <p>
+ * That reframes it decisively: this is an inconsistency <b>inside _txn</b>, not a stale reader. The
+ * reader is faithfully reporting what _txn says -- _txn simultaneously claims "this day has a
+ * partition at cellKey 15" and "the cell registry interner has 15 symbols". One of those two writes
+ * is wrong or they are not landing in the same commit.
+ * <p>
+ * NOT established: which. A missed symbol-count bump for the registry interner and an ordering
+ * problem between the partition write and the interner write would both produce exactly this. Decide
+ * that before writing any fix -- and note the victim is always the highest cellKey, i.e. the cell
+ * most recently interned.
+ * <p>
  * <b>CORRECTION -- my first explanation of WHY was wrong.</b> I wrote that {@code compositeDicts}
  * rides the symbol-map/METADATA lifecycle and therefore cannot see cells created by ordinary data
  * writes. That is false, and checkable in two lines: {@code CellRegistry#size()} returns
