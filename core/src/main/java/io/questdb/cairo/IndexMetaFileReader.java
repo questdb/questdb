@@ -114,6 +114,20 @@ import io.questdb.std.str.LPSZ;
  */
 public class IndexMetaFileReader implements QuietCloseable {
 
+    /**
+     * Whether to verify the {@code _im} CRC on every bind.
+     * <p>
+     * The checksum covers the whole file, and the key directory dominates it:
+     * a million-key column has a 4 MB {@code _im}, so a bind costs a 4 MB
+     * checksum. A query that opens a reader and makes a few hundred lookups
+     * spends most of its time here -- it was 21.8% of a range-read profile.
+     * <p>
+     * Left ON. The cost is per MAPPING, and a pooled TableReader maps once and
+     * serves many queries, so production amortises what a benchmark opening a
+     * reader per iteration pays every time. Turning corruption detection off to
+     * win a benchmark would be the wrong trade; the knob exists to measure it.
+     */
+    private static final boolean VERIFY_CRC = !Boolean.getBoolean("questdb.idx.im.crc.skip");
     public static final int IM_HEADER_SIZE = 128;
     public static final int IM_TRAILER_SIZE = 4;
     /**
@@ -1216,7 +1230,9 @@ public class IndexMetaFileReader implements QuietCloseable {
         // Nothing below this point may be trusted until the CRC agrees.
         final long crcEnd = size - IM_TRAILER_SIZE;
         final int storedCrc = Unsafe.getInt(addr + crcEnd);
-        final int computedCrc = crc32(addr + IM_CRC_AREA_OFF, crcEnd - IM_CRC_AREA_OFF);
+        final int computedCrc = VERIFY_CRC
+                ? crc32(addr + IM_CRC_AREA_OFF, crcEnd - IM_CRC_AREA_OFF)
+                : storedCrc;
         if (storedCrc != computedCrc) {
             throw CairoException.critical(0)
                     .put("_im CRC32 mismatch [stored=").put(storedCrc)
