@@ -258,13 +258,6 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
      * ALTER COLUMN TYPE rewrites every partition's column file, so on a composite table it must rewrite
      * every CELL's. Expected to be the most expensive of the four.
      */
-    @Ignore("SP2: ALTER COLUMN TYPE to SYMBOL is still gated, but the RECORDED REASON WAS WRONG."
-            + " The interner slot-order hazard it shared with addColumn() is fixed, and ADD COLUMN of"
-            + " type SYMBOL shipped on that fix. RE-MEASURED 2026-08-25 with the gate lifted: the ALTER"
-            + " succeeds and does not suspend the table, then every read fails 'Metadata read timeout"
-            + " [src=reader, timeout=5000ms]'. Reproduced with and without an intervening"
-            + " engine.releaseInactive(), so it is the conversion, not the reopen. Un-ignore when that"
-            + " is understood.")
     @Test(timeout = 60_000)
     public void surveyAlterColumnTypeToSymbol() throws Exception {
         assertMemoryLeak(() -> {
@@ -290,7 +283,7 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
 
             assertTwinEqual("", " ORDER BY ts, exch");
             assertQuery("SELECT note FROM c ORDER BY note")
-                    .noLeakCheck()
+                    .noLeakCheck().expectSize()
                     .returns("note\nN0\nN1\nN2\nN3\n");
         });
     }

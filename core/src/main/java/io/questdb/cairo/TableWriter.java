@@ -1563,21 +1563,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
         
 
-        // ALTER COLUMN TYPE to SYMBOL stays refused, but NOT for the reason recorded before.
-        // The original reason was the interner slot-order hazard shared with addColumn(); that is now
-        // FIXED (createSymbolMapWriter inserts ahead of the interners and renumbers them), and ADD
-        // COLUMN of type SYMBOL was un-gated on the strength of it.
-        // RE-MEASURED 2026-08-25 with this gate lifted: the ALTER itself succeeds and does NOT suspend
-        // the table, and then every subsequent read of the table fails
-        //     SqlException: [14] [0]: Metadata read timeout [src=reader, timeout=5000ms]
-        // Reproduced with and without an intervening engine.releaseInactive(), so it is the conversion
-        // itself, not the writer reopen. A DDL that leaves readers hanging is worse than one that
-        // refuses, so the gate stays until that is understood.
-        if (ColumnType.isSymbol(newType) && metadata.getPartitionSpec().getDimensionCount() > 0) {
-            throw CairoException.nonCritical()
-                    .put("ALTER COLUMN TYPE SYMBOL is not yet supported on composite-partitioned tables [table=")
-                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
-        }
 
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
             if (txWriter.isPartitionReadOnly(i)) {

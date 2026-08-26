@@ -172,27 +172,21 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
      */
 
     @Test
-    public void testAlterColumnTypeGated() throws Exception {
+    public void testAlterColumnTypeToSymbolIsNoLongerGated() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exch symbol, note varchar, px double) timestamp(ts) partition by day, exch wal");
-            // Two SEPARATE single-cellKey commits (not one interleaved commit) -- a table with a
-            // var-size column hits a DIFFERENT, pre-existing, out-of-scope guard ("an interleaved
-            // multi-cell commit is not yet supported for a table with a var-size column",
-            // TableWriter.java ~10966) if a single dispatch batch spans 2+ distinct cellKeys. Splitting
-            // into two commits (the same shape CompositeRoutingTest's own
-            // testMultiCommitAddsSecondCellToSingleCellDayMatchesPlainTwin proves safe) reaches a real,
-            // routed, 2-cell composite table without tripping that unrelated guard.
+            // single-cell commits: a var-size column has its own unrelated gate against an interleaved
+            // multi-cell commit
             execute("insert into c values ('2020-01-01T00:00:00.000000Z','A','1',1.0)");
             drainWalQueue();
             execute("insert into c values ('2020-01-01T12:00:00.000000Z','B','2',1.5)");
             drainWalQueue();
             assertWalTableNotSuspended("c");
-            assertCompositeGateFires(
-                    "alter table c alter column note type symbol",
-                    "c",
-                    // The SYMBOL-conversion gate fires before the general one for this column, and its message is
-                    // the more specific of the two -- assert what actually reaches the user.
-                    "ALTER COLUMN TYPE SYMBOL is not yet supported on composite-partitioned tables");
+
+            execute("alter table c alter column note type symbol");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            assertQuery("select note from c order by note").noLeakCheck().expectSize().returns("note\n1\n2\n");
         });
     }
 
