@@ -1229,16 +1229,21 @@ public class PostingIndexBenchmarkSuite {
         // --- The same question at SQL level ---
         out.println();
         out.println("── Converting to parquet: SQL ────────────────────────────────────────────────────");
-        out.printf("  %-16s %-10s %12s %12s %8s%n", "query", "keys", "native", "parquet", "verdict");
+        out.println("   'data' = cost of the parquet DATA format (native -> parquet_data)");
+        out.println("   'index' = cost of the parquet INDEX form (parquet_data -> parquet_index)");
+        out.println("   Only 'index' is attributable to this branch.");
+        out.printf("  %-16s %-10s %11s %11s %11s %9s %9s%n",
+                "query", "keys", "native", "pq-data", "pq-index", "data", "index");
         for (String q : new String[]{"covering_where", "latest_on"}) {
             for (int i = 0; i < 3; i++) {
                 double[] nat = cell(cells, "sqlQuery", q, rungs[i], STORAGE_NATIVE);
-                double[] pq = cell(cells, "sqlQuery", q, rungs[i], STORAGE_PARQUET_INDEX);
-                if (nat == null || pq == null) {
+                double[] dat = cell(cells, "sqlQuery", q, rungs[i], STORAGE_PARQUET_DATA);
+                double[] idx = cell(cells, "sqlQuery", q, rungs[i], STORAGE_PARQUET_INDEX);
+                if (nat == null || dat == null || idx == null) {
                     continue;
                 }
-                out.printf("  %-16s %-10s %,12.0f %,12.0f %8s%n",
-                        q, keyLabels[i], nat[0], pq[0], ratio(nat, pq));
+                out.printf("  %-16s %-10s %,11.0f %,11.0f %,11.0f %9s %9s%n",
+                        q, keyLabels[i], nat[0], dat[0], idx[0], ratio(nat, dat), ratio(dat, idx));
             }
         }
         out.println();
@@ -2083,7 +2088,13 @@ public class PostingIndexBenchmarkSuite {
         @Param({"P400K", "S4", "S6"})
         String scenario;
         String sql;
-        @Param({STORAGE_NATIVE, STORAGE_PARQUET_INDEX})
+        // Three arms, not two. native -> parquet_data isolates the cost of the
+        // parquet DATA format; parquet_data -> parquet_index isolates the cost
+        // of the index form, which is the thing this branch changes. A single
+        // native-vs-parquet_index number confounds them, and on latest_on that
+        // confusion reads as an 8x index regression when the index accounts for
+        // 9% of it.
+        @Param({STORAGE_NATIVE, STORAGE_PARQUET_DATA, STORAGE_PARQUET_INDEX})
         String storage;
         java.nio.file.Path tmpDir;
 
