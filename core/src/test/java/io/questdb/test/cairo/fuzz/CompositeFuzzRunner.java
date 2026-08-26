@@ -1427,19 +1427,27 @@ public class CompositeFuzzRunner {
  * refreshing interner counts in the same txn window. The victim is always the newest cellKey because
  * that is the only key whose coverage differs between two adjacent txns.
  * <p>
- * <b>The obvious candidate is ELIMINATED.</b> {@code reconcileOpenPartitions0} ends with
- * {@code else if (changed) reloadSymbolMapCounts()}, which couples the interner reload to the
- * partition SET changing -- wrong in principle for composite, whose interner counts advance with DATA.
- * Relaxing it to {@code changed || compositeDicts != null} changed the failure by NOTHING: 35
- * occurrences and 9 of 24 seeds, identical, probabilities held fixed. Reverted rather than kept, since
- * it buys nothing measurable and adds work to a reload hot path. In hindsight it was predictable --
- * inserting cellKey 15's partition entry sets {@code changed = true} anyway, so that branch was never
- * being skipped in the failing case.
+ * <b>THE WINDOW, measured.</b> Logging {@code txFile.getTxn()} at every
+ * {@code reloadSymbolMapCounts()} and at the fallback gives:
+ * <pre>
+ *   RELOAD   txn=3  registryBefore=15
+ *   RELOAD   txn=6  registryBefore=15
+ *   FALLBACK txn=9  cellKey=15  registry=15     &lt;-- txFile at 9, last reload was 6
+ * </pre>
+ * {@code txFile} advances to txn 9 unconditionally -- which is why cellKey 15 is visible -- while the
+ * interner counts were last refreshed at txn 6. That is the tear, exactly.
  * <p>
- * So the tear is real and measured, but the code path that produces it is still unidentified. Next
- * probe: log {@code txFile.getTxn()} together with the registry count at every
- * {@code reloadSymbolMapCounts()} AND at the bare-path fallback, and find the window where the two
- * txns differ.
+ * <b>{@code reconcileOpenPartitions0} is ELIMINATED as the site, twice over.</b> Relaxing its
+ * {@code else if (changed)} to {@code changed || compositeDicts != null} changed the failure by
+ * nothing (35 occurrences, 9 of 24 seeds, identical, probabilities fixed) -- AND, decisively, produced
+ * <b>no {@code RELOAD txn=9} line at all</b>. So that method is not executing at txn 9 and the fix was
+ * never on the path. Reverted.
+ * <p>
+ * <b>Therefore:</b> some reader path advances {@code txFile} to a new txn and then serves partition
+ * data WITHOUT running partition reconciliation at all -- so no reload of any kind occurs, and the
+ * {@code changed} gating is irrelevant. Find that path (the {@code reload()} / txn-acquire flow, not
+ * {@code reconcileOpenPartitions*}) and the bug closes. The victim is always the newest cellKey
+ * because that is the only key whose registry coverage differs between two adjacent txns.
  * <p>
  * <b>ELIMINATED -- do not re-chase:</b>
  * <ol>
