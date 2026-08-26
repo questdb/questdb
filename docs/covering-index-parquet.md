@@ -46,47 +46,56 @@ Source: `ParquetIndexSeal.java:107,115`.
 
 ## Read performance
 
-**At parity with the native index across the SQL benchmarks, and ahead of it on
-low- and mid-cardinality point reads.** Measured against an OPTIMISED Rust build
-(`-P qdbr-release`; the default maven build is unoptimised and inflates every
-number here roughly 2x).
+Measured against an OPTIMISED Rust build (`-P qdbr-release`; the default maven
+build leaves the Rust library unoptimised and inflates every number here by
+roughly 2x).
 
-Against the like-for-like arm -- the same partition converted to parquet,
-keeping a native index -- so the parquet DATA format's own cost is not charged
-to the index form:
+**SQL is at parity.** Against the like-for-like arm -- the same partition
+converted to parquet, keeping a NATIVE index -- so the parquet data format's own
+cost is not charged to the index form:
 
 | Query | vs native index |
 | --- | --- |
 | covered `WHERE` | 1.09x faster |
-| `count()` | parity |
+| `count()`, `SELECT DISTINCT`, `LATEST ON`, `IN` list, wide table, O3 | parity |
 | `sum()`, residual filter | parity |
 | `avg()` | 1.14x |
-| `SELECT DISTINCT` | parity |
-| `LATEST ON`, `IN` list, wide table, O3 | parity |
+| covered gather (`sidecarRead`) | parity; INT faster |
 
-Index-level reads over the posting benchmark suite's cardinality scenarios,
-parquet against native:
+**Index-level reads depend on how WIDE the keys are.** Parquet against native
+over the posting suite's cardinality scenarios:
 
-| Rows / distinct keys | point read | scan |
-| --- | --- | --- |
-| 400k / 16 | **1.59x faster** | 3.9x |
-| 1M / 500 (zipf) | **1.84x faster** | 1.4x |
-| 1.02M / 512 | **1.10x faster** | 4.0x |
-| 2M / 2,000 | 1.16x | 4.3x |
-| 1M / 5,000 | 2.4x | 4.2x |
-| 1.2M / 200,000 | 8.9x | 2.0x |
-| 2M / 500,000 | 8.8x | 2.1x |
-| 2M / 1,000,000 | 9.5x | 2.5x |
+| Rows / distinct keys | point read | scan | range |
+| --- | --- | --- | --- |
+| 400k / 16 | **1.64x faster** | 3.9x | 4.1x |
+| 1.02M / 512 | **1.18x faster** | 3.9x | 5.7x |
+| 1M / 500 (zipf) | **1.96x faster** | 1.4x | 1.8x |
+| 2M / 2,000 | 1.09x | 4.4x | 7.5x |
+| 1M / 5,000 | 2.3x | 4.2x | 7.1x |
+| 1M / 10,000 | 6.0x | 2.0x | 7.5x |
+| 1.2M / 200,000 | 8.1x | 2.0x | 8.3x |
+| 2M / 500,000 | 11.6x | 2.2x | 8.2x |
+| 2M / 1,000,000 | 10.0x | 2.4x | 8.2x |
 
-**Where it is still slower, and why.** A parquet read costs one decode call per
-key -- a JNI crossing, a thrift page header, a buffer -- against the native
-index's direct mapped read. That fixed cost disappears into the work when a key
-is wide, which is why low and mid cardinality are at or ahead of parity. It
-dominates when keys are narrow: at a million distinct keys a key holds two rows,
-and the call costs more than the rows it returns. Scans avoid it -- consecutive
-keys share a row group, which is decoded once and served from -- so they stay
-near 2x however narrow the keys get. Random point reads over very high
-cardinality cannot, and remain the one case that is materially slower.
+**Two costs set those numbers, and neither is a defect.**
+
+*One decode call per key.* A lookup crosses JNI, parses a thrift page header and
+sets up a buffer, where the native index follows a pointer into a mapping. That
+fixed cost vanishes into the work when a key is wide, which is why the index
+BEATS native below a few thousand keys. It dominates when keys are narrow: at a
+million distinct keys a key holds two rows and the call costs more than the rows
+it returns. Profiling puts the floor near 430ns of JNI and setup against native's
+~100ns for the whole lookup, so trimming the thrift parse alone would not close
+it. Scans escape it -- consecutive keys share a row group, which is decoded once
+and served from -- and hold near 2x however narrow the keys get.
+
+*`row_id` is PLAIN.* The native chain delta-FoR packs its postings; parquet
+spends 8 bytes each, so a scan moves several times the bytes. Delta packing was
+tried and reverted: a delta block must be decoded from its start, so random
+access into a key's run pays for every posting ahead of it -- point reads went to
+40-44x and ranges to 15-32x. Parquet offers no random-access-friendly packed
+integer encoding, so this one is a format limit rather than a tuning choice.
+`key_id` IS delta packed, since nothing reads it back.
 
 Reproduce with `PostingIndexBenchmarkSuite`, whose `POSTING_PARQUET` and
 `covering_parquet` arms build the same fixture through `ParquetIndexSeal`, and
@@ -103,19 +112,18 @@ java -cp benchmarks/target/benchmarks.jar org.questdb.PostingIndexBenchmarkSuite
 ## Size
 
 The index parquet is written **uncompressed** by default, which is what buys the
-read parity above -- an uncompressed page is never decompressed, so a lookup
-reads its key's rows rather than the page they sit in. It costs about 1.5x the
-size on a covered `DOUBLE`, up to ~2.5x on row-id-only data.
+read numbers above: an uncompressed page is never decompressed, so a lookup reads
+its key's rows rather than the page they sit in. `key_id` is delta packed, worth
+about 1.5x, so the file lands within roughly 2x of what LZ4_RAW would produce
+while reading 2-2.3x faster.
 
-For a feature whose purpose is that the index travels, that is a real trade. To
-take it back:
+To trade back:
 
 ```
 cairo.posting.index.parquet.compression.codec=LZ4_RAW
 ```
 
-The data page size follows the codec, so no second change is needed. Expect
-roughly 2-2.3x slower reads for it.
+The data page size follows the codec, so no second change is needed.
 
 ## Covered column restrictions
 
