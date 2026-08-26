@@ -6885,6 +6885,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * AUDIT NOTE (cellKey-0 / active-tail sweep, 2026-08-26). This operates on
+     * {@code lastPartitionTimestamp} -- the writer's ACTIVE TAIL -- and updates its size with the
+     * cellKey-0-only {@code updatePartitionSizeByTimestamp}. Both are suspect for a routed composite
+     * table: {@code finishO3Commit} documents that the active-tail fields describe the bare, non-cell
+     * day directory and are "NEVER a valid target" there, and neither caller (around lines 5717/5748)
+     * carries a composite guard.
+     * <p>
+     * NOT patched, and not because it looks safe. Threading a cellKey into the size update alone would
+     * not fix an active-tail concept that has no single meaning on a multi-cell day -- it would just
+     * make the line look handled. This belongs with {@code repairDataGaps} as a path needing a real
+     * per-cell design, and is flagged rather than half-fixed.
+     */
     private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
         long initialTransientRowCount = txWriter.transientRowCount;
         txWriter.transientRowCount += lagRowCount;
