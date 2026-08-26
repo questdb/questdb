@@ -494,21 +494,33 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * post-CONVERT assertion below passes, so the conversion is not the cause; something between the
      * squash and the following commit drops rows.
      * <p>
-     * <b>Where it is NOT.</b> {@code squashSplitPartitionsComposite_mergeFragment} folds fragments
-     * through native column-file reads and writes and has no parquet check, which made it the obvious
-     * suspect. It is not sufficient: making that method DECLINE parquet fragments left this test
-     * failing identically, and broke 19 other tests in this class that pass without it. So the merge
-     * is not where the rows go, and the decline is not the fix. Both were tried and reverted -- do not
-     * re-try that approach without new evidence.
+     * <b>LOCALISED by measurement.</b> The squash ALTER itself throws and suspends the table:
+     * <pre>
+     *   java.lang.AssertionError
+     *     at TxReader.getNativePartitionSeqTxn(TxReader.java:438)      // assert !isPartitionParquet(i)
+     *     at TableWriter.squashSplitPartitionsComposite_mergeFragment(TableWriter.java:19803)
+     *     at AlterOperation.squashPartitions ...   seqTxn=4
+     * </pre>
+     * Line 19803 is POST-LOOP bookkeeping:
+     * {@code txWriter.setPartitionSeqTxn(dayFirst, max(squashedSeqTxn, getNativePartitionSeqTxn(dayFirst)))}.
+     * {@code dayFirst} is the day's FIRST cell, which CONVERT made parquet, and
+     * {@code getNativePartitionSeqTxn} asserts the partition is native.
      * <p>
-     * <b>Also ruled out:</b> {@code o3ConsumePartitionUpdateSink_processSplitPartitionRemoval}'s
-     * "split one line from the parent" branch, which was the next suspect because it resolves the
-     * parent through the cellKey-0 {@code setStateForTimestamp} and then reads the parent's NATIVE
-     * timestamp column -- neither of which works for a composite parquet parent. It does not run in
-     * this scenario: its "splitting last line of the partition" log line appears ZERO times in the
-     * failing run. Checked in the log rather than reasoned about, after two wrong attributions on this
-     * same defect.
+     * <b>The shape is a MIXED day.</b> CONVERT converts the day's cells but leaves the split FRAGMENT
+     * native -- measured: {@code 2023-01-01/E0 parquet}, {@code 2023-01-01/E1 parquet},
+     * {@code 2023-01-01T010000-000001/E0 NOT parquet}. Whether CONVERT should convert the fragment too,
+     * or refuse a split day, is a separate question this does not answer.
      * <p>
+     * <b>What the row counts really showed.</b> Not lost rows: the composite table had 4 and the twin 5
+     * because the table was ALREADY SUSPENDED by the squash, so the post-squash insert never applied.
+     * The partition list is byte-identical either side of the squash. Calling this "squash loses rows"
+     * was wrong; the squash never applies at all.
+     * <p>
+     * <b>An earlier attempt that did NOT work.</b> Declining the merge for parquet cells at the TOP of
+     * the per-fragment while loop left this failing identically AND broke 19 other tests in this class.
+     * The assert above is reached on a path that gets past such a guard, so a fix belongs at or around
+     * 19803, not at the loop head. Do not re-try the loop-head guard.
+     *
      * <b>How this shape was reached.</b> Every other squash test here, and the uneven-column-top
      * survey's squash cases, squash a day with NO fragment -- so the merge path had never run against
      * parquet at all. The shape came from asking what the FORMAT PARQUET gate lets downstream code
