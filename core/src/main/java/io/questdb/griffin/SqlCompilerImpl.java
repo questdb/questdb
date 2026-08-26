@@ -4167,6 +4167,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // Gated unconditionally for any composite table (including a still-dormant one, conservatively
         // -- no cheap way to check routedness without a writer here). Plain tables are unaffected.
         try (TableReader rdr = executionContext.getReader(tableToken)) {
+            // MEASURED 2026-08-26 with this gate lifted, using the only test that can tell a rebuild
+            // from a no-op: delete one CELL's index files, REINDEX, and see whether they come back.
+            //     deleted=true; restored=false     -- and REINDEX reported success
+            // Row counts and per-symbol counts stayed correct throughout, which is exactly why they
+            // cannot be the assertion: the DATA is fine, it is the INDEX that is not rebuilt. This is
+            // the same silent no-op that made ADD INDEX "pass" while isColumnIndexed stayed false.
             if (rdr.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
                 throw SqlException.$(lexer.lastTokenPosition(), "composite partitioning does not yet support REINDEX TABLE [table=")
                         .put(tableToken.getTableName()).put(']');

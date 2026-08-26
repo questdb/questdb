@@ -156,8 +156,19 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         if (selectText != null) {
             // Composite partitioning is resolved against known column definitions (below); a
             // CREATE TABLE AS SELECT's columns aren't known until the select is executed, so
-            // composite dimensions can't be resolved at build() time. Full support is deferred;
-            // reject clearly rather than let the resolver misreport columns as non-existent.
+            // composite dimensions can't be resolved at build() time. Full support is deferred.
+            //
+            // MEASURED 2026-08-26 with this gate lifted, and the failure is worse than the "resolver
+            // misreports columns as non-existent" this comment used to predict. Nothing throws at all:
+            //
+            //     CREATE TABLE c AS (SELECT * FROM src) TIMESTAMP(ts) PARTITION BY DAY, exch WAL
+            //     -> SHOW CREATE TABLE c ... PARTITION BY DAY;        (the ", exch" is GONE)
+            //     -> on disk c~2/2023-01-01/exch.d                    (flat day dir, no cell dirs)
+            //
+            // The dimension is silently DROPPED and the user gets a PLAIN table having asked for a
+            // composite one -- the same silent-wrong-DDL class as the enterprise CREATE TABLE path,
+            // which dropped getPartitionSpec() and created plain tables with no error anywhere.
+            // Refusing is mandatory until the spec can be resolved after the select's metadata is known.
             if (partitionDimensionExprs.size() > 0) {
                 throw SqlException.$(
                         partitionDimensionExprs.getQuick(0).position,
