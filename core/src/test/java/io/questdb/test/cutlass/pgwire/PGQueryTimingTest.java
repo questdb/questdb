@@ -25,9 +25,11 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.metrics.QueryTrace;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.MicrosecondClock;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -35,12 +37,43 @@ import org.junit.Test;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class PGQueryTimingTest extends BasePGTest {
+    private static final long CLOCK_TICK_NANOS = 1_000L;
+    private static final long POST_RESUME_ACTIVE_MICROS = 1_000_000L;
+    private static final long POST_RESUME_ACTIVE_NANOS = POST_RESUME_ACTIVE_MICROS * CLOCK_TICK_NANOS;
+    private static final int POST_RESUME_CALLBACK_COUNT = 10;
 
     @Before
     public void setupTracing() {
         node1.getConfigurationOverrides().setProperty(PropertyKey.QUERY_TRACING_ENABLED, true);
+    }
+
+    @Test
+    public void testFetchAllSocketSuspensionCountsAsWait() throws Exception {
+        final SocketTimingClock clock = new SocketTimingClock();
+        testMicrosClock = clock;
+        TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+            @Override
+            public boolean onGet(io.questdb.cairo.sql.Record rec, int count) {
+                // Each 450-byte row nearly fills the 512-byte response buffer, so this row
+                // executes only after the first forced fragmented socket resume.
+                if (count == POST_RESUME_CALLBACK_COUNT) {
+                    clock.advanceMicros(POST_RESUME_ACTIVE_MICROS);
+                }
+                return true;
+            }
+        });
+        try {
+            assertWithPgServerExtendedBinaryOnly(
+                    (connection, _, _, _) -> assertSocketSuspensionCountsAsWait(connection),
+                    this::setupTracingWithFragmentedResponse
+            );
+        } finally {
+            TestLatchedCounterFunctionFactory.reset(null);
+            testMicrosClock = defaultMicrosecondClock;
+        }
     }
 
     @Test
@@ -58,6 +91,40 @@ public class PGQueryTimingTest extends BasePGTest {
                 (connection, _, _, _) -> assertPortalSuspensionCountsAsWait(connection),
                 this::setupTracing
         );
+    }
+
+    private void assertSocketSuspensionCountsAsWait(Connection connection) throws Exception {
+        final ConcurrentQueue<QueryTrace> queue = engine.getMessageBus().getQueryTraceQueue();
+        drain(queue);
+        final String query = """
+                SELECT x, lpad('', 450, 'x') AS value
+                FROM long_sequence(%d)
+                WHERE test_latched_counter()""".formatted(POST_RESUME_CALLBACK_COUNT);
+        try (PreparedStatement statement = connection.prepareStatement(query)) {
+            // Fetch-all has no retained portal, so the forced fragments are the only wait source.
+            statement.setFetchSize(0);
+            Assert.assertEquals(0, statement.getFetchSize());
+            try (ResultSet resultSet = statement.executeQuery()) {
+                int rows = 0;
+                while (resultSet.next()) {
+                    rows++;
+                }
+                Assert.assertEquals(POST_RESUME_CALLBACK_COUNT, rows);
+            }
+        }
+        Assert.assertEquals(POST_RESUME_CALLBACK_COUNT, TestLatchedCounterFunctionFactory.getCount());
+        final QueryTrace trace = pollTraceFor(queue, query);
+        Assert.assertTrue(
+                "expected socket wait >= " + CLOCK_TICK_NANOS + ", got " + trace.waitNanos,
+                trace.waitNanos >= CLOCK_TICK_NANOS
+        );
+        Assert.assertTrue(
+                "expected post-resume active time >= " + POST_RESUME_ACTIVE_NANOS
+                        + " [executionNanos=" + trace.executionNanos + ", waitNanos=" + trace.waitNanos + ']',
+                trace.executionNanos - trace.waitNanos >= POST_RESUME_ACTIVE_NANOS
+        );
+        Assert.assertTrue(trace.firstRowNanos >= 0);
+        Assert.assertTrue(trace.firstRowNanos <= trace.executionNanos);
     }
 
     private void assertPortalSuspensionCountsAsWait(Connection connection) throws Exception {
@@ -108,10 +175,29 @@ public class PGQueryTimingTest extends BasePGTest {
         return null;
     }
 
+    private void setupTracingWithFragmentedResponse() {
+        setupTracing();
+        sendBufferSize = 512;
+        forceSendFragmentationChunkSize = 10;
+    }
+
     private void setupTracingWithFragmentedSync() {
         setupTracing();
         // Force the retained portal's sync response through a pending flush.
         sendBufferSize = 256;
         forceSendFragmentationChunkSize = 64;
+    }
+
+    private static class SocketTimingClock implements MicrosecondClock {
+        private final AtomicLong micros = new AtomicLong();
+
+        public void advanceMicros(long micros) {
+            this.micros.addAndGet(micros);
+        }
+
+        @Override
+        public long getTicks() {
+            return micros.getAndIncrement();
+        }
     }
 }
