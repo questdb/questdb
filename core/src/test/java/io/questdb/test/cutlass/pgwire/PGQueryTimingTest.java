@@ -52,7 +52,7 @@ public class PGQueryTimingTest extends BasePGTest {
 
     @Test
     public void testFetchAllSocketSuspensionCountsAsWait() throws Exception {
-        final SocketTimingClock clock = new SocketTimingClock();
+        final ControlledMicrosecondClock clock = new ControlledMicrosecondClock();
         testMicrosClock = clock;
         TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
             @Override
@@ -82,6 +82,32 @@ public class PGQueryTimingTest extends BasePGTest {
                 (connection, _, _, _) -> assertPortalSuspensionCountsAsWait(connection),
                 this::setupTracingWithFragmentedSync
         );
+    }
+
+    @Test
+    public void testRetainedPortalResumeCountsPostResumeActiveTime() throws Exception {
+        final ControlledMicrosecondClock clock = new ControlledMicrosecondClock();
+        testMicrosClock = clock;
+        TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+            @Override
+            public boolean onGet(io.questdb.cairo.sql.Record rec, int count) {
+                // Fetch size 10 puts this row on the second Execute, after the retained
+                // portal must resume its timer.
+                if (count == POST_RESUME_CALLBACK_COUNT + 1) {
+                    clock.advanceMicros(POST_RESUME_ACTIVE_MICROS);
+                }
+                return true;
+            }
+        });
+        try {
+            assertWithPgServerExtendedBinaryOnly(
+                    (connection, _, _, _) -> assertRetainedPortalResumeCountsPostResumeActiveTime(connection),
+                    this::setupTracing
+            );
+        } finally {
+            TestLatchedCounterFunctionFactory.reset(null);
+            testMicrosClock = defaultMicrosecondClock;
+        }
     }
 
     @Test
@@ -116,6 +142,39 @@ public class PGQueryTimingTest extends BasePGTest {
         final QueryTrace trace = pollTraceFor(queue, query);
         Assert.assertTrue(
                 "expected socket wait >= " + CLOCK_TICK_NANOS + ", got " + trace.waitNanos,
+                trace.waitNanos >= CLOCK_TICK_NANOS
+        );
+        Assert.assertTrue(
+                "expected post-resume active time >= " + POST_RESUME_ACTIVE_NANOS
+                        + " [executionNanos=" + trace.executionNanos + ", waitNanos=" + trace.waitNanos + ']',
+                trace.executionNanos - trace.waitNanos >= POST_RESUME_ACTIVE_NANOS
+        );
+        Assert.assertTrue(trace.firstRowNanos >= 0);
+        Assert.assertTrue(trace.firstRowNanos <= trace.executionNanos);
+    }
+
+    private void assertRetainedPortalResumeCountsPostResumeActiveTime(Connection connection) throws Exception {
+        final ConcurrentQueue<QueryTrace> queue = engine.getMessageBus().getQueryTraceQueue();
+        drain(queue);
+        connection.setAutoCommit(false);
+        final int rowCount = POST_RESUME_CALLBACK_COUNT * 2;
+        final String query = "SELECT x FROM long_sequence(%d) WHERE test_latched_counter()".formatted(rowCount);
+        try (PreparedStatement statement = connection.prepareStatement(query)) {
+            statement.setFetchSize(POST_RESUME_CALLBACK_COUNT);
+            Assert.assertEquals(POST_RESUME_CALLBACK_COUNT, statement.getFetchSize());
+            try (ResultSet resultSet = statement.executeQuery()) {
+                int rows = 0;
+                while (resultSet.next()) {
+                    rows++;
+                }
+                Assert.assertEquals(rowCount, rows);
+            }
+        }
+        connection.commit();
+        Assert.assertEquals(rowCount, TestLatchedCounterFunctionFactory.getCount());
+        final QueryTrace trace = pollTraceFor(queue, query);
+        Assert.assertTrue(
+                "expected controlled portal wait >= " + CLOCK_TICK_NANOS + ", got " + trace.waitNanos,
                 trace.waitNanos >= CLOCK_TICK_NANOS
         );
         Assert.assertTrue(
@@ -188,7 +247,7 @@ public class PGQueryTimingTest extends BasePGTest {
         forceSendFragmentationChunkSize = 64;
     }
 
-    private static class SocketTimingClock implements MicrosecondClock {
+    private static class ControlledMicrosecondClock implements MicrosecondClock {
         private final AtomicLong micros = new AtomicLong();
 
         public void advanceMicros(long micros) {

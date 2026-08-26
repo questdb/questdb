@@ -145,22 +145,30 @@ public class HTTPSerialParquetExporterTest extends AbstractCairoTest {
             final TimerProbePageFrameCursor pageFrameBackedCursor = new TimerProbePageFrameCursor();
             final TimerProbePageFrameCursor tempTableCursor = new TimerProbePageFrameCursor();
             try {
-                task.pageFrameCursor = pageFrameBackedCursor;
+                task.pageFrameCursor = tempTableCursor;
                 exporter.setTask(task);
                 exporter.setExportMode(ParquetExportMode.PAGE_FRAME_BACKED);
                 exporter.setupPageFrameBackedExport(pageFrameBackedCursor, null, null);
+                exporter.suspendCursorTimer();
+                Assert.assertEquals(1, pageFrameBackedCursor.suspendCount);
+                Assert.assertEquals(0, pageFrameBackedCursor.resumeCount);
+                exporter.resumeCursorTimer();
+                Assert.assertEquals(1, pageFrameBackedCursor.suspendCount);
+                Assert.assertEquals(1, pageFrameBackedCursor.resumeCount);
+                Assert.assertEquals("PAGE_FRAME_BACKED must use its streaming cursor only", 0, tempTableCursor.suspendCount);
+                Assert.assertEquals("PAGE_FRAME_BACKED must use its streaming cursor only", 0, tempTableCursor.resumeCount);
+
                 exporter.clearExportResources();
                 Assert.assertEquals(1, pageFrameBackedCursor.closeCount);
 
                 exporter.suspendCursorTimer();
                 exporter.resumeCursorTimer();
                 Assert.assertEquals(
-                        "cleared PAGE_FRAME_BACKED task alias must not receive timer calls",
+                        "cleared PAGE_FRAME_BACKED owner must not receive timer calls",
                         0,
                         pageFrameBackedCursor.staleTimerCallCount
                 );
 
-                task.pageFrameCursor = tempTableCursor;
                 exporter.setExportMode(ParquetExportMode.TEMP_TABLE);
                 exporter.suspendCursorTimer();
                 exporter.resumeCursorTimer();
