@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -107,24 +108,40 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         fileName.clear();
         rnd = null;
         record = null;
-        // Close the Rust streaming writer and its decoded buffers before the
-        // cursor that owns the borrowed query memory tracker is unregistered.
-        task.clear();
+
+        // Destroy task buffers and exporter resources before the cursor that owns
+        // the borrowed query memory tracker disappears. Keep cleanup best-effort:
+        // every cursor must close and unregister even when an earlier step fails.
+        Throwable cleanupFailure = Misc.clearBestEffort(null, task);
         if (serialParquetExporter != null) {
-            serialParquetExporter.clearExportResources();
+            try {
+                serialParquetExporter.clearExportResources();
+            } catch (Throwable th) {
+                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+            }
         }
-        cursor = Misc.free(cursor);
-        pageFrameCursor = Misc.free(pageFrameCursor);
-        materializer.clear();
-        materializerColumnData.clear();
+        final RecordCursor cursor = this.cursor;
+        this.cursor = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        final PageFrameCursor pageFrameCursor = this.pageFrameCursor;
+        this.pageFrameCursor = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, pageFrameCursor);
+        cleanupFailure = Misc.clearBestEffort(cleanupFailure, materializer);
+        cleanupFailure = Misc.clearBestEffort(cleanupFailure, materializerColumnData);
         firstParquetWriteCall = true;
+
+        final RecordCursorFactory recordCursorFactory = this.recordCursorFactory;
+        this.recordCursorFactory = null;
         if (recordCursorFactory != null) {
             if (queryCacheable) {
-                httpConnectionContext.getSelectCache().put(sqlText, recordCursorFactory);
+                try {
+                    httpConnectionContext.getSelectCache().put(sqlText, recordCursorFactory);
+                } catch (Throwable th) {
+                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+                }
             } else {
-                recordCursorFactory.close();
+                cleanupFailure = Misc.freeBestEffort(cleanupFailure, recordCursorFactory);
             }
-            recordCursorFactory = null;
         }
         queryCacheable = false;
         sqlText.clear();
@@ -139,8 +156,14 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         arrayState.clear();
         columnValueFullySent = true;
         metadata = null;
-        releaseExportEntry();
-        createParquetOp = Misc.free(createParquetOp);
+        try {
+            releaseExportEntry();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
+        final CreateTableOperation createParquetOp = this.createParquetOp;
+        this.createParquetOp = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, createParquetOp);
         parquetExportTableName = null;
         parquetExportMode = null;
         parquetFileOffset = 0;
@@ -149,25 +172,46 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         errorPosition = 0;
         serialExporterInit = false;
         writeCallback.of(null, null);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     @Override
     public void close() {
         // See clear(): task buffers must be destroyed while their borrowed
         // query memory tracker is still owned by an open cursor.
-        task = Misc.free(task);
+        final CopyExportRequestTask task = this.task;
+        this.task = null;
+        Throwable cleanupFailure = Misc.freeBestEffort(null, task);
+        final HTTPSerialParquetExporter serialParquetExporter = this.serialParquetExporter;
+        this.serialParquetExporter = null;
         if (serialParquetExporter != null) {
-            serialParquetExporter.clearExportResources();
-            serialParquetExporter = null;
+            try {
+                serialParquetExporter.clearExportResources();
+            } catch (Throwable th) {
+                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+            }
         }
-        cursor = Misc.free(cursor);
-        recordCursorFactory = Misc.free(recordCursorFactory);
-        pageFrameCursor = Misc.free(pageFrameCursor);
-        Misc.free(materializer);
-        Misc.free(materializerColumnData);
-        releaseExportEntry();
-        createParquetOp = Misc.free(createParquetOp);
+        final RecordCursor cursor = this.cursor;
+        this.cursor = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        final PageFrameCursor pageFrameCursor = this.pageFrameCursor;
+        this.pageFrameCursor = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, pageFrameCursor);
+        final RecordCursorFactory recordCursorFactory = this.recordCursorFactory;
+        this.recordCursorFactory = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, recordCursorFactory);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, materializer);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, materializerColumnData);
+        try {
+            releaseExportEntry();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
+        final CreateTableOperation createParquetOp = this.createParquetOp;
+        this.createParquetOp = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, createParquetOp);
         writeCallback.of(null, null);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public ExportModel getExportModel() {

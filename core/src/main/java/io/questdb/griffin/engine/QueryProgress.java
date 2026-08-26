@@ -296,6 +296,9 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        if (pageFrameCursor.isOpen) {
+            throw CairoException.nonCritical().put("cannot open record cursor while page-frame cursor is open");
+        }
         if (!cursor.isOpen) {
             this.executionContext = executionContext;
             CharSequence sqlText = queryTrace.queryText;
@@ -355,14 +358,9 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         if (!pageFrameCursorFactory.supportsPageFrameCursor()) {
             return null;
         }
-        // IMPORTANT: getPageFrameCursor() and getCursor() are mutually exclusive in QueryProgress because it is TOP RecordCursorFactory.
-        // For streaming parquet exports, the caller may directly call getPageFrameCursor()
-        // instead of getCursor() to obtain PageFrame-based access to the data.
-        // Since these two methods are never called together in the same query execution,
-        // we must ensure that query registration (registry.register) and logging (logStart)
-        // are performed here as well, not just in getCursor().
-        // This ensures proper query tracking, cancellation support, and resource leak detection
-        // for both cursor-based and PageFrame-based data access paths.
+        if (cursor.isOpen) {
+            throw CairoException.nonCritical().put("cannot open page-frame cursor while record cursor is open");
+        }
         if (!pageFrameCursor.isOpen) {
             this.executionContext = executionContext;
             CharSequence sqlText = queryTrace.queryText;

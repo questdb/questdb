@@ -69,11 +69,21 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
      */
     public void clearExportResources() {
         exportMode = null;
-        fullCursor = Misc.free(fullCursor);
-        streamingPfc = Misc.free(streamingPfc);
+        final RecordCursor fullCursor = this.fullCursor;
+        this.fullCursor = null;
+        final PageFrameCursor streamingPfc = this.streamingPfc;
+        this.streamingPfc = null;
         materializer = null;
         materializerColumnData = null;
-        clearMemoryTracker();
+
+        Throwable cleanupFailure = Misc.freeBestEffort(null, fullCursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingPfc);
+        try {
+            clearMemoryTracker();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public CopyExportRequestTask.Phase process() throws Exception {
@@ -188,15 +198,26 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
     }
 
     public void resumeCursorTimer() {
-        if (fullCursor != null) {
-            fullCursor.resumeTimer();
+        if (exportMode == null) {
+            return;
         }
-        if (streamingPfc != null) {
-            streamingPfc.resumeTimer();
-        }
-        PageFrameCursor taskPageFrameCursor = task != null ? task.getPageFrameCursor() : null;
-        if (taskPageFrameCursor != null && taskPageFrameCursor != streamingPfc) {
-            taskPageFrameCursor.resumeTimer();
+        switch (exportMode) {
+            case CURSOR_BASED -> {
+                if (fullCursor != null) {
+                    fullCursor.resumeTimer();
+                }
+            }
+            case PAGE_FRAME_BACKED -> {
+                if (streamingPfc != null) {
+                    streamingPfc.resumeTimer();
+                }
+            }
+            case DIRECT_PAGE_FRAME, TABLE_READER, TEMP_TABLE -> {
+                final PageFrameCursor taskPageFrameCursor = task != null ? task.getPageFrameCursor() : null;
+                if (taskPageFrameCursor != null) {
+                    taskPageFrameCursor.resumeTimer();
+                }
+            }
         }
     }
 
@@ -217,15 +238,26 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
     }
 
     public void suspendCursorTimer() {
-        if (fullCursor != null) {
-            fullCursor.suspendTimer();
+        if (exportMode == null) {
+            return;
         }
-        if (streamingPfc != null) {
-            streamingPfc.suspendTimer();
-        }
-        PageFrameCursor taskPageFrameCursor = task != null ? task.getPageFrameCursor() : null;
-        if (taskPageFrameCursor != null && taskPageFrameCursor != streamingPfc) {
-            taskPageFrameCursor.suspendTimer();
+        switch (exportMode) {
+            case CURSOR_BASED -> {
+                if (fullCursor != null) {
+                    fullCursor.suspendTimer();
+                }
+            }
+            case PAGE_FRAME_BACKED -> {
+                if (streamingPfc != null) {
+                    streamingPfc.suspendTimer();
+                }
+            }
+            case DIRECT_PAGE_FRAME, TABLE_READER, TEMP_TABLE -> {
+                final PageFrameCursor taskPageFrameCursor = task != null ? task.getPageFrameCursor() : null;
+                if (taskPageFrameCursor != null) {
+                    taskPageFrameCursor.suspendTimer();
+                }
+            }
         }
     }
 

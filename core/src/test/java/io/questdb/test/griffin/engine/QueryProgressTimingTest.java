@@ -12,8 +12,10 @@ import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.metrics.QueryTrace;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.std.Files;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.Assert;
 import org.junit.Before;
@@ -42,6 +44,123 @@ public class QueryProgressTimingTest extends AbstractCairoTest {
             Assert.assertTrue(queue.tryDequeue(trace));
             Assert.assertEquals(-1, trace.firstRowNanos);
             Assert.assertEquals(0, trace.waitNanos);
+        });
+    }
+
+    @Test
+    public void testPageFrameOpenRejectedWhileRecordCursorIsOpen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab_record_first AS (SELECT x FROM long_sequence(1))");
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final AtomicInteger registrationCount = new AtomicInteger();
+            final AtomicLong firstQueryId = new AtomicLong(-1);
+            final AtomicLong lastQueryId = new AtomicLong(-1);
+            registry.setListener((query, id, context) -> {
+                if ("tab_record_first".contentEquals(query)) {
+                    firstQueryId.compareAndSet(-1, id);
+                    lastQueryId.set(id);
+                    registrationCount.incrementAndGet();
+                }
+            });
+
+            boolean isRejected = false;
+            boolean isFirstQueryUnregistered = false;
+            int busyReadersBeforeSecondOpen = -1;
+            int busyReadersAfterSecondOpen = -1;
+            try (RecordCursorFactory factory = select("tab_record_first")) {
+                Assert.assertTrue(factory instanceof QueryProgress);
+                RecordCursor recordCursor = null;
+                PageFrameCursor pageFrameCursor = null;
+                try {
+                    recordCursor = factory.getCursor(sqlExecutionContext);
+                    Assert.assertSame(recordCursor, factory.getCursor(sqlExecutionContext));
+                    Assert.assertNotNull(registry.getEntry(firstQueryId.get()));
+                    busyReadersBeforeSecondOpen = engine.getBusyReaderCount();
+                    try {
+                        pageFrameCursor = factory.getPageFrameCursor(
+                                sqlExecutionContext,
+                                PartitionFrameCursorFactory.ORDER_ASC
+                        );
+                    } catch (CairoException expected) {
+                        isRejected = true;
+                    }
+                    busyReadersAfterSecondOpen = engine.getBusyReaderCount();
+                } finally {
+                    pageFrameCursor = Misc.free(pageFrameCursor);
+                    recordCursor = Misc.free(recordCursor);
+                    isFirstQueryUnregistered = registry.getEntry(firstQueryId.get()) == null;
+                    unregisterIfPresent(registry, firstQueryId.get());
+                    unregisterIfPresent(registry, lastQueryId.get());
+                }
+            } finally {
+                registry.setListener(null);
+            }
+
+            Assert.assertTrue("page-frame open must be rejected while record cursor is open", isRejected);
+            Assert.assertEquals(1, registrationCount.get());
+            Assert.assertEquals(busyReadersBeforeSecondOpen, busyReadersAfterSecondOpen);
+            Assert.assertTrue("record query must unregister on close", isFirstQueryUnregistered);
+            Assert.assertEquals(0, engine.getBusyReaderCount());
+        });
+    }
+
+    @Test
+    public void testRecordOpenRejectedWhilePageFrameCursorIsOpen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab_page_frame_first AS (SELECT x FROM long_sequence(1))");
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final AtomicInteger registrationCount = new AtomicInteger();
+            final AtomicLong firstQueryId = new AtomicLong(-1);
+            final AtomicLong lastQueryId = new AtomicLong(-1);
+            registry.setListener((query, id, context) -> {
+                if ("tab_page_frame_first".contentEquals(query)) {
+                    firstQueryId.compareAndSet(-1, id);
+                    lastQueryId.set(id);
+                    registrationCount.incrementAndGet();
+                }
+            });
+
+            boolean isRejected = false;
+            boolean isFirstQueryUnregistered = false;
+            int busyReadersBeforeSecondOpen = -1;
+            int busyReadersAfterSecondOpen = -1;
+            try (RecordCursorFactory factory = select("tab_page_frame_first")) {
+                Assert.assertTrue(factory instanceof QueryProgress);
+                RecordCursor recordCursor = null;
+                PageFrameCursor pageFrameCursor = null;
+                try {
+                    pageFrameCursor = factory.getPageFrameCursor(
+                            sqlExecutionContext,
+                            PartitionFrameCursorFactory.ORDER_ASC
+                    );
+                    Assert.assertSame(
+                            pageFrameCursor,
+                            factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)
+                    );
+                    Assert.assertNotNull(registry.getEntry(firstQueryId.get()));
+                    busyReadersBeforeSecondOpen = engine.getBusyReaderCount();
+                    try {
+                        recordCursor = factory.getCursor(sqlExecutionContext);
+                    } catch (CairoException expected) {
+                        isRejected = true;
+                    }
+                    busyReadersAfterSecondOpen = engine.getBusyReaderCount();
+                } finally {
+                    recordCursor = Misc.free(recordCursor);
+                    pageFrameCursor = Misc.free(pageFrameCursor);
+                    isFirstQueryUnregistered = registry.getEntry(firstQueryId.get()) == null;
+                    unregisterIfPresent(registry, firstQueryId.get());
+                    unregisterIfPresent(registry, lastQueryId.get());
+                }
+            } finally {
+                registry.setListener(null);
+            }
+
+            Assert.assertTrue("record open must be rejected while page-frame cursor is open", isRejected);
+            Assert.assertEquals(1, registrationCount.get());
+            Assert.assertEquals(busyReadersBeforeSecondOpen, busyReadersAfterSecondOpen);
+            Assert.assertTrue("page-frame query must unregister on close", isFirstQueryUnregistered);
+            Assert.assertEquals(0, engine.getBusyReaderCount());
         });
     }
 
@@ -197,6 +316,12 @@ public class QueryProgressTimingTest extends AbstractCairoTest {
     private static void drain(ConcurrentQueue<QueryTrace> queue) {
         final QueryTrace trace = new QueryTrace();
         while (queue.tryDequeue(trace)) {
+        }
+    }
+
+    private void unregisterIfPresent(QueryRegistry registry, long queryId) {
+        if (queryId >= 0 && registry.getEntry(queryId) != null) {
+            registry.unregister(queryId, sqlExecutionContext);
         }
     }
 }
