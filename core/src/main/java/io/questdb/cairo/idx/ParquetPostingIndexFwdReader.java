@@ -268,6 +268,24 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             if (hasNext) {
                 return true;
             }
+            // Fast path, and it is the overwhelmingly common one: another row
+            // of a group already decoded. The loop below re-establishes the
+            // group on every call -- entering the while, testing decodedGroup,
+            // testing the null prefix -- though all three only change at a
+            // group boundary. A scan profile put this method at 23%, so what it
+            // repeats per row is most of what a scan costs.
+            if (decodedGroup && nullPos >= nullCount && rowInGroup < groupRows) {
+                final long i = rowInGroup++;
+                final long rowId = Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
+                if (windowNarrowed || (rowId >= minValue && rowId <= maxValue)) {
+                    setEmittedRow(i);
+                    next = rowId;
+                    hasNext = true;
+                    return true;
+                }
+                // Rejected by the window. rowInGroup has moved on, so the loop
+                // below simply resumes from it.
+            }
             if (nullPos < nullCount) {
                 // The implicit-null prefix, which comes FIRST in row order and
                 // is not in the index at all: rows below columnTop carry no
