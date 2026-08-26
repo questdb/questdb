@@ -277,14 +277,13 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         }
 
         long batchSize = task.getRowGroupSize() > 0 ? task.getRowGroupSize() : 100_000;
-        drainHybridFrames(
+        final long totalRows = drainHybridFrames(
                 exporter, materializer, materializerColumnData,
                 isPageFrameBacked ? streamingPfc : null,
                 isPageFrameBacked ? null : fullCursor,
                 batchSize, CopyExportRequestTask.Phase.STREAM_SENDING_DATA
         );
 
-        long totalRows = exporter.getTotalRows();
         copyExportContext.updateStatus(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
         LOG.info().$("hybrid stream export completed [id=").$hexPadded(task.getCopyID())
                 .$(", totalRows=").$(totalRows)

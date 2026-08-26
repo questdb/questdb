@@ -27,6 +27,8 @@ package io.questdb.test.metrics;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.InvalidColumnException;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.mp.WorkerPool;
@@ -102,6 +104,47 @@ public class QueryTracingTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .noRandomAccess()
                         .returns("column\nwait_micros\n");
+            }
+        });
+    }
+
+    @Test
+    public void testMigratedReorderedTableWritesTraceByColumnName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE '_query_trace' (
+                        principal VARCHAR,
+                        execution_micros LONG,
+                        query_text VARCHAR,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL
+                    """);
+            final String query = "SELECT 42 AS answer";
+            try (QueryTracingJob job = new QueryTracingJob(engine)) {
+                try (
+                        RecordCursorFactory factory = select(query);
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(42, cursor.getRecord().getInt(0));
+                    Assert.assertFalse(cursor.hasNext());
+                }
+                job.run();
+                assertQuery("""
+                        SELECT
+                            query_text,
+                            principal,
+                            execution_micros >= 0 AS wall_nonnegative,
+                            wait_micros,
+                            first_row_micros IS NOT NULL AND first_row_micros >= 0 AS ttfr_nonnegative
+                        FROM _query_trace
+                        WHERE query_text = 'SELECT 42 AS answer'
+                        """)
+                        .noLeakCheck()
+                        .returns("""
+                                query_text\tprincipal\twall_nonnegative\twait_micros\tttfr_nonnegative
+                                SELECT 42 AS answer\tadmin\ttrue\t0\ttrue
+                                """);
             }
         });
     }

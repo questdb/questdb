@@ -12,6 +12,7 @@ import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.metrics.QueryTrace;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.std.Files;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -26,6 +27,64 @@ public class QueryProgressTimingTest extends AbstractCairoTest {
     @Before
     public void setup() {
         node1.getConfigurationOverrides().setProperty(PropertyKey.QUERY_TRACING_ENABLED, true);
+    }
+
+    @Test
+    public void testCachedFactoryReopenResetsTimingState() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab_reopen AS (SELECT x FROM long_sequence(2))");
+            final ConcurrentQueue<QueryTrace> queue = engine.getMessageBus().getQueryTraceQueue();
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final LongList queryIds = new LongList();
+            drain(queue);
+            registry.setListener((query, id, context) -> {
+                if ("tab_reopen".contentEquals(query)) {
+                    queryIds.add(id);
+                }
+            });
+            try (RecordCursorFactory factory = select("tab_reopen")) {
+                Assert.assertTrue(factory instanceof QueryProgress);
+
+                currentMicros = 1_000;
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    currentMicros = 1_200;
+                    Assert.assertTrue(cursor.hasNext());
+                    currentMicros = 1_300;
+                    cursor.suspendTimer();
+                    currentMicros = 1_600;
+                    cursor.resumeTimer();
+                    while (cursor.hasNext()) {
+                    }
+                    currentMicros = 2_000;
+                }
+                Assert.assertEquals(1, queryIds.size());
+                Assert.assertNull(registry.getEntry(queryIds.getQuick(0)));
+
+                currentMicros = 3_000;
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    currentMicros = 3_100;
+                    Assert.assertTrue(cursor.hasNext());
+                    while (cursor.hasNext()) {
+                    }
+                    currentMicros = 3_500;
+                }
+                Assert.assertEquals(2, queryIds.size());
+                Assert.assertNull(registry.getEntry(queryIds.getQuick(1)));
+            } finally {
+                registry.setListener(null);
+            }
+
+            final QueryTrace firstTrace = new QueryTrace();
+            Assert.assertTrue(queue.tryDequeue(firstTrace));
+            Assert.assertEquals(300_000L, firstTrace.waitNanos);
+            Assert.assertEquals(200_000L, firstTrace.firstRowNanos);
+
+            final QueryTrace secondTrace = new QueryTrace();
+            Assert.assertTrue(queue.tryDequeue(secondTrace));
+            Assert.assertEquals(0, secondTrace.waitNanos);
+            Assert.assertEquals(100_000L, secondTrace.firstRowNanos);
+            Assert.assertFalse(queue.tryDequeue(new QueryTrace()));
+        });
     }
 
     @Test

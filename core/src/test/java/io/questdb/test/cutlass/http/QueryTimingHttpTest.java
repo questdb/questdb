@@ -78,6 +78,7 @@ public class QueryTimingHttpTest extends AbstractBootstrapTest {
                                 + "AND wait_micros > 0 "
                                 + "AND wait_micros <= execution_micros "
                                 + "AND first_row_micros IS NOT NULL "
+                                + "AND first_row_micros >= 0 "
                                 + "AND first_row_micros <= execution_micros",
                         "count\n1\n"
                 );
