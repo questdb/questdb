@@ -1327,27 +1327,49 @@ public class CompositeFuzzRunner {
                     //
                     // The other three stay at 0.0, and NOT because they are unsupported -- all three
                     // are supported for composite now. Each has its own remaining blocker:
-                    //   REMOVE  -- the generator picks a column uniformly, so it eventually picks a
-                    //              DIMENSION column. Enrolling it needs those drops filtered out (the
-                    //              same way dropUnsupportedAddColumnOps filters), because they cannot
-                    //              be applied to both twins alike.
-                    //              READ THIS BEFORE ENROLLING IT: the refusal
-                    //              (refuseDroppingCompositePinnedColumn, "cannot drop column 'x'
-                    //              referenced by a composite partition dimension") lives in
-                    //              SqlCompilerImpl -- i.e. on the SQL path ONLY. This fuzz drops via
-                    //              TableWriterAPI#apply, which does NOT pass through it. So the
-                    //              expectation is NOT "composite refuses, plain succeeds"; it is
-                    //              UNKNOWN and worth finding out, because a writer-API drop of a
-                    //              dimension column may well be accepted and leave the spec pointing
-                    //              at a column that no longer exists. Establish that first, as its own
-                    //              question -- do not assume the SQL gate protects this path.
-                    //   RENAME  -- DERIVED, not measured: same shape as REMOVE, and the same SQL-path
-                    //              caveat applies. Verify before relying on it.
+                    //   REMOVE/RENAME -- ATTEMPTED AND REVERTED, 2026-08-26. Enrolling both at 0.05,
+                    //              filtering pinned-column ops the way the adds are filtered, failed
+                    //              11 of 17 tests on TWO blockers. Recorded so the next attempt starts
+                    //              here instead of repeating it:
+                    //
+                    //              (a) The comparison SHAPES name columns literally -- "WHERE exch =",
+                    //                  firstNonNullExch(), px/qty in several probes -- so a dropped or
+                    //                  renamed column yields "Invalid column: qty" (100 occurrences),
+                    //                  not a divergence. Filtering PINNED columns does not fix this:
+                    //                  axes.dimClauses is a shuffled PREFIX of DIM_POOL, so at
+                    //                  dimCount=1 the dimensions may reference only sym, leaving exch
+                    //                  unpinned and legitimately droppable while every
+                    //                  dimension-filtered shape still names it. Enrolling these means
+                    //                  making the shapes themselves schema-adaptive AND skipping any
+                    //                  shape whose subject column has vanished -- which then collides
+                    //                  with the comparedShapeCount anti-vacuity floor.
+                    //
+                    //              (b) FILTERING OPS BREAKS THE GENERATOR'S SCHEMA MODEL. This is the
+                    //                  deeper one. generateSet plans against its own idea of the
+                    //                  evolving schema: it emits add(new_col_0) and later
+                    //                  drop(new_col_0). dropUnsupportedAddColumnOps removes the ADD,
+                    //                  and the orphaned DROP then fails with "cannot remove, column
+                    //                  does not exist [column=new_col_0]". Filtering composes only
+                    //                  while no enabled operation REFERENCES a previously added
+                    //                  column.
+                    //
+                    //              (b) is also the standing precondition for the ADD COLUMN filter
+                    //              above: that filter is sound today ONLY because REMOVE, RENAME and
+                    //              COLUMN TYPE CHANGE are all 0.0, so nothing ever refers back to a
+                    //              column whose add was filtered away. RAISING ANY OF THE THREE MEANS
+                    //              FIXING THIS FIRST -- either teach the generator not to emit the
+                    //              unsupported adds (upstream, the clean fix), or transitively drop
+                    //              every later op referencing a filtered column.
+                    //
+                    //              Not a blocker, and established while checking: the dimension-column
+                    //              refusal holds on the WRITER path too, raised by AlterOperation
+                    //              itself rather than only by the compiler pre-check
+                    //              (CompositeDimensionColumnDropTest).
                     //   TYPE    -- MEASURED: "inconvertible types: DOUBLE -> TIMESTAMP_NS". A
                     //              FuzzTransactionGenerator-level literal problem, not a composite one.
                     0.05,  // probabilityOfAddingNewColumn      (ENROLLED)
-                    0.0,   // probabilityOfRemovingColumn       (supported; twins diverge on pinned cols)
-                    0.0,   // probabilityOfRenamingColumn       (supported; twins diverge on pinned cols)
+                    0.0,   // probabilityOfRemovingColumn       (supported; blocked, see below)
+                    0.0,   // probabilityOfRenamingColumn       (supported; blocked, see below)
                     0.0,   // probabilityOfColumnTypeChange     (supported; generator literal problem)
                     1.0,   // probabilityOfDataInsert
                     0.1,   // probabilityOfSameTimestamp
@@ -1426,6 +1448,8 @@ public class CompositeFuzzRunner {
         }
         return transactions;
     }
+
+
 
     /**
      * How many ADD COLUMN operations {@link #dropUnsupportedAddColumnOps} removed from this run.
