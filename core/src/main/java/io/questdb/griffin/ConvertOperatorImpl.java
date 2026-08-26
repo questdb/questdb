@@ -309,23 +309,28 @@ public class ConvertOperatorImpl implements Closeable {
                         // that if the parquet is later converted to native (e.g. by a chained
                         // ALTER TYPE pre-pass), the native reader finds the data at the correct
                         // row offsets.
-                        // LATENT for composite, deliberately left cell-blind. Every lookup in this
-                        // branch resolves BY TIMESTAMP, i.e. cellKey 0, and the upsertColumnTop below
-                        // writes that value back -- the exact shape that caused silent data loss in
-                        // DropIndexOperator (see CompositeDropIndexColumnTopTest). It is unreachable
-                        // today because a composite table cannot hold a PARQUET partition at all:
-                        // FORMAT PARQUET, native-to-parquet switching and pending parquet-to-native
-                        // conversions are each refused for composite. Converting this branch now would
-                        // be untestable. WHOEVER LIFTS THE PARQUET GATES MUST FIX THIS FIRST -- the
-                        // native branch just below is already cell-aware, so this one reads as done.
+                        // Per-CELL, like the native branch below. Every lookup here used to resolve
+                        // BY TIMESTAMP -- i.e. cellKey 0 -- while the upsertColumnTop wrote the result
+                        // into THIS cell's record, so on a composite table each cell inherited cell 0's
+                        // column top. Same read-here/write-there shape that caused silent data loss in
+                        // DropIndexOperator (see CompositeDropIndexColumnTopTest).
+                        //
+                        // This was previously commented as UNREACHABLE, on the grounds that a composite
+                        // table could not hold a parquet partition. That was wrong: CONVERT PARTITION
+                        // TO PARQUET works per cell, so the branch is reachable through ordinary SQL --
+                        // convert a day, then ALTER COLUMN TYPE. MEASURED before this fix, on cells with
+                        // uneven row counts at ADD COLUMN time (BTC top 3, ETH top 1): the ETH cell's
+                        // row vanished from the result entirely while the plain twin kept it. Covered by
+                        // CompositeAlterTypeOverParquetTest.
+                        final int parquetCellKey = tableWriter.getPartitionCellKey(partitionIndex);
                         final long parquetPts = tableWriter.getPartitionTimestamp(partitionIndex);
-                        final long parquetColTop = columnVersionWriter.getColumnTop(parquetPts, existingColIndex);
-                        if (parquetColTop != tableWriter.getColumnTop(parquetPts, columnIndex, -1)) {
+                        final long parquetColTop = columnVersionWriter.getColumnTop(parquetPts, parquetCellKey, existingColIndex);
+                        if (parquetColTop != tableWriter.getColumnTop(parquetPts, parquetCellKey, columnIndex, -1)) {
                             long partTs = tableWriter.getPartitionBy() != PartitionBy.NONE
                                     ? parquetPts
                                     : TxReader.DEFAULT_PARTITION_TIMESTAMP;
                             columnVersionWriter.upsertColumnTop(
-                                    partTs, columnIndex,
+                                    partTs, parquetCellKey, columnIndex,
                                     parquetColTop > -1 ? parquetColTop : tableWriter.getPartitionSize(partitionIndex)
                             );
                         }
