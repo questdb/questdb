@@ -309,6 +309,15 @@ public class ConvertOperatorImpl implements Closeable {
                         // that if the parquet is later converted to native (e.g. by a chained
                         // ALTER TYPE pre-pass), the native reader finds the data at the correct
                         // row offsets.
+                        // LATENT for composite, deliberately left cell-blind. Every lookup in this
+                        // branch resolves BY TIMESTAMP, i.e. cellKey 0, and the upsertColumnTop below
+                        // writes that value back -- the exact shape that caused silent data loss in
+                        // DropIndexOperator (see CompositeDropIndexColumnTopTest). It is unreachable
+                        // today because a composite table cannot hold a PARQUET partition at all:
+                        // FORMAT PARQUET, native-to-parquet switching and pending parquet-to-native
+                        // conversions are each refused for composite. Converting this branch now would
+                        // be untestable. WHOEVER LIFTS THE PARQUET GATES MUST FIX THIS FIRST -- the
+                        // native branch just below is already cell-aware, so this one reads as done.
                         final long parquetPts = tableWriter.getPartitionTimestamp(partitionIndex);
                         final long parquetColTop = columnVersionWriter.getColumnTop(parquetPts, existingColIndex);
                         if (parquetColTop != tableWriter.getColumnTop(parquetPts, columnIndex, -1)) {

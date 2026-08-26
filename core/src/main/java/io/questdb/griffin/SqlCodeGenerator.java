@@ -11250,6 +11250,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * beats the alternative this replaces, which was refusing the index entirely and falling back to a
      * full merged scan over every row. For an unselective predicate the sort is real overhead.
      * <p>
+     * <b>Consequence: cursor SIZE becomes undetermined.</b> A sorted cursor reports -1 until fully
+     * consumed, where the unwrapped index scan could report a concrete size up front. Legal, and
+     * transparent to results, but it does forgo size-based short-cuts for these queries.
+     * <p>
      * <b>Known limit: EQUAL timestamps.</b> The sort key is the designated timestamp alone, so rows
      * sharing a timestamp across different cells come back in whatever relative order the sort leaves
      * them -- which need not match the tie-break

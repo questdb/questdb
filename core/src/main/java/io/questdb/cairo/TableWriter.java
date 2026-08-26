@@ -17432,6 +17432,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 -1L,
                 partitionTimestamp,
                 partitionBy,
+                // ATTACH PARTITION is refused outright for composite tables, so this rebuild is never
+                // reached with one and cellKey 0 is exact rather than a default.
+                0,
                 partitionSize
         );
     }

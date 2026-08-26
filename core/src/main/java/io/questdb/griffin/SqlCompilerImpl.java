@@ -4193,30 +4193,34 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         checkViewModification(tableToken);
 
-        // Plan 4a DDL gate sweep: REINDEX TABLE is not yet cell-aware for a real composite table.
-        // Unlike ALTER TABLE ... ADD INDEX, this command builds its own IndexBuilder directly against
-        // the table's directory (just below) without ever opening a TableWriter, so it hits the same
-        // cell-blind bare-path IndexBuilder#doReindex mechanism as ADD INDEX/UPDATE's index rebuild
-        // (see TableWriter#addIndex's own gate comment) with no TableWriter-level dormancy signal
-        // available to check here -- only the coarser dimCount > 0 (a quick TableReader is opened
-        // purely for this check, mirroring compileVacuum's own idiom just above in this file).
-        // Gated unconditionally for any composite table (including a still-dormant one, conservatively
-        // -- no cheap way to check routedness without a writer here). Plain tables are unaffected.
+        // Composite: IndexBuilder holds neither a reader nor a writer, so it cannot reach the
+        // CellRegistry that maps a cellKey to its on-disk directory segment. Resolve the whole mapping
+        // here, from the reader we have to open anyway, and hand it over before the walk starts. Null
+        // for a plain table, which keeps the bare day path unchanged.
+        //
+        // This replaces a refusal. WHAT THE DEFECT WAS, measured 2026-08-26 with the gate lifted and
+        // the builder still cell-blind, using the only test that can tell a rebuild from a no-op --
+        // delete one CELL's index files, REINDEX, and see whether they come back:
+        //     deleted=true; restored=false     -- and REINDEX reported SUCCESS
+        // Row counts and per-symbol counts stayed correct throughout, which is exactly why they cannot
+        // be the assertion: the DATA is fine, it is the INDEX that was not rebuilt. doReindex built a
+        // bare <day> path, failed its own ff.exists guard and logged "partition does not exist".
+        ObjList<CharSequence> cellSegments = null;
         try (TableReader rdr = executionContext.getReader(tableToken)) {
-            // MEASURED 2026-08-26 with this gate lifted, using the only test that can tell a rebuild
-            // from a no-op: delete one CELL's index files, REINDEX, and see whether they come back.
-            //     deleted=true; restored=false     -- and REINDEX reported success
-            // Row counts and per-symbol counts stayed correct throughout, which is exactly why they
-            // cannot be the assertion: the DATA is fine, it is the INDEX that is not rebuilt. This is
-            // the same silent no-op that made ADD INDEX "pass" while isColumnIndexed stayed false.
             if (rdr.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
-                throw SqlException.$(lexer.lastTokenPosition(), "composite partitioning does not yet support REINDEX TABLE [table=")
-                        .put(tableToken.getTableName()).put(']');
+                final int cellCount = rdr.getCompositeDictionaries().cellRegistry().size();
+                cellSegments = new ObjList<>(cellCount);
+                for (int ck = 0; ck < cellCount; ck++) {
+                    final StringSink cellSink = new StringSink();
+                    rdr.renderCellSegment(cellSink, ck);
+                    cellSegments.add(cellSink.toString());
+                }
             }
         }
 
         try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
             indexBuilder.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()));
+            indexBuilder.withCellSegments(cellSegments);
 
             tok = SqlUtil.fetchNext(lexer);
             CharSequence columnName = null;

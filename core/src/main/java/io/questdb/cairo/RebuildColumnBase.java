@@ -141,6 +141,10 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 partitionNameTxn,
                 partitionSize,
                 partitionTimestamp,
+                // UPDATE is refused for composite tables PERMANENTLY (it is load-bearing for
+                // column-file purge correctness), so this post-update rebuild is never reached with a
+                // composite table and cellKey 0 is exact rather than a default.
+                0,
                 tableWriter.getMetadata().getTimestampType(),
                 tableWriter.getPartitionBy(),
                 indexValueBlockCapacity,
@@ -170,6 +174,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             long partitionNameTxn,
             long partitionTimestamp,
             int partitionBy,
+            int cellKey,
             long partitionSize
     ) {
         doReindex(
@@ -180,6 +185,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 partitionNameTxn,
                 partitionSize,
                 partitionTimestamp,
+                cellKey,
                 metadata.getTimestampType(),
                 partitionBy,
                 metadata.getIndexValueBlockCapacity(columnIndex),
@@ -283,6 +289,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                             partitionBy,
                             -1L,
                             0L,
+                            0, // a non-partitioned table has no cells
                             txReader.getTransientRowCount()
                     );
                 }
@@ -300,6 +307,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             int partitionBy,
             long partitionNameTxn,
             long partitionTimestamp,
+            int cellKey,
             long partitionSize
     ) {
         boolean isIndexed = false;
@@ -316,6 +324,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                             partitionNameTxn,
                             partitionTimestamp,
                             partitionBy,
+                            cellKey,
                             partitionSize
                     );
                 }
@@ -333,6 +342,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                         partitionNameTxn,
                         partitionTimestamp,
                         partitionBy,
+                        cellKey,
                         partitionSize
                 );
             } else {
@@ -351,7 +361,17 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             int partitionBy,
             long partitionTimestamp
     ) {
-        final long partitionSize = partitionIndex == txReader.getPartitionCount() - 1
+        // A composite attached-partition entry IS a cell, so partitionIndex resolves the cell exactly.
+        final int cellKey = txReader.getPartitionCellKey(partitionIndex);
+
+        // The transientRowCount shortcut is ACTIVE-TAIL reasoning: it assumes the last attached entry
+        // is the partition currently being appended to. On a routed composite table that is not true --
+        // the last entry is merely the highest (timestamp, cellKey) pair, and the writer appends to
+        // whichever cell a row routes to -- so transientRowCount would be another cell's row count.
+        // _txn carries an accurate size for every composite cell, so use it directly. Plain tables keep
+        // the shortcut, unchanged.
+        final boolean composite = txReader.getLongsPerAttachedPartition() > TableUtils.LONGS_PER_TX_ATTACHED_PARTITION;
+        final long partitionSize = !composite && partitionIndex == txReader.getPartitionCount() - 1
                 ? txReader.getTransientRowCount()
                 : txReader.getPartitionSize(partitionIndex);
 
@@ -363,6 +383,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 partitionBy,
                 txReader.getPartitionNameTxn(partitionIndex),
                 partitionTimestamp,
+                cellKey,
                 partitionSize
         );
     }
@@ -388,6 +409,11 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             long partitionNameTxn,
             long partitionSize,
             long partitionTimestamp,
+            // Composite: identifies WHICH CELL of partitionTimestamp this call is
+            // for. A composite attached-partition entry IS a cell, so the walk
+            // above already visits every cell -- it just had no way to say so.
+            // 0 for a plain table, i.e. unchanged behaviour.
+            int cellKey,
             int timestampType,
             int partitionBy,
             int indexValueBlockCapacity,

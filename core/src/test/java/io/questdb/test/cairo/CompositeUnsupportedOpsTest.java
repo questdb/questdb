@@ -365,24 +365,32 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * REINDEX TABLE was refused for composite until 2026-08-26 and now runs. This class covers the
+     * STATEMENT reaching the machinery without error; whether it genuinely rebuilds a cell's index --
+     * the assertion that separates a real rebuild from a silent no-op -- lives in
+     * {@code CompositeReindexTest}, which deletes one cell's index files and checks they come back.
+     */
     @Test
-    public void testReindexTableGated() throws Exception {
+    public void testReindexTableRuns() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exch symbol index, px double) timestamp(ts) partition by day, exch wal");
             execute("insert into c values " +
                     "('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','B',1.5)");
             drainWalQueue();
             assertWalTableNotSuspended("c");
-            // REINDEX TABLE is validated synchronously at the SQL layer (it never opens a TableWriter),
-            // so this always throws directly from execute(), never via WAL suspension. The gate fires
-            // before the mandatory LOCK EXCLUSIVE clause is even checked, but the full, well-formed
-            // statement is used here anyway for rigor.
-            try {
-                execute("reindex table c lock exclusive");
-                Assert.fail("expected REINDEX TABLE to be rejected on a composite table");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "composite partitioning does not yet support REINDEX TABLE");
-            }
+            // REINDEX takes an exclusive lock, so the readers and writers this test's own inserts left
+            // open must be released first -- otherwise it fails with "cannot lock table", which is a
+            // test-setup error and not a statement of whether REINDEX is supported.
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            execute("reindex table c lock exclusive");
+            assertWalTableNotSuspended("c");
+            assertQuery("select ts, exch, px from c order by ts")
+                    .noLeakCheck().timestamp("ts").expectSize()
+                    .returns("ts\texch\tpx\n"
+                            + "2020-01-01T00:00:00.000000Z\tA\t1.0\n"
+                            + "2020-01-01T12:00:00.000000Z\tB\t1.5\n");
         });
     }
 
