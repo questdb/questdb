@@ -1263,42 +1263,47 @@ public class CompositeFuzzRunner {
  * check the map is COMPLETE, never by the generator. Enrolment is these probabilities and nothing
  * else.
  * <p>
- * DROP PARTITION: NO LONGER UNATTRIBUTED -- REPRODUCIBLE ON DEMAND as of 2026-08-26.
+ * DROP PARTITION: still an OPEN BUG. Three leads eliminated 2026-08-26, listed so they are not
+ * chased again.
  * <p>
- * <b>Recipe:</b> set {@code o3 = true} (now the default) and {@code probabilityOfDropPartition =
- * 0.05}. It then fires in most suites at once -- 70 occurrences across the sweep, unstable and crash
- * tests in a single run. Six hand-written shapes had failed to reproduce it (listed below); the
- * missing ingredient was O3, which was the top untried lead and is now the harness default.
+ * <b>Correction first.</b> An earlier version of this javadoc claimed O3 was "the missing ingredient"
+ * that made this reproducible. That was WRONG, and it was wrong in a way worth naming: the fuzz had
+ * ALWAYS reproduced it whenever probabilityOfDropPartition was raised -- the previous note said so
+ * itself. What was never reproducible was a hand-written MINIMAL shape. O3 only changes the rate
+ * (12 of 24 seeds with it, 9 of 24 without). Measured both ways.
  * <p>
- * <b>MEASURED evidence.</b> A read of the composite twin fails with "Partition
- * '2023-01-01/SYM/SYM16' does not exist in table ... directory", and the reader logs the disk-level
- * cause immediately before it:
+ * <b>Recipe:</b> {@code probabilityOfDropPartition = 0.05}. 50 occurrences across the 24-seed sweep.
+ * <p>
+ * <b>MEASURED evidence.</b> A read of the composite twin fails, with the disk-level cause logged
+ * immediately before it:
  * <pre>
  *   open partition failed, partition does not exist on the disk
  *     [path=.../unstable4_composite~13/2023-01-01/SYM/SYM16.7]
  * </pre>
- * So _txn points at a CELL at nameTxn .7 that is not on disk. This persists AFTER drainWalQueue, so
- * it is a settled inconsistency, not a read racing a writer. The plain twin is unaffected.
+ * _txn points at a CELL at nameTxn .7 that is not on disk. It persists AFTER drainWalQueue, so it is
+ * a settled inconsistency, not a read racing a writer. The plain twin is unaffected.
  * <p>
- * <b>A LEAD THAT WAS CHASED AND RULED OUT -- do not chase it again.</b> The same runs logged partition
- * purge failures ("could not purge partition version ... errno=2", ENOENT) for cell paths, 14 of 742
- * of which carried an EMPTY path component ({@code /2023-01-02//SKEWLATE}). That WAS a real bug -- an
- * empty-string dimension value rendered no path segment at all, fixed by
- * {@code COMPOSITE_EMPTY_DIMENSION_TOKEN} ({@code %EMPTY}) -- but it is NOT this one. Measured
- * directly, same probe, before and after that fix:
- * <pre>
- *   empty-component purge paths   14  ->  0     (the fix works, on this very workload)
- *   "does not exist in table"     70  ->  70    (completely unchanged)
- * </pre>
- * Two independent defects that happened to appear in the same logs. This is exactly why the link was
- * recorded as unverified rather than reported as one finding: it turned out to be false.
+ * <b>ELIMINATED -- do not re-chase:</b>
+ * <ol>
+ *   <li><b>Empty-component cell paths.</b> The same runs logged ENOENT purge failures, 14 of 742 with
+ *       an empty path component. That was a genuine separate bug (an empty-string dimension value
+ *       rendered no segment; fixed by {@code %EMPTY}), and fixing it moved those 14 to 0 while the
+ *       reader failures stayed at exactly 70. Independent defects sharing a log.</li>
+ *   <li><b>Partition splitting.</b> Disabling it ({@code CAIRO_O3_PARTITION_SPLIT_MIN_SIZE} =
+ *       Integer.MAX_VALUE) leaves the failure intact: 50 occurrences, 12 of 24 seeds.</li>
+ *   <li><b>O3 being necessary.</b> See the correction above -- it is not.</li>
+ * </ol>
+ * Six hand-written shapes are also clean and must not be retried: (1) a WHERE-form drop of a two-cell
+ * day; (2) drop / re-create both cells / drop again; (3) re-insert into the dropped day afterwards;
+ * (4) this runner's own mechanism -- one TableWriterAPI, an AlterOperation applied via
+ * w.apply(op, false) mid-stream, commit per transaction, drain only every 8, 24 transactions across
+ * 3 days; (5) the same with NULL dimension values; (6) the time-skewed-cell lead.
  * <p>
- * Do NOT re-try these six shapes; all are clean: (1) a WHERE-form drop of a two-cell day; (2) drop /
- * re-create both cells / drop again; (3) re-insert into the dropped day afterwards; (4) this runner's
- * own mechanism -- one TableWriterAPI, an AlterOperation applied via w.apply(op, false) mid-stream,
- * commit per transaction, drain only every 8, 24 transactions across 3 days; (5) the same with NULL
- * dimension values; (6) the time-skewed-cell lead. Left at 0.0 only so the suite stays green while
- * the bug is open -- flip it to reproduce.
+ * Note the drop path itself IS cell-aware ({@code dropPartitionByExactTimestamp} resolves
+ * {@code getPartitionCellKey(index)} and calls {@code removeAttachedPartitions(timestamp, cellKey)}),
+ * so a naive "drop is cellKey-0-only" theory is already excluded by inspection.
+ * <p>
+ * Left at 0.0 so the suite stays green while the bug is open -- flip it to reproduce.
  * <p>
  * SCHEMA-CHANGING DDL is blocked for a separate, plainer reason: this runner's SQL is fixed-shape
  * (5-column INSERTs, fixed literals), so a generated ADD/DROP COLUMN gives "row value count does not
@@ -1408,7 +1413,7 @@ public class CompositeFuzzRunner {
                     0.0,   // probabilityOfColumnTypeChange     (supported; generator literal problem)
                     1.0,   // probabilityOfDataInsert
                     0.1,   // probabilityOfSameTimestamp
-                    0.0,   // probabilityOfDropPartition  (REPRODUCIBLE bug, see javadoc)
+                    0.0,   // probabilityOfDropPartition  (open bug, see javadoc)
                     0.0,   // probabilityOfConvertPartitionToParquet  (SP3: supported, per cell)
                     0.0,   // probabilityOfConvertPartitionToNative   (SP3: supported, per cell)
                     0.0,   // probabilityOfTruncate
