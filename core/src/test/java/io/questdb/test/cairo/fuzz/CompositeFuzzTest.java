@@ -138,32 +138,45 @@ public class CompositeFuzzTest extends AbstractCairoTest {
      * something asserts that columns really did arrive. So both sides are asserted -- the filter fired
      * at least once, AND at least one add survived it and reached the table.
      * <p>
-     * The seed is fixed, and is one measured to generate both kinds. Filtering happens after
-     * generation and consumes no {@code Rnd}, so a given seed's generated op stream is unchanged by
-     * the filter's existence: this is reproducible, not probabilistic.
+     * Deliberately NOT pinned to one seed. It was, and that pin broke the moment {@code o3} was
+     * flipped on: the flag changes the {@code Rnd} draw sequence, so the seed measured to generate a
+     * var-size and a POSTING add stopped generating them and this test failed for a reason that had
+     * nothing to do with what it exists to check. Sweeping a few seeds and requiring the property to
+     * hold ACROSS them keeps the assertion meaningful without re-pinning something that will drift
+     * again on the next probability change.
+     * <p>
+     * Filtering happens after generation and consumes no {@code Rnd}, so a given seed's generated op
+     * stream is unchanged by the filter's existence -- this is reproducible for a given config, not
+     * probabilistic.
      */
     @Test
     public void testAddColumnEnrolmentIsNeitherFilteredAwayNorUnfiltered() throws Exception {
         assertMemoryLeak(() -> {
-            CompositeFuzzRunner runner = CompositeFuzzRunner.of(engine, new Rnd(1333L, 1319L));
-            runner.createTables("addcol");
-            final long columnsBefore = runner.compositeColumnCount();
-            runner.applyGeneratedTransactions(600, 30);
+            int totalDropped = 0;
+            int seedsThatGainedColumns = 0;
+            for (int i = 0; i < 8; i++) {
+                CompositeFuzzRunner runner = CompositeFuzzRunner.of(engine, new Rnd(1333L + i * 53L, 1319L + i * 71L));
+                runner.createTables("addcol" + i);
+                final long columnsBefore = runner.compositeColumnCount();
+                runner.applyGeneratedTransactions(600, 30);
+                totalDropped += runner.droppedAddColumnOps();
+                if (runner.compositeColumnCount() > columnsBefore) {
+                    seedsThatGainedColumns++;
+                }
+                runner.assertTwinEqual();
+            }
 
             org.junit.Assert.assertTrue(
-                    "the unsupported-add filter never fired for a seed measured to generate both a "
-                            + "var-size and a POSTING add -- either the generator changed or the filter "
-                            + "is dead; re-measure before weakening this assertion",
-                    runner.droppedAddColumnOps() > 0);
+                    "the unsupported-add filter never fired across 8 seeds -- either the generator no "
+                            + "longer emits var-size/POSTING adds, or the filter is dead. Re-measure "
+                            + "before weakening this assertion.",
+                    totalDropped > 0);
 
-            final long columnsAfter = runner.compositeColumnCount();
             org.junit.Assert.assertTrue(
-                    "every generated ADD COLUMN was filtered out (" + runner.droppedAddColumnOps()
-                            + " dropped, columns " + columnsBefore + " -> " + columnsAfter
-                            + "), so enrolling ADD COLUMN bought no coverage at all",
-                    columnsAfter > columnsBefore);
-
-            runner.assertTwinEqual();
+                    "no seed gained a column (" + totalDropped + " adds dropped across 8 seeds), so "
+                            + "the filter is swallowing every generated ADD COLUMN and enrolling it "
+                            + "bought no coverage at all",
+                    seedsThatGainedColumns > 0);
         });
     }
 }

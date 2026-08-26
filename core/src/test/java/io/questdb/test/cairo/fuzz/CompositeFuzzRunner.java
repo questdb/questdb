@@ -1314,7 +1314,18 @@ public class CompositeFuzzRunner {
                     maxTimestamp,
                     rowCount,
                     transactionCount,
-                    false, // o3: keep Task 1 to in-order inserts
+                    // o3 ENABLED 2026-08-26. It had been false since Task 1 ("keep Task 1 to in-order
+                    // inserts"), which meant this fuzz never exercised out-of-order insertion at all --
+                    // on a feature whose entire risk surface IS the O3 merge path
+                    // (processO3BlockComposite, the per-cell scratch gather, the partition-update
+                    // sink). The single largest coverage gap this harness had.
+                    //
+                    // MEASURED on flipping it: the twins stay equal. All 24 sweep seeds pass, as do the
+                    // crash, unstable and soundness suites. The only casualty was CompositeFuzzTest's
+                    // own anti-vacuity lock, which had been pinned to a seed measured under o3=false --
+                    // the flag changes the Rnd draw sequence, so that seed stopped generating the ops it
+                    // was chosen for. That lock sweeps seeds now instead of pinning one.
+                    true,  // o3: out-of-order inserts -- the shape this feature is actually about
                     0.0,   // probabilityOfCancelRow
                     0.1,   // probabilityOfUnassignedColumnValue (restored: hang fixed, see note above)
                     0.1,   // probabilityOfAssigningNull (restored: hang fixed, see note above)
