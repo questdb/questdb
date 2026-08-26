@@ -1191,15 +1191,22 @@ public class CompositeFuzzRunner {
                     0.1,   // probabilityOfUnassignedColumnValue (restored: hang fixed, see note above)
                     0.1,   // probabilityOfAssigningNull (restored: hang fixed, see note above)
                     0.0,   // probabilityOfTransactionRollback
-                    0.0,   // probabilityOfAddingNewColumn
-                    0.0,   // probabilityOfRemovingColumn
-                    0.0,   // probabilityOfRenamingColumn
-                    0.0,   // probabilityOfColumnTypeChange
+                    // SCHEMA-CHANGING DDL stays at 0.0, and NOT because it is unsupported -- all four
+                    // are supported for composite now. It is this RUNNER that cannot take them: its
+                    // helpers issue fixed 5-column INSERTs and fixed literals, so a generated ADD/DROP
+                    // COLUMN produces "row value count does not match column count [expected=7,
+                    // actual=5]" and a generated type change produces "inconvertible types: DOUBLE ->
+                    // TIMESTAMP_NS". MEASURED by switching them on. Enabling them means making the
+                    // runner's SQL schema-adaptive first -- a harness change, not a probability.
+                    0.0,   // probabilityOfAddingNewColumn      (supported; blocked by this harness)
+                    0.0,   // probabilityOfRemovingColumn       (supported; blocked by this harness)
+                    0.0,   // probabilityOfRenamingColumn       (supported; blocked by this harness)
+                    0.0,   // probabilityOfColumnTypeChange     (supported; blocked by this harness)
                     1.0,   // probabilityOfDataInsert
                     0.1,   // probabilityOfSameTimestamp
-                    0.0,   // probabilityOfDropPartition
-                    0.0,   // probabilityOfConvertPartitionToParquet
-                    0.0,   // probabilityOfConvertPartitionToNative
+                    0.0,   // probabilityOfDropPartition        (supported; see the Rnd note above)
+                    0.0,   // probabilityOfConvertPartitionToParquet (supported; see the Rnd note)
+                    0.0,   // probabilityOfConvertPartitionToNative  (supported; see the Rnd note)
                     0.0,   // probabilityOfTruncate
                     0.0,   // probabilityOfDropTable
                     0.0,   // probabilityOfSetTtl
