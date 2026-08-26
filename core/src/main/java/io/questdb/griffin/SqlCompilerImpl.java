@@ -6509,14 +6509,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * <p>
      * The sweep visits every slot even when a close throws.
      *
-     * @param queryModelPool the pool that allocated the attempt's models
+     * @param queryModelPool the pool that allocated the attempt's models, or null when compiler
+     *                       construction failed before the pool was initialized
      * @param failure        the caller's in-flight failure, or null when it has none
      * @return the failure to propagate: the caller's own failure when it passed one, carrying any
      * close failures as suppressed exceptions; otherwise the first close failure with the later ones
      * suppressed, or null when every close succeeded
      */
-    static @Nullable Throwable freePooledTableNameFunctions(ObjectPool<QueryModel> queryModelPool, @Nullable Throwable failure) {
+    static @Nullable Throwable freePooledTableNameFunctions(@Nullable ObjectPool<QueryModel> queryModelPool, @Nullable Throwable failure) {
         Throwable outcome = failure;
+        if (queryModelPool == null) {
+            return outcome;
+        }
         for (int i = 0, n = queryModelPool.getPos(); i < n; i++) {
             outcome = Misc.freeBestEffort(outcome, queryModelPool.peekQuick(i).takeTableNameFunction());
         }
