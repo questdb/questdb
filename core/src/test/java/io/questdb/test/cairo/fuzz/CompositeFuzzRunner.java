@@ -1338,12 +1338,29 @@ public class CompositeFuzzRunner {
  * For the failing case BOTH flags should be false, so the file should not be opened -- yet it is. That
  * is the unexplained step, and it is where the next probe must go.
  * <p>
- * <b>Every probe on this bug so far measured the WRONG METHOD.</b> They instrumented
- * {@code getColumnTop(ts, cellKey, col)}, which measured correct in 13 calls
- * ({@code recIdx=-1, defaultTs=2023-01-02, ts=2023-01-01 -> top=-1}, exactly right) -- because this
- * path never calls it. Two earlier explanations built on those readings (cellKey aliasing; unstable
- * default partition) are retracted; the "unstable" reading was almost certainly the composite and
- * PLAIN twins mixed in one log with no table identity.
+ * <b>MEASURED AT BOTH ENDS -- writer correct, reader disagrees.</b> Instrumenting the real site plus
+ * every write of the column's default-partition record:
+ * <pre>
+ *   writer: DEF col=6 nameTxn=5 partitionTs=1672617600000000 (2023-01-02)   x4, ONLY from addColumn:987
+ *   reader: OPEN ts=2023-01-01 cellKey=1 wIdx=6 recIdx=-1 top=0 partRows=184 colRows=184
+ *           hasRec=false colTopPartTs=1672531200000000 (2023-01-01) tsOk=true WILLOPEN=true
+ * </pre>
+ * The writer never writes 2023-01-01 for this column. The reader reads it. With
+ * {@code colTopPartTs <= partitionTimestamp} the guard passes, the reader believes all 184 rows of
+ * that cell carry the column, and opens a file that was never created.
+ * <p>
+ * That is the same SHAPE as the DROP PARTITION torn read already fixed on this branch: writer
+ * internally consistent, reader holding a value from a different point in time. Two candidates, and
+ * they are distinguishable by a probe rather than by argument -- a stale/torn
+ * {@code columnVersionReader}, or a {@code writerIndex} vs {@code columnIndex} mismatch (the reader
+ * logs {@code wIdx}, the writer logs its own {@code columnIndex}; after adds/drops these need not
+ * denote the same column).
+ * <p>
+ * <b>Note every earlier probe measured the WRONG METHOD.</b> They instrumented
+ * {@code getColumnTop(ts, cellKey, col)}, which measured correct in 13 calls -- because the failing
+ * path never calls it. Two explanations built on those readings (cellKey aliasing; unstable default
+ * partition) are retracted; the "unstable" reading was the composite and PLAIN twins mixed in one log
+ * with no table identity.
  * <p>
  * Also eliminated by measurement: the ADD COLUMN backfill's scoping, an O3 write landing in an earlier
  * day, and a DROP making an earlier day active -- the failing partition sits at version {@code .0},
