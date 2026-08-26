@@ -189,26 +189,27 @@ public class ColumnVersionReader implements Closeable, Mutable {
      * 2-arg overload.
      */
     public long getColumnTop(long partitionTimestamp, int cellKey, int columnIndex) {
-        // KNOWN GAP, measured 2026-08-26 -- this method is only HALF cell-aware. getRecordIndex below
-        // is threaded with cellKey, but getColumnTopByIndexOrDefault's DEFAULT path (taken whenever
-        // there is no explicit record for this cell) falls through to the cellKey-BLIND
-        // getColumnTopPartitionTimestamp(columnIndex). That scan aliases across cells, so "the
-        // partition where this column was first added" is not stable:
+        // OPEN BUG lives downstream of here, but NOT for the reason a previous version of this comment
+        // claimed. That version said the DEFAULT path aliases across cells because
+        // getColumnTopPartitionTimestamp is "cellKey-blind". IT IS NOT: getRecordIndex(long, int)
+        // delegates to getRecordIndex(ts, 0, columnIndex), and that overload compares the FULL packed
+        // (cellKey, columnIndex), so it can only match a cellKey-0 record and cannot alias. Retracted.
         //
-        //   CVDEF col=5 partitionTs=2023-01-01 defaultPartitionTs=2023-01-02 -> absent
-        //   CVDEF col=5 partitionTs=2023-01-02 defaultPartitionTs=2023-01-01 -> 0 (file expected)
-        //
-        // Same column, two different answers. When it resolves LOW, the default path returns top 0 --
-        // "column fully exists in this partition" -- for a cell whose day predates the column, and the
-        // reader then opens a <col>.d.<txn> file the writer never created:
+        // What is still real and reproducible (Rnd(1666,2138) or Rnd(1111,773) with
+        // CompositeFuzzRunner#withDropPartitionProbability(0.05)):
         //   could not open, file does not exist: .../2023-01-01/SYM.0/new_col_1.d.5
-        // Reproduce: Rnd(1666,2138) or Rnd(1111,773) with
-        // CompositeFuzzRunner#withDropPartitionProbability(0.05).
+        // i.e. the DEFAULT path returned top 0 -- "column fully exists in this partition" -- for a cell
+        // whose day predates the column, and the reader opened a file the writer never created.
         //
-        // Fixing it needs a decision, not just a parameter: "when was this column added" may be a
-        // table-wide fact rather than a per-cell one, in which case the default should resolve against
-        // the cellKey-0 record that addColumn's upsertDefaultTxnName actually writes -- rather than
-        // whichever cell's record the scan happens to land on.
+        // The two differing defaultPartitionTs values I logged do NOT establish a defect here: this
+        // method's own javadoc notes an O3 commit may legitimately overwrite a column top for a
+        // partition where the column did not exist, so the value can change over time. My log carried
+        // neither ordering nor reader identity and cannot tell that apart from a bad read.
+        //
+        // So: the failure is confirmed, its cause is NOT. Next probe must log, for the failing
+        // (ts, cellKey, columnIndex): the record index found, the default partition timestamp, AND a
+        // reader identity + sequence number -- the three things every wrong turn on this bug so far has
+        // lacked.
         int recordIndex = getRecordIndex(partitionTimestamp, cellKey, columnIndex);
         return getColumnTopByIndexOrDefault(recordIndex, partitionTimestamp, columnIndex, -1L);
     }

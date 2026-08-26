@@ -1320,19 +1320,16 @@ public class CompositeFuzzRunner {
  * write landing in an earlier day after the ADD COLUMN; a DROP PARTITION making an earlier day
  * active) -- <b>both now ELIMINATED by measurement</b>: the failing partition is at version
  * {@code .0}, the original, never rewritten, so nothing added rows to it after the column appeared.
- * <b>ROOT-CAUSED</b>: {@code ColumnVersionReader#getColumnTop(ts, cellKey, col)} is only HALF
- * cell-aware. It threads cellKey into {@code getRecordIndex}, then its DEFAULT path (no explicit
- * record for this cell) falls through to the cellKey-BLIND
- * {@code getColumnTopPartitionTimestamp(columnIndex)}, whose scan aliases across cells. Measured, same
- * column, two different answers:
- * <pre>
- *   CVDEF col=5 partitionTs=2023-01-01 defaultPartitionTs=2023-01-02 -&gt; absent
- *   CVDEF col=5 partitionTs=2023-01-02 defaultPartitionTs=2023-01-01 -&gt; 0 (file expected)
- * </pre>
- * When it resolves LOW, the default returns top 0 -- "column fully exists here" -- for a cell whose
- * day predates the column, and the reader opens a file the writer never created. See that method's
- * javadoc for why the fix needs a decision rather than just a parameter. Do not conflate this with the
- * partition-drop corruption above.
+ * <b>STILL OPEN, cause NOT established.</b> The failure is confirmed and reproducible: the DEFAULT
+ * column-version path returns top 0 -- "column fully exists in this partition" -- for a cell whose day
+ * predates the column, so the reader opens a file the writer never created. What it is NOT: an earlier
+ * note here claimed {@code getColumnTopPartitionTimestamp} is cellKey-blind and aliases across cells.
+ * It is not -- {@code getRecordIndex(long, int)} delegates to cellKey 0 and compares the full packed
+ * (cellKey, columnIndex). Retracted, see that method's own comment.
+ * <p>
+ * Also eliminated by measurement: the ADD COLUMN backfill's scoping, an O3 write landing in an earlier
+ * day, and a DROP making an earlier day active -- the failing partition sits at version {@code .0},
+ * never rewritten. Do not conflate this with the partition-drop corruption above.
  * <p>
  * SCHEMA-CHANGING DDL is blocked for a separate, plainer reason: this runner's SQL is fixed-shape
  * (5-column INSERTs, fixed literals), so a generated ADD/DROP COLUMN gives "row value count does not
