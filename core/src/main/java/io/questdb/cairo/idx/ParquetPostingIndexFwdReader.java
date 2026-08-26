@@ -314,7 +314,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 // Pruning level 3: bound the value decode to the key's own
                 // rows. In a packed group most rows belong to other keys, and
                 // decoding them costs row_id plus every covered column.
-                final long keyRange = keyRowRangeInGroup(probe(), rg, key, groupRows);
+                final long keyRange = imReader.getKeyRowRangeInGroup(rg, key);
                 if (keyRange == IndexMetaFileReader.KEY_ABSENT) {
                     // The directory said this group COULD hold the key; the
                     // probe says it does not. An ordinary miss, not an error.

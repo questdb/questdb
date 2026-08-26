@@ -221,46 +221,6 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     }
 
     /**
-     * Finds {@code key}'s contiguous row range inside {@code rowGroup},
-     * returning {@code Numbers.encodeLowHighInts(lo, hiExclusive)} or
-     * {@link IndexMetaFileReader#KEY_ABSENT} when the group holds none.
-     * <p>
-     * Pruning level 3's EFFECT, reached by a different route than the spec's
-     * stated mechanism.
-     * <p>
-     * The spec's mechanism is Parquet {@code ColumnIndex}/{@code OffsetIndex}
-     * page skipping, and the seal DOES write both: {@code parquet2}'s
-     * {@code end()} calls {@code write_page_index} unconditionally, with
-     * {@code allow_column_index} bound to {@code write_statistics}, which the
-     * seal passes as true, and the seal's columns are all fixed-width so the
-     * opaque-Binary exclusion does not apply. What is missing is on the READ
-     * side: neither {@code ParquetFileDecoder} nor {@code ParquetPartitionDecoder}
-     * exposes a page-index API in this tree, so Java cannot consult them.
-     * <p>
-     * What Java does have is {@code decodeRowGroup(..., rowLo, rowHi)}, whose
-     * Rust side skips pages outside the range -- so bounding the decode to the
-     * key's rows achieves the same saving through the API that exists.
-     * <p>
-     * <b>The bound itself now comes from {@code _im}.</b> Format version 3 got
-     * it by decoding the group's whole {@code key_id} column and binary
-     * searching it, which is sound but costs a full-column decode PER KEY: 2.72
-     * ms on a 100k-row group against 0.32 ms on a 10k-row one, a linear decode
-     * whose price is set by the group's size and not by the rows the key
-     * actually has. Read cost therefore scaled with the number of distinct keys
-     * a query touched. Version 4 writes a per-key start-offset directory, so
-     * this is a metadata lookup that decodes nothing at all, and the probe
-     * cursor is gone with it.
-     *
-     * @param probe     unused since format version 4; kept so the two readers
-     *                  share one signature
-     * @param groupRows unused since format version 4: the directory's
-     *                  terminator carries the group's row count
-     */
-    protected long keyRowRangeInGroup(CountingCursor probe, int rowGroup, int key, long groupRows) {
-        return imReader.getKeyRowRangeInGroup(rowGroup, key);
-    }
-
-    /**
      * Records a decode. Kept next to the pruning predicate so the counter and
      * the skip cannot drift: a group is counted where it is decoded, never
      * where it is merely visited.
