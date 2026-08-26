@@ -234,7 +234,6 @@ public class SqlOptimiser implements Mutable {
     // Second stack, separate from sqlNodeStack because some operations
     // call methods that clear and reuse sqlNodeStack.
     private final ArrayDeque<ExpressionNode> sqlNodeStack2 = new ArrayDeque<>();
-    private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> tempAliasRewriteMap = new LowerCaseCharSequenceObjHashMap<>();
@@ -410,7 +409,6 @@ public class SqlOptimiser implements Mutable {
         clausesToSteal.clear();
         tempCursorAliases.clear();
         tempCursorAliasSequenceMap.clear();
-        tableFactoriesInFlight.clear();
         groupByAliases.clear();
         groupByNodes.clear();
         innerWindowModels.clear();
@@ -7168,7 +7166,6 @@ public class SqlOptimiser implements Mutable {
             if (model.getTableNameFunction() == null) {
                 tableFactory = TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
                 model.setTableNameFunction(tableFactory);
-                tableFactoriesInFlight.add(tableFactory);
             }
         }
         copyColumnsFromMetadata(model, model.getTableNameFunction().getMetadata());
@@ -13563,8 +13560,10 @@ public class SqlOptimiser implements Mutable {
             }
             return rewrittenModel;
         } catch (Throwable th) {
-            // at this point, models may have functions that need to be freed
-            Misc.freeObjListAndClear(tableFactoriesInFlight);
+            // The attempt is over, so close every factory it left on a model. Sweeping the model pool
+            // covers each one from the moment it lands on a model, including a factory sitting on a
+            // model that one of the rewrites above disconnected from the graph.
+            SqlCompilerImpl.freePooledTableNameFunctions(queryModelPool, th);
             throw th;
         }
     }

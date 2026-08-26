@@ -1392,6 +1392,16 @@ public class QueryModelWrapper implements IQueryModel {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Takes the delegate's factory. The wrapper rejects {@link #setTableNameFunction}, so the
+     * default take operation, which clears the slot through that setter, has to route the whole
+     * operation to the delegate that owns the field.
+     */
+    @Override
+    public RecordCursorFactory takeTableNameFunction() {
+        return delegate.takeTableNameFunction();
+    }
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         delegate.toSink(sink);

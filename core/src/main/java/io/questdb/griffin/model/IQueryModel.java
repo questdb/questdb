@@ -712,6 +712,24 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void setWhereClause(ExpressionNode whereClause);
 
+    /**
+     * Detaches the table-name function this model owns and hands it to the caller. A non-null
+     * {@link #getTableNameFunction()} means the current compiler attempt still owns the factory,
+     * so code generation takes it here when ownership moves to a returned or enclosing
+     * {@link RecordCursorFactory}. The slot is empty afterwards, which keeps any later cleanup
+     * sweep from closing a factory the caller now owns.
+     * <p>
+     * The getter stays available for optimiser metadata inspection; only ownership transfer goes
+     * through this method.
+     *
+     * @return the factory this model owned, or null when it owns none
+     */
+    default RecordCursorFactory takeTableNameFunction() {
+        final RecordCursorFactory tableNameFunction = getTableNameFunction();
+        setTableNameFunction(null);
+        return tableNameFunction;
+    }
+
     void toSink0(CharSink<?> sink, boolean joinSlave, boolean showOrderBy);
 
     String toString0();

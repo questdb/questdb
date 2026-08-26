@@ -4780,14 +4780,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateFunctionQuery(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        RecordCursorFactory tableFactory = model.getTableNameFunction();
-        if (tableFactory != null) {
-            // We're transferring ownership of the tableFactory's factory to another factory
-            // setting tableFactory to NULL will prevent double-ownership.
-            // We should not release tableFactory itself, they typically just a lightweight factory wrapper.
-            model.setTableNameFunction(null);
-        } else {
-            // when tableFactory is null we have to recompile it from scratch, including creating new factory
+        // Taking the factory transfers ownership to the factory built below, and leaves the model's
+        // slot empty so cleanup cannot close what the caller now owns. The factory itself stays
+        // alive here - it is typically a lightweight wrapper the enclosing factory keeps.
+        RecordCursorFactory tableFactory = model.takeTableNameFunction();
+        if (tableFactory == null) {
+            // the model owns no factory, so build one from scratch
             tableFactory = TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
         }
 
@@ -9018,7 +9016,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case IQueryModel.SELECT_MODEL_WINDOW_JOIN -> generateSelectWindowJoin(model, executionContext);
             case IQueryModel.SELECT_MODEL_DISTINCT -> generateSelectDistinct(model, executionContext);
             case IQueryModel.SELECT_MODEL_CURSOR -> generateSelectCursor(model, executionContext);
-            case IQueryModel.SELECT_MODEL_SHOW -> model.getTableNameFunction();
+            // The optimiser builds the SHOW cursor itself and parks it on the model. Take it, so the
+            // caller owns the factory alone and the attempt's cleanup finds an empty slot.
+            case IQueryModel.SELECT_MODEL_SHOW -> model.takeTableNameFunction();
             default -> shouldProcessJoins && model.getJoinModels().size() > 1
                     ? generateJoins(model, executionContext)
                     : generateNoSelect(model, executionContext);

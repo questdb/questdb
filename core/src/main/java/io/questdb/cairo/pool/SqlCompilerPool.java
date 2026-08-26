@@ -133,6 +133,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         public void close() {
             // revert any debug flags
             setFullFatJoins(false);
+            // Release what the borrow still owns. A model the caller abandoned - a generateExecutionModel()
+            // result nothing generated from - can still hold a factory, and the compiler sits idle in the
+            // pool until someone borrows it again. A full clear() would also drop the SQL text and the
+            // flyweight CompiledQuery, which the caller may still be reading.
+            freeUntransferredTableNameFunctions();
             final AbstractMultiTenantPool<C> pool = this.pool;
             if (pool != null && entry != null) {
                 if (pool.returnToPool(this)) {
@@ -160,6 +165,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public long expiryTimestampThreshold(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate, CharSequence timestampColumn) {
             return delegate.expiryTimestampThreshold(executionContext, metadata, predicate, timestampColumn);
+        }
+
+        @Override
+        public void freeUntransferredTableNameFunctions() {
+            delegate.freeUntransferredTableNameFunctions();
         }
 
         @Override

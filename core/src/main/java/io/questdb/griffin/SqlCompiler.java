@@ -59,6 +59,18 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     boolean execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
 
     /**
+     * Closes the table-name-function factories the compiler attached to its query models and never
+     * transferred to a returned {@link RecordCursorFactory}. Code generation empties the model's slot
+     * as it takes ownership, so a factory the caller still holds is invisible here.
+     * <p>
+     * This is the narrow alternative to {@link #clear()} for a lifecycle boundary: it releases what
+     * the compiler still owns without dropping the SQL text or the flyweight {@link CompiledQuery} a
+     * caller may still be reading. It reports a close failure rather than throwing, so a caller can
+     * always finish returning or disposing of the compiler.
+     */
+    void freeUntransferredTableNameFunctions();
+
+    /**
      * Returns the upper bound T, in the unit of the designated timestamp column, when {@code predicate} is
      * {@code <ts> < T} or {@code <ts> <= T} on that column and T references no column. T lets the row-expiry
      * cleanup classify a whole partition from its bounds, with no survivor scan. A shape that does not match,

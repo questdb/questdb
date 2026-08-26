@@ -389,6 +389,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @TestOnly
+    public static @Nullable Throwable freePooledTableNameFunctionsForTesting(
+            ObjectPool<QueryModel> queryModelPool,
+            @Nullable Throwable failure
+    ) {
+        return freePooledTableNameFunctions(queryModelPool, failure);
+    }
+
+    @TestOnly
     public static void setInsertSelectFactoryGenerationBarrier(@Nullable Runnable barrier) {
         insertSelectFactoryGenerationBarrier = barrier;
     }
@@ -410,6 +418,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw new IllegalStateException("close was already called");
         }
         closed = true;
+        // A compiler can be closed with an abandoned model still holding a factory, e.g. after a caller
+        // discards a generateExecutionModel() result. Pooled compilers sweep on return to the pool;
+        // this covers the ones a caller owns outright.
+        freeUntransferredTableNameFunctions();
         Misc.free(vacuumColumnVersions);
         Misc.free(path);
         Misc.free(renamePath);
@@ -636,6 +648,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return Numbers.LONG_NULL; // any issue -> no fast path; the caller scans (still correct)
         } finally {
             Misc.free(f);
+        }
+    }
+
+    @Override
+    public void freeUntransferredTableNameFunctions() {
+        final Throwable cleanupFailure = freePooledTableNameFunctions(queryModelPool, null);
+        if (cleanupFailure != null) {
+            // Nothing is in flight at this boundary, and the caller is either about to compile the next
+            // statement or to hand the compiler back. Report the close failure and carry on rather than
+            // charge it to work that has not started yet.
+            LOG.error().$("could not close table name function [error=").$(cleanupFailure).I$();
         }
     }
 
@@ -2389,6 +2412,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void clearExceptSqlText() {
+        // Close what the discarded attempt still owns while its models are still enumerable.
+        // ObjectPool.clear() only rewinds the position, after which the attempt's models are gone from
+        // view and the next next() silently nulls the field. Running here covers every retry site,
+        // which all funnel through this method.
+        freeUntransferredTableNameFunctions();
         sqlNodePool.clear();
         characterStore.clear();
         queryColumnPool.clear();
@@ -6469,6 +6497,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw notExistException;
         }
         return viewToken;
+    }
+
+    /**
+     * Closes every table-name function still attached to a query model the current attempt allocated,
+     * and empties each slot before closing it. The pool position bounds the sweep, so a model stays
+     * reachable here even when an optimiser rewrite disconnects it from the model graph the caller
+     * holds. Detaching first also makes a repeated sweep, or a graph walk that ran ahead of this one,
+     * a no-op rather than a double close.
+     * <p>
+     * The sweep visits every slot even when a close throws.
+     *
+     * @param queryModelPool the pool that allocated the attempt's models
+     * @param failure        the caller's in-flight failure, or null when it has none
+     * @return the failure to propagate: the caller's own failure when it passed one, carrying any
+     * close failures as suppressed exceptions; otherwise the first close failure with the later ones
+     * suppressed, or null when every close succeeded
+     */
+    static @Nullable Throwable freePooledTableNameFunctions(ObjectPool<QueryModel> queryModelPool, @Nullable Throwable failure) {
+        Throwable outcome = failure;
+        for (int i = 0, n = queryModelPool.getPos(); i < n; i++) {
+            outcome = Misc.freeBestEffort(outcome, queryModelPool.peekQuick(i).takeTableNameFunction());
+        }
+        return outcome;
     }
 
     static void configureLexer(GenericLexer lexer) {
