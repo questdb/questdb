@@ -1169,6 +1169,17 @@ public interface WindowFunction extends Function {
      * declaration into the leaf only within
      * {@link io.questdb.cairo.lv.LiveViewCheckpointContracts#MAX_INLINE_COMPONENT_STATE_BYTES},
      * and a wider fixed state keeps the page-backed shape.
+     * <p>
+     * <b>The number is durable, so moving it is a state-layout change.</b> An inlined entry
+     * carries no length of its own, so the running build slices released bytes by whatever
+     * this method now returns: a build that changes the width reads every entry an earlier
+     * one wrote at the wrong size. The restore refuses such an entry rather than misreading
+     * it - {@code LiveViewCheckpointTimelineStoreReader} compares the stored scalar's length
+     * against this declaration - but a refusal retires the whole ladder, so a width change
+     * demands a {@link #checkpointStateFormatVersion()} bump exactly as a changed field
+     * would. Adding the declaration to a function that previously declined is the one safe
+     * move without a bump, and only because the image itself is unchanged: the entry moves
+     * from a data page to the leaf scalar, which a reader tells apart by shape.
      */
     default int checkpointStateFixedLength() {
         return -1;
@@ -1179,7 +1190,15 @@ public interface WindowFunction extends Function {
      * the function's state codec identity, and the checkpoint timeline records it in the function
      * root. Bump on any state-layout change: the bump changes the identity, so a root written under
      * the old layout no longer resolves to this function and the timeline rejects it wholesale
-     * instead of decoding foreign bytes.
+     * instead of decoding foreign bytes. A changed {@link #checkpointStateFixedLength()} is such a
+     * change - an inlined entry is sliced by that declaration alone - so it demands a bump like any
+     * moved field would.
+     * <p>
+     * The bump is not free, which is the reason to be sure the layout really moved: the view whose
+     * roots stop resolving retires its whole checkpoint ladder and recomputes its window from the
+     * base table on the first start after the upgrade, once, while staying valid and serving
+     * correct rows throughout.
+     * {@code LiveViewCheckpointReleaseExtremaCompatTest} pins that cost against released bytes.
      */
     default int checkpointStateFormatVersion() {
         return 0;

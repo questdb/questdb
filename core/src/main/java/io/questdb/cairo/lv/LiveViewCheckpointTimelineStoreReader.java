@@ -1292,7 +1292,18 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 throw invalid("checkpoint-capable function has no compiler metadata");
             }
             if (!functionDirectory.find(function.checkpointFunctionIdentity().borrowEncoded(), functionRootRef)) {
-                throw invalid("checkpoint root is missing a compiled function");
+                // Name the function and the codec identity it looked itself up under. The
+                // ordinary way to reach this is a release that bumped the function's
+                // checkpointStateFormatVersion: the version rides inside the codec identity,
+                // so every root the previous build wrote stops resolving on purpose and the
+                // view recomputes its window from the base once. That is the intended cost of
+                // a layout change, but it is charged silently - the view stays valid, no fault
+                // is counted - so the one line an operator gets has to say which function
+                // asked for it and under which codec.
+                throw invalid("root is missing a compiled function [function=")
+                        .put(function.getName())
+                        .put(", codec=").put(function.checkpointFunctionIdentity().getStateCodecIdentity())
+                        .put(']');
             }
             validateFunction(function, functionRootRef);
         }
