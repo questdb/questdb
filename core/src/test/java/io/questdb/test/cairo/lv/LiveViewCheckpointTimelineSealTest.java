@@ -334,10 +334,10 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                     root.of(checkpointsDir, latest.rootRef);
                     Assert.assertEquals(latest.checkpointId, root.getCheckpointId());
                     Assert.assertEquals(latest.maxTimestamp, root.getMaxTimestamp());
-                    final LiveViewCheckpointPageRef anchorRootRef = new LiveViewCheckpointPageRef();
-                    root.getAnchorRootRef(anchorRootRef);
-                    Assert.assertFalse(anchorRootRef.isNull());
-                    anchorRoot.of(checkpointsDir, anchorRootRef);
+                    final LiveViewCheckpointPageRef stateRootRef = new LiveViewCheckpointPageRef();
+                    root.getStateRootRef(stateRootRef);
+                    Assert.assertFalse(stateRootRef.isNull());
+                    anchorRoot.of(checkpointsDir, stateRootRef);
                     Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, anchorRoot.getAnchorValueType());
                     final LiveViewCheckpointPageRef anchorMapRootRef = new LiveViewCheckpointPageRef();
                     anchorRoot.getPartitionMapRootRef(anchorMapRootRef);

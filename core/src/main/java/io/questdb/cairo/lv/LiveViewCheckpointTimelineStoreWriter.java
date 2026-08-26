@@ -893,7 +893,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final LongList removedSegmentIds = shells.removedSegmentIds;
             final LongList addedSegmentIds = shells.addedSegmentIds;
             final LongList batchedReferenceDeltas = shells.batchedReferenceDeltas;
-            final LiveViewCheckpointPageRef oldAnchorRootRef = shells.oldAnchorRootRef;
+            final LiveViewCheckpointPageRef oldStateRootRef = shells.oldStateRootRef;
             final LiveViewCheckpointPageRef oldFunctionDirectoryRef = shells.oldFunctionDirectoryRef;
             final LiveViewCheckpointPageRef newRootRef = shells.newRootRef;
             removedSegmentIds.clear();
@@ -958,7 +958,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 }
                 final LiveViewCheckpointFunctionDirectory seedDirectory;
                 if (!capture.isChained()) {
-                    oldCheckpointRoot.getAnchorRootRef(oldAnchorRootRef);
+                    oldCheckpointRoot.getStateRootRef(oldStateRootRef);
                     oldCheckpointRoot.getFunctionDirectoryRef(oldFunctionDirectoryRef);
                     oldFunctionDirectory.of(checkpointsDir, oldFunctionDirectoryRef);
                     seedDirectory = oldFunctionDirectory;
@@ -967,11 +967,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     // boundary the timeline held. The freeze knew it - it had no
                     // incremental base either, and froze this boundary complete - so the
                     // builders start from empty.
-                    oldAnchorRootRef.clear();
+                    oldStateRootRef.clear();
                     seedDirectory = null;
                 } else {
                     seedCheckpointRoot.of(checkpointsDir, seedRootRef);
-                    seedCheckpointRoot.getAnchorRootRef(oldAnchorRootRef);
+                    seedCheckpointRoot.getStateRootRef(oldStateRootRef);
                     seedCheckpointRoot.getFunctionDirectoryRef(oldFunctionDirectoryRef);
                     seedFunctionDirectory.of(checkpointsDir, oldFunctionDirectoryRef);
                     seedDirectory = seedFunctionDirectory;
@@ -979,7 +979,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 if (batchedRoots == null) {
                     roots.buildRoot(
                             boundary,
-                            oldAnchorRootRef,
+                            oldStateRootRef,
                             seedDirectory,
                             capture.outputKeys,
                             oldEntry.checkpointId,
@@ -1555,9 +1555,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         .put(", candidate=").put(maxTimestamp).put(']');
             }
 
-            final LiveViewCheckpointPageRef oldAnchorRootRef = shells.oldAnchorRootRef;
+            final LiveViewCheckpointPageRef oldStateRootRef = shells.oldStateRootRef;
             final LiveViewCheckpointPageRef oldFunctionDirectoryRef = shells.oldFunctionDirectoryRef;
-            oldAnchorRootRef.clear();
+            oldStateRootRef.clear();
             oldFunctionDirectoryRef.clear();
             if (hasPrevious) {
                 oldCheckpointRoot.of(checkpointsDir, previousEntry.rootRef);
@@ -1565,7 +1565,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
                             .put("live view checkpoint root definition identity mismatch");
                 }
-                oldCheckpointRoot.getAnchorRootRef(oldAnchorRootRef);
+                oldCheckpointRoot.getStateRootRef(oldStateRootRef);
                 oldCheckpointRoot.getFunctionDirectoryRef(oldFunctionDirectoryRef);
                 oldFunctionDirectory.of(checkpointsDir, oldFunctionDirectoryRef);
             }
@@ -1591,7 +1591,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     checkpointsDir,
                     oldFunctionDirectory,
                     oldDirectoryRoot,
-                    oldAnchorRootRef,
+                    oldStateRootRef,
                     previousEntry.maxTimestamp
             ) : null) {
                 // The generation the seal is building on top of. onCheckpointPersisted
@@ -1626,7 +1626,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             reusedSegmentIds.clear();
             roots.buildRoot(
                     boundary,
-                    oldAnchorRootRef,
+                    oldStateRootRef,
                     hasPrevious ? oldFunctionDirectory : null,
                     null,
                     checkpointId,
@@ -4822,7 +4822,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                                 .put("live view checkpoint repair chain has no valid generation to build on");
                     }
                     publishedRoot.of(checkpointsDir, predecessor.rootRef);
-                    publishedRoot.getAnchorRootRef(publishedStateRootRef);
+                    publishedRoot.getStateRootRef(publishedStateRootRef);
                     publishedRoot.getFunctionDirectoryRef(publishedFunctionDirectoryRef);
                     publishedFunctionDirectory.of(checkpointsDir, publishedFunctionDirectoryRef);
                     return publishedPreviousBoundary.of(
@@ -5207,12 +5207,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * so a boundary contributes references rather than objects.
      */
     private static final class BatchedBoundaryState {
-        private final LiveViewCheckpointPageRef anchorRootRef = new LiveViewCheckpointPageRef();
+        private final LiveViewCheckpointPageRef stateRootRef = new LiveViewCheckpointPageRef();
         private final ObjList<LiveViewCheckpointPageRef> functionRootRefs = new ObjList<>();
         private int functionRootRefCount;
 
         private void clear() {
-            anchorRootRef.clear();
+            stateRootRef.clear();
             functionRootRefCount = 0;
         }
 
@@ -5294,7 +5294,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final LiveViewCheckpointPageRef newDirectoryRoot = new LiveViewCheckpointPageRef();
         private final LiveViewCheckpointPageRef newRootRef = new LiveViewCheckpointPageRef();
         private final LiveViewCheckpointPageRef newTimelineRoot = new LiveViewCheckpointPageRef();
-        private final LiveViewCheckpointPageRef oldAnchorRootRef = new LiveViewCheckpointPageRef();
+        private final LiveViewCheckpointPageRef oldStateRootRef = new LiveViewCheckpointPageRef();
         private final LiveViewCheckpointRoot oldCheckpointRoot = new LiveViewCheckpointRoot(configuration);
         private final LiveViewCheckpointPageRef oldDeltaRoot = new LiveViewCheckpointPageRef();
         private final LiveViewCheckpointPageRef oldDirectoryRoot = new LiveViewCheckpointPageRef();
@@ -5408,7 +5408,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final LiveViewCheckpointFunctionDirectory batchFunctionDirectory =
                 new LiveViewCheckpointFunctionDirectory(configuration);
         private final LiveViewCheckpointPageRef batchFunctionDirectoryRef = new LiveViewCheckpointPageRef();
-        private final LiveViewCheckpointPageRef batchOldAnchorRootRef = new LiveViewCheckpointPageRef();
+        private final LiveViewCheckpointPageRef batchOldStateRootRef = new LiveViewCheckpointPageRef();
         private final LiveViewCheckpointRootBuilder checkpointRootBuilder =
                 new LiveViewCheckpointRootBuilder(configuration);
         private final Path checkpointsDir = new Path();
@@ -5417,7 +5417,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 new LiveViewCheckpointFunctionRoot(configuration);
         private final LiveViewCheckpointPartitionMapReader oldPartitionReader =
                 new LiveViewCheckpointPartitionMapReader(configuration);
-        private final LiveViewCheckpointPageRef redirectAnchorRootRef = new LiveViewCheckpointPageRef();
+        private final LiveViewCheckpointPageRef redirectStateRootRef = new LiveViewCheckpointPageRef();
         private final LiveViewCheckpointRoot redirectCheckpointRoot =
                 new LiveViewCheckpointRoot(configuration);
         private final LiveViewCheckpointFunctionDirectory redirectFunctionDirectory =
@@ -5428,7 +5428,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final LiveViewCheckpointPageRef redirectPartitionMapRoot = new LiveViewCheckpointPageRef();
         private final ObjList<BatchedBoundaryState> batchedBoundaryStates = new ObjList<>();
         private final BatchedRepairRoots batchedRepairRoots = new BatchedRepairRoots();
-        private final LiveViewCheckpointPageRef buildAnchorRootRef = new LiveViewCheckpointPageRef();
+        private final LiveViewCheckpointPageRef buildStateRootRef = new LiveViewCheckpointPageRef();
         private final LiveViewCheckpointPageRef buildFunctionRootRef = new LiveViewCheckpointPageRef();
         private final LiveViewCheckpointPageRef buildOldFunctionRootRef = new LiveViewCheckpointPageRef();
         private final LiveViewCheckpointPageRef aggregateFunctionRootRef = new LiveViewCheckpointPageRef();
@@ -5556,9 +5556,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 removedSegmentIdsOut.add(redirectCheckpointRoot.getSegmentId(s));
             }
 
-            // Anchor entries carry no data-segment state, so the anchor root is
-            // reused by reference untouched across a compaction.
-            redirectCheckpointRoot.getAnchorRootRef(redirectAnchorRootRef);
+            // Neither shape of state root names a data segment - an anchor entry carries
+            // its anchor value in the leaf scalar, a fused entry its whole component
+            // payload - so the state root is reused by reference untouched across a
+            // compaction, whichever arm of the tagged union it holds.
+            redirectCheckpointRoot.getStateRootRef(redirectStateRootRef);
             redirectCheckpointRoot.getFunctionDirectoryRef(redirectFunctionDirectoryRef);
             redirectFunctionDirectory.of(checkpointsDir, redirectFunctionDirectoryRef);
 
@@ -5568,7 +5570,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     redirectCheckpointRoot.getCheckpointId(),
                     redirectCheckpointRoot.getMaxTimestamp(),
                     definitionTxn,
-                    redirectAnchorRootRef
+                    redirectStateRootRef
             );
             for (int i = 0, n = redirectFunctionDirectory.size(); i < n; i++) {
                 redirectFunctionDirectory.getRootRef(i, redirectOldFunctionRootRef);
@@ -5745,14 +5747,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                                 .put("live view checkpoint repair root identity mismatch [checkpointId=")
                                 .put(oldEntry.checkpointId).put(']');
                     }
-                    batchCheckpointRoot.getAnchorRootRef(batchOldAnchorRootRef);
+                    batchCheckpointRoot.getStateRootRef(batchOldStateRootRef);
                     batchCheckpointRoot.getFunctionDirectoryRef(batchFunctionDirectoryRef);
                     batchFunctionDirectory.of(checkpointsDir, batchFunctionDirectoryRef);
                     final BatchedBoundaryState state = states.getQuick(i);
                     state.clear();
                     buildBoundaryStateIntoAggregate(
                             boundary,
-                            batchOldAnchorRootRef,
+                            batchOldStateRootRef,
                             batchFunctionDirectory,
                             capture.outputKeys,
                             stateSegmentId,
@@ -5786,7 +5788,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             oldEntry.checkpointId,
                             oldEntry.maxTimestamp,
                             definitionTxn,
-                            state.anchorRootRef
+                            state.stateRootRef
                     );
                     for (int f = 0, n = state.functionRootRefCount; f < n; f++) {
                         checkpointRootBuilder.addFunction(state.functionRootRefs.getQuick(f));
@@ -5809,7 +5811,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         private void buildBoundaryStateIntoAggregate(
                 FrozenBoundary boundary,
-                LiveViewCheckpointPageRef oldAnchorRootRef,
+                LiveViewCheckpointPageRef oldStateRootRef,
                 LiveViewCheckpointFunctionDirectory oldFunctionDirectory,
                 LiveViewCheckpointOutputKeyDomain outputKeys,
                 long stateSegmentId,
@@ -5821,7 +5823,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 final FrozenWindowState windowState = boundary.windowState;
                 windowRootBuilder.ofBorrowedCompiled(
                         checkpointsDir,
-                        oldAnchorRootRef,
+                        oldStateRootRef,
                         windowState.windowIdentity,
                         windowState.anchorValueType,
                         windowState.keySchema,
@@ -5844,12 +5846,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         lastBoundaryPartitionPuts++;
                     }
                 }
-                windowRootBuilder.buildIntoOpenSegment(stateSegmentId, writer, out.anchorRootRef);
+                windowRootBuilder.buildIntoOpenSegment(stateSegmentId, writer, out.stateRootRef);
             } else if (boundary.anchor != null) {
                 final FrozenAnchor anchor = boundary.anchor;
                 anchorRootBuilder.ofBorrowedCompiled(
                         checkpointsDir,
-                        oldAnchorRootRef,
+                        oldStateRootRef,
                         anchor.windowName,
                         anchor.anchorValueType,
                         anchor.keySchema,
@@ -5861,7 +5863,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 for (int i = 0, n = anchor.keys.size(); i < n; i++) {
                     anchorRootBuilder.putPartition(anchor.keys.getQuick(i), anchor.anchorValues.getQuick(i));
                 }
-                anchorRootBuilder.buildIntoOpenSegment(stateSegmentId, writer, out.anchorRootRef);
+                anchorRootBuilder.buildIntoOpenSegment(stateSegmentId, writer, out.stateRootRef);
             }
 
             final LiveViewCheckpointPageRef oldFunctionRootRef = aggregateOldFunctionRootRef;
@@ -5911,7 +5913,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          * paths, so an unchanged entry is reused by reference rather than
          * rewritten. Both are empty for the first root of a timeline.
          * <p>
-         * {@code oldAnchorRootRef} is the predecessor's state root whichever kind it is.
+         * {@code oldStateRootRef} is the predecessor's state root whichever kind it is.
          * A window root over a legacy predecessor - or over one whose manifest moved -
          * simply finds nothing to build on and writes a whole new tree, which is what
          * the format-conversion seal is.
@@ -5923,7 +5925,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          */
         private void buildRoot(
                 FrozenBoundary boundary,
-                LiveViewCheckpointPageRef oldAnchorRootRef,
+                LiveViewCheckpointPageRef oldStateRootRef,
                 @Nullable LiveViewCheckpointFunctionDirectory oldFunctionDirectory,
                 @Nullable LiveViewCheckpointOutputKeyDomain outputKeys,
                 long checkpointId,
@@ -5934,13 +5936,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         ) {
             writtenMetaSegments.clear();
             lastBoundaryPartitionPuts = 0;
-            final LiveViewCheckpointPageRef anchorRootRef = buildAnchorRootRef;
-            anchorRootRef.clear();
+            final LiveViewCheckpointPageRef stateRootRef = buildStateRootRef;
+            stateRootRef.clear();
             if (boundary.windowState != null) {
                 final FrozenWindowState windowState = boundary.windowState;
                 windowRootBuilder.ofBorrowedCompiled(
                         checkpointsDir,
-                        oldAnchorRootRef,
+                        oldStateRootRef,
                         windowState.windowIdentity,
                         windowState.anchorValueType,
                         windowState.keySchema,
@@ -5972,14 +5974,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 }
                 nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
                 final long windowSegmentId = nextSegmentId++;
-                windowRootBuilder.build(windowSegmentId, anchorRootRef);
+                windowRootBuilder.build(windowSegmentId, stateRootRef);
                 metadataBytesAdded = checkedAdd(metadataBytesAdded, windowRootBuilder.getLastSegmentBytes());
                 writtenMetaSegments.add(windowSegmentId, windowRootBuilder.getLastSegmentBytes());
             } else if (boundary.anchor != null) {
                 final FrozenAnchor anchor = boundary.anchor;
                 anchorRootBuilder.ofBorrowedCompiled(
                         checkpointsDir,
-                        oldAnchorRootRef,
+                        oldStateRootRef,
                         anchor.windowName,
                         anchor.anchorValueType,
                         anchor.keySchema,
@@ -5996,7 +5998,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 }
                 nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
                 final long anchorSegmentId = nextSegmentId++;
-                anchorRootBuilder.build(anchorSegmentId, anchorRootRef);
+                anchorRootBuilder.build(anchorSegmentId, stateRootRef);
                 metadataBytesAdded = checkedAdd(metadataBytesAdded, anchorRootBuilder.getLastSegmentBytes());
                 writtenMetaSegments.add(anchorSegmentId, anchorRootBuilder.getLastSegmentBytes());
             }
@@ -6007,7 +6009,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     checkpointId,
                     maxTimestamp,
                     definitionTxn,
-                    anchorRootRef
+                    stateRootRef
             );
             final LiveViewCheckpointPageRef oldFunctionRootRef = buildOldFunctionRootRef;
             final LiveViewCheckpointPageRef functionRootRef = buildFunctionRootRef;

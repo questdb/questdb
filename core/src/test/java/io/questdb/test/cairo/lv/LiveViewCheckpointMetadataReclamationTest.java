@@ -934,7 +934,7 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
                 timeline.iterateAll(pin.getTimelineRootRef(), entry -> {
                     ids.add(entry.rootRef.getSegmentId());
                     root.of(dir, entry.rootRef);
-                    root.getAnchorRootRef(ref);
+                    root.getStateRootRef(ref);
                     if (!ref.isNull()) {
                         ids.add(ref.getSegmentId());
                     }

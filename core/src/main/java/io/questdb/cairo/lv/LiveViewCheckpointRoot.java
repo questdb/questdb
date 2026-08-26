@@ -82,16 +82,6 @@ public class LiveViewCheckpointRoot implements Closeable {
         reader.close();
     }
 
-    /**
-     * @deprecated the reference is a tagged union of the legacy anchor root and the
-     * fused {@link LiveViewCheckpointWindowRoot}; use {@link #getStateRootRef} and
-     * decode by page kind. Retained for the callers still written in anchor terms.
-     */
-    @Deprecated
-    public void getAnchorRootRef(@NotNull LiveViewCheckpointPageRef out) {
-        getStateRootRef(out);
-    }
-
     public long getCheckpointId() {
         return checkpointId;
     }
