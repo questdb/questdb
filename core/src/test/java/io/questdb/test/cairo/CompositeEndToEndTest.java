@@ -501,6 +501,79 @@ public class CompositeEndToEndTest extends AbstractCairoTest {
     }
 
     /**
+     * Checkpoint/restore round-trip with UNEVEN COLUMN TOPS across cells.
+     * <p>
+     * The routed round-trip above inserts twice and never runs {@code ADD COLUMN}, so every cell's
+     * column top is 0 -- and a cell-blind column-top read only returns a WRONG answer when the cells
+     * DISAGREE. That makes it vacuous for the class of defect that produced most of this branch's data
+     * loss: CONVERT TO PARQUET encoding non-zero cells' values as absent, ADD INDEX omitting their
+     * rows, DROP INDEX NULLing them. Every one was invisible under uniform tops and immediate under
+     * uneven ones.
+     * <p>
+     * Restore rebuilds per-cell column versions from the copied {@code _cv}, so it sits squarely in
+     * that class and had no discriminating coverage. Here BTC holds 3 rows and ETH 1 when {@code tag}
+     * is added, giving tops of 3 and 1.
+     * <p>
+     * Same create-then-recover idiom as the round-trip above: change the configured snapshot instance
+     * id between create and recover so {@code checkpointRecover()} treats this as a different install
+     * rather than no-op'ing, and compare captured query output rather than hand-derived strings.
+     */
+    @Test
+    public void testCheckpointRestoreWithUnevenColumnTops() throws Exception {
+        final String snapshotId = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+        final String restartedId = "9f8e7d6c-5b4a-4938-8271-6a5b4c3d2e1f";
+
+        engine.clear();
+        setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+        execute("create table cu (ts timestamp, exch symbol, px double) timestamp(ts) " +
+                "partition by day, exch wal");
+        // UNEVEN row counts per cell at ADD COLUMN time: BTC 3, ETH 1 -> tops 3 and 1.
+        execute("insert into cu values " +
+                "('2020-01-01T01:00:00.000000Z','BTC',1.0), ('2020-01-01T02:00:00.000000Z','BTC',2.0), " +
+                "('2020-01-01T03:00:00.000000Z','BTC',3.0), ('2020-01-01T04:00:00.000000Z','ETH',4.0)");
+        drainWalQueue();
+        execute("alter table cu add column tag symbol");
+        drainWalQueue();
+        execute("insert into cu values " +
+                "('2020-01-01T05:00:00.000000Z','BTC',5.0,'B1'), " +
+                "('2020-01-01T06:00:00.000000Z','ETH',6.0,'E1')");
+        drainWalQueue();
+        Assert.assertFalse("cu must not be suspended",
+                engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("cu")));
+
+        sink.clear();
+        printSql("select ts, exch, tag from cu order by ts");
+        final String scanBefore = sink.toString();
+        // Non-vacuous: the late-added column's values must be present before they can be lost.
+        TestUtils.assertContains(scanBefore, "E1");
+
+        execute("checkpoint create");
+        execute("insert into cu values ('2020-01-02T00:00:00.000000Z','SOL',9.0,'S9')");
+        drainWalQueue();
+
+        engine.clear();
+        setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+        try {
+            engine.checkpointRecover();
+            sink.clear();
+            printSql("select ts, exch, tag from cu order by ts");
+            TestUtils.assertEquals("uneven-column-top round trip", scanBefore, sink.toString());
+        } finally {
+            // checkpointRecover() does NOT clear DatabaseCheckpointAgent's in-progress flag -- only
+            // checkpointRelease() does, and this class has no @After safety net. Omitting it leaves
+            // "in progress" true for the REST OF THE CLASS: the three sibling checkpoint tests all
+            // failed when this test first ran without it, while this test itself passed. A test that
+            // passes and breaks its neighbours is worse than one that fails.
+            engine.checkpointRelease();
+            engine.releaseInactive();
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+        }
+    }
+
+
+    /**
      * Companion to {@link #testCheckpointRestoreRoutedCompositeTableRoundTrips()}: Plan 4d's fix does
      * NOT cover every {@code TableSnapshotRestore} internal -- {@code rebuildBitmapIndexes} (only
      * reached when the caller opts into {@code cairo.checkpoint.recovery.rebuild.column.indexes}, off by
