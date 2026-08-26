@@ -100,11 +100,32 @@ reasoned about.
 | --- | --- | --- |
 | Delta-pack `row_id` | 65x smaller, point reads **40-44x worse** | a delta block decodes from its start, so a point read pays for the whole block |
 | Narrow `row_id` to INT | all tests green, four faster cells turned **slower** | the width branch lands in the `hasNext` fast path |
-| Flat per-key offset array in `_im` | not built | 8 bytes/key = 8 MB at a million keys against today's 4 MB directory, and the row-group search remains |
+| Flat per-key offset array in `_im` | not built; **ceiling measured at 17.1%, reachable part 4.2%** | see below |
 | Cap the parquet form by cardinality | not built | the range-read crossover sits between 512 and 2,000 keys, so parity everywhere means refusing the parquet form above ~512 distinct keys, which removes the feature rather than fixing it |
 
 `key_id` keeps its delta packing: it is written for layout and never read back,
 so the decode cost does not apply.
+
+**Why the flat array was not built.** Profiling S7 (1M keys, 2M rows) with the
+`_im` checksum skipped, so the reader BIND cost does not mask the lookup path:
+
+| Where a point read spends itself | share | parquet-specific? |
+| --- | --- | --- |
+| `hasNext`, emitting rows | 52.1% | no -- the native chain does this too |
+| `seekFirstAtLeast`, first touch of the row-id data | 25.9% | no -- native takes the same miss reading `.pv` |
+| `getKeyRowRangeInGroup` + `getRowGroupRangeForKey` | 17.1% | yes |
+| `rowIdDataOffset`, pruning, other | ~9% | partly |
+
+17.1% is the whole prize, and a flat array cannot take most of it. 12.9% of it is
+one cold miss into the 4 MB key directory, and a 4 MB flat array takes the
+identical miss. What genuinely disappears is `getRowGroupRangeForKey`'s two
+binary searches -- 4.2% -- and a by-row group search comes back in their place to
+locate the page. On the 1.33x this configuration measures, spending all 4.2%
+lands at ~1.28x. A format change is not worth that.
+
+`seekFirstAtLeast` looking expensive is a red herring: at 1M keys a key's run is
+about two rows, so the binary search runs a single iteration and what the profile
+is showing is the cache miss underneath it, not the search.
 
 What remains is the parquet page layer. A lookup walks directory -> row group ->
 page offset -> data where native walks `.pk` -> `.pv`, and that extra layer is
