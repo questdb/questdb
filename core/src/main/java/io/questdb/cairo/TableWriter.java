@@ -15955,6 +15955,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long produceNativeFromParquet(Path path, Path other, long partitionTimestamp, int partitionIndex, long partitionNameTxn) {
+        return produceNativeFromParquet(path, other, partitionTimestamp, partitionIndex, partitionNameTxn, null);
+    }
+
+    private long produceNativeFromParquet(Path path, Path other, long partitionTimestamp, int partitionIndex, long partitionNameTxn, @Nullable CharSequence cellSegment) {
         final int newPartitionDirLen = other.size();
 
         // packed as [auxFd, dataFd, dataVecBytesWritten]
@@ -15962,7 +15966,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final DirectLongList columnFdAndDataSize = getTempDirectLongList(3L * columnCount);
 
         final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
-        setPathForNativePartition(path.trimTo(pathSize).slash(), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        setPathForNativePartition(path.trimTo(pathSize).slash(), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
         int partitionDirLen = path.size();
 
         long parquetAddr = 0;
@@ -16774,6 +16778,122 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             handleHousekeepingException(e);
         }
         return true;
+    }
+
+    /**
+     * Per-cell CONVERT PARTITION TO NATIVE, the inverse of
+     * {@link #convertCompositePartitionNativeToParquet}. Task 3 of the per-cell parquet plan.
+     * <p>
+     * Same phase split, for the same reason: PHASE 1 decodes every cell while touching no
+     * {@code _txn}/{@code _cv} state, so a failure part-way leaves the day wholly parquet rather than
+     * half-converted, and only then does PHASE 2 take the single commit.
+     */
+    private boolean convertCompositePartitionParquetToNative(long partitionTimestamp) {
+        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        final IntList cellKeys = new IntList();
+        final IntList rawIndexes = new IntList();
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) == partitionTimestamp) {
+                cellKeys.add(txWriter.getPartitionCellKey(i));
+                rawIndexes.add(i * txWriter.getLongsPerAttachedPartition());
+            }
+        }
+        if (cellKeys.size() == 0) {
+            throw CairoException.nonCritical()
+                    .put("cannot convert partition to native, partition does not exist [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+
+        final ObjList<String> cellSegments = new ObjList<>();
+        final LongList rowCounts = new LongList();
+        final LongList oldCellNameTxns = new LongList();
+        final ObjList<String> createdDirs = new ObjList<>();
+        final StringSink segmentSink = new StringSink();
+        final long nativeNameTxn = getTxn();
+
+        // PHASE 1 -- decode every cell. No _txn or _cv mutation in here.
+        try {
+            for (int i = 0, n = cellKeys.size(); i < n; i++) {
+                final int rawIndex = rawIndexes.getQuick(i);
+                if (!txWriter.isPartitionParquetByRawIndex(rawIndex)) {
+                    throw CairoException.nonCritical()
+                            .put("cannot convert a day holding a native cell [table=")
+                            .put(tableToken.getTableName()).put(']');
+                }
+                segmentSink.clear();
+                renderCellSegment(segmentSink, cellKeys.getQuick(i));
+                final String cellSegment = segmentSink.toString();
+                cellSegments.add(cellSegment);
+
+                final long cellNameTxn = txWriter.getPartitionNameTxnByRawIndex(rawIndex);
+                oldCellNameTxns.add(cellNameTxn);
+
+                setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, cellNameTxn, cellSegment);
+                if (!ff.exists(path.$())) {
+                    throw CairoException.nonCritical().put("cell parquet file does not exist [path=").put(path).put(']');
+                }
+
+                setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, nativeNameTxn, cellSegment);
+                createDirsOrFail(ff, other, configuration.getMkDirMode());
+                createdDirs.add(other.toString());
+
+                final long rowCount = produceNativeFromParquet(
+                        path, other, partitionTimestamp, rawIndex / txWriter.getLongsPerAttachedPartition(),
+                        cellNameTxn, cellSegment);
+                rowCounts.add(rowCount);
+                restoreIndexFilesAfterParquetToNative(partitionTimestamp, nativeNameTxn, other.size(), rowCount, cellSegment);
+            }
+        } catch (Throwable th) {
+            for (int i = 0, n = createdDirs.size(); i < n; i++) {
+                other.of(createdDirs.getQuick(i));
+                if (!ff.rmdir(other.slash())) {
+                    LOG.error().$("could not remove partially converted cell [path=").$(other).I$();
+                }
+            }
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+            throw th;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+
+        // PHASE 2 -- bookkeeping, then ONE commit.
+        final long partitionSeqTxn = tableToken.isWal() ? txWriter.getSeqTxn() : 0;
+        for (int i = 0, n = cellKeys.size(); i < n; i++) {
+            final int rawIndex = rawIndexes.getQuick(i);
+            txWriter.updatePartitionSizeAndTxnByRawIndex(rawIndex, rowCounts.getQuick(i));
+            txWriter.setPartitionNativeByRawIndex(rawIndex, partitionSeqTxn);
+            // the old dir's data.parquet is deleted below, so generated must not outlive it
+            txWriter.setPartitionParquetGeneratedByRawIndex(rawIndex, false);
+        }
+        if (columnVersionWriter.hasChanges()) {
+            columnVersionWriter.commit();
+            txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        }
+        txWriter.bumpPartitionTableVersion();
+        commitTxWriter();
+
+        // PHASE 3 -- post-commit housekeeping, on the OLD name-txns captured above.
+        try {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+            }
+            for (int i = 0, n = cellKeys.size(); i < n; i++) {
+                safeDeletePartitionDir(partitionTimestamp, oldCellNameTxns.getQuick(i), cellKeys.getQuick(i));
+            }
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        }
+        return true;
+    }
+
+    /**
+     * Test seam for {@link #convertCompositePartitionParquetToNative}.
+     */
+    @TestOnly
+    public boolean convertCompositePartitionToNativeForTest(long partitionTimestamp) {
+        return convertCompositePartitionParquetToNative(partitionTimestamp);
     }
 
     /**
@@ -18055,7 +18175,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int dstDirLen,
             long partitionRowCount
     ) {
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+        restoreIndexFilesAfterParquetToNative(partitionTimestamp, parquetNameTxn, dstDirLen, partitionRowCount, null);
+    }
+
+    private void restoreIndexFilesAfterParquetToNative(
+            long partitionTimestamp,
+            long parquetNameTxn,
+            int dstDirLen,
+            long partitionRowCount
+    , @Nullable CharSequence cellSegment) {
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
         final int srcDirLen = path.size();
         try {
             final int columnCount = metadata.getColumnCount();

@@ -37,14 +37,20 @@ import java.util.List;
 import java.util.stream.Stream;
 
 /**
- * Task 2b of the per-cell parquet plan: converting a composite day converts EVERY cell, each to its own
- * {@code <day>/<cell>.<txn>/data.parquet}.
+ * Tasks 2b and 3 of the per-cell parquet plan: a composite day converts EVERY cell, each to its own
+ * {@code <day>/<cell>.<txn>/data.parquet}, and converts back again.
  * <p>
- * Driven through {@code convertCompositePartitionToParquetForTest}, because the SQL-facing gate is
- * still closed -- until the cross-cell merge cursors read parquet cells (task 5), converting one would
- * make the table unreadable. So these assertions are deliberately STRUCTURAL: which files exist, and
- * what each cell's {@code _txn} record says. Reading the converted rows back is task 5's acceptance,
- * and is not claimed here.
+ * Driven through test seams, because the SQL-facing gate is still closed -- until the cross-cell merge
+ * cursors read parquet cells (task 5), a converted table is unreadable.
+ * <p>
+ * That constrains what can be claimed, and the tests are split accordingly. The one-way conversions
+ * assert STRUCTURE only: which files exist, and what each cell's {@code _txn} record says. Reading
+ * converted rows back is task 5's acceptance and is NOT claimed here.
+ * <p>
+ * {@link #testRoundTripThroughParquetMatchesTheTwin()} is the exception, and the strongest evidence
+ * available today: converting back makes the table native and therefore readable, so it compares every
+ * row against the plain twin that never left native. An encode that dropped, reordered or corrupted
+ * anything cannot be undone by the decode.
  */
 public class CompositePerCellParquetTest extends AbstractCompositeTwinTest {
 
@@ -96,6 +102,42 @@ public class CompositePerCellParquetTest extends AbstractCompositeTwinTest {
             assertQuery("SELECT count() FROM table_partitions('c') WHERE isParquet = true")
                     .noLeakCheck().noRandomAccess().expectSize()
                     .returns("count\n2\n");
+        });
+    }
+
+    /**
+     * The ROUND TRIP, and the strongest assertion available before the readers of task 5 exist.
+     * <p>
+     * Converting to parquet leaves the table unreadable today, so task 2b could only check structure.
+     * Converting BACK makes it native again -- and therefore readable -- so this compares every row
+     * against the plain twin that never left native at all. If the encode dropped, reordered or
+     * corrupted anything, the decode cannot restore it and the twin comparison fails.
+     */
+    @Test(timeout = 60_000)
+    public void testRoundTripThroughParquetMatchesTheTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedTwoCellDay();
+
+            final long day = parseFloorPartialTimestamp(DAY);
+            try (TableWriter w = getWriter("c")) {
+                w.convertCompositePartitionToParquetForTest(day, null, 0.01);
+            }
+            Assert.assertEquals("both cells must be parquet mid-trip", 2, parquetFiles().size());
+
+            try (TableWriter w = getWriter("c")) {
+                w.convertCompositePartitionToNativeForTest(day);
+            }
+            engine.releaseInactive();
+
+            Assert.assertTrue("no parquet file may survive the trip back, got " + parquetFiles(),
+                    parquetFiles().isEmpty());
+            assertQuery("SELECT count() FROM table_partitions('c') WHERE isParquet = true")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n0\n");
+
+            // the payload survived: every row, in the twin's order
+            assertTwinEqual("", " ORDER BY ts, exch");
         });
     }
 
