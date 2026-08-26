@@ -88,6 +88,19 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                     + " then ADD INDEX TYPE POSTING, or take the partition back to native with"
                     + " ALTER TABLE <table> CONVERT PARTITION TO NATIVE LIST '<partition>'";
     protected final IndexMetaFileReader imReader = new IndexMetaFileReader();
+    /**
+     * The one parsed footer of {@code <col>.pidx.<indexTxn>.parquet}, which
+     * every cursor copies rather than re-parsing.
+     * <p>
+     * A cursor's own {@code of(addr, size)} walks the whole footer: one thrift
+     * {@code ColumnChunk} per column per row group. That is affordable once,
+     * but a cursor is built per QUERY, so an aggregate over a single key paid
+     * it per query -- and profiling a short SQL query showed the thrift
+     * ColumnChunk parse above LZ4 decompression. Bound EAGERLY here rather than
+     * lazily in the cursor: {@code getDetachedCursor} hands N workers N cursors
+     * over one frozen reader, and a lazy shared init is a race on that path.
+     */
+    protected final ParquetFileDecoder sourceDecoder = new ParquetFileDecoder();
     protected long columnTop;
     /**
      * Pruning instrumentation, and shared by every cursor this reader serves.
@@ -117,6 +130,9 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     @Override
     public void close() {
         open = false;
+        // Before the munmap below: the decoder's parsed footer addresses the
+        // mapping it was built over.
+        sourceDecoder.close();
         if (pidxAddr != 0) {
             ff.munmap(pidxAddr, pidxSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             pidxAddr = 0;
@@ -627,7 +643,10 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
          */
         protected ParquetFileDecoder decoder() {
             if (!decoderBound) {
-                decoder.of(pidxAddr, pidxSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                // Copies the reader's already-parsed footer and keeps a private
+                // decode context, so N cursors decode concurrently without
+                // sharing the context they would race on.
+                decoder.of(sourceDecoder);
                 decoderBound = true;
             }
             return decoder;
@@ -1156,6 +1175,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
             }
             pidxAddr = TableUtils.mapRO(ff, pidxFile, LOG, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             pidxSize = size;
+            sourceDecoder.of(pidxAddr, pidxSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             open = true;
         } catch (Throwable th) {
             close();
