@@ -18707,13 +18707,45 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
-        // WHAT IT WOULD TAKE, established 2026-08-26 so the next attempt does not re-derive it. This
-        // method is keyed by TIMESTAMP and has three callers, all of which read their partition
-        // timestamps out of the O3 partition-update sink (sealPostingIndexesForO3Partitions). That sink
-        // block carries slots 0..6 -- timestamps and sizes -- and NO cellKey, so there is nothing to
-        // thread through: making the seal cell-aware means widening the sink layout itself, which is
-        // the same structure behind the o3ConsumePartitionUpdateSink trackedTail corruption. That, plus
-        // the dropped-partition wrapper named above, is why this is a task and not a parameter.
+        // WHAT IT WOULD TAKE. An earlier version of this comment said the sink block "carries slots
+        // 0..6 and NO cellKey, so there is nothing to thread through" and concluded that the sink
+        // LAYOUT would have to be widened. That is WRONG, and it is why this gate looked far more
+        // expensive than it is. Re-derived and verified 2026-08-26:
+        //
+        //   o3PartitionUpdateSinkCellKeys ALREADY maps a sink block's own address -> the cellKey it
+        //   was dispatched for. It exists precisely because the shared block layout has no spare slot,
+        //   and o3ConsumePartitionUpdateSink resolves cellKey through it today (two call sites). The
+        //   sink layout does NOT need widening.
+        //
+        // Ordering checked, since the map is the whole basis for this: it is cleared at the TOP of
+        // processO3BlockComposite and populated during dispatchCompositeCellRange, and
+        // processWalCommitFinishApply calls processO3Block(...) and THEN finishO3Commit(...)
+        // sequentially (o3Commit does the same). So the map is live, holding this commit's entries,
+        // at the moment sealPostingIndexesForO3Partitions runs.
+        //
+        // All three callers can supply a cellKey:
+        //   - the two in sealPostingIndexesForO3Partitions already hold blockAddress -> map lookup,
+        //     absent meaning cellKey 0, exactly as the existing consumers read it;
+        //   - squashSplitPartitions resolves partitions by INDEX, and a raw index already identifies
+        //     one specific cell.
+        //
+        // Every primitive the cell-aware body needs also already exists: findAttachedPartitionRawIndexBy
+        // (ts, cellKey), getPartitionNameTxnByRawIndex, isPartitionParquetByRawIndex, the 6-arg
+        // setPathForNativePartition(..., cellSegment), and ColumnVersionReader#packColIndex for the _cv
+        // lookups (which carry cellKey in the columnIndex hi-32 bits rather than in the timestamp).
+        //
+        // FOUR cellKey-blind lookups in this body have to become per-cell -- counted, because a first
+        // pass of this note said "two" and undercounted the last two:
+        //   1. txWriter.getPartitionNameTxnByPartitionTimestamp  (the dropped-partition wrapper)
+        //   2. txWriter.isPartitionParquetByPartitionTimestamp
+        //   3. columnVersionWriter.getColumnTop(partitionTimestamp, colIdx)
+        //   4. columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx)
+        // plus this method's setStateForTimestamp + bare 5-arg path build, which the 6-arg overload
+        // already covers. 3 and 4 need packColIndex(cellKey, colIdx), NOT a different timestamp.
+        //
+        // Treat that as a task worth doing, NOT as a blocked one -- but do it test-first: this gate
+        // guards a stale/incomplete rowid chain, i.e. silently wrong answers from an index, which is
+        // the worst failure class to get wrong.
         if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support a POSTING index seal on this partition [table=")
