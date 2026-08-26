@@ -166,6 +166,8 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
         private boolean decodedGroup;
         /** True while {@link #rowIdPtr} addresses the mapping, not a decode buffer. */
         private boolean directRowIds;
+        /** True when the range was cut to the window, so no row needs testing. */
+        private boolean windowNarrowed;
         /** Row group {@link #rowGroupBuffers} currently holds, or -1. */
         private int cachedRowGroup = -1;
         /** Cover slots the cached decode projected, so a different ask re-decodes. */
@@ -226,6 +228,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             }
             decodedGroup = false;
             directRowIds = false;
+            windowNarrowed = false;
             rowIdPtr = 0;
             hasNext = false;
         }
@@ -290,7 +293,12 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 while (rowInGroup < groupRows) {
                     final long i = rowInGroup++;
                     final long rowId = Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
-                    if (rowId < minValue || rowId > maxValue) {
+                    // seekFirstAtLeast/seekFirstAbove cut the range to exactly
+                    // the rows inside the window, so when they ran every row
+                    // left is emitted and the bounds test below is a tautology.
+                    // This is the hottest line in a scan -- the loop was 23% of
+                    // a low-cardinality scan profile -- so it is worth skipping.
+                    if (!windowNarrowed && (rowId < minValue || rowId > maxValue)) {
                         continue;
                     }
                     setEmittedRow(i);
@@ -390,6 +398,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                         // stride index and reads only what the window asks for.
                         rowInGroup = seekFirstAtLeast(rowIdPtr, rowLo, rowHi, minValue);
                         groupRows = seekFirstAbove(rowIdPtr, rowInGroup, rowHi, maxValue);
+                        windowNarrowed = true;
                         lastTouchedRowGroup = rg;
                         if (rowInGroup >= groupRows) {
                             // The window excludes this group's run entirely.
@@ -406,6 +415,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     // Already in the buffer, whole. No decode at all.
                     decodedGroup = true;
                     directRowIds = false;
+                    windowNarrowed = false;
                     rowIdPtr = rowGroupBuffers.getChunkDataPtr(0);
                     rowInGroup = rowLo;
                     groupRows = rowHi;
@@ -441,6 +451,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 }
                 decodedGroup = true;
                 directRowIds = false;
+                windowNarrowed = false;
                 lastTouchedRowGroup = rg;
                 return true;
             }
