@@ -170,7 +170,11 @@ public class PostingIndexBenchmarkSuite {
                 // scan measured 3.11x SLOWER alongside two others and 1.73x
                 // FASTER alone, three runs agreeing within 2%. Forking makes a
                 // trustworthy number the default rather than folklore.
-                final int iters = Integer.getInteger("questdb.suite.bench.iterations", 2);
+                // Three, not two: JMH does not compute a score error below three
+                // iterations, and without an error every cell prints a hard
+                // ratio that cannot be distinguished from noise. The extra
+                // second per cell costs about a minute across the suite.
+                final int iters = Integer.getInteger("questdb.suite.bench.iterations", 3);
                 builder.forks(1)
                         .jvmArgsAppend(
                                 "--enable-native-access=ALL-UNNAMED",
@@ -1095,9 +1099,77 @@ public class PostingIndexBenchmarkSuite {
         }
     }
 
+    /**
+     * The score of the one result whose key names {@code bench} and every one of
+     * {@code must}, or null when absent. Matching on substrings rather than
+     * rebuilding the key means adding a @Param does not silently empty a table:
+     * the key is params joined in declaration order, so a positional lookup
+     * breaks the moment a new axis is inserted ahead of an existing one.
+     *
+     * @return {@code {score, error}}, or null if no key matched
+     */
+    private static double[] cell(Map<String, double[]> m, String bench, String... must) {
+        outer:
+        for (Map.Entry<String, double[]> e : m.entrySet()) {
+            final String k = e.getKey();
+            if (!k.startsWith(bench + "/")) {
+                continue;
+            }
+            final String[] seg = k.split("/");
+            for (String token : must) {
+                boolean hit = false;
+                for (int i = 1; i < seg.length; i++) {
+                    if (seg[i].equals(token)) {
+                        hit = true;
+                        break;
+                    }
+                }
+                if (!hit) {
+                    continue outer;
+                }
+            }
+            return e.getValue();
+        }
+        return null;
+    }
+
+    /**
+     * A ratio of {@code arm} to {@code base}, or {@code "~"} when the two error
+     * intervals overlap.
+     * <p>
+     * At two measurement iterations the intervals are wide. Printing a bare
+     * ratio would turn that noise into a reported regression, and detecting
+     * regressions is the only reason this table exists.
+     */
+    private static String ratio(double[] base, double[] arm) {
+        if (base == null || arm == null || base[0] <= 0 || arm[0] <= 0) {
+            return "-";
+        }
+        final double r = arm[0] / base[0];
+        final double spread = r >= 1 ? r : 1 / r;
+        final boolean noError = Double.isNaN(base[1]) || Double.isNaN(arm[1]);
+        // JMH computes no error below three iterations, and without one there is
+        // no way to separate a difference from noise.
+        final boolean disjoint = !noError
+                && ((base[0] - base[1]) > (arm[0] + arm[1]) || (arm[0] - arm[1]) > (base[0] + base[1]));
+        if (disjoint) {
+            return r >= 1 ? String.format("%.2fF", r) : String.format("%.2fS", 1 / r);
+        }
+        // Overlapping intervals mean two different things and conflating them
+        // misleads. A small gap really is parity. A LARGE gap whose intervals
+        // still overlap is a noisy cell, not an equal one -- reporting 10,222 vs
+        // 4,048 as "no signal" reads as parity when it is actually an unmeasured
+        // 2.5x. Flag those for a deeper re-run instead.
+        if (spread < 1.25) {
+            return "~";
+        }
+        return String.format("%.1f%s?", spread, r >= 1 ? "F" : "S");
+    }
+
     private static void printSummary(Collection<RunResult> results) {
         // Index results by benchmark name and params
         Map<String, Double> scores = new LinkedHashMap<>();
+        Map<String, double[]> cells = new LinkedHashMap<>();
         for (RunResult rr : results) {
             String label = rr.getParams().getBenchmark().replace("org.questdb.PostingIndexBenchmarkSuite.", "");
             Map<String, String> params = rr.getParams().getParamsKeys().stream()
@@ -1106,6 +1178,7 @@ public class PostingIndexBenchmarkSuite {
                     .filter(v -> !"N/A".equals(v))
                     .reduce("", (a, v) -> a + "/" + v);
             scores.put(key, rr.getPrimaryResult().getScore());
+            cells.put(key, new double[]{rr.getPrimaryResult().getScore(), rr.getPrimaryResult().getScoreError()});
         }
 
         out.println();
@@ -1128,24 +1201,47 @@ public class PostingIndexBenchmarkSuite {
             out.println();
         }
 
-        // --- Index Comparison ---
+        // --- What converting to parquet costs ---
+        // The one question this suite exists to answer. F = parquet faster,
+        // S = parquet slower, ~ = the two error intervals overlap so the
+        // difference is not resolvable at this sample count (re-run that one
+        // cell with -Dquestdb.suite.bench.iterations=10 to settle it).
         out.println();
-        out.println("── Index Comparison: Posting vs Legacy (ops/s, higher=better) ────────────────────");
-        String[] scenarios = {"S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"};
+        out.println("── Converting to parquet: native index vs parquet index ──────────────────────────");
+        out.println("   ops/s, higher=better.  F=parquet faster  S=parquet SLOWER\n   ~=parity   N.NS?=apparent gap but too noisy to confirm; re-run that cell with\n   -Dquestdb.suite.bench.iterations=10");
+        final String[] rungs = {"P400K", "S4", "S6", "S7"};
+        final String[] keyLabels = {"16", "2,000", "200,000", "1,000,000"};
         for (String bench : new String[]{"indexPointRead", "indexScanRead", "indexRangeRead"}) {
-            out.printf("  %s:%n", bench);
-            out.printf("  %-6s %10s %10s %8s%n", "", "LEGACY", "POSTING", "ratio");
-            for (String s : scenarios) {
-                Double leg = scores.get(bench + "/LEGACY/" + s);
-                Double post = scores.get(bench + "/POSTING/" + s);
-                if (leg != null && post != null) {
-                    String ratio = String.format("%.2fx", post / leg);
-                    String marker = post < leg ? " ◄" : "";
-                    out.printf("  %-6s %,10.0f %,10.0f %8s%s%n", s, leg, post, ratio, marker);
+            for (String dir : new String[]{"FORWARD", "BACKWARD"}) {
+                out.printf("%n  %s (%s):%n", bench, dir);
+                out.printf("  %-12s %12s %12s %8s%n", "keys", "native", "parquet", "verdict");
+                for (int i = 0; i < rungs.length; i++) {
+                    double[] nat = cell(cells, bench, "POSTING", rungs[i], dir);
+                    double[] pq = cell(cells, bench, "POSTING_PARQUET", rungs[i], dir);
+                    if (nat == null || pq == null) {
+                        continue;
+                    }
+                    out.printf("  %-12s %,12.0f %,12.0f %8s%n", keyLabels[i], nat[0], pq[0], ratio(nat, pq));
                 }
             }
-            out.println();
         }
+
+        // --- The same question at SQL level ---
+        out.println();
+        out.println("── Converting to parquet: SQL ────────────────────────────────────────────────────");
+        out.printf("  %-16s %-10s %12s %12s %8s%n", "query", "keys", "native", "parquet", "verdict");
+        for (String q : new String[]{"covering_where", "latest_on"}) {
+            for (int i = 0; i < 3; i++) {
+                double[] nat = cell(cells, "sqlQuery", q, rungs[i], STORAGE_NATIVE);
+                double[] pq = cell(cells, "sqlQuery", q, rungs[i], STORAGE_PARQUET_INDEX);
+                if (nat == null || pq == null) {
+                    continue;
+                }
+                out.printf("  %-16s %-10s %,12.0f %,12.0f %8s%n",
+                        q, keyLabels[i], nat[0], pq[0], ratio(nat, pq));
+            }
+        }
+        out.println();
 
         // --- Sidecar ---
         out.println("── Sidecar Read Throughput (ops/s, higher=better) ────────────────────────────────");
@@ -1630,7 +1726,11 @@ public class PostingIndexBenchmarkSuite {
         String dir;
         @Param({"FORWARD", "BACKWARD"})
         String direction;
-        @Param({"LEGACY", "POSTING", "POSTING_PARQUET"})
+        // LEGACY (the old bitmap index) stays selectable but is not a default.
+        // The question this suite answers is what converting a partition to
+        // parquet costs, which is POSTING against POSTING_PARQUET; a third
+        // default arm spends a third of the runtime on a different question.
+        @Param({"POSTING", "POSTING_PARQUET"})
         String format;
         long imFileSize;
         boolean isParquet;
@@ -1642,7 +1742,10 @@ public class PostingIndexBenchmarkSuite {
         int[] pointKeys;
         int[] rangeKeys;
         long rowIdBase;
-        @Param({"S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "P400K"})
+        // Four cardinality rungs. These fixtures are built through the index
+        // writer rather than SQL, so they stay cheap enough to keep the 1M-key
+        // rung -- which is exactly where the parquet form regresses.
+        @Param({"P400K", "S4", "S6", "S7"})
         String scenario;
         int totalRows;
 
@@ -1973,7 +2076,11 @@ public class PostingIndexBenchmarkSuite {
         CairoEngine engine;
         @Param({"covering_where", "latest_on"})
         String queryType;
-        @Param({"P400K", "S2", "S4", "S8", "S6", "S1", "S7"})
+        // Three cardinality rungs, not the full ladder. The question this arm
+        // answers is "does converting to parquet hurt", and 16 / 2,000 / 200,000
+        // distinct keys spans the range where the index-level arm crosses over.
+        // More rungs cost minutes each and add no answer.
+        @Param({"P400K", "S4", "S6"})
         String scenario;
         String sql;
         @Param({STORAGE_NATIVE, STORAGE_PARQUET_INDEX})
@@ -2037,7 +2144,12 @@ public class PostingIndexBenchmarkSuite {
                 case ROUND_ROBIN -> "('s' || (x % " + l.keyCount() + "))::SYMBOL";
                 default -> throw new IllegalStateException("not SQL-expressible: " + l);
             };
-            final String rows = String.valueOf(l.totalRows());
+            // Fixture cost scales with ROWS; the thing under test is KEYS. Holding
+            // rows at the original 400k keeps every rung the same price -- an S7
+            // shaped cell measured 201.5 s, which buys no extra answer. Every rung
+            // used here has keyCount <= 200,000, so at 400k rows the sparsest still
+            // averages two rows per key.
+            final String rows = String.valueOf(Math.min(l.totalRows(), 400_000));
 
             // Core table: sym with covering index on price (ladder keys, ladder rows)
             engine.execute("CREATE TABLE bench (" +
