@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -125,6 +126,56 @@ public class CompositeCellBlindWriteSweepTest extends AbstractCairoTest {
                 assertNoDayLevelData(table, label + " (after a further commit)");
             });
         }
+    }
+
+    /**
+     * The sweep above covers the DDL surface, reached through SQL. This covers the one WRITE path that
+     * SQL cannot reach: a raw {@code TableWriter} obtained from the engine, appending via
+     * {@code newRow}.
+     * <p>
+     * WHY IT IS NOT COVERED BY THE SWEEP, and why that gap was invisible: composite tables are refused
+     * at CREATE unless WAL, so it is tempting to conclude the non-WAL {@code newRow} /
+     * {@code ROW_ACTION_SWITCH_PARTITION} path is unreachable for them. That is false. The refusal
+     * constrains how rows arrive through SQL, not who may open a writer — {@code getWriter} ->
+     * {@code newRow} bypasses the WAL apply path and its composite dispatch entirely and lands in the
+     * cell-blind active tail. MEASURED 2026-08-26: an assert placed in {@code switchPartition} claiming
+     * composite could never reach it fired 20 times across this suite.
+     * <p>
+     * The timestamp deliberately falls in a LATER day than any existing row, which is what drives
+     * {@code newRow} down the {@code switchPartition} branch rather than a plain append.
+     * <p>
+     * Uses the same day-level-file-size oracle as the sweep, and for the same reason: the composite
+     * write path re-resolves its own per-cell handles, so a row can be queryable and correct while a
+     * cell-blind write has still grown a file that belongs to no cell. Row-value assertions cannot see
+     * that; file size can.
+     */
+    @Test
+    public void testRawWriterNewRowDoesNotWriteToADayLevelColumnFile() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rawnr (ts TIMESTAMP, exch SYMBOL, px DOUBLE)"
+                    + " TIMESTAMP(ts) PARTITION BY DAY, exch LAYOUT PLAIN WAL");
+            execute("INSERT INTO rawnr VALUES ('2023-01-01T01:00:00.000000Z','A',1.0),"
+                    + " ('2023-01-01T02:00:00.000000Z','B',2.0),"
+                    + " ('2023-01-02T01:00:00.000000Z','C',3.0)");
+            drainWalQueue();
+            assertNoDayLevelData("rawnr", "raw-writer newRow (before)");
+
+            try (io.questdb.cairo.TableWriter w = getWriter("rawnr")) {
+                try {
+                    // crosses into a LATER day than any existing row -> ROW_ACTION_SWITCH_PARTITION
+                    w.newRow(parseFloorPartialTimestamp("2023-01-03T01:00:00.000000Z"));
+                    Assert.fail("a direct-writer partition switch must be refused on a routed composite table");
+                } catch (io.questdb.cairo.CairoException expected) {
+                    io.questdb.std.str.StringSink m = new io.questdb.std.str.StringSink();
+                    m.put(expected.getFlyweightMessage());
+                    Assert.assertTrue(
+                            "expected the explicit composite refusal, got: " + m,
+                            Chars.contains(m, "does not yet support switching the active partition"));
+                }
+            }
+            // The refusal must not have left debris at the day level either.
+            assertNoDayLevelData("rawnr", "raw-writer newRow (after refusal)");
+        });
     }
 
     /**

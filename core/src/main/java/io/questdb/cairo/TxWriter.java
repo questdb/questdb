@@ -660,14 +660,45 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         prevTransientRowCount = transientRowCount;
         long partitionTimestampLo = getPartitionTimestampByTimestamp(maxTimestamp);
         int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo);
+        // A MISS returns a negative insertion point, which the line below would use as an array index.
+        // MEASURED 2026-08-26: on a routed composite table this threw
+        // "ArrayIndexOutOfBoundsException: Index -16 out of bounds for length 32" (-2 * the composite
+        // stride of 8) from updatePartitionSizeByRawIndex, reached via
+        // TableWriter.switchPartition <- newRow -- i.e. any raw-TableWriter append that crosses a day
+        // boundary on a table whose last day has more than one cell.
+        //
+        // The cause is the lookup above: it is the cellKey-0-only variant (see
+        // findAttachedPartitionRawIndexByLoTimestamp's own docs), and on a multi-cell day the day's
+        // entry at cellKey 0 need not be the one it lands on. This whole method has no cellKey concept
+        // -- initPartitionAt below still hardcodes 0, and its "composite routing is Plan 4" comment is
+        // stale now that Plan 4 has landed.
+        //
+        // Refusing here rather than threading a cellKey through: which cell an active tail "switches
+        // to" has no single meaning on a multi-cell day, so a cellKey argument would invent an answer
+        // rather than compute one. This converts an AIOOBE into the same explicit refusal every other
+        // not-yet-supported composite operation on this branch raises, and is a strict improvement for
+        // plain tables too, where a negative index would have crashed identically.
+        // Scoped to a table that HAS an active tail. On an empty table the miss is legitimate -- there
+        // is genuinely no partition to find -- and returns a small negative that lands back in bounds
+        // once PARTITION_MASKED_SIZE_OFFSET is added, so the slot it touches is immediately overwritten
+        // by initPartitionAt below. That is long-standing behaviour for plain and composite alike and
+        // is deliberately left alone; a first cut of this guard refused it too and broke 5 passing
+        // tests. The defect is the OTHER case: a real partition exists and the cellKey-0 lookup still
+        // failed to find it.
+        if (indexRaw < 0 && partitionTimestampLo != Numbers.LONG_NULL) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support switching the active partition ")
+                    .put("from a direct writer append [partitionTimestamp=").put(partitionTimestampLo)
+                    .put(", cellAwareLookupMissed=true]");
+        }
         updatePartitionSizeByRawIndex(indexRaw, transientRowCount);
 
         indexRaw += longsPerAttachedPartition;
 
         attachedPartitions.setPos(indexRaw + longsPerAttachedPartition);
         long newTimestampLo = getPartitionTimestampByTimestamp(timestamp);
-        // Real writes only ever produce cellKey 0 today -- composite routing (which cell a row lands
-        // in) is Plan 4.
+        // cellKey 0: correct for a plain table (its only value) and unreachable for a routed composite
+        // one, which the guard above now refuses before getting here.
         initPartitionAt(indexRaw, newTimestampLo, 0L, txn - 1, 0);
         transientRowCount = 0L;
         txPartitionCount++;
