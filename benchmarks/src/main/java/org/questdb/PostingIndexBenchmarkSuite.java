@@ -109,6 +109,7 @@ public class PostingIndexBenchmarkSuite {
     private static final PrintStream out = System.err;
 
     public static void main(String[] args) throws Exception {
+        verifyLadder();
         System.setProperty("questdb.log.level", "E");
         LogFactory.haltInstance();
 
@@ -1027,6 +1028,31 @@ public class PostingIndexBenchmarkSuite {
         }
     }
 
+    /**
+     * Every state class must agree on what a scenario label means. This runs at
+     * startup rather than living in a test, because the benchmarks module has no
+     * test harness -- and a check that runs on every invocation is a stronger
+     * guarantee than a test nobody executes.
+     */
+    private static void verifyLadder() {
+        for (Ladder l : Ladder.values()) {
+            if (l.streaming()) {
+                continue;
+            }
+            if (l.keyCount() <= 0 || l.totalRows() <= 0) {
+                throw new IllegalStateException("ladder " + l + " has non-positive shape");
+            }
+            if (l.keyCount() > l.totalRows()) {
+                throw new IllegalStateException(
+                        "ladder " + l + " asks for more keys (" + l.keyCount()
+                                + ") than rows (" + l.totalRows() + "), so most keys would hold no posting");
+            }
+            if (l.commitInterval() <= 0 || l.commitInterval() > l.totalRows()) {
+                throw new IllegalStateException("ladder " + l + " has out-of-range commitInterval");
+            }
+        }
+    }
+
     private static void printSummary(Collection<RunResult> results) {
         // Index results by benchmark name and params
         Map<String, Double> scores = new LinkedHashMap<>();
@@ -1488,6 +1514,71 @@ public class PostingIndexBenchmarkSuite {
         }
     }
 
+    /**
+     * The nine fixture shapes this suite measures across, defined once so that
+     * "S7" means one million keys in EVERY arm. Four state classes parameterise
+     * against this; a shared label that silently meant different things in
+     * different arms would be worse than no sharing at all, which is what
+     * verifyLadder() guards.
+     */
+    enum Dist { SHUFFLED, ROUND_ROBIN, ZIPFIAN, STREAMING }
+
+    enum Ladder {
+        S1(500_000, 2_000_000, 2_000_000, Dist.SHUFFLED, 0L),
+        S2(512, 1_024_000, 65_536, Dist.ROUND_ROBIN, 0L),
+        S3(10_000, 0, 0, Dist.STREAMING, 0L),
+        S4(2_000, 2_000_000, 2_000_000, Dist.ROUND_ROBIN, 0L),
+        S5(500, 1_000_000, 1_000_000, Dist.ZIPFIAN, 0L),
+        S6(200_000, 1_200_000, 1_200_000, Dist.SHUFFLED, 0L),
+        S7(1_000_000, 2_000_000, 2_000_000, Dist.SHUFFLED, 0L),
+        S8(5_000, 1_000_000, 1_000_000, Dist.ROUND_ROBIN, 1_000_000_000L),
+        P400K(16, 400_000, 400_000, Dist.ROUND_ROBIN, 0L);
+
+        private final int commitInterval;
+        private final Dist dist;
+        private final int keyCount;
+        private final long rowIdBase;
+        private final int totalRows;
+
+        Ladder(int keyCount, int totalRows, int commitInterval, Dist dist, long rowIdBase) {
+            this.keyCount = keyCount;
+            this.totalRows = totalRows;
+            this.commitInterval = commitInterval;
+            this.dist = dist;
+            this.rowIdBase = rowIdBase;
+        }
+
+        static Ladder of(String name) {
+            for (Ladder l : values()) {
+                if (l.name().equals(name)) {
+                    return l;
+                }
+            }
+            throw new IllegalArgumentException("unknown scenario " + name);
+        }
+
+        int commitInterval() { return commitInterval; }
+
+        Dist dist() { return dist; }
+
+        int keyCount() { return keyCount; }
+
+        long rowIdBase() { return rowIdBase; }
+
+        /**
+         * Whether this shape can be built by a static SQL insert. ZIPFIAN has no
+         * weighted rnd_symbol, and STREAMING is 100 separate commits; a
+         * hand-rolled approximation of either would be non-comparable with the
+         * index-level arm while LOOKING comparable under the same label. The SQL
+         * and sidecar arms skip these and say so.
+         */
+        boolean sqlExpressible() { return dist != Dist.ZIPFIAN && dist != Dist.STREAMING; }
+
+        boolean streaming() { return dist == Dist.STREAMING; }
+
+        int totalRows() { return totalRows; }
+    }
+
     @State(Scope.Benchmark)
     @BenchmarkMode(Mode.AverageTime)
     @OutputTimeUnit(TimeUnit.MILLISECONDS)
@@ -1521,69 +1612,21 @@ public class PostingIndexBenchmarkSuite {
             // Scaled data sizes: preserve distribution, ~1-2M rows for speed
             int commitInterval;
             int[] keys;
-            switch (scenario) {
-                case "S1" -> {
-                    keyCount = 500_000;
-                    totalRows = 2_000_000;
-                    commitInterval = totalRows;
-                    keys = buildShuffled(totalRows, keyCount);
-                }
-                case "S2" -> {
-                    keyCount = 512;
-                    totalRows = 1_024_000;
-                    commitInterval = 65_536;
-                    keys = buildRoundRobin(totalRows, keyCount);
-                }
-                case "S3" -> { // streaming handled inline
-                    keyCount = 10_000;
-                    setupStreaming();
-                    return;
-                }
-                case "S4" -> {
-                    keyCount = 2_000;
-                    totalRows = 2_000_000;
-                    commitInterval = totalRows;
-                    keys = buildRoundRobin(totalRows, keyCount);
-                }
-                case "S5" -> {
-                    keyCount = 500;
-                    totalRows = 1_000_000;
-                    commitInterval = totalRows;
-                    keys = buildZipfian(totalRows, keyCount);
-                }
-                case "S6" -> {
-                    keyCount = 200_000;
-                    totalRows = 1_200_000;
-                    commitInterval = totalRows;
-                    keys = buildShuffled(totalRows, keyCount);
-                }
-                case "S7" -> {
-                    keyCount = 1_000_000;
-                    totalRows = 2_000_000;
-                    commitInterval = totalRows;
-                    keys = buildShuffled(totalRows, keyCount);
-                }
-                case "S8" -> {
-                    // Row offset dimension: 1B base offset forces 30-bit row IDs (wider bitpacking)
-                    keyCount = 5_000;
-                    totalRows = 1_000_000;
-                    commitInterval = totalRows;
-                    keys = buildRoundRobin(totalRows, keyCount);
-                    rowIdBase = 1_000_000_000L;
-                }
-                case "P400K" -> {
-                    // The fixture docs/covering-index-parquet.md publishes its
-                    // native-vs-parquet ratios on: 400k rows, 16 distinct keys,
-                    // round-robin so the hot key repeats every 16th row. Pinned
-                    // here so the suite's numbers sit next to the documented
-                    // ones rather than on a differently shaped fixture.
-                    keyCount = 16;
-                    totalRows = 400_000;
-                    commitInterval = totalRows;
-                    keys = buildRoundRobin(totalRows, keyCount);
-                }
-                default -> throw new IllegalArgumentException(scenario);
+            final Ladder l = Ladder.of(scenario);
+            keyCount = l.keyCount();
+            if (l.streaming()) {
+                setupStreaming();
+                return;
             }
+            totalRows = l.totalRows();
+            commitInterval = l.commitInterval();
+            rowIdBase = l.rowIdBase();
+            keys = switch (l.dist()) {
+                case SHUFFLED -> buildShuffled(totalRows, keyCount);
+                case ROUND_ROBIN -> buildRoundRobin(totalRows, keyCount);
+                case ZIPFIAN -> buildZipfian(totalRows, keyCount);
+                case STREAMING -> throw new IllegalStateException("handled above");
+            };
 
             maxRow = rowIdBase + totalRows - 1;
             pointKeys = selectRandomKeys(keyCount, Math.min(5_000, keyCount));
