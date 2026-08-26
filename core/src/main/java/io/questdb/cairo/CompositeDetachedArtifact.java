@@ -130,6 +130,26 @@ public final class CompositeDetachedArtifact {
             int expectedTableId,
             CharSequence tableName
     ) {
+        // WHAT IT WOULD TAKE to lift this, established 2026-08-26 by looking at what DETACH actually
+        // copies rather than by argument -- so the next attempt starts from evidence.
+        //
+        // detachPartition copies exactly three table-level files into the artifact via copyOverwrite:
+        // _meta, _cv, _txn. It does NOT copy symbol tables. A composite _txn stores cellKeys, and
+        // decoding a cellKey needs the _cell registry plus the dedicated dictionaries -- neither of
+        // which travels. Hence this refusal: a FOREIGN artifact's cellKeys are undecodable.
+        //
+        // The two candidate fixes are NOT equally conventional, which is the useful part:
+        //   - COPY THE INTERNERS alongside _meta/_cv/_txn. Reuses the existing mechanism exactly, but
+        //     the interners ARE symbol maps, and symbol maps are deliberately NOT copied today (a
+        //     plain ATTACH resolves symbol keys against the TARGET table's own tables). So this
+        //     reverses an existing, deliberate choice for symbol-like data.
+        //   - WRITE A cellKey->values MANIFEST. Decodes without shipping symbol machinery, but
+        //     introduces a file format that exists nowhere else in the artifact.
+        //
+        // So the existing convention does NOT settle it -- both options are new behaviour, and it is
+        // a genuine format decision with compatibility consequences (free while unreleased, a break
+        // afterwards). It also means invariant 4 ("values, not ordinals, across table boundaries") is
+        // not satisfiable by today's artifact at all.
         final int rootLen = artifactRoot.size();
         try (TableReaderMetadata artifactMeta = new TableReaderMetadata(configuration)) {
             final LPSZ metaPath = artifactRoot.concat(TableUtils.META_FILE_NAME).$();
