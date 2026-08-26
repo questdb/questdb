@@ -11791,9 +11791,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             if (newPrevPartitionSize == 0) {
                                 // newSplitPartitionTimestamp can be equal to partitionTimestamp
                                 partitionRemoveCandidates.add(prevPartitionTimestamp, prevPartitionNameTxn, prevPartitionCellKey);
-                                insertPartitionIndex = txWriter.removeAttachedPartitions(prevPartitionTimestamp);
+                                // (ts, cellKey)-resolving. The one-arg removeAttachedPartitions delegates
+                                // to cellKey 0, so on a composite day with 2+ cells it removed cellKey 0's
+                                // _txn entry no matter which cell was actually being split -- while the
+                                // remove candidate on the line above correctly names prevPartitionCellKey.
+                                // Byte-identical for plain and dormant-composite tables, where the cellKey
+                                // is 0 anyway.
+                                insertPartitionIndex = txWriter.removeAttachedPartitions(prevPartitionTimestamp, prevPartitionCellKey);
                             } else {
-                                txWriter.updatePartitionSizeByTimestamp(prevPartitionTimestamp, newPrevPartitionSize);
+                                // Same defect, other branch: updatePartitionSizeByTimestamp resolves
+                                // cellKey 0 only, so a size update aimed at one cell landed on a
+                                // different cell sharing the timestamp. updatePartitionSizeByCell takes
+                                // the same txn-1 nameTxn, so this is a drop-in with the cellKey threaded.
+                                txWriter.updatePartitionSizeByCell(prevPartitionTimestamp, prevPartitionCellKey, newPrevPartitionSize);
                             }
 
                             txWriter.insertPartition(insertPartitionIndex, newSplitPartitionTimestamp, prevPartitionSize - newPrevPartitionSize, txWriter.txn);
