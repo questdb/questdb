@@ -1335,19 +1335,25 @@ public class CompositeFuzzRunner {
  * The cell's new version was written to the BARE DAY path instead of inside the cell. Nothing was
  * deleted; it was created in the wrong place, and _txn was pointed at it.
  * <p>
- * The blind spot is {@code TableWriter#setStateForTimestamp(Path, long)}. It resolves
+ * The prime suspect is {@code TableWriter#setStateForTimestamp(Path, long)}. It resolves
  * {@code getPartitionNameTxnByPartitionTimestamp} (cellKey 0 ONLY) and then builds the path with the
- * bare 5-arg {@code setPathForNativePartition} -- no cell segment. It has <b>17 call sites</b> in
- * TableWriter, and any of them reached on a routed composite table yields exactly this signature: a
- * bare {@code <day>.<txn>} directory plus a cellKey-0 nameTxn stamped onto some cell's entry.
+ * bare 5-arg {@code setPathForNativePartition} -- no cell segment -- and {@code openPartition}, one of
+ * its callers, follows it with {@code ff.mkdirs}. That would create a bare {@code <day>.<txn>}
+ * directory and stamp a cellKey-0 nameTxn onto a cell's entry: exactly the observed signature.
  * <p>
- * So the fix is an audit of those 17 call sites, giving each either the cell-aware
- * {@code setPathForNativePartition(..., cellSegment)} or an explicit "unreachable for routed
- * composite" justification. That is bounded work, but it is real work and it is write-path, so it
- * wants doing test-first rather than quickly. Note the highest cellKey was the one that went wrong
- * here, which is consistent with an active-tail/"last partition" caller -- {@code finishO3Commit}
- * already skips its own last-partition reopen for composite for precisely this reason, so that
- * exemption evidently does not cover every such path.
+ * <b>But guarding that did NOT fix it, so the story is incomplete.</b> Skipping the
+ * {@code openPartition} + {@code setAppendPosition} reopen in
+ * {@code dropPartitionByExactTimestamp}'s active-partition branch for a routed composite table --
+ * mirroring the guard {@code finishO3Commit} already applies to its own last-partition reopen -- left
+ * the failure completely unchanged: 50 occurrences, 12 of 24 seeds, before and after. That change was
+ * reverted rather than kept, since it fixes nothing measurable and alters drop control flow.
+ * <p>
+ * <b>Methodological warning, because it produced a wrong answer here.</b> Instrumenting
+ * {@code setStateForTimestamp} with a stack dump appeared to show only TWO of its 17 call sites
+ * reachable on a routed composite table. That was an artifact: the stacks were grepped with a
+ * 3-line window, so only the top frames were ever visible, and the "two sites" (12280 and 9469) are
+ * {@code openPartition} and its caller in ONE stack. The reachable-call-site question is still OPEN
+ * -- redo it with full stacks before relying on any count.
  * <p>
  * <b>ELIMINATED -- do not re-chase:</b>
  * <ol>
