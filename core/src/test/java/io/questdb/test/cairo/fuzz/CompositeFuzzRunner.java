@@ -1263,18 +1263,43 @@ public class CompositeFuzzRunner {
  * check the map is COMPLETE, never by the generator. Enrolment is these probabilities and nothing
  * else.
  * <p>
- * UNATTRIBUTED, and why DROP PARTITION is still 0.0. Enabled, a run fails a later read of the
- * composite table with "Partition '2023-01-01' does not exist in table 'gated_composite' directory"
- * -- _txn referencing a directory that is gone. That is the shape of a real defect, but FIVE
- * hand-written shapes are all clean, so do not re-try them: (1) a WHERE-form drop of a two-cell day;
- * (2) drop / re-create both cells / drop again; (3) re-insert into the dropped day afterwards;
- * (4) this runner's own mechanism -- one TableWriterAPI, an AlterOperation applied via
- * w.apply(op, false) mid-stream, commit per transaction, drain only every 8, 24 transactions across
- * 3 days; (5) the same with NULL dimension values, since the generator emits them at
- * probabilityOfAssigningNull = 0.1 and a NULL cell was the most plausible trigger left.
- * Still NOT ruled out: O3 inserts (this runner passes o3 = false), the SKEWEARLY/SKEWLATE
- * time-skewed cells inserted either side of the generated traffic, and the generated interleaving of
- * same-timestamp rows. Left disabled, reported as neither a product bug nor a harness artifact.
+ * DROP PARTITION: NO LONGER UNATTRIBUTED -- REPRODUCIBLE ON DEMAND as of 2026-08-26.
+ * <p>
+ * <b>Recipe:</b> set {@code o3 = true} (now the default) and {@code probabilityOfDropPartition =
+ * 0.05}. It then fires in most suites at once -- 70 occurrences across the sweep, unstable and crash
+ * tests in a single run. Six hand-written shapes had failed to reproduce it (listed below); the
+ * missing ingredient was O3, which was the top untried lead and is now the harness default.
+ * <p>
+ * <b>MEASURED evidence.</b> A read of the composite twin fails with "Partition
+ * '2023-01-01/SYM/SYM16' does not exist in table ... directory", and the reader logs the disk-level
+ * cause immediately before it:
+ * <pre>
+ *   open partition failed, partition does not exist on the disk
+ *     [path=.../unstable4_composite~13/2023-01-01/SYM/SYM16.7]
+ * </pre>
+ * So _txn points at a CELL at nameTxn .7 that is not on disk. This persists AFTER drainWalQueue, so
+ * it is a settled inconsistency, not a read racing a writer. The plain twin is unaffected.
+ * <p>
+ * Also measured in the same runs, and possibly the same bug seen from the writer side: partition
+ * purge logs "could not purge partition version, async purge will be scheduled ... errno=2" (ENOENT)
+ * for cell paths, and 14 of 742 such paths contain an EMPTY path component:
+ * <pre>
+ *   /2023-01-02//SKEWLATE      /2023-01-02//0
+ *   /2023-01-02/0//SKEWLATE    /2023-01-02//SKEWLATE/0
+ * </pre>
+ * An empty component is distinct from a NULL dimension, which renders {@code %NULL} (seen in the same
+ * logs), so this is a rendering / path-construction signature, not a NULL value.
+ * <p>
+ * <b>NOT established:</b> that the empty-component purge paths CAUSE the reader failure. They are
+ * two observations from the same runs and the connection is unverified -- do not report it as one
+ * finding. Start by deciding that question.
+ * <p>
+ * Do NOT re-try these six shapes; all are clean: (1) a WHERE-form drop of a two-cell day; (2) drop /
+ * re-create both cells / drop again; (3) re-insert into the dropped day afterwards; (4) this runner's
+ * own mechanism -- one TableWriterAPI, an AlterOperation applied via w.apply(op, false) mid-stream,
+ * commit per transaction, drain only every 8, 24 transactions across 3 days; (5) the same with NULL
+ * dimension values; (6) the time-skewed-cell lead. Left at 0.0 only so the suite stays green while
+ * the bug is open -- flip it to reproduce.
  * <p>
  * SCHEMA-CHANGING DDL is blocked for a separate, plainer reason: this runner's SQL is fixed-shape
  * (5-column INSERTs, fixed literals), so a generated ADD/DROP COLUMN gives "row value count does not
@@ -1384,7 +1409,7 @@ public class CompositeFuzzRunner {
                     0.0,   // probabilityOfColumnTypeChange     (supported; generator literal problem)
                     1.0,   // probabilityOfDataInsert
                     0.1,   // probabilityOfSameTimestamp
-                    0.0,   // probabilityOfDropPartition             (supported; UNATTRIBUTED, see javadoc)
+                    0.0,   // probabilityOfDropPartition  (REPRODUCIBLE bug, see javadoc)
                     0.0,   // probabilityOfConvertPartitionToParquet  (SP3: supported, per cell)
                     0.0,   // probabilityOfConvertPartitionToNative   (SP3: supported, per cell)
                     0.0,   // probabilityOfTruncate
