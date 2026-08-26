@@ -13531,6 +13531,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             );
                         }
                     } else {
+                        // WHY, precisely, so the next attempt does not start from scratch. An interleaved
+                        // multi-cell commit is served by building a compact per-cell scratch
+                        // (buildCompositeCellGroupScratch) and dispatching each group. That gather copies
+                        // each row with a plain fixed-width Vect#memcpy of the column's element width --
+                        // width-agnostic, which is exactly why it handles every FIXED type with no
+                        // per-type switch, and exactly why it cannot handle a var-size one: those carry an
+                        // aux vector plus a data vector, and the row's value is a slice of the latter.
+                        //
+                        // Reading the slice is easy enough (getDataVectorSizeAt bounds it). WRITING the
+                        // scratch's aux entry is not: the aux format is type-specific -- VARCHAR packs an
+                        // inline prefix rather than storing a bare offset -- and ColumnTypeDriver exposes
+                        // no "copy one value" primitive. mergeShuffleColumnFromManyAddresses is not a
+                        // substitute: it consumes the index format radixSortManySegmentsIndexAsc emits,
+                        // not a per-row gather.
+                        // So this needs per-driver support, not a loop here -- and it lands on the same
+                        // scratch machinery whose .i field caused the merge-shuffle corruption in #25.
                         if (hasVarSizeColumn) {
                             throw CairoException.critical(0)
                                     .put("composite partitioning: an interleaved multi-cell commit is not yet supported for a table with a var-size column [table=")

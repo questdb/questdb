@@ -470,6 +470,24 @@ public class TableSnapshotRestore implements QuietCloseable {
             // silently rebuild a wrong (or missing) bitmap index, mirroring this whole project's
             // no-silent-path convention, until a dedicated fix threads cellSegment through the
             // bitmap-index restore path too.
+            // PREMISE CORRECTION 2026-08-26. The comment above used to argue that parquet needed no
+            // equivalent guard here, because CONVERT PARTITION TO PARQUET was unconditionally gated for
+            // composite, so isPartitionParquet(i) would always skip. CONVERT is now SUPPORTED per cell,
+            // so that reasoning no longer holds and this became a live gap the moment the gate lifted --
+            // the same shadow-becomes-live pattern every other gate in this branch has shown.
+            // processParquetPartition builds its target with the cell-less setPathForNativePartition, so
+            // it would look for <day>.<txn>/data.parquet while the file lives at <day>/<cell>.<txn>/.
+            // Refuse rather than restore a composite table's parquet cells through a cell-blind path.
+            if (isRoutedComposite) {
+                for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                    if (txWriter.isPartitionParquet(i)) {
+                        throw CairoException.critical(0)
+                                .put("composite partitioning does not yet support checkpoint/snapshot restore of a parquet partition [table=")
+                                .put(tablePath.trimTo(pathTableLen)).put(']');
+                    }
+                }
+            }
+
             if (isRoutedComposite && rebuildPartitionColumnIndexes) {
                 for (int i = 0, n = tableMetadata.getColumnCount(); i < n; i++) {
                     if (tableMetadata.isColumnIndexed(i)) {
