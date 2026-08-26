@@ -1280,19 +1280,18 @@ public class CompositeFuzzRunner {
  * So _txn points at a CELL at nameTxn .7 that is not on disk. This persists AFTER drainWalQueue, so
  * it is a settled inconsistency, not a read racing a writer. The plain twin is unaffected.
  * <p>
- * Also measured in the same runs, and possibly the same bug seen from the writer side: partition
- * purge logs "could not purge partition version, async purge will be scheduled ... errno=2" (ENOENT)
- * for cell paths, and 14 of 742 such paths contain an EMPTY path component:
+ * <b>A LEAD THAT WAS CHASED AND RULED OUT -- do not chase it again.</b> The same runs logged partition
+ * purge failures ("could not purge partition version ... errno=2", ENOENT) for cell paths, 14 of 742
+ * of which carried an EMPTY path component ({@code /2023-01-02//SKEWLATE}). That WAS a real bug -- an
+ * empty-string dimension value rendered no path segment at all, fixed by
+ * {@code COMPOSITE_EMPTY_DIMENSION_TOKEN} ({@code %EMPTY}) -- but it is NOT this one. Measured
+ * directly, same probe, before and after that fix:
  * <pre>
- *   /2023-01-02//SKEWLATE      /2023-01-02//0
- *   /2023-01-02/0//SKEWLATE    /2023-01-02//SKEWLATE/0
+ *   empty-component purge paths   14  ->  0     (the fix works, on this very workload)
+ *   "does not exist in table"     70  ->  70    (completely unchanged)
  * </pre>
- * An empty component is distinct from a NULL dimension, which renders {@code %NULL} (seen in the same
- * logs), so this is a rendering / path-construction signature, not a NULL value.
- * <p>
- * <b>NOT established:</b> that the empty-component purge paths CAUSE the reader failure. They are
- * two observations from the same runs and the connection is unverified -- do not report it as one
- * finding. Start by deciding that question.
+ * Two independent defects that happened to appear in the same logs. This is exactly why the link was
+ * recorded as unverified rather than reported as one finding: it turned out to be false.
  * <p>
  * Do NOT re-try these six shapes; all are clean: (1) a WHERE-form drop of a two-cell day; (2) drop /
  * re-create both cells / drop again; (3) re-insert into the dropped day afterwards; (4) this runner's
