@@ -572,7 +572,9 @@ public class SqlParser {
             args.addAll(leaf.args);
         } else {
             args.add(leaf.rhs);
-            args.add(leaf.lhs);
+            if (leaf.lhs != null) {
+                args.add(leaf.lhs);
+            }
         }
     }
 
