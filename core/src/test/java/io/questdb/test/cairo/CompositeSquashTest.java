@@ -516,6 +516,17 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * The partition list is byte-identical either side of the squash. Calling this "squash loses rows"
      * was wrong; the squash never applies at all.
      * <p>
+     * <b>The assert is LOAD-BEARING -- do not remove it.</b> Skipping the seqTxn stamp for a parquet
+     * {@code dayFirst} (justified, since offset 3 holds a FILE SIZE not a seqTxn for parquet) makes the
+     * squash succeed and produce CORRUPTION instead:
+     * <pre>
+     *   CairoException: parquet partition row count mismatch [partitionHi=3, parquetRowCount=1]
+     * </pre>
+     * The merge folds the native fragment's 2 rows into the parquet parent's 1, so {@code _txn} says 3
+     * while data.parquet holds 1, and every read of that partition throws. The assert was stopping an
+     * invalid MERGE, not merely objecting to a slot. Suspension is loud and recoverable; a corrupt
+     * partition is neither -- so this was reverted. A fix must prevent the merge, not unblock it.
+     * <p>
      * <b>An earlier attempt that did NOT work.</b> Declining the merge for parquet cells at the TOP of
      * the per-fragment while loop left this failing identically AND broke 19 other tests in this class.
      * The assert above is reached on a path that gets past such a guard, so a fix belongs at or around
