@@ -25,6 +25,7 @@
 package io.questdb.test.mp;
 
 import io.questdb.Metrics;
+import io.questdb.metrics.FiberMetrics;
 import io.questdb.mp.Worker;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -41,6 +42,7 @@ import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Os;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -771,7 +773,9 @@ public class FiberAffinitySchedulingTest {
                     true
             ));
             final FiberRuntime runtime = pool.getFiberRuntime();
-            final CountDownLatch recovered = new CountDownLatch(1);
+            final FiberMetrics metrics = new FiberMetrics();
+            metrics.register("test", runtime);
+            final CountDownLatch recovered = new CountDownLatch(2);
             final AtomicBoolean isFailurePending = new AtomicBoolean(true);
             final AtomicInteger mountedWorkerId = new AtomicInteger(FiberRuntime.NO_WORKER);
             final AtomicReference<Throwable> jobError = new AtomicReference<>();
@@ -781,16 +785,18 @@ public class FiberAffinitySchedulingTest {
                     // deterministic failure injected below.
                     try {
                         awaitWorkerReady(pool, 1);
-                        final LaunchResult launchResult = runtime.launch(new FiberTask() {
-                            @Override
-                            protected boolean runStep() {
-                                mountedWorkerId.set(Worker.current().getWorkerId());
-                                recovered.countDown();
-                                return true;
+                        for (int i = 0; i < 2; i++) {
+                            final LaunchResult launchResult = runtime.launch(new FiberTask() {
+                                @Override
+                                protected boolean runStep() {
+                                    mountedWorkerId.set(Worker.current().getWorkerId());
+                                    recovered.countDown();
+                                    return true;
+                                }
+                            });
+                            if (launchResult != LaunchResult.LAUNCHED) {
+                                recordFailure(jobError, "launch was rejected [result=" + launchResult + ']');
                             }
-                        });
-                        if (launchResult != LaunchResult.LAUNCHED) {
-                            recordFailure(jobError, "launch was rejected [result=" + launchResult + ']');
                         }
                     } catch (Throwable th) {
                         jobError.compareAndSet(null, th);
@@ -809,10 +815,34 @@ public class FiberAffinitySchedulingTest {
                 rethrow(jobError);
                 Assert.assertEquals(1, mountedWorkerId.get());
                 Assert.assertEquals(1, runtime.getOrphanedShardTransitionCount());
-                Assert.assertEquals(1, runtime.getOrphanedEntryRecoveryCount());
-                Assert.assertEquals(1, runtime.getStolenSelectionCount());
+                Assert.assertEquals(2, runtime.getOrphanedEntryRecoveryCount());
+                Assert.assertEquals(2, runtime.getStolenSelectionCount());
                 Assert.assertEquals(1, runtime.getWakeClaimCount());
                 awaitOutstanding(runtime, 0);
+
+                try (DirectUtf8Sink sink = new DirectUtf8Sink(2048)) {
+                    metrics.scrapeIntoPrometheus(sink);
+                    TestUtils.assertContains(
+                            sink.toString(),
+                            "questdb_worker_pool_fiber_orphaned_shard_total{worker_pool=\"test\"} 1\n"
+                    );
+                    TestUtils.assertContains(
+                            sink.toString(),
+                            "questdb_worker_pool_fiber_orphan_recovery_total{worker_pool=\"test\"} 2\n"
+                    );
+
+                    metrics.clear();
+                    sink.clear();
+                    metrics.scrapeIntoPrometheus(sink);
+                    TestUtils.assertContains(
+                            sink.toString(),
+                            "questdb_worker_pool_fiber_orphaned_shard_total{worker_pool=\"test\"} 0\n"
+                    );
+                    TestUtils.assertContains(
+                            sink.toString(),
+                            "questdb_worker_pool_fiber_orphan_recovery_total{worker_pool=\"test\"} 0\n"
+                    );
+                }
             } finally {
                 pool.halt();
             }
