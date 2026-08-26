@@ -46,14 +46,20 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
- * Shared harness for the cases that read a checkpoint tree written by a released build
- * back through this one: unpacking a whole database root over the test's own, and reading
- * the published checkpoint state of a view inside it.
+ * Shared harness for the cases that read a checkpoint tree some <i>other</i> build wrote:
+ * unpacking a whole database root over the test's own, and reading the published checkpoint
+ * state of a view inside it.
  * <p>
- * Every helper here reads the released tree rather than asserting anything about it. What
- * each fixture is evidence for belongs to the subclass that owns it.
+ * Both directions live here. {@link LiveViewCheckpointReleaseCompatTest} and
+ * {@link LiveViewCheckpointReleaseShapesCompatTest} read trees an older, released build wrote
+ * and expect a restore; {@link LiveViewCheckpointForwardCompatTest} reads a tree shaped the way
+ * a newer build would write one and expects a refusal and a rebuild. They need the same two
+ * things - a database root the engine will open, and a way to see which shape the head carries.
+ * <p>
+ * Every helper here reads the tree rather than asserting anything about it. What each case is
+ * evidence for belongs to the subclass that owns it.
  */
-public abstract class AbstractLiveViewReleaseFixtureTest extends AbstractLiveViewTest {
+public abstract class AbstractLiveViewCheckpointCompatTest extends AbstractLiveViewTest {
 
     /**
      * Unpacks a database root over the test's own and points the engine at it, the way
@@ -76,7 +82,7 @@ public abstract class AbstractLiveViewReleaseFixtureTest extends AbstractLiveVie
         engine.closeNameRegistry();
 
         final byte[] buffer = new byte[1024 * 1024];
-        try (InputStream is = AbstractLiveViewReleaseFixtureTest.class.getResourceAsStream(resourcePath)) {
+        try (InputStream is = AbstractLiveViewCheckpointCompatTest.class.getResourceAsStream(resourcePath)) {
             Assert.assertNotNull("missing fixture resource " + resourcePath, is);
             try (ZipInputStream zip = new ZipInputStream(is)) {
                 ZipEntry entry;

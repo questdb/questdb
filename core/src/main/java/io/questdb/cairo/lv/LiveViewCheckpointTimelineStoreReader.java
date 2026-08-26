@@ -424,9 +424,15 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
      * skipping each corrupt root until one restores, and reports the highest
      * skipped boundary in {@link Result#corruptCeilingMaxTs} so the caller can
      * reconstruct the same logical checkpoint ids. Only a run longer than
-     * {@link #MAX_CORRUPT_ROOT_FALLBACKS}, or a corrupt oldest root with no
-     * predecessor left, surfaces as checkpoint-storage corruption; generation and
-     * superblock corruption still propagate directly, before the fallback runs.
+     * {@link #MAX_CORRUPT_ROOT_FALLBACKS}, or a refused oldest root with no
+     * predecessor left, exhausts the walk; generation and superblock corruption
+     * still propagate directly, before the fallback runs.
+     * <p>
+     * The exhaustion error quotes the newest root's own refusal, because damage is
+     * not the only thing that empties the walk. A tree a newer build wrote refuses
+     * at every root - an unknown page kind, or a structure version this build does
+     * not read - with every checksum intact, and the caller rebuilds from the base
+     * table either way. The message is what tells the two apart afterwards.
      */
     public Result restoreLatestCompatible(
             long durableFrontierTimestamp,
@@ -468,6 +474,15 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             // durable materialization, so it is skipped only when its own restore
             // fails.
             long corruptCeilingMaxTs = Numbers.LONG_NULL;
+            // Why the newest candidate was refused. The loop discards every later
+            // refusal, and the exhaustion message below can only describe the walk, so
+            // without this the caller's log names no cause at all. It matters most for
+            // the one refusal that is not damage: a root a NEWER build wrote carries a
+            // page kind or a structure version this one does not know, and every root
+            // in that tree carries it, so the walk exhausts and reports corruption over
+            // a directory whose every checksum agrees. The rebuild is right either way;
+            // the operator reading the log is the one who needs to tell the two apart.
+            CairoException firstRefusal = null;
             int fallbacks = 0;
             boolean isFloor = true;
             while (true) {
@@ -499,6 +514,9 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                         // the runtime, so the failed candidate left it untouched (or the
                         // next restore re-clears it), and this pin still holds the same
                         // generation for the retry.
+                        if (firstRefusal == null) {
+                            firstRefusal = e;
+                        }
                     }
                 } else if (isFloor) {
                     throw invalid("logical root is incompatible with durable materialization")
@@ -512,9 +530,14 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 }
                 if (++fallbacks > MAX_CORRUPT_ROOT_FALLBACKS
                         || !timelineReader.predecessor(pin.getTimelineRootRef(), entry.maxTimestamp, entry)) {
-                    throw invalid("storage is corrupt: no usable root at or below the corruption ceiling")
-                            .put(" [corruptCeilingMaxTs=").put(corruptCeilingMaxTs)
-                            .put(", fallbacks=").put(fallbacks).put(']');
+                    final CairoException exhausted =
+                            invalid("storage has no usable root at or below the corruption ceiling")
+                                    .put(" [corruptCeilingMaxTs=").put(corruptCeilingMaxTs)
+                                    .put(", fallbacks=").put(fallbacks);
+                    if (firstRefusal != null) {
+                        exhausted.put(", newestRefusal=").put(firstRefusal.getFlyweightMessage());
+                    }
+                    throw exhausted.put(']');
                 }
                 isFloor = false;
             }

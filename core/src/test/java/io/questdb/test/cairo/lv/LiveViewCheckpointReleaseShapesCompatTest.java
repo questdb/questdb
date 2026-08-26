@@ -72,7 +72,7 @@ import java.io.IOException;
  * into a clean {@code 10.0.1} checkout's {@code io.questdb.test.cairo.lv} package and run it;
  * the constants below are the values it prints.
  */
-public class LiveViewCheckpointReleaseShapesCompatTest extends AbstractLiveViewReleaseFixtureTest {
+public class LiveViewCheckpointReleaseShapesCompatTest extends AbstractLiveViewCheckpointCompatTest {
 
     // The simulated clock the fixture's own run left behind. This one starts above it, so the
     // flush cadence reads a forward-moving clock rather than one that jumped backwards.

@@ -67,7 +67,7 @@ import java.io.IOException;
  * clean {@code 10.0.1} checkout's {@code io.questdb.test.cairo.lv} package and run it; the
  * constants below are the values it prints.
  */
-public class LiveViewCheckpointReleaseCompatTest extends AbstractLiveViewReleaseFixtureTest {
+public class LiveViewCheckpointReleaseCompatTest extends AbstractLiveViewCheckpointCompatTest {
 
     private static final String FIXTURE_RESOURCE = "/lv/lv_checkpoint_10_0_1.zip";
     // The simulated clock the fixture's own run left behind. This one starts above it, so the
