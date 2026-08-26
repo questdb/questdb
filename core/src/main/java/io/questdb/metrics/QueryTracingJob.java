@@ -81,13 +81,28 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
                 null,
                 null
         );
-        this.tableWriter = acquireTableWriter();
-        final TableRecordMetadata metadata = tableWriter.getMetadata();
-        queryTextColumnIndex = metadata.getColumnIndex(COLUMN_QUERY_TEXT);
-        executionMicrosColumnIndex = metadata.getColumnIndex(COLUMN_EXECUTION_MICROS);
-        principalColumnIndex = metadata.getColumnIndex(COLUMN_PRINCIPAL);
-        waitMicrosColumnIndex = metadata.getColumnIndex(COLUMN_WAIT_MICROS);
-        firstRowMicrosColumnIndex = metadata.getColumnIndex(COLUMN_FIRST_ROW_MICROS);
+        TableWriter writer = null;
+        try {
+            writer = acquireTableWriter();
+            if (writer.getMetadata().getColumnIndexQuiet(COLUMN_WAIT_MICROS) < 0) {
+                writer.addColumn(COLUMN_WAIT_MICROS, ColumnType.LONG, sqlExecutionContext.getSecurityContext());
+            }
+            if (writer.getMetadata().getColumnIndexQuiet(COLUMN_FIRST_ROW_MICROS) < 0) {
+                writer.addColumn(COLUMN_FIRST_ROW_MICROS, ColumnType.LONG, sqlExecutionContext.getSecurityContext());
+            }
+            final TableRecordMetadata metadata = writer.getMetadata();
+            queryTextColumnIndex = metadata.getColumnIndex(COLUMN_QUERY_TEXT);
+            executionMicrosColumnIndex = metadata.getColumnIndex(COLUMN_EXECUTION_MICROS);
+            principalColumnIndex = metadata.getColumnIndex(COLUMN_PRINCIPAL);
+            waitMicrosColumnIndex = metadata.getColumnIndex(COLUMN_WAIT_MICROS);
+            firstRowMicrosColumnIndex = metadata.getColumnIndex(COLUMN_FIRST_ROW_MICROS);
+        } catch (Throwable th) {
+            if (writer != null) {
+                writer.close();
+            }
+            throw th;
+        }
+        this.tableWriter = writer;
     }
 
     @Override
@@ -115,19 +130,7 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
                 tableToken = engine.verifyTableName(TABLE_NAME);
             }
         }
-        final TableWriter writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
-        try {
-            if (writer.getMetadata().getColumnIndexQuiet(COLUMN_WAIT_MICROS) < 0) {
-                writer.addColumn(COLUMN_WAIT_MICROS, ColumnType.LONG, sqlExecutionContext.getSecurityContext());
-            }
-            if (writer.getMetadata().getColumnIndexQuiet(COLUMN_FIRST_ROW_MICROS) < 0) {
-                writer.addColumn(COLUMN_FIRST_ROW_MICROS, ColumnType.LONG, sqlExecutionContext.getSecurityContext());
-            }
-        } catch (Throwable th) {
-            writer.close();
-            throw th;
-        }
-        return writer;
+        return engine.getWriter(tableToken, WRITER_LOCK_REASON);
     }
 
     private void putVarchar(TableWriter.Row row, int column, String value) {

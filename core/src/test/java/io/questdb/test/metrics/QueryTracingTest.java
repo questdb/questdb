@@ -26,10 +26,12 @@ package io.questdb.test.metrics;
 
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.griffin.SqlException;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -41,6 +43,24 @@ public class QueryTracingTest extends AbstractCairoTest {
     public void setup() throws SqlException {
         node1.getConfigurationOverrides().setProperty(PropertyKey.QUERY_TRACING_ENABLED, true);
         engine.execute("DROP TABLE IF EXISTS '" + TABLE_NAME + "'");
+    }
+
+    @Test
+    public void testConstructorFailureReleasesWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            engine.execute(
+                    "CREATE TABLE '_query_trace' (" +
+                            "ts TIMESTAMP, query_text VARCHAR, principal VARCHAR" +
+                            ") TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL"
+            );
+
+            Assert.assertThrows(InvalidColumnException.class, () -> new QueryTracingJob(engine));
+
+            engine.execute("DROP TABLE '_query_trace'");
+            try (QueryTracingJob ignore = new QueryTracingJob(engine)) {
+                // Successfully acquiring the replacement table proves the failed constructor released its writer.
+            }
+        });
     }
 
     @Test
