@@ -37,6 +37,21 @@ pub fn column_type_to_parquet_type(
     designated_timestamp: bool,
     raw_array_encoding: bool,
 ) -> ParquetResult<ParquetType> {
+    column_type_to_parquet_type_with_repetition(
+        column_id, column_name, column_type, designated_timestamp, raw_array_encoding, false,
+    )
+}
+
+/// As [`column_type_to_parquet_type`], plus `force_required` for a column the
+/// caller guarantees holds no nulls.
+pub fn column_type_to_parquet_type_with_repetition(
+    column_id: i32,
+    column_name: &str,
+    column_type: ColumnType,
+    designated_timestamp: bool,
+    raw_array_encoding: bool,
+    force_required: bool,
+) -> ParquetResult<ParquetType> {
     let name = column_name.to_string();
     // BOOLEAN/BYTE/SHORT/CHAR have no in-band null sentinel in QuestDB, but they are declared
     // Optional so that rows in the column-top region can be flagged as parquet-NULL via
@@ -51,7 +66,7 @@ pub fn column_type_to_parquet_type(
     // nulls). The `not_null_hint` flag is only a write-time hint that lets the encoder
     // emit a fast all-ones RLE run for definition levels instead of computing
     // per-row values. See encoders::symbol::encode().
-    let repetition = if designated_timestamp {
+    let repetition = if designated_timestamp || force_required {
         Repetition::Required
     } else {
         Repetition::Optional
@@ -524,12 +539,13 @@ pub fn to_parquet_schema(
         .columns
         .iter()
         .map(|c| {
-            column_type_to_parquet_type(
+            column_type_to_parquet_type_with_repetition(
                 c.id,
                 c.name,
                 c.data_type,
                 c.designated_timestamp,
                 raw_array_encoding,
+                c.parquet_encoding_config.is_required(),
             )
         })
         .collect::<ParquetResult<Vec<_>>>()?;
@@ -687,6 +703,8 @@ const COMPRESSION_MASK: u32 = 0xFF;
 const LEVEL_SHIFT: u32 = 16;
 const LEVEL_MASK: u32 = 0xFF;
 const EXPLICIT_FLAG: u32 = 1 << 24;
+/// Bit 26: the column holds no nulls and may be declared parquet-REQUIRED.
+const REQUIRED_FLAG: u32 = 1 << 26;
 
 impl ParquetEncodingConfig {
     /// Create a config from the raw packed i32 received from JNI.
@@ -711,6 +729,15 @@ impl ParquetEncodingConfig {
     /// Return the raw packed i32 value.
     pub fn raw(self) -> i32 {
         self.0
+    }
+
+    /// Whether the column may be written parquet-REQUIRED.
+    ///
+    /// Set only by a writer that knows the column can never be null. QuestDB
+    /// columns are Optional as a rule -- a column top has to be expressible as
+    /// parquet-NULL -- so this is opt-in per column, never inferred.
+    pub fn is_required(self) -> bool {
+        (self.0 as u32 & REQUIRED_FLAG) != 0
     }
 
     /// Whether the config was explicitly set by the user.

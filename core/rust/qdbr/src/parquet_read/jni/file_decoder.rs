@@ -317,6 +317,34 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileD
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_plainColumnDataOffset(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    file_ptr: *const u8,
+    file_size: i64,
+    row_group_index: u32,
+    column_index: u32,
+) -> i64 {
+    let env = &mut env;
+    let res = (|| -> ParquetResult<i64> {
+        if decoder.is_null() || file_ptr.is_null() || file_size <= 0 {
+            return Ok(-1);
+        }
+        let decoder = unsafe { &*decoder };
+        decoder.plain_column_data_offset(file_ptr, file_size as u64, row_group_index, column_index)
+    })();
+
+    match res {
+        Ok(offset) => offset,
+        Err(mut err) => {
+            err.add_context("error in ParquetFileDecoder.plainColumnDataOffset");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_decodeRowGroup(
     mut env: JNIEnv,
     _class: JClass,

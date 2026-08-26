@@ -103,6 +103,17 @@ public final class ParquetIndexSeal {
      * the waste directly and leaves wide-key partitions, which were already
      * well packed, untouched.
      */
+    /**
+     * Bit 26 of the packed parquet column config: the column holds no nulls and
+     * may be written parquet-REQUIRED, which spares every row a definition
+     * level and lets a reader address the values in the mapping directly.
+     * <p>
+     * {@code row_id} is written for every posting and is never null, so it
+     * qualifies. {@code key_id} does NOT get it: the delta encoder needs a
+     * definition-level stream and refuses Required, and key_id is never read
+     * back anyway.
+     */
+    private static final int PARQUET_CONFIG_REQUIRED_FLAG = 1 << 26;
     private static final long TARGET_ROW_GROUP_ROWS = 100_000;
     // The streaming writer's fixed threshold stays live and would split a key
     // wherever it fired, so it is put beyond any partition's posting count.
@@ -665,7 +676,13 @@ public final class ParquetIndexSeal {
             // slower than native to 40-44x and range reads from 4-9x to 15-32x,
             // while scans, which read a group start to end anyway, were
             // unaffected. Random access is what this column is for.
-            addSchemaColumn(columnNames, columnMetadata, "row_id", SYNTHETIC_COLUMN_ID, ColumnType.LONG);
+            addSchemaColumn(columnNames, columnMetadata, "row_id", SYNTHETIC_COLUMN_ID, ColumnType.LONG,
+                    TableUtils.packParquetConfig(
+                            ParquetEncoding.ENCODING_PLAIN,
+                            ParquetCompression.COMPRESSION_UNCOMPRESSED + 1,
+                            -1,
+                            false
+                    ) | PARQUET_CONFIG_REQUIRED_FLAG);
             for (int slot = 0; slot < coverCount; slot++) {
                 addSchemaColumn(
                         columnNames, columnMetadata, coveredNames.getQuick(slot),

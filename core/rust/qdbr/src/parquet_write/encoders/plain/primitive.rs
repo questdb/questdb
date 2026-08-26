@@ -409,6 +409,35 @@ fn simd_segments_to_page<T: SimdEncodable>(
     primitive_type: PrimitiveType,
     bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
+    // SAFETY: Column data originates from JNI/Java memory-mapped buffers.
+    let mut views = unsafe {
+        page_chunk_views::<T>(columns, first_partition_start, last_partition_end, window)
+    };
+    let first = views.next().unwrap();
+
+    if primitive_type.field_info.repetition == Repetition::Required {
+        // A Required column carries no definition levels, so its page is the
+        // values alone -- which is what lets a reader address them in the
+        // mapping instead of decoding. Only a single view qualifies: spanning
+        // partitions means a column top, and a top is a null, which Required
+        // cannot express.
+        if views.next().is_some() {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "plain required encoder cannot span partitions for column {}",
+                primitive_type.field_info.name
+            ));
+        }
+        if first.adjusted_column_top != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "plain required encoder cannot express a column top for column {}",
+                primitive_type.field_info.name
+            ));
+        }
+        return simd_single_view_required_page(first, options, primitive_type, bloom_hashes);
+    }
+
     if primitive_type.field_info.repetition != Repetition::Optional {
         return Err(fmt_err!(
             InvalidLayout,
@@ -417,12 +446,6 @@ fn simd_segments_to_page<T: SimdEncodable>(
             primitive_type.field_info.name
         ));
     }
-
-    // SAFETY: Column data originates from JNI/Java memory-mapped buffers.
-    let mut views = unsafe {
-        page_chunk_views::<T>(columns, first_partition_start, last_partition_end, window)
-    };
-    let first = views.next().unwrap();
 
     match views.next() {
         None => {
@@ -500,6 +523,66 @@ fn simd_single_view_page<T: SimdEncodable>(
         num_rows,
         null_count,
         definition_levels_byte_length,
+        statistics,
+        primitive_type,
+        options,
+        Encoding::Plain,
+        false,
+    )
+    .map(Page::Data)
+}
+
+/// Plain page for a Required single-partition view: the values, and nothing
+/// else.
+///
+/// Mirrors [`simd_single_view_page`] with the definition-level section removed,
+/// so it stays generic over the same `SimdEncodable` types and reuses their
+/// `encode_data`. `null_count` is zero by construction -- Required means the
+/// caller has guaranteed there is nothing to be null.
+fn simd_single_view_required_page<T: SimdEncodable>(
+    view: PartitionChunkView<'_, T>,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page> {
+    let num_rows = view.num_rows();
+    // The def-level pass is what computes min/max and feeds the bloom filter, so
+    // it is run for those and its LEVELS are dropped -- a Required page carries
+    // none. Costs one scan at write time and saves the reader a level stream on
+    // every page it touches.
+    let mut scratch = Vec::new();
+    let result = T::encode_def_levels(
+        &mut scratch,
+        view.slice,
+        0,
+        options.write_statistics,
+        bloom_hashes.as_deref_mut(),
+    )?;
+    if result.null_count != 0 {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "plain required encoder found {} nulls in column {}",
+            result.null_count,
+            primitive_type.field_info.name
+        ));
+    }
+    let buffer = T::encode_data(view.slice, 0, Encoding::Plain, Vec::new())?;
+
+    let statistics = if options.write_statistics {
+        Some(build_statistics(
+            Some(0),
+            MaxMin { max: result.max, min: result.min },
+            primitive_type.clone(),
+        ))
+    } else {
+        None
+    };
+
+    build_plain_page(
+        buffer,
+        num_rows,
+        0,
+        0,
         statistics,
         primitive_type,
         options,

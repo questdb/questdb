@@ -106,6 +106,22 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
         fileSize = 0;
     }
 
+    /**
+     * Absolute file offset of {@code columnIndex}'s values in
+     * {@code rowGroupIndex}, or {@code -1} when they cannot be addressed
+     * directly.
+     * <p>
+     * Non-negative only for a single uncompressed PLAIN data page with no
+     * dictionary and no levels, whose payload is the fixed-width values laid
+     * end to end -- so a caller may read value {@code i} straight from the
+     * mapping instead of calling {@link #decodeRowGroup}. Every other shape
+     * answers -1 and the caller decodes as usual.
+     */
+    public long plainColumnDataOffset(int rowGroupIndex, int columnIndex) {
+        assert ptr != 0;
+        return plainColumnDataOffset(ptr, fileAddr, fileSize, rowGroupIndex, columnIndex);
+    }
+
     public int decodeRowGroup(
             RowGroupBuffers rowGroupBuffers,
             DirectIntList columns, // contains [parquet_column_index, column_type] pairs
@@ -291,6 +307,14 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
         assert ptr != 0;
         return rowGroupMinTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
     }
+
+    private static native long plainColumnDataOffset(
+            long decoderPtr,
+            long fileAddr,
+            long fileSize,
+            int rowGroupIndex,
+            int columnIndex
+    );
 
     private static native boolean canSkipRowGroup(
             long decoderPtr,

@@ -541,10 +541,17 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
                 final AbstractParquetPostingIndexReader indexReader =
                         (AbstractParquetPostingIndexReader) reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD);
 
+                // A COVERED walk, deliberately: asking for no covered value lets
+                // the reader address row_id straight in the mapping and decode
+                // nothing, which would leave this test with no decodes to count
+                // and no way to fail. Requesting a cover slot puts the decoder
+                // back on the path whose counting is what is under test.
+                final int[] covers = {0};
+
                 // One serial pass establishes what a single walk costs.
                 final long groupsBefore = indexReader.getDecodedRowGroupCount();
                 final long rowsBefore = indexReader.getDecodedRowCount();
-                try (RowCursor c = indexReader.getDetachedCursor(key, 0, Long.MAX_VALUE, null)) {
+                try (RowCursor c = indexReader.getDetachedCursor(key, 0, Long.MAX_VALUE, covers)) {
                     while (c.hasNext()) {
                         c.next();
                     }
@@ -566,7 +573,7 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
                         try {
                             start.await();
                             for (int i = 0; i < repeats; i++) {
-                                try (RowCursor c = indexReader.getDetachedCursor(key, 0, Long.MAX_VALUE, null)) {
+                                try (RowCursor c = indexReader.getDetachedCursor(key, 0, Long.MAX_VALUE, covers)) {
                                     while (c.hasNext()) {
                                         c.next();
                                     }
@@ -785,10 +792,16 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
                                 + " walked=" + walked + " groupRows=" + groupRows,
                         walked < groupRows
                 );
-                Assert.assertEquals(
-                        "only the key's own rows may have their values decoded",
-                        walked,
-                        decodedRows
+                // The reader must never read MORE than the key's own rows. It
+                // may read FEWER -- zero, in fact -- because a Required,
+                // uncompressed, single-page row_id chunk is addressed straight
+                // in the mapping and decodes nothing at all. Asserting equality
+                // pinned the bounded-decode mechanism rather than the property
+                // that matters, and went red the moment a better path existed.
+                Assert.assertTrue(
+                        "no more than the key's own rows may have their values decoded:"
+                                + " walked=" + walked + " decodedRows=" + decodedRows,
+                        decodedRows <= walked
                 );
                 Assert.assertTrue(
                         "decoding the whole group would be " + groupRows + " rows, got " + decodedRows,
