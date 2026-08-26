@@ -13636,7 +13636,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3ErrorCount.set(0);
         o3oomObserved = false;
         lastErrno = 0;
-        partitionRemoveCandidates.clear();
+        // NOT partitionRemoveCandidates.clear(), unlike processO3BlockPlain. That reset assumes the
+        // list is empty on entry, which holds for a plain table because the preceding statement's
+        // commit already drained it. It does NOT hold for a composite table: a squash queues the
+        // merged fragment's directory here, the composite squash does not commit before the next O3
+        // block, and this reset then DISCARDED the candidate -- measured, the fragment's directory
+        // then survived forever, through both the synchronous drain and O3PartitionPurgeJob:
+        //
+        //   INSTR-ADD-FRAG  c~1 fragTs=... size=3
+        //   INSTR-CLEAR     processO3BlockComposite discarding=3   <-- here
+        //   INSTR-HOUSEKEEP c~1 candidates=0
+        //
+        // Keeping the entries lets housekeep() drain them after commit00(), which is the point the
+        // merge's own "NO eager removeEmptyDayContainer here" comment requires: the detachment must be
+        // durable before the directory goes. A failed block still discards them -- rollback() clears
+        // the list -- so nothing stale survives an aborted commit.
         o3ColumnCounters.clear();
         o3BasketPool.clear();
         commitRowCount = srcOooMax;

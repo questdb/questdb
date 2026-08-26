@@ -241,13 +241,24 @@ public class CompositeConvertSplitDayTest extends AbstractCompositeTwinTest {
     }
 
     /**
-     * PINS AN UNFIXED LEAK: composite squash never reclaims the merged fragment's directory.
+     * The merged fragment's directory must be reclaimed. FIXED -- it used to leak forever.
      * <p>
-     * After a squash merges a fragment into the day's cells, the fragment is correctly detached from
-     * the attached-partition list -- {@code table_partitions()} shows the consolidated day and the rows
-     * are right -- but {@code 2023-01-01T010000-000001/E0.1} stays on disk forever.
+     * After a squash merges a fragment into the day's cells the fragment is correctly detached from the
+     * attached-partition list, but {@code 2023-01-01T010000-000001/E0.1} used to stay on disk
+     * permanently, growing with every split that got squashed.
      * <p>
-     * MEASURED, and each of these ruled out an explanation I had reached for:
+     * <b>The cause was a per-block reset discarding an undrained purge candidate.</b>
+     * {@code processO3BlockComposite} opened with {@code partitionRemoveCandidates.clear()}, copied
+     * from {@code processO3BlockPlain} where it is harmless: on a plain table the preceding statement's
+     * commit has already drained the list, so the reset only ever clears an empty list. On a composite
+     * table the squash queues the fragment's directory and does NOT commit before the next O3 block, so
+     * that reset destroyed the candidate. The fix simply stops discarding them; {@code housekeep()}
+     * then drains after {@code commit00()}, which is the post-commit point the merge's own
+     * "NO eager removeEmptyDayContainer here" comment requires -- the detachment must be durable before
+     * the directory goes. An aborted commit still drops them, because {@code rollback()} clears.
+     * <p>
+     * Four explanations were ruled out by measurement before the real one was found, and they are kept
+     * because each is a plausible place to look again:
      * <ul>
      *   <li>NOT specific to parquet or to CONVERT. An explicit {@code SQUASH PARTITIONS} on a purely
      *       NATIVE day leaks identically. An earlier revision of this file claimed the native case was
@@ -285,12 +296,11 @@ public class CompositeConvertSplitDayTest extends AbstractCompositeTwinTest {
      * {@code processPartitionRemoveCandidates()} on the composite squash's commit path -- or a
      * per-block reset in {@code processO3BlockComposite} that does not discard undrained candidates.
      * <p>
-     * Non-corrupting -- nothing reads the stale directory and no query sees it -- but it wastes disk
-     * permanently, growing with every split that gets squashed. Pinned rather than left silent so the
-     * reproduction is not lost; invert when the reclaim is fixed.
+     * The test also asserts the fragment is not ATTACHED, so a regression from "reclaimed" to "still
+     * attached" -- a far worse bug than the leak -- fails distinctly rather than looking the same.
      */
     @Test(timeout = 60_000)
-    public void testMergedFragmentDirectoryIsLeaked() throws Exception {
+    public void testMergedFragmentDirectoryIsReclaimed() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
         assertMemoryLeak(() -> {
             createTwins();
@@ -310,10 +320,10 @@ public class CompositeConvertSplitDayTest extends AbstractCompositeTwinTest {
                     tableHasAttachedFragment());
             assertTwinEqual("");
 
-            // ... but its directory is still there. Invert this when reclaim is fixed.
-            Assert.assertFalse(
-                    "composite squash now reclaims the merged fragment's directory -- the leak is fixed, "
-                            + "invert this test. Remaining: " + fragmentDirs("c"),
+            // ... and its directory is reclaimed rather than leaked.
+            Assert.assertTrue(
+                    "the merged fragment's directory must be purged once the commit makes its detachment "
+                            + "durable. Remaining: " + fragmentDirs("c"),
                     fragmentDirs("c").isEmpty());
         });
     }
