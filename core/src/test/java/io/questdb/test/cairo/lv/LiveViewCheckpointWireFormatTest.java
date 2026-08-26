@@ -31,8 +31,11 @@ import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
+import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapReader;
+import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
+import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
 import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -40,8 +43,10 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -87,26 +92,50 @@ import java.util.zip.ZipInputStream;
  *     <li>{@code 0x19} {@link LiveViewCheckpointFunctionDirectory} - which moved to
  *     {@code ObjList} and retained reference shells;</li>
  *     <li>{@code 0x16} the partition-map leaf, which gained the arena-backed key path;</li>
+ *     <li>{@code 0x17} the partition-map internal node, whose entry framing is the other, never
+ *     co-occurring branch of the same {@code writeTo}: a key and a child reference, without the
+ *     leaf's scalar length and reference count. It carries the descent a restore of a
+ *     many-keyed view actually runs;</li>
  *     <li>{@link LiveViewCheckpointFunctionIdentity}, whose encoder was rewritten from
  *     {@code ByteBuffer} to a hand-rolled big-endian one. It is the single highest-risk change
  *     in the set: the identity is the directory's lookup key, so a byte that moved would leave a
  *     freshly compiled function unable to find the root the release wrote for it, with no
  *     corruption anywhere to explain it.</li>
  * </ul>
- * Two shapes the fixture does carry - the {@code 0x11} timeline leaf and the {@code 0x15}
- * segment-directory leaf - are counted by the census case but not decoded field for field: their
- * encoders live in {@code LiveViewCheckpointTimelineNode} and
- * {@code LiveViewCheckpointSegmentDirectoryNode}, which this PR does not touch, so they are
- * outside what the audit is for. The partition map's {@code 0x17} internal node is not in the
- * fixture at all - its trees are one page deep - but it shares its {@code writeTo} with the
- * {@code 0x16} leaf audited here. Neither is the {@code 0x13}/{@code 0x14} row-position delta,
- * whose view would need a ROWS frame; its encoder is untouched by this PR as well. The census
- * case pins all of this, so a regenerated fixture that changed what is present fails loudly
- * rather than turning a case that reads it into a no-op.
+ * Two further shapes are read here even though this PR leaves their encoders alone, because the
+ * evidence is worth having once released bytes exist to check it against: the {@code 0x13}
+ * row-position delta leaf, which only a localized out-of-order repair writes, and the RANGE
+ * ring's scalar continuation state, which owns the ring's value kind and so decides how every
+ * chunk after it is read.
+ * <p>
+ * Two fixtures feed the cases. {@code lv_checkpoint_10_0_1.zip} is the single anchored view
+ * {@link LiveViewCheckpointReleaseCompatTest} restores; {@code lv_checkpoint_10_0_1_shapes.zip}
+ * adds the five views {@link LiveViewCheckpointReleaseShapesCompatTest} restores, and is where
+ * the deep partition map, the spliced timeline and every ring value kind come from. Each case
+ * unpacks the one view it reads.
+ * <p>
+ * What the audit does not decode field for field, and why:
+ * <ul>
+ *     <li>{@code 0x11} the timeline leaf and {@code 0x15} the segment-directory leaf: their
+ *     encoders live in {@code LiveViewCheckpointTimelineNode} and
+ *     {@code LiveViewCheckpointSegmentDirectoryNode}, which this PR does not touch;</li>
+ *     <li>{@code 0x14} the row-position delta's internal node, {@code 0x12} the timeline's and
+ *     {@code 0x1c} the segment directory's: no released fixture here is large enough to have
+ *     split one. A delta internal node needs 65 separate localized repairs, and the node classes
+ *     that would write all three are unmodified by this PR;</li>
+ *     <li>the encoded payload of a data-segment state page. The bytes are FoR- or ALP-compressed
+ *     by {@code LiveViewCheckpointStateCodec}, so a longhand reading would mean a second
+ *     implementation of the codec - and the codec, like the ring reader that drives it, is
+ *     unmodified here. The references that address those pages, their kinds, codecs and row
+ *     counts, and the scalar that selects among them are all read longhand.</li>
+ * </ul>
+ * The two census cases pin all of this, so a regenerated fixture that changed what is present
+ * fails loudly rather than turning a case that reads it into a no-op.
  */
 public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
 
     private static final String FIXTURE_RESOURCE = "/lv/lv_checkpoint_10_0_1.zip";
+    private static final String SHAPES_FIXTURE_RESOURCE = "/lv/lv_checkpoint_10_0_1_shapes.zip";
     // ASCII "LVFI", the first four bytes of an encoded function identity.
     private static final int IDENTITY_MAGIC = 0x4c56_4649;
     // Page framing: crc INT, payloadLength INT, pageKind INT.
@@ -115,7 +144,9 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
     private static final int PAGE_KIND_CHECKPOINT_ROOT = 0x1a;
     private static final int PAGE_KIND_FUNCTION_DIRECTORY = 0x19;
     private static final int PAGE_KIND_FUNCTION_ROOT = 0x18;
+    private static final int PAGE_KIND_PARTITION_MAP_INTERNAL = 0x17;
     private static final int PAGE_KIND_PARTITION_MAP_LEAF = 0x16;
+    private static final int PAGE_KIND_ROW_POSITION_DELTA_LEAF = 0x13;
     private static final int PAGE_KIND_WINDOW_ROOT = 0x1d;
     // A metadata page reference: segmentId LONG, offset LONG, length INT.
     private static final int PAGE_REF_BYTES = 20;
@@ -135,6 +166,11 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
     // A state page reference: segmentId LONG, offset LONG, then storedLength, decodedLength,
     // pageKind, codec, rowCount and flags as INTs.
     private static final int STATE_REF_BYTES = 40;
+    /**
+     * The {@code _checkpoints} tree the current case is reading, set by {@link #unpack}. JUnit
+     * builds one instance per case, so this never leaks between them.
+     */
+    private File fixtureDir;
 
     @Test
     public void testACorruptedReleasedPageIsRejectedRatherThanMisread() throws Exception {
@@ -540,6 +576,364 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testTheReleasedPartitionMapInternalNodesDecodeFieldForField() throws Exception {
+        assertMemoryLeak(() -> {
+            // The 100-key view. A partition map leaf holds 64 entries, so this is the only
+            // released tree deep enough to have an internal node at all - the anchored fixture's
+            // maps are one page, which is why the audit had no released bytes for this arm.
+            unpackShape("lv_keyed");
+            final ObjList<ReleasedPage> pages = releasedPages(PAGE_KIND_PARTITION_MAP_INTERNAL);
+            Assert.assertEquals("the fixture must carry partition map internal nodes", 6, pages.size());
+
+            try (
+                    Path checkpointsDir = checkpointsDir();
+                    LiveViewCheckpointPartitionMapReader reader =
+                            new LiveViewCheckpointPartitionMapReader(engine.getConfiguration())
+            ) {
+                reader.of(checkpointsDir);
+                for (int p = 0, n = pages.size(); p < n; p++) {
+                    final ReleasedPage page = pages.getQuick(p);
+                    final byte[] payload = page.payload;
+                    final String at = "partition map internal node in segment " + page.segmentId;
+
+                    // formatVersion INT, count INT, then per child: keyLength INT, the key bytes
+                    // and the child reference. The leaf's scalarLength and refCount fields are
+                    // absent here, and that difference is the whole point of the case: the two
+                    // kinds share one writeTo whose branches never both run on one page, so a
+                    // leaf-shaped read of an internal node would consume the wrong stride.
+                    Assert.assertEquals(at + " [formatVersion]", 1, leInt(payload, 0));
+                    final int count = leInt(payload, 4);
+                    Assert.assertTrue(at + " [count]", count > 1);
+
+                    final byte[][] keys = new byte[count][];
+                    final int[] refOffsets = new int[count];
+                    int offset = 8;
+                    for (int i = 0; i < count; i++) {
+                        final int keyLength = leInt(payload, offset);
+                        offset += Integer.BYTES;
+                        keys[i] = Arrays.copyOfRange(payload, offset, offset + keyLength);
+                        offset += keyLength;
+                        refOffsets[i] = offset;
+                        offset += PAGE_REF_BYTES;
+                    }
+                    Assert.assertEquals(at + " [payload consumed]", payload.length, offset);
+
+                    Assert.assertEquals(at + " [childCount]", count, reader.rootChildCount(page.ref()));
+                    final LiveViewCheckpointPageRef childRef = new LiveViewCheckpointPageRef();
+                    long entriesBelow = 0;
+                    for (int i = 0; i < count; i++) {
+                        reader.rootChildRef(page.ref(), i, childRef);
+                        assertPageRef(at + " [childRef " + i + ']', payload, refOffsets[i], childRef);
+
+                        // The separator is the subtree's lower bound - a split writes the new
+                        // right node's minimum, and later inserts below an existing separator
+                        // stay in the child it already names, so separator[0] can sit under its
+                        // subtree's actual minimum. What has to hold, and what makes the
+                        // descent's binary search correct, is the interval: every key in child i
+                        // is at or above separator[i] and strictly below separator[i + 1]. A
+                        // released tree whose separators bounded anything else would still
+                        // iterate, and would still find most keys - the misses would be the
+                        // entries either side of a boundary.
+                        final byte[] lowBound = keys[i];
+                        final byte[] highBound = i + 1 < count ? keys[i + 1] : null;
+                        final int child = i;
+                        final long[] seen = {0};
+                        reader.iterateAll(childRef, entry -> {
+                            final byte[] key = entry.getKey();
+                            Assert.assertTrue(
+                                    at + ": child " + child + " holds a key below its separator",
+                                    compareUnsigned(lowBound, key) <= 0
+                            );
+                            if (highBound != null) {
+                                Assert.assertTrue(
+                                        at + ": child " + child + " holds a key the next separator claims",
+                                        compareUnsigned(key, highBound) < 0
+                                );
+                            }
+                            seen[0]++;
+                        });
+                        Assert.assertTrue(at + " [child " + i + " is not empty]", seen[0] > 0);
+                        entriesBelow += seen[0];
+                    }
+
+                    // And the descent itself, from the internal node down: every entry the
+                    // children hold, in ascending key order, reached through this page.
+                    final ObjList<byte[]> descended = new ObjList<>();
+                    // The visitor hands out the decoded node's own key array, which the reader
+                    // reuses for the next page, so anything kept past the callback is copied.
+                    reader.iterateAll(page.ref(), entry -> descended.add(entry.getKey().clone()));
+                    Assert.assertEquals(at + " [entries under the internal node]", entriesBelow, descended.size());
+                    for (int i = 1, m = descended.size(); i < m; i++) {
+                        Assert.assertTrue(
+                                at + ": the descent must deliver keys in ascending order at " + i,
+                                compareUnsigned(descended.getQuick(i - 1), descended.getQuick(i)) < 0
+                        );
+                    }
+                    Assert.assertEquals(at + " [size]", entriesBelow, reader.size(page.ref()));
+
+                    // And the descent's binary search, which is the operation a restore actually
+                    // runs: every key the released tree holds has to come back through this
+                    // internal node, not merely be reachable by walking every leaf.
+                    final LiveViewCheckpointPartitionMapEntry found = new LiveViewCheckpointPartitionMapEntry();
+                    for (int i = 0, m = descended.size(); i < m; i++) {
+                        final byte[] key = descended.getQuick(i);
+                        Assert.assertTrue(
+                                at + ": the descent must find every key it delivered, at " + i,
+                                reader.find(page.ref(), key, found)
+                        );
+                        Assert.assertArrayEquals(at + " [find " + i + ']', key, found.getKey());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTheReleasedRingScalarsDecodeFieldForField() throws Exception {
+        assertMemoryLeak(() -> {
+            // Every value kind the ring encodes, over the two released views that between them
+            // reach all nine: DOUBLE and LONG rings and their monotonic-deque siblings, the
+            // 128- and 256-bit decimals and theirs, and the valueless chunk a count keeps.
+            final TreeMap<Integer, Integer> kindsSeen = new TreeMap<>();
+            for (String viewName : new String[]{"lv_range", "lv_decimal"}) {
+                unpackShape(viewName);
+                final ObjList<ReleasedPage> pages = releasedPages(PAGE_KIND_PARTITION_MAP_LEAF);
+                try (
+                        Path checkpointsDir = checkpointsDir();
+                        LiveViewCheckpointPartitionMapReader maps =
+                                new LiveViewCheckpointPartitionMapReader(engine.getConfiguration());
+                        LiveViewCheckpointRangeRingStateReader ring =
+                                new LiveViewCheckpointRangeRingStateReader(engine.getConfiguration())
+                ) {
+                    maps.of(checkpointsDir);
+                    for (int p = 0, n = pages.size(); p < n; p++) {
+                        final ReleasedPage page = pages.getQuick(p);
+                        final String at = viewName + " ring entry in segment " + page.segmentId;
+                        maps.iterateAll(page.ref(), entry -> {
+                            final byte[] scalar = entry.getScalarState();
+
+                            // The ring's continuation state, longhand. The header packs four
+                            // fields into one little-endian word - formatVersion in the low 16
+                            // bits, then the value kind, then the scalar width, then the head
+                            // offset in the high 32 - and the words after it are positional on
+                            // that width, so a scalar read one word wide reads frameSize where
+                            // lastTimestamp belongs and still passes every bounds check.
+                            final long header = leLong(scalar, 0);
+                            final int formatVersion = (int) (header & 0xffffL);
+                            final int valueKind = (int) ((header >>> 16) & 0xffL);
+                            final int scalarWords = (int) ((header >>> 24) & 0xffL);
+                            final int headOffset = (int) (header >>> 32);
+                            Assert.assertEquals(at + " [scalar formatVersion]", 1, formatVersion);
+                            Assert.assertEquals(
+                                    at + " [scalar length]",
+                                    (4 + scalarWords) * Long.BYTES,
+                                    scalar.length
+                            );
+                            final long rowCount = leLong(scalar, Long.BYTES);
+                            final long frameSize = leLong(scalar, (2 + scalarWords) * Long.BYTES);
+                            final long lastTimestamp = leLong(scalar, (3 + scalarWords) * Long.BYTES);
+
+                            ring.ofMetadata(entry);
+                            Assert.assertEquals(at + " [headOffset]", headOffset, ring.getHeadOffset());
+                            Assert.assertEquals(at + " [scalarWordCount]", scalarWords, ring.getScalarWordCount());
+                            Assert.assertEquals(at + " [rowCount]", rowCount, ring.getRowCount());
+                            Assert.assertEquals(at + " [frameSize]", frameSize, ring.getFrameSize());
+                            Assert.assertEquals(at + " [lastTimestamp]", lastTimestamp, ring.getLastTimestamp());
+                            for (int w = 0; w < scalarWords; w++) {
+                                Assert.assertEquals(
+                                        at + " [scalarWord " + w + ']',
+                                        leLong(scalar, (2 + w) * Long.BYTES),
+                                        ring.getScalarWord(w)
+                                );
+                            }
+
+                            // The value kind is not a field of its own on any page: it lives in
+                            // those eight header bits and selects how the chunk stream is laid
+                            // out. Reading it wrong is therefore invisible until the pages are
+                            // paired, so the case pins the pairing the release actually wrote.
+                            final int valuePageKind = valuePageKindOf(valueKind);
+                            final int pagesPerChunk = valuePageKind == 0 ? 1 : 2;
+                            Assert.assertEquals(
+                                    at + " [state page count is a whole number of chunks]",
+                                    0,
+                                    entry.getStatePageCount() % pagesPerChunk
+                            );
+                            final LiveViewCheckpointStatePageRef ref = new LiveViewCheckpointStatePageRef();
+                            for (int i = 0, m = entry.getStatePageCount(); i < m; i += pagesPerChunk) {
+                                ring.getStatePageRef(i, ref);
+                                Assert.assertEquals(
+                                        at + " [chunk " + i + " timestamp page kind]",
+                                        0x21,
+                                        ref.getPageKind()
+                                );
+                                if (pagesPerChunk > 1) {
+                                    ring.getStatePageRef(i + 1, ref);
+                                    Assert.assertEquals(
+                                            at + " [chunk " + i + " value page kind for value kind "
+                                                    + valueKind + ']',
+                                            valuePageKind,
+                                            ref.getPageKind()
+                                    );
+                                    Assert.assertEquals(
+                                            at + " [chunk " + i + " row counts must match]",
+                                            ring.getStatePageCount() == 0 ? 0 : refRowCount(ring, i),
+                                            ref.getRowCount()
+                                    );
+                                }
+                            }
+                            kindsSeen.merge(valueKind, 1, Integer::sum);
+                        });
+                    }
+                }
+            }
+
+            // A regenerated fixture that dropped a function would otherwise turn this case into
+            // a narrower one silently.
+            final StringSink sink = new StringSink();
+            for (Integer kind : kindsSeen.keySet()) {
+                sink.put(kind).put('\n');
+            }
+            TestUtils.assertEquals(
+                    "0\n"   // DOUBLE ring
+                            + "1\n"   // LONG ring
+                            + "2\n"   // DOUBLE monotonic deque
+                            + "3\n"   // LONG monotonic deque
+                            + "4\n"   // DECIMAL128 ring
+                            + "5\n"   // DECIMAL256 ring
+                            + "6\n"   // DECIMAL128 monotonic deque
+                            + "7\n"   // DECIMAL256 monotonic deque
+                            + "8\n",  // no value page at all
+                    sink
+            );
+        });
+    }
+
+    @Test
+    public void testTheReleasedRowPositionDeltaDecodesFieldForField() throws Exception {
+        assertMemoryLeak(() -> {
+            // The view whose released timeline a localized out-of-order repair spliced. The
+            // delta tree is the only structure that records the splice: the suffix roots it
+            // shifted are reused by page reference and say nothing about having moved.
+            unpackShape("lv_late");
+            final ObjList<ReleasedPage> pages = releasedPages(PAGE_KIND_ROW_POSITION_DELTA_LEAF);
+            Assert.assertEquals("the released splice must have written one delta leaf", 1, pages.size());
+            final ReleasedPage page = pages.getQuick(0);
+            final byte[] payload = page.payload;
+            final String at = "row position delta leaf in segment " + page.segmentId;
+
+            // count INT, then per entry keyMaxTimestamp LONG, keyCheckpointId LONG, diff LONG.
+            // The delta node framing carries no format version of its own, unlike every root
+            // above it - so the count field is the first thing on the page, and a decoder that
+            // skipped four bytes expecting one would read the count as a key.
+            final int count = leInt(payload, 0);
+            Assert.assertTrue(at + " [count]", count > 0);
+            Assert.assertEquals(at + " [payload length]", Integer.BYTES + count * 24, payload.length);
+
+            final LongList keyTimestamps = new LongList();
+            final LongList keyIds = new LongList();
+            final LongList diffs = new LongList();
+            for (int i = 0; i < count; i++) {
+                final int entryAt = Integer.BYTES + i * 24;
+                keyTimestamps.add(leLong(payload, entryAt));
+                keyIds.add(leLong(payload, entryAt + 8));
+                diffs.add(leLong(payload, entryAt + 16));
+            }
+
+            try (
+                    Path checkpointsDir = checkpointsDir();
+                    LiveViewCheckpointRowPositionDeltaReader reader =
+                            new LiveViewCheckpointRowPositionDeltaReader(engine.getConfiguration())
+            ) {
+                reader.of(checkpointsDir);
+                final int[] seen = {0};
+                reader.iterateAll(page.ref(), (maxTimestamp, checkpointId, diff) -> {
+                    final int i = seen[0]++;
+                    Assert.assertEquals(at + " entry " + i + " [keyMaxTimestamp]", keyTimestamps.getQuick(i), maxTimestamp);
+                    Assert.assertEquals(at + " entry " + i + " [keyCheckpointId]", keyIds.getQuick(i), checkpointId);
+                    Assert.assertEquals(at + " entry " + i + " [diff]", diffs.getQuick(i), diff);
+                });
+                Assert.assertEquals(at + " [entry count]", count, seen[0]);
+                Assert.assertEquals(at + " [size]", count, reader.size(page.ref()));
+
+                // The tree exists to answer one question, so the case asks it. A prefix sum is
+                // inclusive of the query key, which is what puts the whole added delta on every
+                // suffix root and none of it on a prefix root - the sign of that boundary is the
+                // difference between a correct suffix position and one off by the splice.
+                long running = 0;
+                for (int i = 0; i < count; i++) {
+                    final long keyTs = keyTimestamps.getQuick(i);
+                    final long keyId = keyIds.getQuick(i);
+                    Assert.assertEquals(
+                            at + ": the key immediately below breakpoint " + i + " must not see its diff",
+                            running,
+                            reader.prefixSum(page.ref(), keyTs, keyId - 1)
+                    );
+                    running += diffs.getQuick(i);
+                    Assert.assertEquals(
+                            at + ": breakpoint " + i + " itself must see its own diff",
+                            running,
+                            reader.prefixSum(page.ref(), keyTs, keyId)
+                    );
+                }
+                Assert.assertEquals(
+                        at + ": every key above the last breakpoint must see the whole shift",
+                        running,
+                        reader.prefixSum(page.ref(), Long.MAX_VALUE, Long.MAX_VALUE)
+                );
+                Assert.assertEquals(
+                        at + ": no key below the first breakpoint may see any of it",
+                        0,
+                        reader.prefixSum(page.ref(), Long.MIN_VALUE, Long.MIN_VALUE)
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testTheReleasedShapesFixtureCarriesTheShapesTheAuditReads() throws Exception {
+        assertMemoryLeak(() -> {
+            // The census for the multi-shape fixture, view by view: which metadata pages the
+            // release wrote, and which state page kinds its partition entries point at. Without
+            // it a regenerated fixture that lost a function, a width or a whole view would turn
+            // the cases above into narrower ones that still pass.
+            final StringSink sink = new StringSink();
+            for (String viewName : new String[]{"lv_decimal", "lv_keyed", "lv_late", "lv_range", "lv_rows"}) {
+                unpackShape(viewName);
+                final TreeMap<Integer, Integer> metaCensus = new TreeMap<>();
+                final TreeMap<Integer, Integer> stateCensus = new TreeMap<>();
+                final ObjList<ReleasedPage> pages = readReleasedPages();
+                for (int i = 0, n = pages.size(); i < n; i++) {
+                    final ReleasedPage page = pages.getQuick(i);
+                    metaCensus.merge(page.kind, 1, Integer::sum);
+                    if (page.kind == PAGE_KIND_PARTITION_MAP_LEAF) {
+                        censusStatePageKinds(page.payload, stateCensus);
+                    }
+                }
+                Assert.assertFalse(
+                        viewName + ": 10.0.1 cannot have written a fused window root; a fixture that "
+                                + "contains one was not produced by the release",
+                        metaCensus.containsKey(PAGE_KIND_WINDOW_ROOT)
+                );
+                sink.put(viewName).put(" meta ").put(describeCensus(metaCensus)).put('\n');
+                sink.put(viewName).put(" state ").put(describeCensus(stateCensus)).put('\n');
+            }
+            TestUtils.assertEquals(
+                    "lv_decimal meta 0x11=2,0x15=2,0x16=20,0x18=20,0x19=5,0x1a=5\n"
+                            + "lv_decimal state 0x21=40,0x26=10,0x27=10,0x28=10,0x29=10\n"
+                            + "lv_keyed meta 0x11=2,0x15=2,0x16=18,0x17=6,0x18=5,0x19=5,0x1a=5,0x1b=5\n"
+                            + "lv_keyed state 0x41=500\n"
+                            + "lv_late meta 0x11=2,0x13=1,0x15=2,0x16=14,0x18=14,0x19=14,0x1a=14\n"
+                            + "lv_late state 0x41=28\n"
+                            + "lv_range meta 0x11=2,0x15=2,0x16=35,0x18=35,0x19=5,0x1a=5\n"
+                            + "lv_range state 0x21=70,0x22=30,0x23=10,0x24=10,0x25=10\n"
+                            + "lv_rows meta 0x11=2,0x15=2,0x16=10,0x18=10,0x19=5,0x1a=5\n"
+                            + "lv_rows state 0x41=20\n",
+                    sink
+            );
+        });
+    }
+
+    @Test
     public void testThisBranchStillProducesTheIdentityBytesTheReleasedDirectoryStores() throws Exception {
         assertMemoryLeak(() -> {
             unpackFixture();
@@ -657,6 +1051,83 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
         Assert.assertEquals(at + " [flags]", leInt(payload, offset + 36), ref.getFlags());
     }
 
+    /**
+     * Adds every state page kind the entries of one partition map leaf point at.
+     */
+    private static void censusStatePageKinds(byte[] payload, TreeMap<Integer, Integer> census) {
+        final int count = leInt(payload, 4);
+        int offset = 8;
+        for (int i = 0; i < count; i++) {
+            final int keyLength = leInt(payload, offset);
+            final int scalarLength = leInt(payload, offset + 4);
+            final int refCount = leInt(payload, offset + 8);
+            offset += 12 + keyLength + scalarLength;
+            for (int r = 0; r < refCount; r++) {
+                census.merge(leInt(payload, offset + 24), 1, Integer::sum);
+                offset += STATE_REF_BYTES;
+            }
+        }
+        Assert.assertEquals("partition map leaf [payload consumed]", payload.length, offset);
+    }
+
+    private static int compareUnsigned(byte[] left, byte[] right) {
+        final int n = Math.min(left.length, right.length);
+        for (int i = 0; i < n; i++) {
+            final int diff = (left[i] & 0xff) - (right[i] & 0xff);
+            if (diff != 0) {
+                return diff;
+            }
+        }
+        return left.length - right.length;
+    }
+
+    private static String describeCensus(TreeMap<Integer, Integer> census) {
+        final StringBuilder sink = new StringBuilder();
+        for (Map.Entry<Integer, Integer> entry : census.entrySet()) {
+            if (sink.length() > 0) {
+                sink.append(',');
+            }
+            sink.append("0x").append(Integer.toHexString(entry.getKey())).append('=').append(entry.getValue());
+        }
+        return sink.length() == 0 ? "(none)" : sink.toString();
+    }
+
+    private static long refRowCount(LiveViewCheckpointRangeRingStateReader ring, int index) {
+        final LiveViewCheckpointStatePageRef ref = new LiveViewCheckpointStatePageRef();
+        ring.getStatePageRef(index, ref);
+        return ref.getRowCount();
+    }
+
+    /**
+     * The value page kind a ring's value kind selects, or {@code 0} when the chunk is a
+     * timestamp page on its own. Written out here rather than imported, because the mapping is
+     * part of what the audit is checking.
+     */
+    private static int valuePageKindOf(int valueKind) {
+        switch (valueKind) {
+            case 0:
+                return 0x22;
+            case 1:
+                return 0x23;
+            case 2:
+                return 0x24;
+            case 3:
+                return 0x25;
+            case 4:
+                return 0x26;
+            case 5:
+                return 0x27;
+            case 6:
+                return 0x28;
+            case 7:
+                return 0x29;
+            case 8:
+                return 0;
+            default:
+                throw new AssertionError("released bytes carry an unknown ring value kind " + valueKind);
+        }
+    }
+
     private static int beInt(byte[] bytes, int offset) {
         return ((bytes[offset] & 0xff) << 24)
                 | ((bytes[offset + 1] & 0xff) << 16)
@@ -673,10 +1144,6 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
     private static String describe(byte[] identity) {
         final int[] cursor = {12};
         return readField(identity, cursor) + '/' + readField(identity, cursor);
-    }
-
-    private static File fixtureDir() {
-        return new File(temp.getRoot(), "released-checkpoints");
     }
 
     private static int leInt(byte[] bytes, int offset) {
@@ -705,8 +1172,8 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
      * {@code LiveViewCheckpointMetaSegmentReader}, which is the point: the reader under audit
      * cannot be the witness for its own framing.
      */
-    private static ObjList<ReleasedPage> readReleasedPages() throws IOException {
-        final File metaDir = new File(fixtureDir(), "meta");
+    private ObjList<ReleasedPage> readReleasedPages() throws IOException {
+        final File metaDir = new File(fixtureDir, "meta");
         final String[] names = metaDir.list();
         Assert.assertNotNull("the fixture must carry a meta/ directory", names);
         Arrays.sort(names);
@@ -763,23 +1230,29 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
     }
 
     /**
-     * Copies the fixture's whole {@code _checkpoints} tree out of the zip, under the temporary
-     * folder rather than under the database root: the cases here read the released bytes
-     * directly and never register the view, so nothing has to persuade the engine that a second
-     * database root exists.
+     * Copies one live view's whole {@code _checkpoints} tree out of a fixture zip, under the
+     * temporary folder rather than under the database root: the cases here read the released
+     * bytes directly and never register the view, so nothing has to persuade the engine that a
+     * second database root exists.
+     * <p>
+     * {@code viewDirPrefix} selects the view when a fixture carries several. The released
+     * directory name is the view name with the table id appended, so the prefix ends at the
+     * separator: {@code lv_range~} never matches {@code lv_rows~3}.
      */
-    private static void unpackFixture() throws IOException {
-        final File target = fixtureDir();
+    private void unpack(String resource, String viewDirPrefix, String targetName) throws IOException {
+        final File target = new File(temp.getRoot(), targetName);
         TestUtils.removeTestPath(target.getAbsolutePath());
         final byte[] buffer = new byte[1024 * 1024];
-        try (InputStream is = LiveViewCheckpointWireFormatTest.class.getResourceAsStream(FIXTURE_RESOURCE)) {
-            Assert.assertNotNull("missing fixture resource " + FIXTURE_RESOURCE, is);
+        try (InputStream is = LiveViewCheckpointWireFormatTest.class.getResourceAsStream(resource)) {
+            Assert.assertNotNull("missing fixture resource " + resource, is);
             try (ZipInputStream zip = new ZipInputStream(is)) {
                 ZipEntry entry;
                 while ((entry = zip.getNextEntry()) != null) {
-                    final int at = entry.getName().indexOf("/_checkpoints/");
-                    if (!entry.isDirectory() && at > -1) {
-                        final File dest = new File(target, entry.getName().substring(at + "/_checkpoints/".length()));
+                    final String name = entry.getName();
+                    final int at = name.indexOf("/_checkpoints/");
+                    if (!entry.isDirectory() && at > -1
+                            && (viewDirPrefix == null || name.startsWith(viewDirPrefix))) {
+                        final File dest = new File(target, name.substring(at + "/_checkpoints/".length()));
                         final File parent = dest.getParentFile();
                         Assert.assertTrue("cannot create " + parent, parent.isDirectory() || parent.mkdirs());
                         try (OutputStream os = new FileOutputStream(dest)) {
@@ -793,7 +1266,26 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
                 }
             }
         }
-        Assert.assertTrue("the fixture must carry a _checkpoints tree", new File(target, "meta").isDirectory());
+        Assert.assertTrue(
+                targetName + ": the fixture must carry a _checkpoints tree",
+                new File(target, "meta").isDirectory()
+        );
+        fixtureDir = target;
+    }
+
+    /**
+     * Unpacks the single-view anchored fixture {@link LiveViewCheckpointReleaseCompatTest} reads.
+     */
+    private void unpackFixture() throws IOException {
+        unpack(FIXTURE_RESOURCE, null, "released-checkpoints");
+    }
+
+    /**
+     * Unpacks one view of the multi-shape fixture
+     * {@link LiveViewCheckpointReleaseShapesCompatTest} reads.
+     */
+    private void unpackShape(String viewName) throws IOException {
+        unpack(SHAPES_FIXTURE_RESOURCE, viewName + '~', "released-" + viewName);
     }
 
     /**
@@ -811,7 +1303,7 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
         final File metaDir = new File(corruptDir, "meta");
         Assert.assertTrue("cannot create " + metaDir, metaDir.mkdirs());
         final String name = segmentFileName(page.segmentId);
-        final byte[] bytes = Files.readAllBytes(new File(new File(fixtureDir(), "meta"), name).toPath());
+        final byte[] bytes = Files.readAllBytes(new File(new File(fixtureDir, "meta"), name).toPath());
         bytes[(int) page.offset + fieldOffset] ^= 1;
         Files.write(new File(metaDir, name).toPath(), bytes);
 
@@ -832,7 +1324,7 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
     }
 
     private Path checkpointsDir() {
-        return new Path().of(fixtureDir().getAbsolutePath());
+        return new Path().of(fixtureDir.getAbsolutePath());
     }
 
     /**

@@ -25,31 +25,16 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.MetadataCacheWriter;
-import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
-import io.questdb.cairo.lv.LiveViewCheckpointLayout;
-import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
-import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
-import io.questdb.cairo.lv.LiveViewCheckpointRoot;
-import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
-import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
-import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
 /**
  * Cross-version restore: a checkpoint tree written by the released 10.0.1 build, read back by
@@ -82,7 +67,7 @@ import java.util.zip.ZipInputStream;
  * clean {@code 10.0.1} checkout's {@code io.questdb.test.cairo.lv} package and run it; the
  * constants below are the values it prints.
  */
-public class LiveViewCheckpointReleaseCompatTest extends AbstractLiveViewTest {
+public class LiveViewCheckpointReleaseCompatTest extends AbstractLiveViewReleaseFixtureTest {
 
     private static final String FIXTURE_RESOURCE = "/lv/lv_checkpoint_10_0_1.zip";
     // The simulated clock the fixture's own run left behind. This one starts above it, so the
@@ -119,25 +104,25 @@ public class LiveViewCheckpointReleaseCompatTest extends AbstractLiveViewTest {
                 driveRefreshToQuiescence(job);
                 Assert.assertTrue(
                         "the upgrade must restore off the released roots",
-                        instance().isCheckpointRestoreSucceeded()
+                        instance("lv").isCheckpointRestoreSucceeded()
                 );
 
                 // The first commit after the upgrade seals through this branch's writers, which
                 // fuse the shape the released build kept in separate roots.
                 insertAccount(job, timestamp(50), "acct-1", 100.0);
-                Assert.assertTrue("the seal after the upgrade must publish a fused window root", isFusedHead());
+                Assert.assertTrue("the seal after the upgrade must publish a fused window root", isFusedHead("lv"));
                 assertViewMatchesRecompute();
                 assertNoRefreshFaults("lv");
             }
 
             // A second restart, now reading back the converted root rather than the released one.
             restartCycle();
-            Assert.assertFalse("the converted view must stay valid across a restart", instance().isInvalid());
+            Assert.assertFalse("the converted view must stay valid across a restart", instance("lv").isInvalid());
             Assert.assertTrue(
                     "the restart must restore off the converted fused root",
-                    instance().isCheckpointRestoreSucceeded()
+                    instance("lv").isCheckpointRestoreSucceeded()
             );
-            Assert.assertTrue("the restored head must still be the fused root", isFusedHead());
+            Assert.assertTrue("the restored head must still be the fused root", isFusedHead("lv"));
             assertViewMatchesRecompute();
             assertNoRefreshFaults("lv");
 
@@ -172,7 +157,7 @@ public class LiveViewCheckpointReleaseCompatTest extends AbstractLiveViewTest {
             // probe that reported one here would mean the case is testing this branch's own bytes.
             Assert.assertFalse(
                     "the fixture's head must be a legacy anchor root, not a fused window root",
-                    isFusedHead()
+                    isFusedHead("lv")
             );
             assertReleasedLineage("the fixture must arrive with the lineage the released build sealed");
 
@@ -181,7 +166,7 @@ public class LiveViewCheckpointReleaseCompatTest extends AbstractLiveViewTest {
                 driveRefreshToQuiescence(job);
             }
 
-            final LiveViewInstance instance = instance();
+            final LiveViewInstance instance = instance("lv");
             Assert.assertFalse("a released checkpoint must not invalidate the view", instance.isInvalid());
             Assert.assertTrue("the restore must have run", instance.isCheckpointRestoreAttempted());
             Assert.assertTrue(
@@ -202,61 +187,13 @@ public class LiveViewCheckpointReleaseCompatTest extends AbstractLiveViewTest {
             );
             Assert.assertFalse(
                     "restoring must not rewrite the head; only a later seal converts the shape",
-                    isFusedHead()
+                    isFusedHead("lv")
             );
 
             // A restore that succeeded on a misread page is worse than one that failed, so the
             // rows are compared against a from-base recompute as well.
             assertViewMatchesRecompute();
         });
-    }
-
-    /**
-     * Unpacks a database root over the test's own and points the engine at it, the way
-     * {@code EngineMigrationTest} does for its migration fixtures.
-     * <p>
-     * The catalogue has to be rebuilt as well as the name registry. A process that opens this
-     * root for real hydrates {@link io.questdb.cairo.MetadataCache} from it at startup, but the
-     * engine here has already declared its own (empty) catalogue complete, and
-     * {@code hydrateAllTables()} short-circuits on that flag. Skipping the wipe leaves
-     * {@code LiveViewRefreshJob.buildColumnMappings} reading a catalogue with no {@code tx} in
-     * it, which throws {@code table does not exist} on a table every SQL cursor can read -
-     * an artifact of hot-swapping the root under a live engine, not of the fixture.
-     */
-    private static void replaceDbContent(String resourcePath) throws IOException {
-        engine.getLiveViewRegistry().clear();
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
-        engine.releaseInactive();
-        engine.closeNameRegistry();
-
-        final byte[] buffer = new byte[1024 * 1024];
-        try (InputStream is = LiveViewCheckpointReleaseCompatTest.class.getResourceAsStream(resourcePath)) {
-            Assert.assertNotNull("missing fixture resource " + resourcePath, is);
-            try (ZipInputStream zip = new ZipInputStream(is)) {
-                ZipEntry entry;
-                while ((entry = zip.getNextEntry()) != null) {
-                    if (!entry.isDirectory()) {
-                        final File dest = new File(root, entry.getName());
-                        final File parent = dest.getParentFile();
-                        Assert.assertTrue("cannot create " + parent, parent.isDirectory() || parent.mkdirs());
-                        try (OutputStream os = new FileOutputStream(dest)) {
-                            int read;
-                            while ((read = zip.read(buffer)) > 0) {
-                                os.write(buffer, 0, read);
-                            }
-                        }
-                    }
-                    zip.closeEntry();
-                }
-            }
-        }
-
-        engine.reloadTableNames();
-        try (MetadataCacheWriter cacheRW = engine.getMetadataCache().writeLock()) {
-            cacheRW.clearCache();
-        }
-        engine.getMetadataCache().hydrateAllTables();
     }
 
     private static String timestamp(int secondOfDay) {
@@ -273,8 +210,8 @@ public class LiveViewCheckpointReleaseCompatTest extends AbstractLiveViewTest {
      * separately, after the restore that fills it in.
      */
     private void assertReleasedLineage(String message) {
-        final LiveViewInstance instance = instance();
-        Assert.assertEquals(message + " [sealedBoundaries]", FIXTURE_SEALED_BOUNDARIES, countSealedBoundaries());
+        final LiveViewInstance instance = instance("lv");
+        Assert.assertEquals(message + " [sealedBoundaries]", FIXTURE_SEALED_BOUNDARIES, countSealedBoundaries("lv"));
         Assert.assertEquals(message + " [headLvSeqTxn]", FIXTURE_HEAD_LV_SEQ_TXN, instance.getHeadCheckpointLvSeqTxn());
         Assert.assertEquals(message + " [headBaseSeqTxn]", FIXTURE_HEAD_BASE_SEQ_TXN, instance.getHeadCheckpointBaseSeqTxn());
     }
@@ -301,64 +238,11 @@ public class LiveViewCheckpointReleaseCompatTest extends AbstractLiveViewTest {
         );
     }
 
-    private Path checkpointsDir(LiveViewInstance instance) {
-        return new Path().of(engine.getConfiguration().getDbRoot())
-                .concat(instance.getLiveViewToken())
-                .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-    }
-
-    /**
-     * How many logical boundaries the selected generation's timeline holds. A restart that fell
-     * back to a from-base rebuild retires the timeline first, so this drops rather than grows.
-     */
-    private int countSealedBoundaries() {
-        final LiveViewInstance instance = instance();
-        final int[] count = {0};
-        try (
-                Path checkpointsDir = checkpointsDir(instance);
-                LiveViewCheckpointMetaStore store = openStore(instance);
-                LiveViewCheckpointTimelineReader timeline = openTimelineReader(instance);
-                LiveViewCheckpointGenerationPin pin = store.pin()
-        ) {
-            timeline.iterateAll(pin.getTimelineRootRef(), entry -> count[0]++);
-        }
-        return count[0];
-    }
-
     private void insertAccount(LiveViewRefreshJob job, String timestamp, String account, double amount)
             throws Exception {
         execute("INSERT INTO tx VALUES ('" + timestamp + "', '" + account + "', " + amount + ")");
         drainWalQueue();
         driveRefreshToQuiescence(job);
-    }
-
-    private LiveViewInstance instance() {
-        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-        Assert.assertNotNull("live view 'lv' must be registered", instance);
-        return instance;
-    }
-
-    /**
-     * Whether the newest sealed boundary carries a fused window root rather than the legacy
-     * anchor root plus function directory the released build wrote.
-     */
-    private boolean isFusedHead() {
-        final LiveViewInstance instance = instance();
-        try (
-                Path checkpointsDir = checkpointsDir(instance);
-                LiveViewCheckpointMetaStore store = openStore(instance);
-                LiveViewCheckpointGenerationPin pin = store.pin();
-                LiveViewCheckpointTimelineReader timeline = openTimelineReader(instance);
-                LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(engine.getConfiguration());
-                LiveViewCheckpointWindowRoot windowRoot = new LiveViewCheckpointWindowRoot(engine.getConfiguration())
-        ) {
-            final LiveViewCheckpointTimelineEntry newest = new LiveViewCheckpointTimelineEntry();
-            Assert.assertTrue("the view must have a sealed boundary", timeline.last(pin.getTimelineRootRef(), newest));
-            root.of(checkpointsDir, newest.rootRef);
-            final LiveViewCheckpointPageRef stateRootRef = new LiveViewCheckpointPageRef();
-            root.getStateRootRef(stateRootRef);
-            return !stateRootRef.isNull() && windowRoot.ofIfWindowRoot(checkpointsDir, stateRootRef);
-        }
     }
 
     /**
@@ -368,24 +252,7 @@ public class LiveViewCheckpointReleaseCompatTest extends AbstractLiveViewTest {
     private void openFixture() throws IOException {
         replaceDbContent(FIXTURE_RESOURCE);
         engine.buildViewGraphs();
-        Assert.assertFalse("the fixture must not carry an invalid view", instance().isInvalid());
-    }
-
-    private LiveViewCheckpointMetaStore openStore(LiveViewInstance instance) {
-        final LiveViewCheckpointMetaStore store = new LiveViewCheckpointMetaStore(engine.getConfiguration());
-        try (Path dir = checkpointsDir(instance)) {
-            store.of(dir);
-        }
-        return store;
-    }
-
-    private LiveViewCheckpointTimelineReader openTimelineReader(LiveViewInstance instance) {
-        final LiveViewCheckpointTimelineReader reader =
-                new LiveViewCheckpointTimelineReader(engine.getConfiguration());
-        try (Path dir = checkpointsDir(instance)) {
-            reader.of(dir);
-        }
-        return reader;
+        Assert.assertFalse("the fixture must not carry an invalid view", instance("lv").isInvalid());
     }
 
     private void restartCycle() throws Exception {
