@@ -802,7 +802,9 @@ public class FiberAffinitySchedulingTest {
                         jobError.compareAndSet(null, th);
                     }
                     if (jobError.get() != null) {
-                        recovered.countDown();
+                        while (recovered.getCount() > 0) {
+                            recovered.countDown();
+                        }
                         return false;
                     }
                     throw new RuntimeException("deterministic owner failure");
