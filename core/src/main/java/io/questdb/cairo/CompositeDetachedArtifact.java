@@ -47,6 +47,27 @@ import org.jetbrains.annotations.Nullable;
  * cellKey and comparing, precisely to avoid a reverse parse. A parser here would be a second, lossier
  * source of truth for the same mapping.
  */
+/*
+ * UNREACHABLE FROM SQL as of 6dd81d5325, and kept anyway -- deliberately, with the evidence, so the
+ * next reader does not have to re-derive it.
+ *
+ * DETACH/ATTACH PARTITION are refused for composite tables at the statement
+ * (SqlCompilerImpl#alterTableDropConvertDetachOrAttachPartition), so nothing here is reachable through
+ * SQL. It is NOT deleted because attachPartition has a second caller: ParallelCsvFileImporter (~730).
+ *
+ * What was established about that caller, short of an end-to-end test:
+ *   - the importer's createTable() rmdirs an existing table and recreates it from the importer's OWN
+ *     TableStructure, which carries no composite dimensions -- so a COPY target is always plain;
+ *   - the TABLE_EXISTS branch (~742) is failure cleanup (truncate), not an append path.
+ * Together those say the composite branch of attachPartition cannot be reached from COPY either, and
+ * this class is fully dead.
+ *
+ * That is INFERRED, not proven -- no test drives COPY into a composite table. Deleting ~400 lines on
+ * inference is the exact move that went wrong earlier on this branch, where a "clearly redundant"
+ * refusal turned out to be deliberate and test-pinned. So: prove it with a COPY-into-composite test
+ * first, then delete. The cost of waiting is dead code; the cost of being wrong is a broken import
+ * path with no test to catch it.
+ */
 public final class CompositeDetachedArtifact {
 
     private CompositeDetachedArtifact() {
