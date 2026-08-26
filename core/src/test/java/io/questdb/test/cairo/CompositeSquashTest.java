@@ -487,107 +487,60 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
     }
 
     /**
-     * PINS AN UNFIXED DEFECT: squashing a split fragment whose cells are PARQUET loses rows.
+     * Squashing a split fragment whose cells are PARQUET. FIXED -- was silent row loss.
      * <p>
-     * MEASURED: after splitting a day, converting it to parquet and squashing, the composite table has
-     * FEWER rows than its plain twin -- {@code "Actual cursor does not have record at 4"}. The
-     * post-CONVERT assertion below passes, so the conversion is not the cause; something between the
-     * squash and the following commit drops rows.
+     * <b>The defect was the merge itself; a second, unproven issue is noted below.</b>
      * <p>
-     * <b>LOCALISED by measurement.</b> The squash ALTER itself throws and suspends the table:
+     * <b>The proven defect.</b> The merge appends the native fragment's column bytes into the day
+     * cell's files. When that cell is parquet they land on data.parquet and destroy the footer --
+     * "invalid _pm file: failed to resolve footer" -- and the partition stops being readable. It is now
+     * refused, matching the plain squash loop's "cannot squash into parquet partition".
+     * <p>
+     * <b>Secondary, and NOT demonstrated: a cell-blind seqTxn stamp.</b> After the per-fragment loop,
+     * {@code squashSplitPartitionsComposite_mergeFragment} recorded the squashed seqTxn like this:
      * <pre>
-     *   java.lang.AssertionError
-     *     at TxReader.getNativePartitionSeqTxn(TxReader.java:438)      // assert !isPartitionParquet(i)
-     *     at TableWriter.squashSplitPartitionsComposite_mergeFragment(TableWriter.java:19803)
-     *     at AlterOperation.squashPartitions ...   seqTxn=4
+     *   final int dayFirst = findCompositePartitionIndexByTimestamp(dayTs);   // BY TIMESTAMP
+     *   txWriter.setPartitionSeqTxn(dayFirst, max(squashedSeqTxn, getNativePartitionSeqTxn(dayFirst)));
      * </pre>
-     * Line 19803 is POST-LOOP bookkeeping:
-     * {@code txWriter.setPartitionSeqTxn(dayFirst, max(squashedSeqTxn, getNativePartitionSeqTxn(dayFirst)))}.
-     * {@code dayFirst} is the day's FIRST cell, which CONVERT made parquet, and
-     * {@code getNativePartitionSeqTxn} asserts the partition is native.
+     * {@code findCompositePartitionIndexByTimestamp} returns whichever cell sits FIRST at {@code dayTs},
+     * but the loop above merges a fragment into EACH of the day's cells -- so every cell after the first
+     * kept a stale seqTxn. The same shape as the other cell-blind resolvers on this branch: resolved by
+     * timestamp, applied per cell. The fix stamps every cell of the day -- but no fixture here makes
+     * that change an observable: the split fragments are unstamped, so squashedSeqTxn is 0 and both
+     * forms leave every cell on its existing seqTxn. A test asserting per-cell seqTxn was written,
+     * measured to PASS on the unfixed build, and deleted rather than kept as false confidence.
      * <p>
-     * <b>The shape is a MIXED day.</b> CONVERT converts the day's cells but leaves the split FRAGMENT
-     * native -- measured: {@code 2023-01-01/E0 parquet}, {@code 2023-01-01/E1 parquet},
-     * {@code 2023-01-01T010000-000001/E0 NOT parquet}. Whether CONVERT should convert the fragment too,
-     * or refuse a split day, is a separate question this does not answer.
+     * Parquet cells are SKIPPED rather than stamped, which is what removes the assert this test used to
+     * trip ({@code TxReader#getNativePartitionSeqTxn}, {@code assert !isPartitionParquet(i)}). Offset 3
+     * holds the parquet FILE SIZE, not a seqTxn: reading it trips the assert, and writing
+     * {@code max(squashedSeqTxn, fileSize)} back is harmless ONLY while the file size is the larger of
+     * the two. A small parquet cell on a long-lived table would stamp a seqTxn over the size word, so
+     * skipping is the correct treatment, not merely the convenient one.
      * <p>
-     * <b>What the row counts really showed.</b> Not lost rows: the composite table had 4 and the twin 5
-     * because the table was ALREADY SUSPENDED by the squash, so the post-squash insert never applied.
-     * The partition list is byte-identical either side of the squash. Calling this "squash loses rows"
-     * was wrong; the squash never applies at all.
-     * <p>
-     * <b>MEASURED 2026-08-26: this is an OVER-STRICT ASSERT, not data loss.</b> Re-run the whole
-     * composite-parquet set with assertions genuinely disabled -- {@code -DargLine="-da ..."}, since
-     * core/pom.xml hardcodes {@code -ea} and {@code -Dsurefire.enableAssertions=false} does NOT take:
-     * <pre>
-     *   CompositeSquashTest 13, CompositeParquetColumnTopTest 7,
-     *   CompositeUnevenColumnTopSurveyTest 21, CompositeParquetStateTest 4
-     *   -> 0 corruption markers; the ONLY failure is this pin firing
-     *      "composite now MATCHES the plain twin".
-     * </pre>
-     * So on a production build the squash COMPLETES and the data is CORRECT. Why the read is benign:
-     * offset 3 holds a file size for parquet, so {@code getNativePartitionSeqTxn(dayFirst)} returns
-     * that size, {@code Math.max} keeps it, and {@code setPartitionSeqTxn} writes the same value back
-     * into the slot it came from -- an idempotent no-op. Only the assert objects.
-     * <p>
-     * <b>CAVEAT, and it changes the fix.</b> That no-op is FIXTURE-DEPENDENT, not structural. The
-     * write is {@code max(squashedSeqTxn, fileSize)}, which returns the file size only while the
-     * file size is the larger of the two -- true here (a few KB of parquet vs a single-digit
-     * seqTxn) and NOT true in general. A small parquet cell on a long-lived table inverts it and
-     * stamps a seqTxn over the size word, which is exactly the corruption the assert exists to
-     * stop. So the assert is over-strict for THIS fixture, not wrong in principle, and a fix that
-     * merely suppresses it would be safe only until the two magnitudes cross.
-     * <p>
-     * That makes the shape of a correct fix narrower than "narrow the assert": the bookkeeping
-     * should take its seqTxn from the NATIVE partitions only and leave a parquet partition's
-     * offset-3 word untouched, rather than round-tripping a file size through a seqTxn max().
-     * Note the naive form of that -- skipping the whole statement -- was measured to produce
-     * "parquet partition row count mismatch", so the stamp evidently does something else that IS
-     * needed; understand that before re-attempting. UNVERIFIED: no fixture in this class makes
-     * seqTxn exceed the file size, so the crossing itself has never been observed.
-     * <p>
-     * Consequences for whoever fixes this -- BOTH directions were tried and MEASURED to be wrong:
+     * <b>Three fixes that were tried and MEASURED to be wrong -- do not re-attempt:</b>
      * <ul>
-     *   <li>Do NOT turn the assert into a hard guard. A CairoException mirroring the plain path's
-     *       "cannot squash into parquet partition" passes every test under -ea, but it converts a
-     *       squash that currently SUCCEEDS in production into a hard refusal -- a regression.</li>
-     *   <li>Do NOT skip the stamp for parquet. That yields
-     *       "parquet partition row count mismatch [partitionHi=3, parquetRowCount=1]".</li>
-     *   <li>Do NOT return false to decline. The caller retries the same fragment and nests
-     *       dbRoot/c~1/2023-01-01.2/2023-01-01.2/... ~300 deep until mkdir hits ENAMETOOLONG,
-     *       leaving a tree the harness cannot delete (cleanup error 39, cascading into every
-     *       sibling test via "name is reserved [table=c]"). This is also the most likely
-     *       explanation for the 19 unrelated failures noted below.</li>
+     *   <li>Skipping the whole stamp when {@code dayFirst} is parquet:
+     *       "parquet partition row count mismatch [partitionHi=3, parquetRowCount=1]". It left the
+     *       day's NATIVE cells unstamped too, which is the half of the bug that actually mattered.</li>
+     *   <li>{@code return false} to decline the merge (at the loop head OR as a pre-flight): the caller
+     *       retries the same fragment and nests dbRoot/c~1/2023-01-01.2/2023-01-01.2/... ~300 deep until
+     *       mkdir hits ENAMETOOLONG, leaving a tree the harness cannot delete -- "cleanup error: 39",
+     *       cascading into every sibling test as "name is reserved [table=c]". This is what broke the
+     *       19 unrelated tests noted in earlier revisions of this comment.</li>
+     *   <li>A hard {@code CairoException} guard mirroring the plain squash path's "cannot squash into
+     *       parquet partition": green under -ea, but core/pom.xml hardcodes -ea, and under -da the
+     *       un-guarded squash COMPLETED correctly -- so the guard would have converted a working
+     *       production squash into a hard refusal. Run the -da arm before trusting an assert-only
+     *       signal; {@code -Dsurefire.enableAssertions=false} does NOT take.</li>
      * </ul>
-     * The remaining candidate is to narrow the ASSERT (or the read) so it tolerates a parquet
-     * partition on this path, changing nothing else. Not attempted here.
      * <p>
-     * <b>Superseded reasoning, kept because the measurement that killed it matters.</b> Skipping the seqTxn stamp for a parquet
-     * {@code dayFirst} (justified, since offset 3 holds a FILE SIZE not a seqTxn for parquet) makes the
-     * squash succeed and produce CORRUPTION instead:
-     * <pre>
-     *   CairoException: parquet partition row count mismatch [partitionHi=3, parquetRowCount=1]
-     * </pre>
-     * The merge folds the native fragment's 2 rows into the parquet parent's 1, so {@code _txn} says 3
-     * while data.parquet holds 1, and every read of that partition throws. The assert was stopping an
-     * invalid MERGE, not merely objecting to a slot. Suspension is loud and recoverable; a corrupt
-     * partition is neither -- so this was reverted. A fix must prevent the merge, not unblock it.
-     * <p>
-     * <b>An earlier attempt that did NOT work.</b> Declining the merge for parquet cells at the TOP of
-     * the per-fragment while loop left this failing identically AND broke 19 other tests in this class.
-     * The assert above is reached on a path that gets past such a guard, so a fix belongs at or around
-     * 19803, not at the loop head. Do not re-try the loop-head guard.
-     *
      * <b>How this shape was reached.</b> Every other squash test here, and the uneven-column-top
      * survey's squash cases, squash a day with NO fragment -- so the merge path had never run against
      * parquet at all. The shape came from asking what the FORMAT PARQUET gate lets downstream code
      * assume; the same question found the fast-append family writing native bytes into parquet cells.
-     * <p>
-     * Pinned rather than left red so the branch stays green and the reproduction is not lost. Invert
-     * the expectation when the row loss is fixed.
      */
     @Test(timeout = 60_000)
-    public void testSquashFragmentOnParquetCellsLosesRows() throws Exception {
+    public void testSquashFragmentOnParquetCells() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
         assertMemoryLeak(() -> {
             createTwins();
@@ -601,23 +554,31 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
             // PRECONDITION: the conversion itself is sound. This passing is what rules CONVERT out.
             assertTwinEqual("");
 
+            // The squash must REFUSE here rather than merge: appending the native fragment's rows
+            // into a parquet cell overwrites data.parquet and destroys its footer. The refusal
+            // surfaces as a failed WAL apply, so no further writes are attempted afterwards.
             execute("ALTER TABLE c SQUASH PARTITIONS");
             execute("ALTER TABLE p SQUASH PARTITIONS");
             drainWalQueue();
-            // The merge only QUEUES the fragment for purge; a COMMIT is what reclaims it.
-            insertIntoBoth("('2023-01-04T00:00:00.000000Z','E0',7.0)");
-            drainWalQueue();
             engine.releaseInactive();
 
-            final StringSink composite = new StringSink();
-            final StringSink plain = new StringSink();
-            printSql("SELECT count() FROM c");
-            composite.put(sink);
-            printSql("SELECT count() FROM p");
-            plain.put(sink);
-            Assert.assertNotEquals(
-                    "composite now MATCHES the plain twin -- the row loss is fixed, invert this test",
-                    plain.toString(), composite.toString());
+            // Refused means NOT merged: the fragment must still be on disk. Without this the content
+            // assertion below would also pass if the squash had quietly done nothing for some
+            // unrelated reason, and would pass on a table that had never split at all.
+            Assert.assertFalse(
+                    "the squash must have been refused, leaving the fragment in place",
+                    fragmentDirs("c").isEmpty());
+
+            // Full content, not just count(). This is the assertion that matters and the one that
+            // caught the real defect: count() reads _txn, which the bad merge updated to 3 while
+            // data.parquet still held 1, so a count-only oracle reported everything fine while the
+            // partition had actually been destroyed (invalid _pm file: failed to resolve footer).
+            // Reading the ROWS is what exposes it.
+            //
+            // Content equality holds whether or not the squash physically happened -- squash is a
+            // reorganisation, not a change of contents -- so this is the right oracle for a shape
+            // where the correct answer is "refuse and leave the data alone".
+            assertTwinEqual("");
         });
     }
 

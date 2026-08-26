@@ -19733,6 +19733,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 return false;
             }
         }
+        // Pre-flight 2: REFUSE to merge a native fragment into a parquet cell. The merge appends
+        // native column bytes into the day cell's files; when that cell is parquet it lands on top of
+        // data.parquet and destroys the footer, and the partition stops being readable at all:
+        //   CairoException: invalid _pm file: failed to resolve footer [path=.../2023-01-01/E0.2/_pm]
+        // MEASURED on a production-semantics build (-da). Under -ea an assert in
+        // TxReader#getNativePartitionSeqTxn happened to stop it first, which is why this looked like a
+        // test-only problem; core/pom.xml hardcodes -ea, so the -ea run was never showing production.
+        // A count(*) oracle does NOT see this -- count reads _txn, which the merge updates to 3 while
+        // the parquet file still holds 1. It takes reading the ROWS to expose it.
+        //
+        // Throw, do not `return false`: the plain squash loop refuses this same shape the same way
+        // ("cannot squash into parquet partition"), and a false return makes the caller retry the
+        // fragment forever, nesting 2023-01-01.2/2023-01-01.2/... until mkdir hits ENAMETOOLONG.
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) != fragTs) {
+                continue;
+            }
+            final int fragCell = txWriter.getPartitionCellKey(i);
+            final int dayIdx = findCompositePartitionIndex(dayTs, fragCell);
+            if (txWriter.isPartitionParquet(i) || (dayIdx >= 0 && txWriter.isPartitionParquet(dayIdx))) {
+                throw CairoException.critical(0).put("cannot squash into parquet partition [table=")
+                        .put(tableToken.getTableName())
+                        .put(", partitionTimestamp=").ts(timestampType, dayTs)
+                        .put(", cellKey=").put(fragCell)
+                        .put(']');
+            }
+        }
         final FrameFactory frameFactory = engine.getFrameFactory();
         long squashedSeqTxn = 0;
         int srcIndex;
@@ -19798,9 +19825,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // Once per FRAGMENT, not once per cell: this drops every cell recorded at fragTs.
         columnVersionWriter.squashPartition(dayTs, fragTs);
-        final int dayFirst = findCompositePartitionIndexByTimestamp(dayTs);
-        if (dayFirst >= 0) {
-            txWriter.setPartitionSeqTxn(dayFirst, Math.max(squashedSeqTxn, txWriter.getNativePartitionSeqTxn(dayFirst)));
+        // Stamp EVERY cell of the day, not just the first. findCompositePartitionIndexByTimestamp
+        // resolves BY TIMESTAMP, which on a composite table is whichever cell happens to sit first at
+        // dayTs -- but the loop above merged a fragment into EACH of the day's cells, so the rest kept
+        // a stale seqTxn. Same shape as the other cell-blind resolvers on this branch: looked up by
+        // timestamp, written back per cell.
+        //
+        // DEFENSIVE, NOT A DEMONSTRATED FIX -- do not cite this as one. I could not build a fixture
+        // where it changes an observable. table_partitions() exposes seqTxn per cell, but in every
+        // shape tried the split fragments are UNSTAMPED (seqTxn 0), so squashedSeqTxn is 0 and
+        // max(0, own) leaves each cell on its existing value -- the cell-blind and cell-aware forms
+        // print byte-identical output. Exposing a difference needs a fragment whose stamped seqTxn
+        // EXCEEDS the day cells', which is reachable via the parquet-generated stamping path at
+        // ~3636, and that path is now unreachable here because the pre-flight above refuses parquet.
+        // Kept because reading offset 3 of a non-first cell is wrong regardless of whether today's
+        // callers can observe it; treat it as hardening until someone builds the fixture.
+        //
+        // Parquet cells are skipped rather than stamped: offset 3 holds the parquet FILE SIZE, not a
+        // seqTxn. Reading it trips TxReader#getNativePartitionSeqTxn's assert, and writing
+        // max(squashedSeqTxn, fileSize) back is only harmless while the file size is the larger of the
+        // two -- a small parquet cell on a long-lived table would stamp a seqTxn over the size word.
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) != dayTs || txWriter.isPartitionParquet(i)) {
+                continue;
+            }
+            txWriter.setPartitionSeqTxn(i, Math.max(squashedSeqTxn, txWriter.getNativePartitionSeqTxn(i)));
         }
         // NO eager removeEmptyDayContainer here. Deleting the fragment container at this point removes
         // a directory BEFORE the transaction recording its detachment is durable, so a reload sees the
