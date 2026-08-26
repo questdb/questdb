@@ -266,9 +266,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // and the CREATE MATERIALIZED VIEW compile disable it: the cleanup computes survivors from its
     // authoritative keep-filter alone, decoupled from the read filter (so a read-filter change cannot
     // affect physical deletion), and a mat-view definition derives from the raw base.
-    default boolean isExpiryReadFilterEnabled() {
-        return true;
-    }
+    // This method and its setter are abstract on purpose: a context that inherited a no-op setter would
+    // silently keep the filter on in the two places that require it off.
+    boolean isExpiryReadFilterEnabled();
 
     // Per-table refinement of {@link #isExpiryReadFilterEnabled()}: whether the read-time row-expiry
     // filter applies to reads of THIS table in the current compilation. Follows the global flag by
@@ -358,8 +358,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
 
-    default void setExpiryReadFilterEnabled(boolean enabled) {
-    }
+    void setExpiryReadFilterEnabled(boolean enabled);
 
     void setIntervalFunctionType(int intervalType);
 
