@@ -18697,6 +18697,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        // WHAT IT WOULD TAKE, established 2026-08-26 so the next attempt does not re-derive it. This
+        // method is keyed by TIMESTAMP and has three callers, all of which read their partition
+        // timestamps out of the O3 partition-update sink (sealPostingIndexesForO3Partitions). That sink
+        // block carries slots 0..6 -- timestamps and sizes -- and NO cellKey, so there is nothing to
+        // thread through: making the seal cell-aware means widening the sink layout itself, which is
+        // the same structure behind the o3ConsumePartitionUpdateSink trackedTail corruption. That, plus
+        // the dropped-partition wrapper named above, is why this is a task and not a parameter.
         if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support a POSTING index seal on this partition [table=")
