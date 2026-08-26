@@ -62,32 +62,34 @@ cost is not charged to the index form:
 | `avg()` | 1.14x |
 | covered gather (`sidecarRead`) | parity; INT faster |
 
-**Index-level reads.** Parquet against native, each scenario in its own JVM --
-running the whole suite in one leaves the million-key fixtures' memory pressure
-on everything measured after them:
+**Index-level reads.** Parquet against native. **One benchmark per JVM**:
+benchmarks sharing a JVM contaminate each other badly here -- a 5,000-key scan
+reads 3.11x SLOWER measured alongside two others and 1.73x FASTER measured alone,
+three runs agreeing within 2%.
 
 | Rows / distinct keys | point read | scan | range |
 | --- | --- | --- | --- |
-| 400k / 16 | **1.56x faster** | 1.57x | 2.73x |
-| 1.02M / 512 | **1.66x faster** | 1.86x | 2.69x |
-| 1M / 500 (zipf) | **1.26x faster** | **1.53x faster** | **1.11x faster** |
-| 2M / 2,000 | **1.49x faster** | 2.08x | 4.84x |
-| 1M / 5,000 | **1.25x faster** | 1.88x | 7.81x |
-| 1M / 10,000 | 1.00x | **1.48x faster** | 2.39x |
-| 1.2M / 200,000 | 2.0x | **1.82x faster** | 6.00x |
-| 2M / 500,000 | 2.9x | **1.65x faster** | 6.69x |
-| 2M / 1,000,000 | 4.0x | **1.73x faster** | 7.03x |
+| 400k / 16 | **1.93x faster** | **1.90x faster** | **1.79x faster** |
+| 1.02M / 512 | **1.88x faster** | **1.86x faster** | **1.56x faster** |
+| 1M / 500 (zipf) | **1.49x faster** | **1.51x faster** | **3.10x faster** |
+| 2M / 2,000 | **1.72x faster** | **1.66x faster** | 1.11x |
+| 1M / 5,000 | **1.60x faster** | **1.72x faster** | 1.52x |
+| 1M / 10,000 | **1.84x faster** | **2.25x faster** | 1.42x |
+| 1.2M / 200,000 | 1.22x | **2.44x faster** | 3.24x |
+| 2M / 500,000 | 1.77x | **1.71x faster** | 3.82x |
+| 2M / 1,000,000 | 2.35x | **1.76x faster** | 4.63x |
 
-Point reads beat the native chain up to five thousand keys and level with it at
-ten thousand; scans beat it from ten thousand upwards.
+Scans beat the native chain at every cardinality. Point reads beat it to ten
+thousand keys, and range reads to a thousand.
 
-**What still costs.** `row_id` is PLAIN where the native chain delta-FoR packs
-its postings, so anything that walks a long run of them -- a windowed range scan
-above all -- moves several times the bytes native does. Delta packing was tried
-and reverted: a delta block decodes from its start, so it destroys the random
-access the same column needs (point reads went to 40-44x). Parquet offers no
-packed integer encoding that survives random access, which is where the
-remaining range-read gap comes from.
+**What is left is the `_im` checksum, not the read path.** The nine slower cells
+are all high-cardinality point and range reads, and both are dominated by reader
+BIND: the checksum covers the whole `_im`, whose key directory is 4 MB at a
+million keys. Skipping it takes a million-key point read from 2.34x to 1.33x and
+a range read from 4.52x to 2.14x. It is left on, and the number to keep in mind
+is that the cost is per MAPPING -- a pooled TableReader maps once per
+partition-open and serves many queries, where these benchmarks open a reader
+every iteration and then make as few as 500 lookups.
 
 Reproduce with `PostingIndexBenchmarkSuite`, whose `POSTING_PARQUET` and
 `covering_parquet` arms build the same fixture through `ParquetIndexSeal`, and
