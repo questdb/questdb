@@ -44,9 +44,12 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.TimeZoneRuleFactory;
 import io.questdb.std.datetime.microtime.Micros;
 
 import java.io.IOException;
@@ -76,6 +79,19 @@ import java.util.Locale;
  * closing {@code # sweeps} line report what that costs, including the seal that follows
  * a sweep against one that does not - the seal stays incremental across a sweep, but has
  * to carry one removal per evicted key on top of the keys the batch touched.
+ * <p>
+ * <b>The zoned anchor.</b> {@code --anchor-period=daily:<zone>} hangs an IANA zone off the
+ * DAILY sugar, as in {@code --anchor-period=daily:Europe/Berlin}. A zoned anchor desugars
+ * to {@code timestamp_floor_utc} rather than {@code timestamp_floor}, whose civil days are
+ * 23 and 25 hours wide across a DST transition, and the checkpoint anchor planner reads
+ * that shape through a branch of its own. It is the shape whose repair used to report
+ * {@code boundary rebuild/incomplete dependency} in the {@code repair} column on every
+ * correction and re-read the view from its own start; a run that names a zone is what
+ * prices the localized path against that. Read {@code repair} and {@code o3_scan_rows}
+ * against a run of the same parameters without the zone. The account window still slides
+ * on a fixed 24-hour grid, shifted by the zone's offset at the run's first timestamp, so
+ * it tracks the zone's civil day for as long as the run stays inside one DST regime and
+ * drifts by the transition's own amount past one.
  * <p>
  * {@code --compact-threshold} and {@code --compact-stale-percent} move the two arms of the
  * trigger. The threshold is an absolute count and stops binding once the map is large; the
@@ -147,6 +163,14 @@ import java.util.Locale;
  *     org.questdb.LiveViewSteadyStateBenchmark \
  *     --seed=1000000 --batch=1000000 --batches=10 --checkpoint-rows=1000000 \
  *     --anchor-period=8m --account-window=1000000
+ *
+ * # a time-zone-aware daily anchor, which is what takes the planner's zoned branch
+ * java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx12g \
+ *     -cp benchmarks/target/benchmarks.jar \
+ *     org.questdb.LiveViewSteadyStateBenchmark \
+ *     --seed=200000 --batch=5500 --batches=200 --checkpoint-rows=1000000 \
+ *     --anchor-period=daily:Europe/Berlin --account-window=20000000 \
+ *     --ts-step-us=909 --o3-percent=2 --o3-commit-percent=50 --o3-from-batch=50
  * </pre>
  */
 public class LiveViewSteadyStateBenchmark {
@@ -179,7 +203,7 @@ public class LiveViewSteadyStateBenchmark {
         boolean isSymbolPreSized = true;
         int recycleAccounts = 0; // 0 = every row a brand new account
         long accountWindow = 0; // 0 = no rolling window, so nothing ages out
-        String anchorPeriod = DAILY_ANCHOR_PERIOD;
+        String anchorPeriodArg = DAILY_ANCHOR_PERIOD;
         int compactStalePercent = -1; // -1 = leave the configuration default alone
         int compactThreshold = -1; // -1 = leave the configuration default alone
         String shape = Shape.TARGET.name;
@@ -264,7 +288,7 @@ public class LiveViewSteadyStateBenchmark {
             } else if (arg.startsWith("--account-window=")) {
                 accountWindow = Long.parseLong(arg.substring(17));
             } else if (arg.startsWith("--anchor-period=")) {
-                anchorPeriod = arg.substring(16);
+                anchorPeriodArg = arg.substring(16);
             } else if (arg.startsWith("--compact-threshold=")) {
                 compactThreshold = Integer.parseInt(arg.substring(20));
             } else if (arg.startsWith("--compact-stale-percent=")) {
@@ -365,8 +389,31 @@ public class LiveViewSteadyStateBenchmark {
             isSymbolPreSized = false;
         }
 
+        // --anchor-period=daily:<zone> names an IANA zone for the DAILY anchor. That form
+        // desugars to timestamp_floor_utc rather than timestamp_floor, and the zoned shape is
+        // the one the checkpoint anchor planner recognizes through its own branch, so it is
+        // what a run has to name to price a repair against a zone's civil day rather than
+        // against a fixed 24-hour grid. Only DAILY carries a zone: the planner requires
+        // ANCHOR DAILY for the zoned shape, so a zone on an ANCHOR EXPRESSION period would
+        // move the view's buckets and still leave the run measuring an unplanned anchor.
+        final int anchorZoneAt = anchorPeriodArg.indexOf(':');
+        final String anchorPeriod = anchorZoneAt < 0 ? anchorPeriodArg : anchorPeriodArg.substring(0, anchorZoneAt);
+        final String anchorZone = anchorZoneAt < 0 ? null : anchorPeriodArg.substring(anchorZoneAt + 1);
+        if (anchorZone != null && !DAILY_ANCHOR_PERIOD.equals(anchorPeriod)) {
+            throw new IllegalArgumentException(
+                    "--anchor-period carries a time zone only on 'daily': " + anchorPeriodArg
+            );
+        }
         final long anchorPeriodMicros = anchorPeriodMicros(anchorPeriod);
-        final long anchorOffsetMicros = DAILY_ANCHOR_PERIOD.equals(anchorPeriod) ? DAILY_ANCHOR_OFFSET_MICROS : 0;
+        // The account window slides on a fixed 24-hour grid, so the offset it counts from has
+        // to name the same instants the DDL's anchor fires on. A zoned anchor fires at
+        // DAILY_ANCHOR_TIME local, which is the zone's offset earlier in UTC. Taking that
+        // offset at START_TS makes the two grids coincide for as long as the run stays inside
+        // one DST regime and drift by the transition's own amount past one - an approximation
+        // in where accounts age out, not in what the view computes or what a repair plans.
+        final long anchorOffsetMicros = DAILY_ANCHOR_PERIOD.equals(anchorPeriod)
+                ? DAILY_ANCHOR_OFFSET_MICROS - anchorZoneOffsetMicros(anchorZone)
+                : 0;
         final long totalRows = seedRows + (long) batchRows * batches;
         // What decides whether a sweep can fire at all: an account falls behind the
         // frontier only once the anchor has advanced two buckets past its last row.
@@ -518,7 +565,7 @@ public class LiveViewSteadyStateBenchmark {
                     Locale.ROOT,
                     "# seed=%d batch=%d batches=%d checkpointRows=%d checkpointPurgeInterval=%d "
                             + "checkpointCompactionInterval=%d preSizeSymbol=%s index=%s recycleAccounts=%d "
-                            + "anchorPeriod=%s accountWindow=%d rowsPerBucket=%d buckets=%d compactThreshold=%d "
+                            + "anchorPeriod=%s anchorZone=%s accountWindow=%d rowsPerBucket=%d buckets=%d compactThreshold=%d "
                             + "compactStalePercent=%d shape=%s keyType=%s nullPercent=%d sumColumns=%d "
                             + "commitsPerBatch=%d commitRows=%d o3EveryN=%d o3Lag=%s o3LagRows=%d o3FromBatch=%d "
                             + "o3SpreadSteps=%d o3MaxLagRows=%d o3Depths=%s o3CommitPercent=%d "
@@ -530,7 +577,8 @@ public class LiveViewSteadyStateBenchmark {
                     configuration.getLiveViewCheckpointPurgeInterval(),
                     configuration.getLiveViewCheckpointCompactionInterval(),
                     isSymbolPreSized, isIndexed, recycleAccounts,
-                    anchorPeriod, accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
+                    anchorPeriod, anchorZone == null ? "none" : anchorZone,
+                    accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
                     configuration.getLiveViewPartitionCompactThreshold(),
                     configuration.getLiveViewPartitionCompactStalePercent(),
                     selectShape.name, partitionKeyType.name, nullPercent, sumColumns,
@@ -581,7 +629,7 @@ public class LiveViewSteadyStateBenchmark {
                             + selectShape.projections(sumColumns)
                             + " from payments "
                             + "window w as (partition by account_id order by created_at "
-                            + anchorClause(anchorPeriod) + ")"
+                            + anchorClause(anchorPeriod, anchorZone) + ")"
                             + selectShape.extraWindows(),
                     sqlCtx
             );
@@ -978,11 +1026,18 @@ public class LiveViewSteadyStateBenchmark {
      * through {@code ANCHOR EXPRESSION timestamp_floor(...)}, the two-argument form the
      * live view compiler can still prove monotone in the designated timestamp - which
      * is what leaves the frontier sweep enabled at all.
+     * <p>
+     * A named zone rides on the DAILY sugar as its second literal, which is the only
+     * spelling that reaches {@code timestamp_floor_utc} and so the only one that reaches
+     * the anchor planner's zoned branch.
      */
-    private static String anchorClause(String anchorPeriod) {
-        return DAILY_ANCHOR_PERIOD.equals(anchorPeriod)
+    private static String anchorClause(String anchorPeriod, String anchorZone) {
+        if (!DAILY_ANCHOR_PERIOD.equals(anchorPeriod)) {
+            return "anchor expression timestamp_floor('" + anchorPeriod + "', created_at)";
+        }
+        return anchorZone == null
                 ? "anchor daily '" + DAILY_ANCHOR_TIME + "'"
-                : "anchor expression timestamp_floor('" + anchorPeriod + "', created_at)";
+                : "anchor daily '" + DAILY_ANCHOR_TIME + "' '" + anchorZone + "'";
     }
 
     /**
@@ -1011,6 +1066,25 @@ public class LiveViewSteadyStateBenchmark {
             throw new IllegalArgumentException("--anchor-period count must be positive: " + anchorPeriod);
         }
         return count * unitMicros;
+    }
+
+    /**
+     * The zone's UTC offset at the run's own {@code START_TS}, which is what turns the local
+     * {@code DAILY_ANCHOR_TIME} the DDL names into the UTC instants the account window's
+     * fixed grid counts from. Resolving the zone here also fails a misspelled one on the
+     * command line rather than deep inside CREATE LIVE VIEW.
+     */
+    private static long anchorZoneOffsetMicros(String anchorZone) {
+        if (anchorZone == null) {
+            return 0;
+        }
+        try {
+            return DateLocaleFactory.EN_LOCALE
+                    .getRules(anchorZone, TimeZoneRuleFactory.RESOLUTION_MICROS)
+                    .getOffset(START_TS);
+        } catch (NumericException e) {
+            throw new IllegalArgumentException("--anchor-period names an unknown time zone: " + anchorZone);
+        }
     }
 
     private static long compactedPartitionCount(LiveViewInstance instance) {
