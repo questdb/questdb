@@ -855,6 +855,28 @@ public class IndexMetaFileReader implements QuietCloseable {
     }
 
     /**
+     * How many key ids {@code rowGroup}'s directory covers, that is the span
+     * {@code [getRowGroupFirstKey(rowGroup), +count)} it can answer for. Some
+     * of those may hold no row; {@link #getKeyRowRangeInGroup(int, int)} tells
+     * them apart. 0 when the group has no directory.
+     * <p>
+     * Lets a caller enumerate a group's keys from metadata instead of decoding
+     * its {@code key_id} column, which is what {@code SELECT DISTINCT} over an
+     * indexed column needs.
+     */
+    public int getRowGroupKeyCount(int rowGroup) {
+        if (rowGroup < 0 || rowGroup >= getIndexRowGroupCount()) {
+            return 0;
+        }
+        final long base = Unsafe.getInt(addr + rgKeyDirBaseOffset + (long) rowGroup * Integer.BYTES) & 0xFFFFFFFFL;
+        final long end = rowGroup + 1 < getIndexRowGroupCount()
+                ? Unsafe.getInt(addr + rgKeyDirBaseOffset + (long) (rowGroup + 1) * Integer.BYTES) & 0xFFFFFFFFL
+                : keyDirEntryCount;
+        // One entry per key id, plus the terminator.
+        return end > base ? (int) (end - base - 1) : 0;
+    }
+
+    /**
      * The row range {@code [lo, hi)} within {@code rowGroup} holding
      * {@code key}, packed with {@link Numbers#encodeLowHighInts(int, int)}, or
      * {@link #KEY_ABSENT} when the group holds no row for it.

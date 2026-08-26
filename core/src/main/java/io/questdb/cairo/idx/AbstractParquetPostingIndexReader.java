@@ -321,16 +321,17 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                     continue;
                 }
                 if (isWholeGroupInRange(rg, rowLo, rowHi)) {
-                    final long keyIdPtr = probe.decodeKeyIdColumn(rg, rows);
-                    // Key-major, so a linear walk that only tests the boundary
-                    // marks each distinct key once without a set.
-                    int previous = -1;
-                    for (long i = 0; i < rows; i++) {
-                        final int k = Unsafe.getUnsafe().getInt(keyIdPtr + (i << 2));
-                        if (k == previous) {
+                    // Every row of the group is in the window, so every key the
+                    // group holds is present -- and the _im directory names
+                    // them. No decode: this walks metadata only, which is what
+                    // makes SELECT DISTINCT over the index cheap.
+                    final int firstKey = imReader.getRowGroupFirstKey(rg);
+                    for (int i = 0, span = imReader.getRowGroupKeyCount(rg); i < span; i++) {
+                        final int k = firstKey + i;
+                        if (imReader.getKeyRowRangeInGroup(rg, k) == IndexMetaFileReader.KEY_ABSENT) {
+                            // In the group's key span but holding no row of it.
                             continue;
                         }
-                        previous = k;
                         if (k >= 0 && k < foundKeys.capacity() && !foundKeys.get(k)) {
                             foundKeys.set(k);
                             found++;
