@@ -373,26 +373,24 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testTheTimeZoneAnchoredCustomerViewDeclinesTheRoute() throws Exception {
-        // The customer's FIRST view - the one the incident was reported against - anchors
-        // DAILY '00:00' 'Asia/Kolkata'. A time-zone-aware daily anchor desugars to
+    public void testTheTimeZoneAnchoredViewDeclinesTheRoute() throws Exception {
+        // A daily anchor with a DST-observing zone such as Europe/Berlin desugars to
         // timestamp_floor_utc, whose buckets change width at a DST transition and so have no
-        // closed-form end, and LiveViewCheckpointFunctionCompiler.anchorPlan declines it
-        // outright. There is then no segmentation to decompose against: no closed segment to
-        // scope, no open segment to resume into, and none of this route.
+        // closed-form end. LiveViewCheckpointFunctionCompiler.anchorPlan currently declines
+        // that shape outright. There is then no segmentation to decompose against: no closed
+        // segment to scope, no open segment to resume into, and none of this route.
         //
-        // Asia/Kolkata observes no DST today, but the plan is withheld from the desugaring
-        // rather than from the zone, so this is a verdict on the shape and not on the data. A
-        // customer wanting the route on that view has to drop the zone from the anchor.
+        // This test guards the current decline-by-shape behavior; it does not depend on whether
+        // the sampled timestamp falls inside daylight-saving time.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 16);
         assertMemoryLeak(() -> {
-            createCustomerShape(true, "00:00", "Asia/Kolkata");
+            createCustomerShape(true, "00:00", "Europe/Berlin");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
 
                 final LiveViewInstance instance = viewInstance();
                 Assert.assertNull(
-                        "a time-zone-aware daily anchor must yield no checkpoint anchor plan",
+                        "a daily anchor with a DST-observing zone must yield no checkpoint anchor plan",
                         instance.getAnchorWindow().getCheckpointAnchorPlan()
                 );
                 // The gate an operator reads is "incomplete dependency" rather than "no
