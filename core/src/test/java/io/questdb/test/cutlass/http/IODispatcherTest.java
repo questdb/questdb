@@ -76,6 +76,8 @@ import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactor
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.QueryTrace;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -155,6 +157,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
@@ -6842,6 +6845,91 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testTextTableReferenceOutOfDate() throws Exception {
         getSimpleTester().run((_, _) -> testHttpClient.assertGet("/exp", "{\"query\":\"select * from test_table_reference_out_of_date();\",\"error\":\"cached query plan cannot be used because table schema has changed [table=test_table_reference_out_of_date]\",\"position\":0}", "select * from test_table_reference_out_of_date();"));
+    }
+
+    @Test
+    public void testBlockedPendingResponseFlushStaysInWaitTimings() throws Exception {
+        final long waitNanos = 1_000_000L;
+        final AtomicInteger blockedResponseSendCount = new AtomicInteger();
+        final AtomicInteger responseSendCount = new AtomicInteger();
+        final AtomicLong serverFd = new AtomicLong(-1);
+        final AtomicLong ticks = new AtomicLong();
+        final NanosecondClock clock = ticks::get;
+        final NetworkFacade nf = new NetworkFacadeImpl() {
+            @Override
+            public long accept(long listenerFd) {
+                final long connectionFd = super.accept(listenerFd);
+                if (connectionFd >= 0) {
+                    serverFd.set(connectionFd);
+                }
+                return connectionFd;
+            }
+
+            @Override
+            public int sendRaw(long fd, long buffer, int bufferLen) {
+                if (fd == serverFd.get()) {
+                    switch (responseSendCount.incrementAndGet()) {
+                        case 2 -> {
+                            blockedResponseSendCount.incrementAndGet();
+                            return 0;
+                        }
+                        case 3 -> {
+                            blockedResponseSendCount.incrementAndGet();
+                            ticks.addAndGet(waitNanos);
+                            return 0;
+                        }
+                        default -> {
+                        }
+                    }
+                }
+                return super.sendRaw(fd, buffer, bufferLen);
+            }
+        };
+
+        final CairoConfiguration tracingConfiguration = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public NanosecondClock getNanosecondClock() {
+                return clock;
+            }
+
+            @Override
+            public boolean isQueryTracingEnabled() {
+                return true;
+            }
+        };
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withNanosClock(clock)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(nf)
+                                .withSendBufferSize(1024)
+                )
+                .run(tracingConfiguration, (engine, _) -> {
+                    final ConcurrentQueue<QueryTrace> traces = engine.getMessageBus().getQueryTraceQueue();
+                    final QueryTrace trace = new QueryTrace();
+                    while (traces.tryDequeue(trace)) {
+                    }
+
+                    final CharSequenceObjHashMap<String> queryParams = new CharSequenceObjHashMap<>();
+                    queryParams.put("timings", "true");
+                    testHttpClient.assertGetRegexp(
+                            "/query",
+                            ".*\\\"wait\\\":" + waitNanos + "}}",
+                            "SELECT x FROM long_sequence(1_000)",
+                            null,
+                            null,
+                            null,
+                            queryParams,
+                            "200"
+                    );
+
+                    Assert.assertTrue(responseSendCount.get() > 3);
+                    Assert.assertEquals(2, blockedResponseSendCount.get());
+                    Assert.assertTrue(traces.tryDequeue(trace));
+                    Assert.assertEquals(waitNanos, trace.waitNanos);
+                });
     }
 
     @Test
