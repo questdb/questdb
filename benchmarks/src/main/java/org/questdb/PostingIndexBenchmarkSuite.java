@@ -1971,29 +1971,22 @@ public class PostingIndexBenchmarkSuite {
         SqlCompilerImpl compiler;
         SqlExecutionContextImpl ctx;
         CairoEngine engine;
-        @Param({
-                // Core covering queries
-                "covering_where", "covering_agg", "covering_sum", "covering_count",
-                "latest_on", "in_list",
-                // Residual filter variants (CoveringFilterBenchmark)
-                "residual_filter", "non_covering_filter", "no_index_filter",
-                "residual_filter_in", "non_covering_filter_in",
-                // VARCHAR/FSST variants (CoveringVarcharBenchmark)
-                "varchar_fsst", "varchar_non_covering", "varchar_in_covering",
-                // Wide table, O3, non-covering baseline
-                "wide_table", "o3_covering", "o3_non_covering", "o3_distinct",
-                "non_covering_where",
-                // Bulk throughput (CoveringQueryBenchmark S6)
-                "bulk_covering", "bulk_non_covering"
-        })
+        @Param({"covering_where", "latest_on"})
         String queryType;
+        @Param({"P400K", "S2", "S4", "S8", "S6", "S1", "S7"})
+        String scenario;
         String sql;
-        @Param({STORAGE_NATIVE, STORAGE_PARQUET_DATA, STORAGE_PARQUET_INDEX})
+        @Param({STORAGE_NATIVE, STORAGE_PARQUET_INDEX})
         String storage;
         java.nio.file.Path tmpDir;
 
         @Setup(Level.Trial)
         public void setup() throws Exception {
+            final Ladder l = Ladder.of(scenario);
+            if (!l.sqlExpressible()) {
+                throw new IllegalStateException(
+                        "scenario " + scenario + " has no SQL form; it must not appear in this arm's @Param list");
+            }
             tmpDir = Files.createTempDirectory("suite-sql");
             final boolean parquetIndex = STORAGE_PARQUET_INDEX.equals(storage);
             CairoConfiguration config = new DefaultCairoConfiguration(tmpDir.toString()) {
@@ -2035,26 +2028,37 @@ public class PostingIndexBenchmarkSuite {
                             null, null, -1, null);
             compiler = new SqlCompilerImpl(engine);
 
-            // Core table: sym with covering index on price (200 keys, 400K rows)
+            // bench / bench_noidx / bench_nc are ladder-driven: their cardinality
+            // and row count come from the scenario, not a hardcoded 200/400000.
+            // wide, vchar, bulk and o3bench stay fixed -- they serve query shapes
+            // this arm's default @Param list no longer pins.
+            final String keyExpr = switch (l.dist()) {
+                case SHUFFLED -> "rnd_symbol(" + l.keyCount() + ", 4, 8, 0)";
+                case ROUND_ROBIN -> "('s' || (x % " + l.keyCount() + "))::SYMBOL";
+                default -> throw new IllegalStateException("not SQL-expressible: " + l);
+            };
+            final String rows = String.valueOf(l.totalRows());
+
+            // Core table: sym with covering index on price (ladder keys, ladder rows)
             engine.execute("CREATE TABLE bench (" +
                     "ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL + " INCLUDE (price), price DOUBLE" +
                     ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
             engine.execute("INSERT INTO bench SELECT dateadd('T', x::INT, '2024-01-01')::TIMESTAMP, " +
-                    "rnd_symbol(200, 4, 8, 0), rnd_double() * 1000 FROM long_sequence(400000)", ctx);
+                    keyExpr + ", rnd_double() * 1000 FROM long_sequence(" + rows + ")", ctx);
 
             // No-index version of bench for full-scan filter comparison
             engine.execute("CREATE TABLE bench_noidx (" +
                     "ts TIMESTAMP, sym SYMBOL, price DOUBLE" +
                     ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
             engine.execute("INSERT INTO bench_noidx SELECT dateadd('T', x::INT, '2024-01-01')::TIMESTAMP, " +
-                    "rnd_symbol(200, 4, 8, 0), rnd_double() * 1000 FROM long_sequence(400000)", ctx);
+                    keyExpr + ", rnd_double() * 1000 FROM long_sequence(" + rows + ")", ctx);
 
             // Non-covering version of bench (bitmap index, no INCLUDE)
             engine.execute("CREATE TABLE bench_nc (" +
                     "ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE" +
                     ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
             engine.execute("INSERT INTO bench_nc SELECT dateadd('T', x::INT, '2024-01-01')::TIMESTAMP, " +
-                    "rnd_symbol(200, 4, 8, 0), rnd_double() * 1000 FROM long_sequence(400000)", ctx);
+                    keyExpr + ", rnd_double() * 1000 FROM long_sequence(" + rows + ")", ctx);
 
             // Wide table: 8 columns, covering 2 (200 keys, 200K rows)
             engine.execute("CREATE TABLE wide (" +
