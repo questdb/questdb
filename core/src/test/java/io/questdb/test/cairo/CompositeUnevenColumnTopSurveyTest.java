@@ -205,6 +205,127 @@ public class CompositeUnevenColumnTopSurveyTest extends AbstractCairoTest {
 
     private static final String DEFAULT_QUERY = "SELECT ts, exch, tag FROM %s ORDER BY ts";
 
+    // ------------------------------------------------------------------------------------------
+    // SECOND VACUITY AXIS: the DIRECTION of the top skew, and the NUMBER of cells.
+    //
+    // createUnevenCells gives cell 0 the LARGER top (BTC 3, ETH 1), so a cell-blind read yields a
+    // too-LARGE top for cell 1 and its rows read as absent -- data goes missing. The opposite skew is
+    // a different failure mode: a too-SMALL top makes a cell read rows that predate its column, which
+    // surfaces as garbage or duplicated values rather than absence. Neither the tests above nor any
+    // earlier test in this branch covers that direction.
+    //
+    // And every fixture so far has exactly TWO cells, so cellKey is only ever 0 or 1. A resolver that
+    // is off by one, or that reads "the last cell" rather than cellKey 0, would answer correctly for
+    // both. Three cells distinguishes those.
+    // ------------------------------------------------------------------------------------------
+
+    @Test
+    public void testReversedSkewConvertToParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            createReversedSkewCells("c_rev_pq", ", exch");
+            createReversedSkewCells("p_rev_pq", "");
+            execute("ALTER TABLE c_rev_pq CONVERT PARTITION TO PARQUET LIST '2023-10-01'");
+            execute("ALTER TABLE p_rev_pq CONVERT PARTITION TO PARQUET LIST '2023-10-01'");
+            drainWalQueue();
+            assertLive("c_rev_pq");
+            assertMatchesTwin("c_rev_pq", "p_rev_pq", DEFAULT_QUERY);
+        });
+    }
+
+    @Test
+    public void testReversedSkewIndexedWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            createReversedSkewCells("c_rev_idx", ", exch");
+            createReversedSkewCells("p_rev_idx", "");
+            execute("ALTER TABLE c_rev_idx ALTER COLUMN tag ADD INDEX");
+            execute("ALTER TABLE p_rev_idx ALTER COLUMN tag ADD INDEX");
+            drainWalQueue();
+            assertLive("c_rev_idx");
+            assertMatchesTwin("c_rev_idx", "p_rev_idx",
+                    "SELECT ts, exch, tag FROM %s WHERE tag = 'B1' ORDER BY ts");
+        });
+    }
+
+    @Test
+    public void testThreeCellsConvertToParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            createThreeCells("c_3_pq", ", exch");
+            createThreeCells("p_3_pq", "");
+            execute("ALTER TABLE c_3_pq CONVERT PARTITION TO PARQUET LIST '2023-10-01'");
+            execute("ALTER TABLE p_3_pq CONVERT PARTITION TO PARQUET LIST '2023-10-01'");
+            drainWalQueue();
+            assertLive("c_3_pq");
+            assertMatchesTwin("c_3_pq", "p_3_pq", DEFAULT_QUERY);
+        });
+    }
+
+    @Test
+    public void testThreeCellsIndexedWhereOnLastCell() throws Exception {
+        assertMemoryLeak(() -> {
+            createThreeCells("c_3_idx", ", exch");
+            createThreeCells("p_3_idx", "");
+            execute("ALTER TABLE c_3_idx ALTER COLUMN tag ADD INDEX");
+            execute("ALTER TABLE p_3_idx ALTER COLUMN tag ADD INDEX");
+            drainWalQueue();
+            assertLive("c_3_idx");
+            // 'S1' lives in the THIRD cell (cellKey 2) -- unreachable by any two-cell fixture.
+            assertMatchesTwin("c_3_idx", "p_3_idx",
+                    "SELECT ts, exch, tag FROM %s WHERE tag = 'S1' ORDER BY ts");
+        });
+    }
+
+    @Test
+    public void testThreeCellsO3IntoMiddleCell() throws Exception {
+        assertMemoryLeak(() -> {
+            createThreeCells("c_3_o3", ", exch");
+            createThreeCells("p_3_o3", "");
+            execute("INSERT INTO c_3_o3 VALUES ('2023-10-01T00:30:00.000000Z','ETH',9.0,'E0')");
+            execute("INSERT INTO p_3_o3 VALUES ('2023-10-01T00:30:00.000000Z','ETH',9.0,'E0')");
+            drainWalQueue();
+            assertLive("c_3_o3");
+            assertMatchesTwin("c_3_o3", "p_3_o3", DEFAULT_QUERY);
+        });
+    }
+
+    /** Cell 0 gets the SMALLER top: BTC 1 row before ADD COLUMN, ETH 3. */
+    private void createReversedSkewCells(String name, String dimension) throws Exception {
+        execute("CREATE TABLE " + name + " (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) "
+                + "PARTITION BY DAY" + dimension + " WAL");
+        execute("INSERT INTO " + name + " VALUES "
+                + "('2023-10-01T01:00:00.000000Z','BTC',1.0),"
+                + "('2023-10-01T02:00:00.000000Z','ETH',2.0),"
+                + "('2023-10-01T03:00:00.000000Z','ETH',3.0),"
+                + "('2023-10-01T04:00:00.000000Z','ETH',4.0)");
+        drainWalQueue();
+        execute("ALTER TABLE " + name + " ADD COLUMN tag SYMBOL");
+        drainWalQueue();
+        execute("INSERT INTO " + name + " VALUES "
+                + "('2023-10-01T05:00:00.000000Z','BTC',5.0,'B1'),"
+                + "('2023-10-01T06:00:00.000000Z','ETH',6.0,'E1')");
+        drainWalQueue();
+    }
+
+    /** THREE cells with three DIFFERENT tops: BTC 3, ETH 2, SOL 1. */
+    private void createThreeCells(String name, String dimension) throws Exception {
+        execute("CREATE TABLE " + name + " (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) "
+                + "PARTITION BY DAY" + dimension + " WAL");
+        execute("INSERT INTO " + name + " VALUES "
+                + "('2023-10-01T01:00:00.000000Z','BTC',1.0),"
+                + "('2023-10-01T02:00:00.000000Z','BTC',2.0),"
+                + "('2023-10-01T03:00:00.000000Z','BTC',3.0),"
+                + "('2023-10-01T04:00:00.000000Z','ETH',4.0),"
+                + "('2023-10-01T05:00:00.000000Z','ETH',5.0),"
+                + "('2023-10-01T06:00:00.000000Z','SOL',6.0)");
+        drainWalQueue();
+        execute("ALTER TABLE " + name + " ADD COLUMN tag SYMBOL");
+        drainWalQueue();
+        execute("INSERT INTO " + name + " VALUES "
+                + "('2023-10-01T07:00:00.000000Z','BTC',7.0,'B1'),"
+                + "('2023-10-01T08:00:00.000000Z','ETH',8.0,'E1'),"
+                + "('2023-10-01T09:00:00.000000Z','SOL',9.0,'S1')");
+        drainWalQueue();
+    }
+
     /**
      * Builds a composite table and a plain twin with identical rows and UNEVEN column tops, applies
      * {@code op} to each, then asserts the two answer {@code query} identically.
