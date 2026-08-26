@@ -138,11 +138,17 @@ Reproduce with `PostingIndexBenchmarkSuite`, whose `POSTING_PARQUET` and
 whose `sqlQuery` carries a `storage` arm separating the parquet data format's
 cost from the index form's:
 
+Every `-D` must come BEFORE `-cp` and the main class. After the main class they
+are program arguments, the JVM never sets them, and the suite silently ignores
+the pinning and runs its whole matrix -- around forty minutes that looks like a
+hung command rather than a mistake:
+
 ```
 mvn -Plocal-client -Pbuild-rust-library -Pqdbr-release -pl benchmarks -am package -DskipTests
-java -cp benchmarks/target/benchmarks.jar org.questdb.PostingIndexBenchmarkSuite \
-    -Dquestdb.suite.bench=indexPointRead -Dquestdb.suite.bench.scenario=P400K,S1 \
-    -Dquestdb.suite.bench.format=POSTING,POSTING_PARQUET
+java -Dquestdb.suite.bench=indexPointRead \
+    -Dquestdb.suite.bench.scenario=P400K,S1 \
+    -Dquestdb.suite.bench.format=POSTING,POSTING_PARQUET \
+    -cp benchmarks/target/benchmarks.jar org.questdb.PostingIndexBenchmarkSuite
 ```
 
 ## Size
