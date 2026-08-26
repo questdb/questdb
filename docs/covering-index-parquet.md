@@ -62,34 +62,32 @@ cost is not charged to the index form:
 | `avg()` | 1.14x |
 | covered gather (`sidecarRead`) | parity; INT faster |
 
-**Index-level reads.** Parquet against native, each scenario measured in its own
-JVM -- running the whole suite in one leaves the million-key fixtures' memory
-pressure on everything measured after them, which understates the smaller ones by
-up to 2x:
+**Index-level reads.** Parquet against native, each scenario in its own JVM --
+running the whole suite in one leaves the million-key fixtures' memory pressure
+on everything measured after them:
 
 | Rows / distinct keys | point read | scan | range |
 | --- | --- | --- | --- |
-| 400k / 16 | **1.60x faster** | 1.66x | 2.80x |
-| 1.02M / 512 | **1.21x faster** | 2.05x | 3.22x |
-| 1M / 500 (zipf) | **1.15x faster** | **1.51x faster** | 1.08x |
-| 2M / 2,000 | **1.13x faster** | 2.08x | 5.60x |
-| 1M / 5,000 | 2.1x | 2.19x | 7.79x |
-| 1M / 10,000 | 5.3x | **1.30x faster** | 6.82x |
-| 1.2M / 200,000 | 7.7x | **1.70x faster** | 7.65x |
-| 2M / 500,000 | 8.3x | **1.87x faster** | 7.71x |
-| 2M / 1,000,000 | 8.4x | **1.73x faster** | 8.03x |
+| 400k / 16 | **1.56x faster** | 1.57x | 2.73x |
+| 1.02M / 512 | **1.66x faster** | 1.86x | 2.69x |
+| 1M / 500 (zipf) | **1.26x faster** | **1.53x faster** | **1.11x faster** |
+| 2M / 2,000 | **1.49x faster** | 2.08x | 4.84x |
+| 1M / 5,000 | **1.25x faster** | 1.88x | 7.81x |
+| 1M / 10,000 | 1.00x | **1.48x faster** | 2.39x |
+| 1.2M / 200,000 | 2.0x | **1.82x faster** | 6.00x |
+| 2M / 500,000 | 2.9x | **1.65x faster** | 6.69x |
+| 2M / 1,000,000 | 4.0x | **1.73x faster** | 7.03x |
 
-Point reads beat the native chain up to a few thousand keys; scans beat it from
-ten thousand upwards.
+Point reads beat the native chain up to five thousand keys and level with it at
+ten thousand; scans beat it from ten thousand upwards.
 
-**What is left is RANDOM access, not the format.** Walking a partition's keys in
-order costs 34ns a key: consecutive keys share a row group, which is decoded once
-and served from. Jumping between random keys costs about 1us, because each lands
-in a different group and every step -- the `_im` key directory, the row-group
-directory, the mapping itself -- is a cache miss. The native chain's index is
-several times smaller, so more of it stays resident. Both benchmarks that remain
-slower are random-access ones: `indexPointRead` draws 5,000 uniformly random keys
-against a freshly opened reader each iteration, and `indexRangeRead` draws 500.
+**What still costs.** `row_id` is PLAIN where the native chain delta-FoR packs
+its postings, so anything that walks a long run of them -- a windowed range scan
+above all -- moves several times the bytes native does. Delta packing was tried
+and reverted: a delta block decodes from its start, so it destroys the random
+access the same column needs (point reads went to 40-44x). Parquet offers no
+packed integer encoding that survives random access, which is where the
+remaining range-read gap comes from.
 
 Reproduce with `PostingIndexBenchmarkSuite`, whose `POSTING_PARQUET` and
 `covering_parquet` arms build the same fixture through `ParquetIndexSeal`, and
