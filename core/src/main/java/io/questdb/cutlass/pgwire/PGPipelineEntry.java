@@ -382,6 +382,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateSuspended = false;
     }
 
+    public void resumeCursorTimer() {
+        if (cursor != null) {
+            cursor.resumeTimer();
+        }
+    }
+
+    public void suspendCursorTimer() {
+        if (cursor != null) {
+            cursor.suspendTimer();
+        }
+    }
+
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws PGMessageProcessingException {
         // Demote write-fence, mirrored from the ILP twin TableUpdateDetails.commit. A BEGIN; INSERT
         // parks a WalWriter in pendingWriters -- invisible to drainWriterPool, which counts the non-WAL
@@ -1728,6 +1740,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 factory = null;
                 throw e;
             }
+        } else {
+            // Execute resumes a suspended portal; its retained cursor was
+            // suspended when the pipeline parked it in syncPipeline().
+            resumeCursorTimer();
         }
     }
 

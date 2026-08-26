@@ -410,6 +410,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         flushRemainingBuffer();
         if (resumeCallback != null) {
+            if (pipelineCurrentEntry != null) {
+                pipelineCurrentEntry.resumeCursorTimer();
+            }
             resumeCallback.resume();
         }
 
@@ -539,6 +542,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (remaining > 0) {
             bufferRemainingOffset = offset;
             bufferRemainingSize = remaining;
+            if (pipelineCurrentEntry != null) {
+                pipelineCurrentEntry.suspendCursorTimer();
+            }
             throw PeerIsSlowToReadException.INSTANCE;
         }
     }
@@ -1471,8 +1477,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         && nextEntry == null
                         && !isClosed
                         && !isError) {
-                    // portal is suspended with more rows to send, retain the entry
-                    // so the next Execute can resume the cursor
+                    // Portal is suspended with more rows to send, retain the entry
+                    // so the next Execute can resume the cursor.
+                    pipelineCurrentEntry.suspendCursorTimer();
                     break;
                 }
                 if (pipelineCurrentEntry.isSuspended()) {
