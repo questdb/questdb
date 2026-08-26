@@ -1320,9 +1320,19 @@ public class CompositeFuzzRunner {
  * write landing in an earlier day after the ADD COLUMN; a DROP PARTITION making an earlier day
  * active) -- <b>both now ELIMINATED by measurement</b>: the failing partition is at version
  * {@code .0}, the original, never rewritten, so nothing added rows to it after the column appeared.
- * The real question is the cellKey-agnostic DEFAULT column-version fallback, which does not yield
- * {@code top >= cellRowCount} for an earlier day's cell. Do not conflate this with the partition-drop
- * corruption above.
+ * <b>ROOT-CAUSED</b>: {@code ColumnVersionReader#getColumnTop(ts, cellKey, col)} is only HALF
+ * cell-aware. It threads cellKey into {@code getRecordIndex}, then its DEFAULT path (no explicit
+ * record for this cell) falls through to the cellKey-BLIND
+ * {@code getColumnTopPartitionTimestamp(columnIndex)}, whose scan aliases across cells. Measured, same
+ * column, two different answers:
+ * <pre>
+ *   CVDEF col=5 partitionTs=2023-01-01 defaultPartitionTs=2023-01-02 -&gt; absent
+ *   CVDEF col=5 partitionTs=2023-01-02 defaultPartitionTs=2023-01-01 -&gt; 0 (file expected)
+ * </pre>
+ * When it resolves LOW, the default returns top 0 -- "column fully exists here" -- for a cell whose
+ * day predates the column, and the reader opens a file the writer never created. See that method's
+ * javadoc for why the fix needs a decision rather than just a parameter. Do not conflate this with the
+ * partition-drop corruption above.
  * <p>
  * SCHEMA-CHANGING DDL is blocked for a separate, plainer reason: this runner's SQL is fixed-shape
  * (5-column INSERTs, fixed literals), so a generated ADD/DROP COLUMN gives "row value count does not

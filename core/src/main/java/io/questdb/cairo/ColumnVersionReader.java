@@ -189,6 +189,26 @@ public class ColumnVersionReader implements Closeable, Mutable {
      * 2-arg overload.
      */
     public long getColumnTop(long partitionTimestamp, int cellKey, int columnIndex) {
+        // KNOWN GAP, measured 2026-08-26 -- this method is only HALF cell-aware. getRecordIndex below
+        // is threaded with cellKey, but getColumnTopByIndexOrDefault's DEFAULT path (taken whenever
+        // there is no explicit record for this cell) falls through to the cellKey-BLIND
+        // getColumnTopPartitionTimestamp(columnIndex). That scan aliases across cells, so "the
+        // partition where this column was first added" is not stable:
+        //
+        //   CVDEF col=5 partitionTs=2023-01-01 defaultPartitionTs=2023-01-02 -> absent
+        //   CVDEF col=5 partitionTs=2023-01-02 defaultPartitionTs=2023-01-01 -> 0 (file expected)
+        //
+        // Same column, two different answers. When it resolves LOW, the default path returns top 0 --
+        // "column fully exists in this partition" -- for a cell whose day predates the column, and the
+        // reader then opens a <col>.d.<txn> file the writer never created:
+        //   could not open, file does not exist: .../2023-01-01/SYM.0/new_col_1.d.5
+        // Reproduce: Rnd(1666,2138) or Rnd(1111,773) with
+        // CompositeFuzzRunner#withDropPartitionProbability(0.05).
+        //
+        // Fixing it needs a decision, not just a parameter: "when was this column added" may be a
+        // table-wide fact rather than a per-cell one, in which case the default should resolve against
+        // the cellKey-0 record that addColumn's upsertDefaultTxnName actually writes -- rather than
+        // whichever cell's record the scan happens to land on.
         int recordIndex = getRecordIndex(partitionTimestamp, cellKey, columnIndex);
         return getColumnTopByIndexOrDefault(recordIndex, partitionTimestamp, columnIndex, -1L);
     }
