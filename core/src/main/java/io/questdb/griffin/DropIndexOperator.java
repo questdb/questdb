@@ -89,7 +89,13 @@ public class DropIndexOperator {
                 final int cellKey = tableWriter.getPartitionCellKey(pIndex);
                 final String cellSegment = composite ? renderCellSegment(cellKey) : null;
                 long columnVersion = tableWriter.getColumnNameTxn(pTimestamp, cellKey, columnIndex);
-                long columnTop = tableWriter.getColumnTop(pTimestamp, columnIndex, -1);
+                // Cell-scoped, like the getColumnNameTxn above it. The 3-arg form answers for cellKey
+                // 0, and this value is written straight back into THIS cell's _cv record by the
+                // upsertColumnVersion below -- so on cells with differing column tops (ADD COLUMN while
+                // cells hold different row counts) every cell inherited cell 0's top. MEASURED: after
+                // DROP INDEX the ETH cell's tag values read back as NULL while the row count stayed
+                // correct, i.e. silent data loss. Covered by CompositeDropIndexColumnTopTest.
+                long columnTop = tableWriter.getColumnTop(pTimestamp, cellKey, columnIndex, -1);
                 byte partitionFormat = tableWriter.getPartitionFormat(pIndex);
 
                 if (columnTop != -1) {
