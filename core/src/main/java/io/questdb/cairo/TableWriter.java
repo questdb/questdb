@@ -4092,9 +4092,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 path.trimTo(pathSize);
             }
         }
-        if (removingFirst && partitionCountBefore > 1) {
+        if (partitionCountBefore == 1) {
+            // The drop empties the table. Carrying the old minimum forward strands it permanently: the
+            // WAL/O3 commit path folds the incoming batch in with min(existing, batchMin), so a stale
+            // minimum always beats any later data and is never recomputed -- leaving _txn describing a
+            // partition that no longer exists, which trips the minTimestamp >= partition[0] assert in
+            // commitWalInsertTransactions and suspends the table (silently persisted in production,
+            // where assertions are off). MAX_VALUE is the identity for that min.
+            //
+            // Same defect as the one fixed in dropPartitionByExactTimestamp (e548783f9e); this is its
+            // sibling, found by auditing that method's other callers rather than by a failure. NOT
+            // reachable from SQL today -- AlterOperation.DROP_PARTITION_CELL exists but nothing in the
+            // parser constructs it -- so it is demonstrated through the public writer entry point the
+            // opcode will call once wired. See CompositeDropCellMinTimestampTest.
+            newMinTimestamp = Long.MAX_VALUE;
+        } else if (removingFirst) {
             // readMinTimestamp reads partition index 1, which is exactly the survivor when index 0 goes.
             // It is cell-aware as of sub-project 1D.
+            //
+            // Correct here, unlike in dropPartitionByExactTimestamp, and the difference is worth
+            // keeping: this guard keys on removingFirst -- an INDEX comparison -- so index 1 really is
+            // the survivor. That method compared DAYS, which on a multi-cell day fires even when
+            // index 0 survives. Only the empty-table half of the defect was shared.
             newMinTimestamp = readMinTimestamp();
         }
 
