@@ -14655,9 +14655,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         scratchColumns.setPos(columnCount * 2);
         for (int i = 0; i < columnCount; i++) {
             int columnType = metadata.getColumnType(i);
-            if (columnType < 0 || i == timestampIndex) {
+            if (columnType < 0) {
                 continue;
             }
+            // The DESIGNATED TIMESTAMP is copied like any other fixed-size column. It used to be
+            // skipped, because the native O3 path takes timestamps from the separate sorted-timestamp
+            // index (tsIndexAddr below) and never reads the column slot -- so a null there was
+            // invisible. The PARQUET path does read it: processParquetPartition's materializer
+            // dereferences oooColumns.getQuick(primaryIndex(ts)), which NPE'd with
+            //   Cannot invoke "MemoryCR.addressOf(long)" because ReadOnlyObjList.getQuick(int) is null
+            // and suspended the table on a DEDUP upsert into a parquet cell, where the plain twin
+            // committed the row. Covered by CompositeUnevenColumnTopSurveyTest#testParquetDedupUpsertKeys.
             // hasVarSizeColumn already guarded this at the caller -- assert, don't re-check silently.
             assert !ColumnType.isVarSize(columnType) : "var-size column reached composite scratch build";
             final int shl = ColumnType.pow2SizeOf(columnType);

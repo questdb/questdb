@@ -128,6 +128,81 @@ public class CompositeUnevenColumnTopSurveyTest extends AbstractCairoTest {
                 execute("ALTER TABLE " + t + " SQUASH PARTITIONS"), DEFAULT_QUERY);
     }
 
+    // ------------------------------------------------------------------------------------------
+    // PARQUET variants. The same operations, applied to cells that have been tiered to parquet --
+    // the cold-storage state. Two of this branch's six cell-blindness defects lived on parquet paths
+    // (the CONVERT encoder and the ALTER TYPE column-top propagation), and the native survey above
+    // cannot reach either, so each operation is repeated with a CONVERT in front of it.
+    // ------------------------------------------------------------------------------------------
+
+    @Test
+    public void testParquetAddThenDropColumn() throws Exception {
+        runTwinnedOverParquet("pq_add_drop", (t) -> {
+            execute("ALTER TABLE " + t + " ADD COLUMN extra INT");
+            execute("ALTER TABLE " + t + " DROP COLUMN px");
+        }, "SELECT ts, exch, tag, extra FROM %s ORDER BY ts");
+    }
+
+    @Test
+    public void testParquetDropOnePartition() throws Exception {
+        runTwinnedOverParquet("pq_drop_part", (t) ->
+                execute("ALTER TABLE " + t + " DROP PARTITION LIST '2023-10-01'"), DEFAULT_QUERY);
+    }
+
+    @Test
+    public void testParquetLatestOn() throws Exception {
+        runTwinnedOverParquet("pq_latest", (t) -> {
+        }, "SELECT ts, exch, tag FROM %s LATEST ON ts PARTITION BY exch");
+    }
+
+    @Test
+    public void testParquetSampleBy() throws Exception {
+        runTwinnedOverParquet("pq_sample", (t) -> {
+        }, "SELECT ts, count() c FROM %s WHERE tag IS NOT NULL SAMPLE BY 1d ORDER BY ts");
+    }
+
+    @Test
+    public void testParquetSelectWithFilterOnLateAddedColumn() throws Exception {
+        runTwinnedOverParquet("pq_filter", (t) -> {
+        }, "SELECT ts, exch, tag FROM %s WHERE tag = 'E1' ORDER BY ts");
+    }
+
+    @Test
+    public void testParquetDedupUpsertKeys() throws Exception {
+        runTwinnedOverParquet("pq_dedup", (t) -> {
+            execute("ALTER TABLE " + t + " DEDUP ENABLE UPSERT KEYS(ts, exch)");
+            execute("INSERT INTO " + t + " VALUES ('2023-10-01T06:00:00.000000Z','ETH',66.0,'E9')");
+        }, DEFAULT_QUERY);
+    }
+
+    /**
+     * Same as {@link #runTwinned} but tiers the first day to PARQUET on both tables before applying
+     * {@code op}. Asserts the twin match BEFORE the operation too, so a failure afterwards is
+     * attributable to {@code op} rather than to the conversion.
+     */
+    private void runTwinnedOverParquet(String name, Op op, String query) throws Exception {
+        assertMemoryLeak(() -> {
+            final String c = "c_" + name;
+            final String p = "p_" + name;
+            createUnevenCells(c, ", exch");
+            createUnevenCells(p, "");
+
+            execute("ALTER TABLE " + c + " CONVERT PARTITION TO PARQUET LIST '2023-10-01'");
+            execute("ALTER TABLE " + p + " CONVERT PARTITION TO PARQUET LIST '2023-10-01'");
+            drainWalQueue();
+            assertLive(c);
+            // PRECONDITION -- otherwise a later failure could be blamed on op when CONVERT caused it.
+            assertMatchesTwin(c, p, DEFAULT_QUERY);
+
+            op.apply(c);
+            op.apply(p);
+            drainWalQueue();
+
+            assertLive(c);
+            assertMatchesTwin(c, p, query);
+        });
+    }
+
     private static final String DEFAULT_QUERY = "SELECT ts, exch, tag FROM %s ORDER BY ts";
 
     /**
@@ -145,10 +220,23 @@ public class CompositeUnevenColumnTopSurveyTest extends AbstractCairoTest {
             op.apply(p);
             drainWalQueue();
 
-            Assert.assertFalse(c + " suspended",
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(c)));
+            assertLive(c);
             assertMatchesTwin(c, p, query);
         });
+    }
+
+    /**
+     * Asserts the table is live, and on failure reports the WAL error message rather than just the
+     * fact of suspension -- a bare "suspended" tells you nothing about which gate or defect fired.
+     */
+    private void assertLive(String table) throws Exception {
+        if (!engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(table))) {
+            return;
+        }
+        final StringSink why = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext,
+                "SELECT errorMessage FROM wal_tables() WHERE name = '" + table + "'", why);
+        Assert.fail(table + " suspended: " + why.toString().replace('\n', ' '));
     }
 
     private void assertMatchesTwin(String composite, String plain, String query) throws Exception {
