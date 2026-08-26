@@ -1318,7 +1318,11 @@ public class CompositeFuzzRunner {
  * timestamp alone". Both failures are on 2023-01-01 while 2023-01-02 exists -- i.e. exactly the
  * earlier-day case assumed safe. See that method's javadoc for the two candidate mechanisms (an O3
  * write landing in an earlier day after the ADD COLUMN; a DROP PARTITION making an earlier day
- * active), neither yet established. Do not conflate this with the partition-drop corruption above.
+ * active) -- <b>both now ELIMINATED by measurement</b>: the failing partition is at version
+ * {@code .0}, the original, never rewritten, so nothing added rows to it after the column appeared.
+ * The real question is the cellKey-agnostic DEFAULT column-version fallback, which does not yield
+ * {@code top >= cellRowCount} for an earlier day's cell. Do not conflate this with the partition-drop
+ * corruption above.
  * <p>
  * SCHEMA-CHANGING DDL is blocked for a separate, plainer reason: this runner's SQL is fixed-shape
  * (5-column INSERTs, fixed literals), so a generated ADD/DROP COLUMN gives "row value count does not

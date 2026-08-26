@@ -12156,11 +12156,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * {@code Rnd(1111,773)} and {@code Rnd(1666,2138)} with
      * {@code CompositeFuzzRunner#withDropPartitionProbability(0.05)}.
      * <p>
-     * NOT established, and worth deciding before any fix: WHY an earlier day needs the file at all. Two
-     * candidates, both reachable only because this branch newly enrolled the operations that produce
-     * them -- an O3 write landing in an earlier day AFTER the ADD COLUMN, and a DROP PARTITION removing
-     * the last day so that an earlier day becomes the active one. Both would mean "earlier by timestamp"
-     * no longer implies "before the column existed".
+     * <b>BOTH of the obvious mechanisms are ELIMINATED</b> -- measured, do not re-chase them. Tracing
+     * this method's own scoping on {@code Rnd(1666,2138)}:
+     * <pre>
+     *   ADDCOL col=6 nameTxn=5 scopedToTs=1672617600000000 (2023-01-02) partitionCount=6 txn=5
+     *   failure:  2023-01-01/SYM.0/new_col_1.d.5
+     * </pre>
+     * The column was scoped to 2023-01-02, and the failure is on 2023-01-01 at partition version
+     * <b>{@code .0}</b> -- the ORIGINAL version, never rewritten. So nothing added rows to that
+     * partition after the column appeared: neither "an O3 write landed in an earlier day" nor "a DROP
+     * made an earlier day active" can account for it, since both would have bumped that cell's nameTxn.
+     * <p>
+     * What is left, and is the actual question: the reader computed a NON-ZERO row count for this
+     * column in a cell whose day predates the column entirely. For an earlier day there is no explicit
+     * per-cell record (by this method's design), so the lookup lands on the cellKey-agnostic,
+     * table-wide DEFAULT-partition fallback -- and that fallback evidently does not yield
+     * {@code top >= cellRowCount} for such a cell, which is exactly the property the paragraph above
+     * assumes it has. Investigate {@code getColumnTop}/{@code ColumnVersionReader}'s default resolution
+     * for a {@code (ts, cellKey)} pair with no explicit record, not the write path.
      */
     private void writeCompositeAddColumnColumnVersions(int columnIndex, long columnNameTxn) {
         final long ts = txWriter.getLastPartitionTimestamp();
