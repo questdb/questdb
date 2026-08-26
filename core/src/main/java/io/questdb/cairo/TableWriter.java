@@ -16033,7 +16033,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // real composite table (a fresh table's very first WAL commit) -- getPartitionCount() ==
                 // 1 here means index 0 (logical) is this sole entry's own raw index.
                 int cellKey = txWriter.getPartitionCellKey(0);
-                txWriter.removeAttachedPartitions(partitionTimestamp);
+                // (ts, cellKey)-resolving. The one-arg form removes cellKey 0's entry, while
+                // safeDeletePartitionDir below deletes THIS cellKey's directory -- so for a sole entry
+                // whose cellKey is not 0 the directory went and the _txn entry stayed. The cellKey is
+                // read here precisely because it can be non-zero. Found by the cellKey-0 call-site
+                // audit; byte-identical for plain and dormant-composite tables.
+                txWriter.removeAttachedPartitions(partitionTimestamp, cellKey);
                 safeDeletePartitionDir(partitionTimestamp, partitionNameTxn, cellKey);
             }
 
@@ -18079,6 +18084,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE);
                             maxTimestamp = readLongAtOffset(ff, path.$(), tempMem16b, (transientRowCount - 1) * Long.BYTES);
                             fixedRowCount -= transientRowCount;
+                            // AUDIT NOTE (cellKey-0 sweep, 2026-08-26): cellKey-0-only, like the
+                            // setStateForTimestamp call above -- this whole recovery path is cell-blind,
+                            // so threading a cellKey into just this line would not make it correct. Left
+                            // as-is deliberately: repairDataGaps needs its own per-cell pass, not a
+                            // one-line patch. Reachable only after an unclean shutdown.
                             txWriter.removeAttachedPartitions(txWriter.getMaxTimestamp());
                             LOG.info()
                                     .$("updated active partition [name=").$(path.trimTo(p).$())
