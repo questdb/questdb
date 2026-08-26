@@ -183,24 +183,28 @@ public class CompositePartitionDdlTest extends AbstractCairoTest {
             createAndPopulateTwins();
             engine.releaseInactive();
 
-            // Day 3 of 5 -- ordinal 2, non-first.
+            // Day 3 of 5 -- ordinal 2, non-first. A non-first day is the discriminating one: the cell
+            // records are not at raw index 0, so a converter that resolved by timestamp alone would
+            // still find SOMETHING and convert the wrong partition.
             execute("alter table p convert partition to parquet list '2020-01-03'");
             execute("alter table c convert partition to parquet list '2020-01-03'");
             drainWalQueue();
 
-            Assert.assertTrue("c must be suspended by the new CONVERT PARTITION guard",
+            // SP3 (2026-08-26): CONVERT is SUPPORTED on a composite table, per cell. The suspension this
+            // test used to assert was the gate, and the gate is gone.
+            Assert.assertFalse("c must not be suspended -- CONVERT is supported",
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
-            assertQuery("select suspended, errorMessage like '%composite partitioning does not yet support CONVERT PARTITION TO PARQUET%' clearMessage " +
-                    "from wal_tables() where name = 'c'")
-                    .noLeakCheck().noRandomAccess()
-                    .returns("suspended\tclearMessage\ntrue\ttrue\n");
+            assertSqlCursors("select * from p order by ts", "select * from c order by ts");
 
             engine.releaseInactive();
             execute("alter table p convert partition to native list '2020-01-03'");
+            execute("alter table c convert partition to native list '2020-01-03'");
             drainWalQueue();
             engine.releaseInactive();
 
             assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n10\n");
+            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize().returns("count\n10\n");
+            assertSqlCursors("select * from p order by ts", "select * from c order by ts");
         });
     }
 

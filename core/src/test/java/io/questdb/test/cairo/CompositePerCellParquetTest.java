@@ -211,6 +211,64 @@ public class CompositePerCellParquetTest extends AbstractCompositeTwinTest {
     }
 
     /**
+     * Task 6 acceptance, driven entirely through SQL -- no test seams. This is the shape a user meets:
+     * CONVERT the day, query it, convert it back, query again, comparing against the plain twin at
+     * every step.
+     */
+    @Test(timeout = 60_000)
+    public void testSqlConvertRoundTripMatchesTheTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedTwoCellDay();
+
+            execute("ALTER TABLE c CONVERT PARTITION TO PARQUET LIST '" + DAY + "'");
+            execute("ALTER TABLE p CONVERT PARTITION TO PARQUET LIST '" + DAY + "'");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            // composite produced one parquet per CELL; the plain twin one for the whole day
+            Assert.assertEquals("composite converts per cell", 2, parquetFiles().size());
+            assertTwinEqual("", " ORDER BY ts, exch");
+            assertTwinEqual(" WHERE exch = 'E1'", " ORDER BY ts");
+
+            execute("ALTER TABLE c CONVERT PARTITION TO NATIVE LIST '" + DAY + "'");
+            execute("ALTER TABLE p CONVERT PARTITION TO NATIVE LIST '" + DAY + "'");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            Assert.assertTrue("no parquet may survive, got " + parquetFiles(), parquetFiles().isEmpty());
+            assertTwinEqual("", " ORDER BY ts, exch");
+        });
+    }
+
+    /**
+     * Ingestion must keep working against a day that is already parquet -- otherwise CONVERT is a
+     * one-way trip that quietly breaks the table on the next INSERT.
+     */
+    @Test(timeout = 60_000)
+    public void testInsertAfterConvertKeepsTheTableHealthy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedTwoCellDay();
+
+            execute("ALTER TABLE c CONVERT PARTITION TO PARQUET LIST '" + DAY + "'");
+            execute("ALTER TABLE p CONVERT PARTITION TO PARQUET LIST '" + DAY + "'");
+            drainWalQueue();
+
+            // a NEW day, well clear of the converted one
+            insertIntoBoth("('2023-01-03T01:00:00.000000Z','E0',4.0)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            assertTwinEqual("", " ORDER BY ts, exch");
+        });
+    }
+
+    private void assertWalTableNotSuspended(String tableName) {
+        Assert.assertFalse(tableName + " must not be suspended",
+                engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
+    }
+
+    /**
      * Seeds one day routed to TWO cells, plus a later day so the converted one is not the active
      * partition. Each commit is single-cell on purpose: an interleaved multi-cell commit has its own
      * unrelated gate on a table carrying a var-size column, and tripping it here would measure the

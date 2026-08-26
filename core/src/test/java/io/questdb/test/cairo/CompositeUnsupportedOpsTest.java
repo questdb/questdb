@@ -105,27 +105,28 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConvertPartitionToParquetGated() throws Exception {
+    public void testConvertPartitionToParquetIsNoLongerGated() throws Exception {
         assertMemoryLeak(() -> {
             createRoutedTwoCellTable("c");
-            assertCompositeGateFires(
-                    "alter table c convert partition to parquet list '2020-01-01'",
-                    "c",
-                    "composite partitioning does not yet support CONVERT PARTITION TO PARQUET");
+            execute("insert into c values ('2020-01-02T00:00:00.000000Z','A',2.0)");
+            drainWalQueue();
+            execute("alter table c convert partition to parquet list '2020-01-01'");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
         });
     }
 
     @Test
-    public void testConvertPartitionToNativeGated() throws Exception {
+    public void testConvertPartitionToNativeIsNoLongerGated() throws Exception {
         assertMemoryLeak(() -> {
             createRoutedTwoCellTable("c");
-            // The gate fires unconditionally, before checking whether the partition is actually
-            // parquet-format yet -- CONVERT TO PARQUET is itself gated, so a real composite table can
-            // never legitimately reach parquet format via ordinary SQL in the first place.
-            assertCompositeGateFires(
-                    "alter table c convert partition to native list '2020-01-01'",
-                    "c",
-                    "composite partitioning does not yet support CONVERT PARTITION TO NATIVE");
+            execute("insert into c values ('2020-01-02T00:00:00.000000Z','A',2.0)");
+            drainWalQueue();
+            execute("alter table c convert partition to parquet list '2020-01-01'");
+            drainWalQueue();
+            execute("alter table c convert partition to native list '2020-01-01'");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
         });
     }
 

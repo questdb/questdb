@@ -2078,22 +2078,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
-        // MEASURED 2026-08-25 by lifting this gate on a routed multi-cell table: it does not return a
-        // wrong answer, it CRASHES THE JVM.
-        //     SIGBUS in questdbr::parquet_write::encode::encode_int64_dispatch
-        //     <- TableWriter.convertPartitionNativeToParquet -> produceParquetFromNative
-        // Root cause is right below this gate and is the ordinary cell-blind shape: getPartitionIndex
-        // and getPartitionNameTxn resolve by TIMESTAMP only (so cellKey 0), and the path is built with
-        // the bare 5-arg setPathForNativePartition overload, which carries no cell segment. That names
-        // the bare DAY container -- whose column files are the ZERO-BYTE phantoms a composite day keeps
-        // -- while the row count still comes from _txn. The native encoder is then told to read N rows
-        // out of 0-byte mappings.
-        // Per the parquet design, the fix is per-CELL conversion (one parquet per cell, preserving the
-        // 1:1 between a cell and a _txn partition record), not a path tweak here.
+        // Composite: convert every CELL of the day, each to its own parquet file. The cell-blind
+        // flow below would hand the encoder the bare day container -- whose column files are zero-byte
+        // phantoms -- with a non-zero row count, which is a SIGBUS in the native encoder, not an error.
         if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support CONVERT PARTITION TO PARQUET [table=")
-                    .put(tableToken.getTableName()).put(']');
+            return convertCompositePartitionNativeToParquet(partitionTimestamp, bloomFilterColumns, bloomFilterFpp);
         }
 
         if (inTransaction()) {
@@ -2237,9 +2226,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
         if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support CONVERT PARTITION TO NATIVE [table=")
-                    .put(tableToken.getTableName()).put(']');
+            return convertCompositePartitionParquetToNative(partitionTimestamp);
         }
 
         if (doCommit && inTransaction()) {
