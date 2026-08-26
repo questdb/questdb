@@ -650,6 +650,43 @@ public class CompositeFuzzRunner {
     }
 
     /**
+     * Sort key for every {@code SELECT *} twin comparison: EVERY column, read from live metadata.
+     * <p>
+     * This MUST be a total order, and it stopped being one the moment ADD COLUMN was enrolled. The key
+     * used to be the literal {@code ORDER BY ts, exch, sym, px, qty} -- total only because those five
+     * WERE every column, so two rows tying on all five were necessarily identical and their relative
+     * order could not be observed. Once the generator can add a sixth, a tie on the five is no longer
+     * a tie on the ROW: {@code SELECT *} returns the added column too, the two rows sort arbitrarily,
+     * and the comparison passes or fails on cursor order.
+     * <p>
+     * Not hypothetical. {@code probabilityOfSameTimestamp} is 0.1 and {@code probabilityOfAssigningNull}
+     * / {@code probabilityOfUnassignedColumnValue} are each 0.1, so rows sharing ts + exch + sym with
+     * NULL px and NULL qty are reachable in a 600-row run -- a NULL px appears in the very first
+     * divergence this enrolment produced. Left alone it would have been a rare, seed-dependent flake,
+     * and one that would most likely have been attributed to the product rather than to the harness.
+     * <p>
+     * Var-size columns are skipped, as they cannot be sorted on. That does not hole the total order
+     * today: {@code dropUnsupportedAddColumnOps} filters var-size adds out entirely and the base
+     * schema has none. If that filter is ever relaxed, this becomes non-total again and must be
+     * revisited.
+     */
+    private String orderByAllColumns() throws SqlException {
+        final StringBuilder sb = new StringBuilder(" ORDER BY ");
+        try (TableMetadata meta = engine.getTableMetadata(engine.verifyTableName(plainName))) {
+            boolean first = true;
+            for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
+                final int type = meta.getColumnType(i);
+                if (type <= 0 || ColumnType.isVarSize(type)) {
+                    continue;
+                }
+                sb.append(first ? "" : ", ").append(meta.getColumnName(i));
+                first = false;
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
      * ONE column model, TWO DDLs. The reference differs from the subject only in the partition
      * clause, so a divergence can never come from the schema.
      * <p>
@@ -762,7 +799,7 @@ public class CompositeFuzzRunner {
     private void compareDimensionFiltered() throws SqlException {
         final String present = firstNonNullExch();
         final String absent = "SYM_ABSENT_PROBE";
-        final String order = " ORDER BY ts, exch, sym, px, qty";
+        final String order = orderByAllColumns();
         TestUtils.assertSqlCursors(engine, sqlExecutionContext,
                 "SELECT * FROM " + plainName + " WHERE exch = '" + present + "'" + order,
                 "SELECT * FROM " + compositeName + " WHERE exch = '" + present + "'" + order, LOG);
@@ -781,7 +818,7 @@ public class CompositeFuzzRunner {
      * once, even when it issues two queries").
      */
     private void compareFullScan() throws SqlException {
-        final String orderAsc = " ORDER BY ts, exch, sym, px, qty";
+        final String orderAsc = orderByAllColumns();
         TestUtils.assertSqlCursors(engine, sqlExecutionContext,
                 "SELECT * FROM " + plainName + orderAsc, "SELECT * FROM " + compositeName + orderAsc, LOG);
         // Backward scan. The obvious way to write this -- ORDER BY ts DESC, exch DESC, ... -- does NOT
@@ -815,7 +852,7 @@ public class CompositeFuzzRunner {
         final String where = " WHERE ts >= '2023-01-01T18:00:00.000000Z' AND ts < '2023-01-02T06:00:00.000000Z'";
         assertBackwardScanUsed("SELECT ts FROM " + compositeName + where + " ORDER BY ts DESC", "Interval backward scan");
         assertBackwardTimestampsEqual(where);
-        final String outerAsc = " ORDER BY ts, exch, sym, px, qty";
+        final String outerAsc = orderByAllColumns();
         // A point interval too: [t, t] is the interval most cells of a day fail to match, which is the
         // shape that breaks.
         final LongList timestamps = new LongList();
@@ -861,7 +898,7 @@ public class CompositeFuzzRunner {
         // so the oracle is unaffected.
         collectLongPairs("SELECT minTimestamp, maxTimestamp FROM table_partitions('" + compositeName + "')"
                 + " WHERE minTimestamp IS NOT NULL ORDER BY maxTimestamp LIMIT " + CELL_BOUNDARY_PROBES, bounds);
-        final String outerAsc = " ORDER BY ts, exch, sym, px, qty";
+        final String outerAsc = orderByAllColumns();
         for (int i = 0, n = bounds.size(); i < n; i += 2) {
             final long cellMin = bounds.getQuick(i);
             final long cellMax = bounds.getQuick(i + 1);
@@ -924,7 +961,7 @@ public class CompositeFuzzRunner {
         final String where = above
                 ? " WHERE ts > cast(" + bounds.getQuick(1) + " AS TIMESTAMP)"
                 : " WHERE ts < cast(" + bounds.getQuick(0) + " AS TIMESTAMP)";
-        final String outerAsc = " ORDER BY ts, exch, sym, px, qty";
+        final String outerAsc = orderByAllColumns();
         TestUtils.assertSqlCursors(engine, sqlExecutionContext,
                 "SELECT * FROM " + plainName + where + outerAsc,
                 "SELECT * FROM " + compositeName + where + outerAsc, LOG);
@@ -948,7 +985,7 @@ public class CompositeFuzzRunner {
      */
     private void compareLimitedScans() throws SqlException {
         final String where = " WHERE ts >= '2023-01-01T18:00:00.000000Z' AND ts < '2023-01-02T06:00:00.000000Z'";
-        final String orderAsc = " ORDER BY ts, exch, sym, px, qty";
+        final String orderAsc = orderByAllColumns();
         for (String limit : new String[]{" LIMIT 1", " LIMIT 5", " LIMIT 100", " LIMIT 2,10", " LIMIT -3"}) {
             TestUtils.assertSqlCursors(engine, sqlExecutionContext,
                     "SELECT * FROM " + plainName + where + orderAsc + limit,
@@ -1040,7 +1077,7 @@ public class CompositeFuzzRunner {
                 + " GROUP BY ts ORDER BY c DESC, ts) LIMIT " + POINT_TIMESTAMP_PROBES, timestamps);
         for (int i = 0, n = timestamps.size(); i < n; i++) {
             final String where = " WHERE ts = cast(" + timestamps.getQuick(i) + " AS TIMESTAMP)";
-            final String order = " ORDER BY ts, exch, sym, px, qty";
+            final String order = orderByAllColumns();
             TestUtils.assertSqlCursors(engine, sqlExecutionContext,
                     "SELECT * FROM " + plainName + where + order,
                     "SELECT * FROM " + compositeName + where + order, LOG);
@@ -1065,8 +1102,8 @@ public class CompositeFuzzRunner {
     }
 
     private void compareIntervalScan() throws SqlException {
-        final String sql = " WHERE ts >= '2023-01-01T18:00:00.000000Z' AND ts < '2023-01-02T06:00:00.000000Z'" +
-                " ORDER BY ts, exch, sym, px, qty";
+        final String sql = " WHERE ts >= '2023-01-01T18:00:00.000000Z' AND ts < '2023-01-02T06:00:00.000000Z'"
+                + orderByAllColumns();
         TestUtils.assertSqlCursors(engine, sqlExecutionContext,
                 "SELECT * FROM " + plainName + sql, "SELECT * FROM " + compositeName + sql, LOG);
         comparedShapeCount++;
