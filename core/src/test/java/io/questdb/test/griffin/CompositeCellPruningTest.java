@@ -802,30 +802,45 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
     }
 
     /**
-     * REGRESSION: a bind-variable value in the dimension predicate must still hit Task 6b's loud gate,
+     * REGRESSION: a bind-variable value in the dimension predicate must still DECLINE cell pruning,
      * unaffected by Task #28 -- {@code resolveDimensionCellPruneSet} declines on {@link
      * io.questdb.cairo.sql.Function#isRuntimeConstant()} for EVERY value BEFORE any prune/residual
      * decision is made (see its doc): baking a value bound at compile/first-execution time into a cached
      * cellKey set (or a residual built from it) would go silently wrong were the same compiled factory
      * later re-executed with a DIFFERENT bound value -- so the WHOLE predicate aborts pruning, unchanged
      * from 5b. Proven for both a lone bind variable and a mixed literal+bind-variable IN-list.
+     * <p>
+     * Declining to PRUNE is not declining to ANSWER. Pruning off means the query takes the general
+     * indexed path, which is sorted back into timestamp order -- so the rows below must equal the plain
+     * twin's. Until 2026-08-26 this shape was refused outright; the assertions now pin the answer,
+     * which is a strictly stronger check that pruning was skipped SAFELY rather than skipped loudly.
      */
     @Test
-    public void testBindVariableOnDimensionColumnStillLoudGated() throws Exception {
+    public void testBindVariableOnDimensionColumnDeclinesPruningButAnswersCorrectly() throws Exception {
         assertMemoryLeak(() -> {
             createAndPopulateTwins();
             engine.releaseInactive();
 
-            final String msg = "composite partitioning does not yet support an indexed WHERE predicate";
+            final String btcRows = "ts\texch\tpx\n" +
+                    "2020-01-01T00:00:00.000000Z\tBTC\t1.0\n" +
+                    "2020-01-01T06:00:00.000000Z\tBTC\t1.1\n" +
+                    "2020-01-02T00:00:00.000000Z\tBTC\t2.0\n" +
+                    "2020-01-02T06:00:00.000000Z\tBTC\t2.1\n" +
+                    "2020-01-03T00:00:00.000000Z\tBTC\t3.0\n" +
+                    "2020-01-03T06:00:00.000000Z\tBTC\t3.1\n";
+
             bindVariableService.clear();
             bindVariableService.setStr("v", "BTC");
             assertQuery("select ts, exch, px from c where exch = :v order by ts")
-                    .noLeakCheck().failsWith(msg);
+                    .noLeakCheck().timestamp("ts").returns(btcRows);
 
+            // a mixed literal + bind-variable IN-list: both cells, interleaved by timestamp
             bindVariableService.clear();
             bindVariableService.setStr("v", "ETH");
-            assertQuery("select ts, exch, px from c where exch in ('BTC', :v) order by ts")
-                    .noLeakCheck().failsWith(msg);
+            assertSqlCursors(
+                    "select ts, exch, px from p where exch in ('BTC', :v) order by ts",
+                    "select ts, exch, px from c where exch in ('BTC', :v) order by ts"
+            );
 
             // plain twin is of course unaffected
             bindVariableService.clear();
@@ -846,19 +861,20 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
     /**
      * Negative control: an ordinary indexed symbol column that is NOT the partitioning dimension (here,
      * {@code sym} -- only {@code exch} is declared as the dimension, via {@code partition by day, exch})
-     * must be completely unaffected by this task: Task 6b's gate still fires for it, exactly as before
-     * (Scope decision 3) -- mirrors {@code CompositeReadShapesTest#testWhereIndexedSymInListCompositeIsLoudGated}'s
-     * own established case, re-proven here as this class's self-contained boundary check.
+     * cannot be cell-pruned at all, so it takes the general indexed path and must equal the plain twin.
+     * Re-proven here as this class's self-contained boundary check: 5b's pruning must neither help nor
+     * harm a column it does not apply to.
      */
     @Test
-    public void testNonDimensionIndexedColumnStillGatedUnaffectedBy5b() throws Exception {
+    public void testNonDimensionIndexedColumnUnaffectedBy5b() throws Exception {
         assertMemoryLeak(() -> {
             createAndPopulateTwins();
             engine.releaseInactive();
 
-            assertQuery("select ts, exch, sym, px from c where sym = 'BTC' order by ts")
-                    .noLeakCheck()
-                    .failsWith("composite partitioning does not yet support an indexed WHERE predicate");
+            assertSqlCursors(
+                    "select ts, exch, sym, px from p where sym = 'BTC' order by ts",
+                    "select ts, exch, sym, px from c where sym = 'BTC' order by ts"
+            );
         });
     }
 

@@ -136,7 +136,7 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
      * attempt to lift this gate must use the interleaved shape below.
      */
     @Test(timeout = 60_000)
-    public void surveyIndexedWhereReturnsCellMajorOrder() throws Exception {
+    public void surveyIndexedWhereMatchesUnindexedTwin() throws Exception {
         assertMemoryLeak(() -> {
             createTwins("ts TIMESTAMP, exch SYMBOL, sym SYMBOL, px DOUBLE",
                     "PARTITION BY DAY, exch LAYOUT PLAIN");
@@ -151,20 +151,24 @@ public class CompositeColumnDdlSurveyTest extends AbstractCompositeTwinTest {
             drainWalQueue();
             assertIndexed("c", "sym", true);
 
-            try {
-                printSql("SELECT ts, exch FROM c WHERE sym = 'X'");
-                org.junit.Assert.fail("the indexed WHERE gate must fire");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(),
-                        "composite partitioning does not yet support an indexed WHERE predicate");
-            }
-
-            // the escape hatch must give the twin's answer, in the twin's ORDER, with no outer sort
-            printSql("SELECT /*+ NO_INDEX(sym) */ ts, exch FROM c WHERE sym = 'X'");
-            final String cRows = sink.toString();
+            // The INDEXED read must give the twin's answer, in the twin's ORDER. This survey originally
+            // pinned the opposite -- that the read was REFUSED -- and before that it measured the raw
+            // defect on exactly this data: the indexed scan returned
+            //     01 E0, 03 E0, 02 E1, 04 E1   (cell-major)
+            // against the twin's
+            //     01 E0, 02 E1, 03 E0, 04 E1
+            // Right rows, wrong order, silently. That is why this compares against the twin rather than
+            // counting rows: X is in every row here, so a count would pass no matter what came back.
+            printSql("SELECT ts, exch FROM c WHERE sym = 'X'");
+            final String cIndexed = sink.toString();
             printSql("SELECT ts, exch FROM p WHERE sym = 'X'");
             final String pRows = sink.toString();
-            org.junit.Assert.assertEquals("NO_INDEX must match the twin exactly", pRows, cRows);
+            org.junit.Assert.assertEquals("indexed composite read must match the twin exactly",
+                    pRows, cIndexed);
+
+            // and the NO_INDEX escape hatch must still agree, so the two composite plans agree too
+            printSql("SELECT /*+ NO_INDEX(sym) */ ts, exch FROM c WHERE sym = 'X'");
+            org.junit.Assert.assertEquals("NO_INDEX must match the twin exactly", pRows, sink.toString());
         });
     }
 

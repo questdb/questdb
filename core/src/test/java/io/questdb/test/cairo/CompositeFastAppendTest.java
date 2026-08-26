@@ -185,10 +185,13 @@ public class CompositeFastAppendTest extends AbstractCairoTest {
             engine.releaseInactive();
             assertWalTableNotSuspended("c");
             assertWalTableNotSuspended("p");
-            // (composite rejects an indexed WHERE predicate at query time, so the oracle here is the
-            // full scan + count -- the fast-append gate keeps the WRITE path off an unmaintained index.)
             assertSqlCursors("select ts, exch, sub, px from p order by ts, exch", "select ts, exch, sub, px from c order by ts, exch");
             assertSqlCursors("select count() from p", "select count() from c");
+            // Read THROUGH the index too. The fast-append gate exists so the index cannot silently
+            // desync from the data; that claim is only testable now that an indexed read is served,
+            // and a full scan alone would pass even with a completely stale index.
+            assertSqlCursors("select ts, exch, sub, px from p where sub = 'A' order by ts",
+                    "select ts, exch, sub, px from c where sub = 'A' order by ts");
         });
     }
 

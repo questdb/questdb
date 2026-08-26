@@ -58,10 +58,10 @@ import org.junit.Test;
  * ts}, since ts is not a total order, but OBSERVABLE to ASOF/LT join semantics per the 6a review) never
  * arises here -- every comparison against the plain twin is unambiguous.
  * <p>
- * <b>Task 6b's loud gate, UPDATED by Tasks 5b and 3</b>: an indexed WHERE predicate against a composite
- * table on an ORDINARY (non-dimension) indexed symbol column (6b's own {@code CompositeReadShapesTest}
- * tests) still throws a CLEAR, documented exception -- never silently wrong, never silently dropped -- so
- * this capstone documents the current boundary rather than papering over it. WINDOW/HORIZON JOIN with a
+ * <b>Task 6b's loud gate, now FULLY LIFTED</b>: an indexed WHERE predicate against a composite table on
+ * an ORDINARY (non-dimension) indexed symbol column was the last shape still throwing; as of 2026-08-26
+ * it is served, by sorting the index scan back into designated-timestamp order (6b's own {@code
+ * CompositeReadShapesTest} tests now assert the plain twin's answer instead of the throw). WINDOW/HORIZON JOIN with a
  * composite table on the SLAVE side, previously gated the same way, is Task 3's whole point: it now
  * resolves to a SERIAL merged-time-frame join and succeeds instead, matching the plain twin -- see {@link
  * #testWindowJoinCompositeSlaveMatchesPlainTwin}/{@link #testHorizonJoinCompositeSlaveMatchesPlainTwin}

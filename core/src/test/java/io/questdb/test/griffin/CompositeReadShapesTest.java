@@ -353,27 +353,41 @@ public class CompositeReadShapesTest extends AbstractCairoTest {
     }
 
     // ==========================================================================================
-    // Step 3-4: the two index-based scan sites -- LOUD-GATED for composite (see SqlCodeGenerator's
-    // Task 6b comments at the intrinsicModel.keyColumn != null guard and the sorted-symbol-index
-    // guard for why a predicate-preserving fall-through was not implemented).
+    // Step 3-4: the two index-based scan sites. Both were LOUD-GATED for composite and both now
+    // WORK. The shared defect was ORDER: a composite table's page frames arrive (day ASC, cellKey
+    // ASC), so an index-driven walk emits cell-major rather than timestamp order, and the generator
+    // ELIDED the requested sort because the factory advertised an ordering it did not deliver.
+    // The indexed WHERE now sorts its output back into timestamp order; the sorted-symbol-index
+    // optimisation is simply declined, falling through to the plain merged scan.
     // ==========================================================================================
 
+    /**
+     * The composite result must equal the PLAIN twin's, not merely contain the right rows -- the
+     * measured defect returned exactly the right rows in cell-major order.
+     */
     @Test
-    public void testWhereIndexedSymInListCompositeIsLoudGated() throws Exception {
+    public void testWhereIndexedSymInListCompositeMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             createSingleTableTwins(true);
-            // sanity: the plain twin (same shape query) must NOT be affected by the composite gate.
             assertSqlCursors(
                     "select * from p where sym in ('A','B') order by ts",
-                    "select * from p where sym in ('A','B') order by ts"
+                    "select * from c where sym in ('A','B') order by ts"
             );
-            assertQuery("select * from c where sym in ('A','B') order by ts")
-                    .noLeakCheck()
-                    .failsWith("composite partitioning does not yet support an indexed WHERE predicate");
-            // single-value equality takes the same guarded branch
-            assertQuery("select * from c where sym = 'A' order by ts")
-                    .noLeakCheck()
-                    .failsWith("composite partitioning does not yet support an indexed WHERE predicate");
+            // single-value equality takes a different factory in the same branch
+            assertSqlCursors(
+                    "select * from p where sym = 'A' order by ts",
+                    "select * from c where sym = 'A' order by ts"
+            );
+            // ... and descending, where the sort cannot simply be inherited from the scan
+            assertSqlCursors(
+                    "select * from p where sym = 'A' order by ts desc",
+                    "select * from c where sym = 'A' order by ts desc"
+            );
+            // NOT IN reaches FilterOnExcludedValues
+            assertSqlCursors(
+                    "select * from p where sym not in ('A') order by ts",
+                    "select * from c where sym not in ('A') order by ts"
+            );
         });
     }
 
@@ -395,7 +409,7 @@ public class CompositeReadShapesTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByIndexedSymColumnCompositeIsLoudGated() throws Exception {
+    public void testOrderByIndexedSymColumnCompositeMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             createSingleTableTwins(true);
             // preconditions for the sorted-symbol-index optimisation: interval hits exactly one
@@ -405,26 +419,27 @@ public class CompositeReadShapesTest extends AbstractCairoTest {
             // divergence unrelated to any bug, since SortedSymbolIndexRecordCursorFactory's bitmap-index
             // walk order for same-key rows need not match a from-scratch scan's order.
             final String predicate = " where ts >= '2020-02-01' and ts < '2020-02-02'";
-            // WHY the gate is right, measured 2026-08-25 by lifting it on exactly this shape: the row
-            // COUNT is correct (96 == 96), so this is ordering, not row loss. `order by sym, ts` came
-            // back cell-major --
+            // WHAT THE DEFECT WAS, measured 2026-08-25 by lifting the old gate on exactly this shape:
+            // the row COUNT was correct (96 == 96), so this was ordering, not row loss. `order by
+            // sym, ts` came back cell-major --
             //     plain      00:30 Y, 01:15 X, 02:00 Y, 02:45 X ...
             //     composite  00:30 Y, 02:00 Y, 03:30 Y, 05:00 Y ...
-            // -- because the requested sort was ELIDED: the factory advertises an ordering its
-            // cell-sequential index walk does not deliver.
+            // -- because the requested sort was ELIDED: the factory advertised an ordering its
+            // cell-sequential index walk did not deliver.
             //
-            // sanity: the plain twin still takes the SortedSymbolIndex optimisation this gate declines
-            // for composite -- confirms the gate is scoped to composite only.
+            // The plain twin STILL takes the SortedSymbolIndex optimisation. Asserting that here is
+            // what makes the comparison below meaningful: composite declines the optimisation, so the
+            // two sides reach the answer by different plans and agreeing is evidence.
             assertQuery("select * from p" + predicate + " order by sym")
                     .noLeakCheck()
                     .assertsPlanContaining("SortedSymbolIndex");
+            // Composite must NOT take it -- if it did, this whole test would be asserting nothing.
             assertQuery("select * from c" + predicate + " order by sym")
                     .noLeakCheck()
-                    .failsWith("composite partitioning does not yet support ORDER BY on an indexed symbol column");
-            // the NO_INDEX hint falls back to a plain sorted scan over the merged getCursor() instead.
+                    .assertsPlanNotContaining("SortedSymbolIndex");
             assertSqlCursors(
                     "select * from p" + predicate + " order by sym, ts",
-                    "select /*+ NO_INDEX(sym) */ * from c" + predicate + " order by sym, ts"
+                    "select * from c" + predicate + " order by sym, ts"
             );
         });
     }

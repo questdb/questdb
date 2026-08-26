@@ -140,15 +140,18 @@ public class CompositeFactoryCoverageTest extends AbstractCairoTest {
     }
 
     /**
-     * The indexed predicates composite refuses. A loud refusal is the contract; silently running a
-     * cell-blind index scan would not be.
+     * Indexed predicates, which composite refused until 2026-08-26 and now answers. A cell-blind index
+     * scan would return the right rows in cell-major order, so the twin comparison -- not a row count --
+     * is what makes this test meaningful.
      */
     @Test
-    public void testUnsupportedIndexedPredicatesAreRefused() throws Exception {
+    public void testIndexedPredicatesMatchTheTwin() throws Exception {
         assertMemoryLeak(() -> {
             createTwins(true);
-            assertRefused("select * from c where sym = 'S0'", "indexed WHERE predicate");
-            assertRefused("select * from c where exch != 'E0'", "indexed WHERE predicate");
+            assertTwin("select * from %s where sym = 'S0'");
+            assertTwin("select * from %s where exch != 'E0'");
+            assertTwin("select * from %s where sym in ('S0','S1') order by ts");
+            assertTwin("select * from %s where sym = 'S0' order by ts desc");
         });
     }
 

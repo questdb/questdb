@@ -11226,6 +11226,63 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return generateQuery(model.getNestedModel(), executionContext, true);
     }
 
+    /**
+     * Sorts a composite table's INDEXED scan back into designated-timestamp order.
+     * <p>
+     * A composite table stores rows in per-cell subdirectories within each time partition, and the
+     * row-cursor family that serves an indexed WHERE is driven per PAGE FRAME. Frames arrive
+     * {@code (partition-timestamp ASC, cellKey ASC)}, so walking them emits, per day,
+     * {@code cell0 ++ cell1 ++ ...} -- CELL-MAJOR, not timestamp order. MEASURED: a value present in
+     * two cells at interleaved timestamps came back {@code 01:00 E0, 03:00 E0, 02:00 E1, 04:00 E1}
+     * against the twin's {@code 01, 02, 03, 04}. Right rows, wrong order, silently.
+     * <p>
+     * <b>Why a sort and not a merge.</b> The architecturally-clean fix is a k-way merge across a day's
+     * cells, which is what {@link io.questdb.griffin.engine.table.CompositeMergePartitionRecordCursor}
+     * already does for ordinary scans. It cannot be reused here: its own documentation records that it
+     * "walks every row of a pulled frame unconditionally" and "has no hook for a RowCursorFactory's
+     * row-level index selection", so dropping it under this family would silently DROP the key
+     * predicate -- returning rows for symbol values outside the WHERE clause. That is a worse failure
+     * than the one being fixed. Adding that hook is a genuine piece of work; sorting is correct by
+     * construction and can be replaced by the merge later without changing results.
+     * <p>
+     * <b>What it costs.</b> An O(n log n) sort over the MATCHED rows only, not the table. For a
+     * selective predicate -- the case an index is chosen for -- that is a small set, and it still
+     * beats the alternative this replaces, which was refusing the index entirely and falling back to a
+     * full merged scan over every row. For an unselective predicate the sort is real overhead.
+     * <p>
+     * <b>Known limit: EQUAL timestamps.</b> The sort key is the designated timestamp alone, so rows
+     * sharing a timestamp across different cells come back in whatever relative order the sort leaves
+     * them -- which need not match the tie-break
+     * {@link io.questdb.griffin.engine.table.CompositeMergePartitionRecordCursor} produces for the same
+     * query served without an index. Both are SQL-legal (a designated timestamp is not a total order),
+     * and this is the same caveat the 6a review already recorded as OBSERVABLE to ASOF/LT join
+     * semantics -- it is not introduced here, but it is not fixed here either. Not asserted in the
+     * tests, which use unique timestamps throughout, exactly as the rest of the composite read suite
+     * does for this reason. Adding cellKey as a secondary sort key would close it if a consumer ever
+     * needs the two plans to agree on ties.
+     */
+    private RecordCursorFactory wrapCompositeIndexedScan(RecordCursorFactory base, RecordMetadata metadata) throws SqlException {
+        final int timestampIndex = metadata.getTimestampIndex();
+        if (timestampIndex < 0) {
+            return base; // no designated timestamp: nothing to restore an order against
+        }
+        listColumnFilterA.clear();
+        listColumnFilterA.add(timestampIndex + 1); // positive = ascending
+        final RecordComparator comparator = recordComparatorCompiler.newInstance(metadata, listColumnFilterA);
+        final ListColumnFilter filterCopy = listColumnFilterA.copy();
+        // LIGHT sorts row IDs and re-reads each row from the base, so it needs random access. A
+        // COVERING index cursor serves its projection from the index sidecars and has none -- it
+        // throws "CoveringIndex does not support random access" -- so that case materialises the
+        // records instead. Same light/non-light choice wrapCompositeLatestBy documents, keyed on the
+        // same predicate.
+        if (!base.recordCursorSupportsRandomAccess()) {
+            entityColumnFilter.of(metadata.getColumnCount());
+            final RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, metadata, entityColumnFilter);
+            return new SortedRecordCursorFactory(configuration, metadata, base, sink, comparator, filterCopy);
+        }
+        return new SortedLightRecordCursorFactory(configuration, metadata, base, comparator, filterCopy);
+    }
+
     private RecordCursorFactory generateTableQuery(
             IQueryModel model,
             SqlExecutionContext executionContext
@@ -11914,54 +11971,52 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 keyColumnIndex, intrinsicModel.keyValueFuncs, queryMeta, executionContext);
                     }
 
-                    // Task 6b (narrowed by Task #28 for the dimension-prune case specifically -- see just
-                    // below): every row-cursor factory this family can return (single-value, IN-list,
-                    // NOT-IN, key sub-query, and the covering-index / sorted-symbol-index shortcuts
-                    // below) is a framingSupported=false PageFrameRecordCursorFactory driven by a
-                    // per-partition bitmap-index RowCursorFactory. 6a's CompositeMergePartitionRecordCursor
-                    // cannot sit under one of these: it walks every row of a pulled frame unconditionally
-                    // (it has no hook for a RowCursorFactory's row-level index selection), so swapping it
-                    // in here would silently DROP the key predicate -- returning rows for symbol values
-                    // outside the WHERE list, not just in the wrong order. A predicate-preserving
-                    // fallback for a keyColumn shape this row-cursor family would otherwise have to serve
-                    // (fold the key predicate back into a residual filter and use the plain merged
-                    // full-scan, mirroring the NOT-IN-too-many-values restore below) needs to reconstruct
-                    // keyValueFuncs safely -- either re-quoting its values into a fresh AST node (escaping
-                    // risk: unverified whether the round trip through GenericLexer.unquote()/the literal
-                    // parser is lossless for values containing quotes) or hand-building a Function tree
-                    // outside FunctionParser.parseFunction (ownership risk in the GENERAL case: an
-                    // arbitrary keyColumn's keyValueFuncs can hold a runtime-constant/bind-variable entry,
-                    // whose constant-vs-deferred split changes which entries a hand-built
-                    // InSymbolFunctionFactory.Func would retain vs discard, so a generic caller cannot
-                    // safely free the leftovers without risking a leak or a double-free). That general
-                    // reconstruction remains unimplemented here for the row-cursor family's own gate below
-                    // -- composite still loud-gates any OTHER keyColumn shape this family alone would have
-                    // to serve; see task-6b-report.md (Plan-7 follow-up). Task #28 instead solves a
-                    // strictly NARROWER, provably-safe instance of the same idea for the DIMENSION-prune
-                    // case only (buildDimensionResidualFilter above): resolveDimensionCellPruneSet already
-                    // declines every runtime-constant value before a residual is ever built, so the
-                    // ownership risk above cannot arise for it (see that helper's own ownership doc) --
-                    // this does not relax the row-cursor family's gate for any OTHER shape.
-                    // A NO_INDEX hint on the column (or on the whole query) avoids this gate entirely: it
-                    // stops WhereClauseParser from ever setting intrinsicModel.keyColumn, so the predicate
-                    // stays a normal residual filter over the already-correct merged scan. Task 5b: a
-                    // successfully cell-pruned DIMENSION predicate (dimensionPruned) also bypasses this
-                    // gate -- see this method's own resolveDimensionCellPruneSet doc for exactly which
-                    // cases that covers; every other composite keyColumn shape still throws, unchanged.
-                    // MEASURED 2026-08-25, with this gate lifted, on a table where one sym value spans
-                    // two cells at interleaved timestamps. The plan is
-                    //     DeferredSingleSymbolFilterPageFrame / Index forward scan / Frame forward scan
-                    // and a page-frame scan walks CELLS sequentially, so it returned cell-major order:
+                    // COMPOSITE + an indexed WHERE. Every row-cursor factory this family can return
+                    // (single-value, IN-list, NOT-IN, key sub-query, and the covering-index shortcut)
+                    // is a framingSupported=false PageFrameRecordCursorFactory driven by a per-partition
+                    // index RowCursorFactory. Frames arrive (day ASC, cellKey ASC), so the walk emits,
+                    // per day, cell0 ++ cell1 ++ ... -- CELL-MAJOR, not timestamp order.
+                    //
+                    // MEASURED 2026-08-25 on a table where one sym value spans two cells at interleaved
+                    // timestamps. Plan: DeferredSingleSymbolFilterPageFrame / Index forward scan.
                     //     plain      01:00 E0, 02:00 E1, 03:00 E0, 04:00 E1
                     //     composite  01:00 E0, 03:00 E0, 02:00 E1, 04:00 E1
                     // Silently wrong ORDER, not wrong rows -- which is why two earlier probe shapes
                     // passed: seeding one sym value per cell cannot expose it, and an outer ORDER BY
-                    // sorts it away. See CompositeColumnDdlSurveyTest#surveyIndexedWhereReturnsCellMajorOrder.
-                    if (compositeTable && !dimensionPruned) {
-                        throw CairoException.critical(0)
-                                .put("composite partitioning does not yet support an indexed WHERE predicate [table=")
-                                .put(tableToken.getTableName()).put(", column=").put(intrinsicModel.keyColumn).put(']');
-                    }
+                    // sorts it away.
+                    //
+                    // This was REFUSED until 2026-08-26. It is now served by sorting the scan's output
+                    // back into designated-timestamp order (wrapCompositeIndexedScan), which is correct
+                    // by construction. Two alternatives were rejected:
+                    //
+                    //  - Put 6a's CompositeMergePartitionRecordCursor under this family. It walks every
+                    //    row of a pulled frame unconditionally -- it has no hook for a RowCursorFactory's
+                    //    row-level index selection -- so swapping it in would silently DROP the key
+                    //    predicate, returning rows for symbol values outside the WHERE list. Wrong ROWS
+                    //    is worse than wrong order. Adding that hook would remove the sort; nothing
+                    //    depends on it yet.
+                    //  - Fold the key predicate back into a residual filter and use the plain merged
+                    //    scan (mirroring the NOT-IN-too-many-values restore below). Needs keyValueFuncs
+                    //    reconstructed safely -- either re-quoting values into a fresh AST node (escaping
+                    //    risk: the round trip through GenericLexer.unquote() is unverified for values
+                    //    containing quotes) or hand-building a Function tree outside
+                    //    FunctionParser.parseFunction (ownership risk: an arbitrary keyColumn's
+                    //    keyValueFuncs can hold a runtime-constant/bind-variable entry, whose
+                    //    constant-vs-deferred split changes which entries a hand-built
+                    //    InSymbolFunctionFactory.Func retains vs discards, so a generic caller cannot
+                    //    free the leftovers without risking a leak or a double-free).
+                    //
+                    // Task 5b: a successfully cell-pruned DIMENSION predicate (dimensionPruned) needs no
+                    // sort -- pruning selects whole cells and leaves the merged scan's order intact --
+                    // so it is excluded below. Task #28 extends that to HASH/TRUNCATE dimensions via
+                    // buildDimensionResidualFilter, whose ownership doc explains why the reconstruction
+                    // risk above cannot arise for it: resolveDimensionCellPruneSet declines every
+                    // runtime-constant value before a residual is ever built.
+                    //
+                    // A NO_INDEX hint still bypasses this path entirely: it stops WhereClauseParser from
+                    // setting intrinsicModel.keyColumn, leaving the predicate a residual filter over the
+                    // merged scan. That is now an optimisation choice rather than a workaround.
+                    final boolean compositeIndexedNeedsSort = compositeTable && !dimensionPruned;
 
                     // Task #26 (broadened by Task #28): a successfully-pruned multi-cell set
                     // (dimensionPrunedMultiCell -- IDENTITY, or now HASH/TRUNCATE paired with
@@ -12002,7 +12057,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 Misc.free(dfcFactory);
                                 return new EmptyTableRecordCursorFactory(queryMeta);
                             }
-                            return new FilterOnSubQueryRecordCursorFactory(
+                            final RecordCursorFactory subQueryScan = new FilterOnSubQueryRecordCursorFactory(
                                     configuration,
                                     queryMeta,
                                     dfcFactory,
@@ -12013,6 +12068,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     columnIndexes,
                                     columnSizeShifts
                             );
+                            return compositeIndexedNeedsSort
+                                    ? wrapCompositeIndexedScan(subQueryScan, queryMeta) : subQueryScan;
                         }
                         assert nKeyValues > 0 || nKeyExcludedValues > 0;
 
@@ -12022,7 +12079,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // needs the master in timestamp order. Honoring the order-by advice would
                         // strip the timestamp index and let a sym-ordered cursor feed a SPLICE/ASOF
                         // /LT/WINDOW merge that assumes ts order.
-                        if (intervalHitsOnlyOnePartition && !executionContext.isTimestampRequired()) {
+                        // Both order-ELISION shortcuts below are switched off for a composite table.
+                        // Each one tells a downstream factory "the requested order is already satisfied,
+                        // skip the sort" -- a promise a cell-sequential page-frame walk cannot keep. With
+                        // them off, the scan is wrapped in an ascending timestamp sort (see
+                        // wrapCompositeIndexedScan) so it genuinely delivers what its metadata advertises,
+                        // and any ORDER BY -- including DESC, and including `ORDER BY sym, ts` -- is sorted
+                        // by the ordinary machinery instead of being elided. That also keeps indexDirection
+                        // at DIR_FORWARD, so no backward index scan is requested for composite.
+                        if (intervalHitsOnlyOnePartition && !compositeIndexedNeedsSort && !executionContext.isTimestampRequired()) {
                             final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
                             final int orderByAdviceSize = orderByAdvice.size();
                             if (orderByAdviceSize > 0 && orderByAdviceSize < 3) {
@@ -12048,7 +12113,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // - query index with a single value or
                         // - query index with multiple values but use table order with forward scan (heap row cursor factory doesn't support backward scan)
                         // it doesn't matter if we hit one or more partitions
-                        if (!orderByKeyColumn && isOrderByDesignatedTimestampOnly(model)) {
+                        if (!orderByKeyColumn && !compositeIndexedNeedsSort && isOrderByDesignatedTimestampOnly(model)) {
                             int orderByDirection = getOrderByDirectionOrDefault(model, 0);
                             if (nKeyValues == 1 || (nKeyValues > 1 && orderByDirection == IQueryModel.ORDER_DIRECTION_ASCENDING)) {
                                 orderByTimestamp = true;
@@ -12106,10 +12171,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             // references so the outer catch and finally do not double-free them.
                                             dfcFactory = null;
                                             symbolFunc = null;
-                                            if (filter != null) {
-                                                return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
-                                            }
-                                            return coveringFactory;
+                                            final RecordCursorFactory singleCoveringScan = filter != null
+                                                    ? wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext)
+                                                    : coveringFactory;
+                                            return compositeIndexedNeedsSort
+                                                    ? wrapCompositeIndexedScan(singleCoveringScan, queryMeta)
+                                                    : singleCoveringScan;
                                         }
                                     }
 
@@ -12163,12 +12230,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 supportsRandomAccess
                                         );
                                         symbolFunc = null;
-                                        return result;
+                                        return compositeIndexedNeedsSort
+                                                ? wrapCompositeIndexedScan(result, queryMeta) : result;
                                     }
                                     if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                                         symbolFunc = null;
                                     }
-                                    return new PageFrameRecordCursorFactory(
+                                    final RecordCursorFactory indexedScan = new PageFrameRecordCursorFactory(
                                             configuration,
                                             queryMeta,
                                             dfcFactory,
@@ -12181,6 +12249,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             supportsRandomAccess,
                                             false
                                     );
+                                    return compositeIndexedNeedsSort
+                                            ? wrapCompositeIndexedScan(indexedScan, queryMeta) : indexedScan;
                                 } finally {
                                     Misc.free(symbolFunc);
                                 }
@@ -12209,10 +12279,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     // coveringFactory now owns dfcFactory; clear our reference so the
                                     // outer catch does not double-free it.
                                     dfcFactory = null;
-                                    if (filter != null) {
-                                        return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
-                                    }
-                                    return coveringFactory;
+                                    final RecordCursorFactory coveringScan = filter != null
+                                            ? wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext)
+                                            : coveringFactory;
+                                    return compositeIndexedNeedsSort
+                                            ? wrapCompositeIndexedScan(coveringScan, queryMeta) : coveringScan;
                                 }
                             }
 
@@ -12220,7 +12291,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 queryMeta.setTimestampIndex(-1);
                             }
 
-                            return new FilterOnValuesRecordCursorFactory(
+                            final RecordCursorFactory valuesScan = new FilterOnValuesRecordCursorFactory(
                                     configuration,
                                     queryMeta,
                                     dfcFactory,
@@ -12236,6 +12307,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     columnIndexes,
                                     columnSizeShifts
                             );
+                            return compositeIndexedNeedsSort
+                                    ? wrapCompositeIndexedScan(valuesScan, queryMeta) : valuesScan;
                         } else if (nKeyExcludedValues > 0) {
                             if (reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex)).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()) {
                                 Function filter = compileFilter(intrinsicModel, queryMeta, executionContext);
@@ -12250,7 +12323,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                 }
 
-                                return new FilterOnExcludedValuesRecordCursorFactory(
+                                final RecordCursorFactory excludedScan = new FilterOnExcludedValuesRecordCursorFactory(
                                         configuration,
                                         queryMeta,
                                         dfcFactory,
@@ -12266,6 +12339,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         columnSizeShifts,
                                         configuration.getMaxSymbolNotEqualsCount()
                                 );
+                                return compositeIndexedNeedsSort
+                                        ? wrapCompositeIndexedScan(excludedScan, queryMeta) : excludedScan;
                             } else if (intrinsicModel.keyExcludedNodes.size() > 0) {
                                 // restore filter
                                 ExpressionNode root = intrinsicModel.keyExcludedNodes.getQuick(0);
@@ -12315,29 +12390,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         assert columnIndex > -1;
 
                         // this is our kind of column — bitmap only (native scanner)
+                        // A COMPOSITE table declines this optimisation rather than refusing the query.
+                        // SortedSymbolIndexRecordCursorFactory walks the column's global bitmap index in
+                        // symbol-key order across every partition slot -- for a composite table that spans
+                        // every sibling cell of a day, and the factory has no cell awareness. It advertises
+                        // an ordering its cell-sequential walk does not deliver, so the requested sort gets
+                        // ELIDED. MEASURED 2026-08-25 on the single-day shape the optimisation requires:
+                        // row COUNT was right (96 == 96), but `order by sym, ts` returned
+                        //     plain      00:30 Y, 01:15 X, 02:00 Y, 02:45 X ...  (ts-interleaved)
+                        //     composite  00:30 Y, 02:00 Y, 03:30 Y, 05:00 Y ...  (cell-major)
+                        //
+                        // Skipping it falls through to the plain merged scan below, where ORDER BY sorts
+                        // normally and correctly. That is strictly better than the refusal this replaces:
+                        // the query now WORKS, just without a shortcut composite never had. Teaching the
+                        // factory about cells would restore the shortcut; nothing depends on it first.
                         if (queryMeta.getColumnIndexType(columnIndex) == IndexType.BITMAP
-                                && !SqlHints.hasNoIndexHint(model)) {
-                            // Task 6b: SortedSymbolIndexRecordCursorFactory walks this column's global
-                            // bitmap index in symbol-key order across every partition slot; for a
-                            // composite table that includes every sibling cell of a day, and this
-                            // factory has no cell awareness (same family of gap as the other two index
-                            // sites in this method -- discovered auditing this method, out of the two
-                            // sites the brief named, so loud-gated conservatively rather than left
-                            // silently un-audited). NO_INDEX on the column avoids the gate (falls back
-                            // to a plain sorted scan over the merged getCursor()). Plan-7 follow-up.
-                            // MEASURED 2026-08-25 with this gate lifted, on the single-day shape the
-                            // optimisation requires. Row COUNT is right (96 == 96) -- this is ordering,
-                            // not row loss. Asking for `order by sym, ts` returned:
-                            //     plain      00:30 Y, 01:15 X, 02:00 Y, 02:45 X ...  (ts-interleaved)
-                            //     composite  00:30 Y, 02:00 Y, 03:30 Y, 05:00 Y ...  (cell-major)
-                            // The requested sort was ELIDED, because the factory advertises an ordering
-                            // its cell-sequential walk does not deliver. Same root cause as the indexed
-                            // WHERE gate above.
-                            if (reader.getMetadata().getPartitionSpec().isComposite()) {
-                                throw CairoException.critical(0)
-                                        .put("composite partitioning does not yet support ORDER BY on an indexed symbol column [table=")
-                                        .put(tableToken.getTableName()).put(", column=").put(queryMeta.getColumnName(columnIndex)).put(']');
-                            }
+                                && !SqlHints.hasNoIndexHint(model)
+                                && !reader.getMetadata().getPartitionSpec().isComposite()) {
                             boolean orderByKeyColumn = false;
                             int indexDirection = IndexReader.DIR_FORWARD;
                             if (orderByAdviceSize == 1) {
