@@ -2549,12 +2549,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     .$(", from=").$(other)
                                     .$(", to=").$(detachedPath)
                                     .I$();
-                        } else if (isRoutedComposite()) {
-                            // Make the artifact SELF-DESCRIBING: _meta/_cv/_txn carry the cellKeys but
-                            // not what they mean, and the dimension dictionaries + _cell registry stay
-                            // at the table root. See CompositeCellManifest for why a manifest rather
-                            // than copying those in (measured 112x, and near-constant).
-                            writeCellManifest(detachedPath.trimTo(detachedPathLen), timestamp);
                         }
                     }
                 }
@@ -4595,78 +4589,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *                                        data is ever processed, and that teardown renders the
      *                                        placeholder's own cell segment name through here.
      */
-    /**
-     * Writes {@code _cell_manifest.d} into a freshly detached artifact: for every cell the partition
-     * holds, the dimension VALUES its cellKey resolves to.
-     * <p>
-     * Resolution mirrors {@link #renderDimensionSegment} exactly, because that method is the existing
-     * authority on ordinal-to-value for each dimension kind, and two different answers to the same
-     * question is how the cell-blindness defects on this branch happened in the first place. It is NOT
-     * reused directly because it renders a PATH SEGMENT -- path-safety encoded, with its own NULL token
-     * and a possible {@code col=} HIVE prefix. The manifest must carry the raw value, or a receiver
-     * would re-intern the encoded form and file rows under a dimension value that never existed.
-     * <p>
-     * {@code KIND_HASH} has no dictionary at all -- its ordinal IS the bucket, and a bucket number
-     * means the same thing in any table with the same dimension spec. It is therefore stored as its
-     * decimal digits, which the consuming side parses straight back to an ordinal. This keeps the
-     * format uniformly string-valued.
-     * <p>
-     * SPEC COMPATIBILITY IS NOT CHECKED HERE and the manifest does not carry the dimension kinds. A
-     * receiver must satisfy itself that its own spec matches (same dimension count and kinds, and for
-     * {@code KIND_HASH} the same bucket count) before trusting these values -- "BTC" under an IDENTITY
-     * dimension and "BTC" under a TRUNCATE dimension are not interchangeable. That validation belongs
-     * with the consuming step, whose requirements are concrete; the format's version word exists so a
-     * v2 can carry spec metadata if that turns out to be the better home for it.
-     */
-    private void writeCellManifest(Path artifactRoot, long partitionTimestamp) {
-        final PartitionSpec spec = metadata.getPartitionSpec();
-        final int dimCount = spec.getDimensionCount();
-        final IntList cellKeys = new IntList();
-        final ObjList<String> values = new ObjList<>();
-        final int[] tuple = new int[dimCount];
-        final StringSink valueSink = new StringSink();
-
-        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
-            if (txWriter.getPartitionTimestampByIndex(i) != partitionTimestamp) {
-                continue;
-            }
-            final int cellKey = txWriter.getPartitionCellKey(i);
-            cellKeys.add(cellKey);
-            getCompositeDictionaries().cellRegistry().getTupleFromWriter(cellKey, tuple);
-            for (int d = 0; d < dimCount; d++) {
-                final PartitionDimension dim = spec.getDimension(d);
-                final int ordinal = tuple[d];
-                switch (dim.getKind()) {
-                    case PartitionDimension.KIND_HASH:
-                        valueSink.clear();
-                        valueSink.put(ordinal);
-                        values.add(valueSink.toString());
-                        break;
-                    case PartitionDimension.KIND_IDENTITY: {
-                        final CharSequence v = ordinal == SymbolTable.VALUE_IS_NULL
-                                ? null : symbolValueOf(dim.getColumnIndex(), ordinal);
-                        values.add(v == null ? null : Chars.toString(v));
-                        break;
-                    }
-                    case PartitionDimension.KIND_TRUNCATE:
-                    case PartitionDimension.KIND_EXPRESSION: {
-                        final CharSequence v = ordinal == SymbolTable.VALUE_IS_NULL
-                                ? null : MapWriter.valueOf(getDedicatedDictOrThrow(d), ordinal);
-                        values.add(v == null ? null : Chars.toString(v));
-                        break;
-                    }
-                    default:
-                        throw new UnsupportedOperationException(
-                                "unknown composite partition dimension kind: " + dim.getKind());
-                }
-            }
-        }
-
-        CompositeCellManifest.write(ff, artifactRoot, configuration.getWriterFileOpenOpts(),
-                dimCount, cellKeys, values);
-        LOG.info().$("wrote composite cell manifest [table=").$(tableToken)
-                .$(", cells=").$(cellKeys.size()).$(", dims=").$(dimCount).I$();
-    }
 
     public void renderCellSegment(CharSink<?> sink, int cellKey) {
         PartitionSpec spec = metadata.getPartitionSpec();

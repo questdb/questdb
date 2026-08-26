@@ -63,46 +63,7 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
      * {@code CompositeDropPartitionWholeDayTest}.
      */
 
-    /**
-     * SP1 (2026-08-18): DETACH PARTITION is no longer gated for composite tables. It detaches the day
-     * as a container holding its cells; the round-trip back via ATTACH is still unsupported and gated
-     * separately. Full behaviour lives in CompositeDetachAttachTest.
-     */
-    @Test
-    public void testDetachPartitionIsNoLongerGated() throws Exception {
-        assertMemoryLeak(() -> {
-            createRoutedTwoCellTable("c");
-            execute("insert into c values ('2020-01-02T00:00:00.000000Z','A',2.0)");
-            drainWalQueue();
-            execute("alter table c detach partition list '2020-01-01'");
-            drainWalQueue();
-            assertWalTableNotSuspended("c");
-        });
-    }
 
-    /**
-     * SP1 (2026-08-25): ATTACH PARTITION is no longer gated for composite tables, for the table's OWN
-     * artifact. The detach/attach round trip lives in CompositeDetachAttachTest.
-     * <p>
-     * What made it work was not the attach path's column validation, as the old gate comment assumed.
-     * DETACH was removing only cellKey 0's directory, leaving a residual live {@code <day>/} that made
-     * ATTACH fail ATTACH_ERR_DIR_EXISTS -- a status TOLERATED as a WAL command failure, so the ALTER
-     * silently did nothing. The column versions were already carried correctly, because
-     * overrideColumnVersions copies by timestamp RANGE and _cv packs the cellKey into its column index.
-     * <p>
-     * Cross-table attach remains refused: see testAttachFromAnotherTableStillRefused.
-     */
-    @Test
-    public void testAttachPartitionIsNoLongerGated() throws Exception {
-        assertMemoryLeak(() -> {
-            createRoutedTwoCellTable("c");
-            execute("insert into c values ('2020-01-02T00:00:00.000000Z','A',2.0)");
-            drainWalQueue();
-            execute("alter table c detach partition list '2020-01-01'");
-            drainWalQueue();
-            assertWalTableNotSuspended("c");
-        });
-    }
 
     @Test
     public void testConvertPartitionToParquetIsNoLongerGated() throws Exception {
@@ -792,6 +753,52 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
      * {@code assertWalTableSuspendedWithMessage} idiom). Handles both without the caller needing to
      * know which applies to a given op.
      */
+    /**
+     * SCOPE DECISION 2026-08-26: composite tables do not support DETACH PARTITION.
+     * <p>
+     * Same-table detach/attach DID work (sub-project 1) and was dropped deliberately, not abandoned as
+     * broken. Nothing needs it: cold storage -- the feature that actually moves partitions between
+     * tiers -- tiers via applyColdSwitch/switchNativePartitionWithParquet/removePartition and never
+     * calls attach or detach. What the removal buys is the HAZARD SURFACE going with it: artifact
+     * reading, per-cell path building and per-cell _txn entries are the family behind several of this
+     * branch's cell-blindness defects.
+     * <p>
+     * Refused at the STATEMENT (invariant 6), and deliberately not inside TableWriter#detachPartition:
+     * ParallelCsvFileImporter calls the sibling attachPartition, so a writer-level refusal would take
+     * the COPY path down with the SQL one.
+     */
+    @Test
+    public void testDetachPartitionIsRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            createRoutedTwoCellTable("c");
+            execute("insert into c values ('2020-01-02T00:00:00.000000Z','A',2.0)");
+            drainWalQueue();
+            assertCompositeGateFires(
+                    "alter table c detach partition list '2020-01-01'",
+                    "c",
+                    "composite partitioning does not support DETACH PARTITION");
+        });
+    }
+
+    /**
+     * The ATTACH half of the same scope decision. Also closes the cross-table ATTACH gate outright
+     * rather than deferring it -- and that gate turned out never to have been reachable anyway:
+     * TableWriter#attachPrepare refuses a foreign artifact by table_id for EVERY table, plain or
+     * composite ("very same table, attaching foreign partitions is not allowed").
+     */
+    @Test
+    public void testAttachPartitionIsRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            createRoutedTwoCellTable("c");
+            execute("insert into c values ('2020-01-02T00:00:00.000000Z','A',2.0)");
+            drainWalQueue();
+            assertCompositeGateFires(
+                    "alter table c attach partition list '2020-01-01'",
+                    "c",
+                    "composite partitioning does not support ATTACH PARTITION");
+        });
+    }
+
     private void assertCompositeGateFires(String sql, String tableName, String expectedMessageSubstring) throws Exception {
         boolean threwSynchronously;
         try {

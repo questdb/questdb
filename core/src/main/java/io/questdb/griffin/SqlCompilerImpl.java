@@ -1758,12 +1758,37 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // timestamp, so "WHERE exch = 'E0'" fails with "Invalid column: exch".
                     break;
                 case PartitionAction.DETACH:
-                    break;
                 case PartitionAction.ATTACH:
-                    // SP1 (2026-08-25): ATTACH is SUPPORTED for a composite table, same-table only.
-                    // Cross-table attach stays refused inside TableWriter (the artifact carries no
-                    // dimension dictionaries, so its cellKeys cannot be decoded here).
-                    break;
+                    // SCOPE DECISION 2026-08-26: composite tables do not support DETACH/ATTACH at all.
+                    //
+                    // Same-table attach/detach DID work (sub-project 1). It is dropped because nothing
+                    // needs it: cold storage -- the feature that actually moves partitions between
+                    // tiers -- does not use attach/detach at all, tiering instead via applyColdSwitch,
+                    // switchNativePartitionWithParquet and removePartition. Verified by grep, not
+                    // assumed.
+                    //
+                    // What it buys is not the deleted code but the removed HAZARD SURFACE: artifact
+                    // reading, per-cell path building and per-cell _txn entries are the family that
+                    // produced several of this branch's cell-blindness defects, and every one of those
+                    // sites needed its own audit.
+                    //
+                    // It also closes the cross-table ATTACH gate outright rather than deferring it.
+                    // That gate was blocked on a format decision, and the format turned out not to be
+                    // the binding constraint anyway: TableWriter#attachPrepare refuses a foreign
+                    // artifact by table_id for EVERY table, plain or composite ("very same table,
+                    // attaching foreign partitions is not allowed"), so no composite-side work could
+                    // ever have reached it.
+                    //
+                    // Gated HERE, at the statement, and not inside TableWriter#attachPartition:
+                    // ParallelCsvFileImporter calls that method too, and a writer-level refusal would
+                    // block the COPY path along with the SQL one.
+                    //
+                    // Predicate matches the surrounding gate (isRoutedCompositeTable): a DORMANT
+                    // composite table has no cell fan-out and takes the plain paths, so it is left
+                    // alone here as it is everywhere else.
+                    throw SqlException.$(pos, "composite partitioning does not support ")
+                            .put(action == PartitionAction.DETACH ? "DETACH" : "ATTACH")
+                            .put(" PARTITION [table=").put(tableToken.getTableName()).put(']');
                 default:
                     // CONVERT TO PARQUET / NATIVE are sub-project 3's gates; left to the writer side
                     // deliberately rather than gated here on a guess about their eventual shape.

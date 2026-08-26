@@ -70,20 +70,21 @@ public class CompositeLifecycleDdlRefusalTest extends AbstractCairoTest {
     }
 
     /*
-     * The DETACH PARTITION refusal test that stood here is gone: sub-project 1 made DETACH cell-aware
-     * once 1E unblocked it (detach calls squash internally, so it could not be reached before). A
-     * composite day detaches as a container holding its cells -- see CompositeDetachAttachTest.
+     * DETACH and ATTACH PARTITION are refused for composite tables again, as of the 2026-08-26 scope
+     * decision: composite does not support them at all.
      *
-     * The ATTACH PARTITION test that stood here is gone too (2026-08-25): ATTACH is now SUPPORTED for
-     * the table's OWN artifact, so there is no statement-time refusal left to guard. See
-     * CompositeDetachAttachTest#testDetachThenAttachRoundTrips.
+     * The history is worth keeping because it reversed twice. Sub-project 1 made DETACH cell-aware and
+     * then made same-table ATTACH work, and the refusal tests that stood here were deleted as obsolete.
+     * Both were then dropped -- not because they broke, but because nothing needs them: cold storage,
+     * the feature that actually moves partitions between tiers, tiers via
+     * applyColdSwitch/switchNativePartitionWithParquet/removePartition and never calls either. The
+     * removal takes a hazard surface with it (artifact reading, per-cell path building, per-cell _txn
+     * entries -- the family behind several cell-blindness defects on this branch).
      *
-     * What remains refused is attaching a FOREIGN artifact, and that refusal deliberately does NOT
-     * belong in this suite. It fires on the apply thread and suspends the table -- which is exactly what
-     * a PLAIN table does with a foreign artifact (measured: "no throw from execute() | suspended=true",
-     * via attachPrepare's own table_id check). This suite exists for refusals where composite suspends a
-     * table that its plain twin would not. A composite matching its twin is not an invariant-6
-     * violation, and forcing a statement-time refusal here would make composite DIVERGE from plain.
+     * The refusals now live in CompositeUnsupportedOpsTest#testDetachPartitionIsRefused and
+     * #testAttachPartitionIsRefused, gated at the STATEMENT in SqlCompilerImpl. They are not gated
+     * inside TableWriter because ParallelCsvFileImporter calls attachPartition too, and a writer-level
+     * refusal would block the COPY path along with the SQL one.
      */
 
     /*

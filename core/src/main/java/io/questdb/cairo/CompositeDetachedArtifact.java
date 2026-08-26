@@ -25,8 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.std.FilesFacade;
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
@@ -174,135 +172,7 @@ public final class CompositeDetachedArtifact {
         }
     }
 
-    /**
-     * Refuses an artifact whose SOURCE partition spec does not mean the same thing as {@code localSpec}.
-     * <p>
-     * The safety gate that must pass before a foreign artifact's manifest values may be re-interned
-     * locally. {@code "BTC"} under an {@code IDENTITY} dimension and {@code "BTC"} under a
-     * {@code TRUNCATE(3)} dimension are not the same cell, and a {@code HASH} bucket number means
-     * nothing without the same bucket count -- so equal VALUES are not sufficient, the dimensions they
-     * are values OF must agree too.
-     * <p>
-     * <b>Read from the artifact's own {@code _meta}, not from the manifest.</b> {@code _meta} already
-     * persists the whole spec -- naming mode, and per dimension the kind, column index, param, alias
-     * and exprText (see {@code TableUtils#writeCompositePartitionBlock}) -- so duplicating any of it
-     * into {@code _cell_manifest.d} would create a second source of truth for the same facts. That is
-     * why the manifest carries values only, and why it needs no v2 to support this check.
-     * <p>
-     * <b>Deliberately conservative.</b> Each rule below can be relaxed later with evidence; none can be
-     * added later without breaking artifacts that were already accepted. A wrongly accepted attach is
-     * silent corruption filed under the wrong dimension value, so the asymmetry favours strictness:
-     * <ul>
-     *   <li>dimension COUNT must match -- a differing arity cannot be remapped at all;</li>
-     *   <li>each dimension's KIND must match;</li>
-     *   <li>{@code param} must match for {@code HASH} (bucket count) and {@code TRUNCATE} (prefix
-     *       length): both change which value maps to which cell;</li>
-     *   <li>{@code exprText} must match for {@code EXPRESSION} -- a different expression computes a
-     *       different value from the same row;</li>
-     *   <li>for {@code IDENTITY}, the SOURCE COLUMN NAME must match. Strictly this is stronger than
-     *       needed -- the values are strings either way -- but attaching {@code exch} data into a
-     *       {@code venue} dimension is far more likely a mistake than an intent, and the cost of
-     *       being wrong is silent misfiling;</li>
-     *   <li>the NAMING MODE must match. This one is not semantic: it decides how cell directories are
-     *       rendered, so a mismatch means every directory in the artifact would need renaming. It is
-     *       refused rather than handled because renaming is remap work, and this is the gate that runs
-     *       before any of it.</li>
-     * </ul>
-     *
-     * @param artifactRoot artifact directory; trimmed back to its original length on return
-     */
-    public static void checkSpecCompatible(
-            FilesFacade ff,
-            CairoConfiguration configuration,
-            Path artifactRoot,
-            PartitionSpec localSpec,
-            TableRecordMetadata localMeta,
-            CharSequence tableName
-    ) {
-        final int rootLen = artifactRoot.size();
-        try (TableReaderMetadata artifactMeta = new TableReaderMetadata(configuration)) {
-            final LPSZ metaPath = artifactRoot.concat(TableUtils.META_FILE_NAME).$();
-            if (!ff.exists(metaPath)) {
-                throw incompatible(tableName).put(", reason=artifact carries no _meta]");
-            }
-            artifactMeta.loadMetadata(metaPath);
-            final PartitionSpec srcSpec = artifactMeta.getPartitionSpec();
 
-            final int srcDims = srcSpec.getDimensionCount();
-            final int dstDims = localSpec.getDimensionCount();
-            if (srcDims != dstDims) {
-                throw incompatible(tableName)
-                        .put(", reason=dimension count differs, artifact=").put(srcDims)
-                        .put(", table=").put(dstDims).put(']');
-            }
-            if (srcSpec.getNamingMode() != localSpec.getNamingMode()) {
-                throw incompatible(tableName)
-                        .put(", reason=naming mode differs, artifact=").put(srcSpec.getNamingMode())
-                        .put(", table=").put(localSpec.getNamingMode()).put(']');
-            }
-            for (int i = 0; i < srcDims; i++) {
-                final PartitionDimension src = srcSpec.getDimension(i);
-                final PartitionDimension dst = localSpec.getDimension(i);
-                if (src.getKind() != dst.getKind()) {
-                    throw incompatible(tableName)
-                            .put(", reason=dimension ").put(i).put(" kind differs, artifact=")
-                            .put(src.getKind()).put(", table=").put(dst.getKind()).put(']');
-                }
-                switch (src.getKind()) {
-                    case PartitionDimension.KIND_HASH:
-                    case PartitionDimension.KIND_TRUNCATE:
-                        if (src.getParam() != dst.getParam()) {
-                            throw incompatible(tableName)
-                                    .put(", reason=dimension ").put(i).put(" param differs, artifact=")
-                                    .put(src.getParam()).put(", table=").put(dst.getParam()).put(']');
-                        }
-                        break;
-                    case PartitionDimension.KIND_EXPRESSION:
-                        if (!sameText(src.getExprText(), dst.getExprText())) {
-                            throw incompatible(tableName)
-                                    .put(", reason=dimension ").put(i).put(" expression differs]");
-                        }
-                        break;
-                    case PartitionDimension.KIND_IDENTITY: {
-                        final CharSequence srcCol = src.getColumnIndex() > -1
-                                ? artifactMeta.getColumnName(src.getColumnIndex()) : null;
-                        final CharSequence dstCol = dst.getColumnIndex() > -1
-                                ? localMeta.getColumnName(dst.getColumnIndex()) : null;
-                        if (!sameText(srcCol, dstCol)) {
-                            throw incompatible(tableName)
-                                    .put(", reason=dimension ").put(i).put(" source column differs, artifact=")
-                                    .put(srcCol == null ? "<none>" : srcCol)
-                                    .put(", table=").put(dstCol == null ? "<none>" : dstCol).put(']');
-                        }
-                        break;
-                    }
-                    default:
-                        throw incompatible(tableName)
-                                .put(", reason=unknown dimension kind ").put(src.getKind()).put(']');
-                }
-            }
-        } finally {
-            artifactRoot.trimTo(rootLen);
-        }
-    }
-
-    /**
-     * Null-safe text equality. {@code Chars.equalsNc} requires a NON-NULL left operand, and both sides
-     * here are legitimately null -- exprText is null for every non-EXPRESSION dimension, and a
-     * dimension with no source column has none to name.
-     */
-    private static boolean sameText(CharSequence a, CharSequence b) {
-        if (a == null || b == null) {
-            return a == null && b == null;
-        }
-        return Chars.equals(a, b);
-    }
-
-    private static CairoException incompatible(CharSequence tableName) {
-        return CairoException.critical(0)
-                .put("composite partitioning cannot attach an artifact with an incompatible partition spec")
-                .put(" [table=").put(tableName);
-    }
 
     /**
      * Folds the designated-timestamp min and max across the artifact's cells into
