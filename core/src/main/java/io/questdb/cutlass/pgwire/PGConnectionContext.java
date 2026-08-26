@@ -1468,19 +1468,21 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // "cacheIfPossible" has side effects on the entry.
 
             PGPipelineEntry nextEntry = pipeline.poll();
-            if (nextEntry != null || isExec || isError || isClosed) {
+            // A resumed sync re-enters after clearState() has reset stateExec. Keep
+            // retained portals suspended even when this entry is otherwise not consumed.
+            if (pipelineCurrentEntry.isSuspended()
+                    && nextEntry == null
+                    && !isClosed
+                    && !isError) {
                 if (bindingServiceConfiguredFor == pipelineCurrentEntry) {
                     bindingServiceConfiguredFor = null;
                 }
-                // check suspension before cacheIfPossible(), which frees the cursor
-                if (pipelineCurrentEntry.isSuspended()
-                        && nextEntry == null
-                        && !isClosed
-                        && !isError) {
-                    // Portal is suspended with more rows to send, retain the entry
-                    // so the next Execute can resume the cursor.
-                    pipelineCurrentEntry.suspendCursorTimer();
-                    break;
+                pipelineCurrentEntry.suspendCursorTimer();
+                break;
+            }
+            if (nextEntry != null || isExec || isError || isClosed) {
+                if (bindingServiceConfiguredFor == pipelineCurrentEntry) {
+                    bindingServiceConfiguredFor = null;
                 }
                 if (pipelineCurrentEntry.isSuspended()) {
                     // cursor is suspended but we cannot retain (closed, error,

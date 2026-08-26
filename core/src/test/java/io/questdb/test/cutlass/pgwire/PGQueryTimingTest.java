@@ -32,6 +32,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 
@@ -43,33 +44,47 @@ public class PGQueryTimingTest extends BasePGTest {
     }
 
     @Test
+    public void testFragmentedSyncPortalSuspensionCountsAsWait() throws Exception {
+        assertWithPgServerExtendedBinaryOnly(
+                (connection, _, _, _) -> assertPortalSuspensionCountsAsWait(connection),
+                this::setupTracingWithFragmentedSync
+        );
+    }
+
+    @Test
     public void testPortalSuspensionCountsAsWait() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
-            execute("CREATE TABLE tab AS (SELECT x FROM long_sequence(100))");
-            final ConcurrentQueue<QueryTrace> queue = engine.getMessageBus().getQueryTraceQueue();
-            drain(queue);
-            connection.setAutoCommit(false);
-            final String query = "SELECT x FROM tab";
-            try (PreparedStatement statement = connection.prepareStatement(query)) {
-                statement.setFetchSize(10);
-                try (ResultSet resultSet = statement.executeQuery()) {
-                    int rows = 0;
-                    while (resultSet.next()) {
-                        if (++rows % 10 == 0) {
-                            Os.sleep(20);
-                        }
+        assertWithPgServer(
+                CONN_AWARE_EXTENDED,
+                (connection, _, _, _) -> assertPortalSuspensionCountsAsWait(connection),
+                this::setupTracing
+        );
+    }
+
+    private void assertPortalSuspensionCountsAsWait(Connection connection) throws Exception {
+        execute("CREATE TABLE tab AS (SELECT x FROM long_sequence(100))");
+        final ConcurrentQueue<QueryTrace> queue = engine.getMessageBus().getQueryTraceQueue();
+        drain(queue);
+        connection.setAutoCommit(false);
+        final String query = "SELECT x FROM tab";
+        try (PreparedStatement statement = connection.prepareStatement(query)) {
+            statement.setFetchSize(10);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                int rows = 0;
+                while (resultSet.next()) {
+                    if (++rows % 10 == 0) {
+                        Os.sleep(20);
                     }
-                    Assert.assertEquals(100, rows);
                 }
+                Assert.assertEquals(100, rows);
             }
-            connection.commit();
-            final QueryTrace trace = pollTraceFor(queue, query);
-            Assert.assertTrue("expected wait > 0, got " + trace.waitNanos, trace.waitNanos > 0);
-            Assert.assertTrue("expected portal wait >= 100000000, got " + trace.waitNanos, trace.waitNanos >= 100_000_000L);
-            Assert.assertTrue(trace.waitNanos <= trace.executionNanos);
-            Assert.assertTrue(trace.firstRowNanos >= 0);
-            Assert.assertTrue(trace.firstRowNanos <= trace.executionNanos);
-        }, this::setupTracing);
+        }
+        connection.commit();
+        final QueryTrace trace = pollTraceFor(queue, query);
+        Assert.assertTrue("expected wait > 0, got " + trace.waitNanos, trace.waitNanos > 0);
+        Assert.assertTrue("expected portal wait >= 100000000, got " + trace.waitNanos, trace.waitNanos >= 100_000_000L);
+        Assert.assertTrue(trace.waitNanos <= trace.executionNanos);
+        Assert.assertTrue(trace.firstRowNanos >= 0);
+        Assert.assertTrue(trace.firstRowNanos <= trace.executionNanos);
     }
 
     private static void drain(ConcurrentQueue<QueryTrace> queue) {
@@ -91,5 +106,12 @@ public class PGQueryTimingTest extends BasePGTest {
         }
         Assert.fail("no trace for query: " + query);
         return null;
+    }
+
+    private void setupTracingWithFragmentedSync() {
+        setupTracing();
+        // Force the retained portal's sync response through a pending flush.
+        sendBufferSize = 256;
+        forceSendFragmentationChunkSize = 64;
     }
 }
