@@ -1631,22 +1631,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // open new column files (skip when last partition is parquet - no native files)
             int lastPartitionIndex = txWriter.getPartitionCount() - 1;
-            // The composite clause is not an optimisation. This block eagerly opens the new column's
-            // files for the currently-open last partition and then calls setColumnAppendPosition, which
-            // reads getColumnTop(columnIndex) and asserts lastOpenPartitionTs is set. A composite table
-            // routinely has NO open partition -- it never keeps the bare day container open -- so the
-            // assert fires and suspends the table. There is nothing to extend when nothing is open:
-            // the files are created when the partition is next opened for a write.
+            // COMPOSITE SKIPS THIS BLOCK ENTIRELY, and the reason is stronger than the one that
+            // prompted it. The block eagerly opens the new column's files for the currently-open last
+            // partition, then calls setColumnAppendPosition -> getColumnTop(columnIndex), which asserts
+            // lastOpenPartitionTs is set. A composite table routinely has NO open partition (it never
+            // keeps the bare day container open), so that assert fired and suspended the table.
+            //
+            // Skipping only when nothing is open would leave a subtler hazard: getColumnTop(int) reads
+            // columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, columnIndex), which is
+            // cellKey-BLIND. A timestamp does not identify a cell, so on a multi-cell day that can read
+            // a SIBLING cell's column top and position the append wrong. That was unreachable while the
+            // path resolution above failed first; fixing the path would have made it reachable. Skipping
+            // outright avoids reintroducing a cellKey-0 read behind a cell-aware path.
+            //
+            // Nothing is lost: the column files are created when the partition is next opened for a
+            // write. Covered by the ALTER COLUMN TYPE tests, which INSERT afterwards and compare
+            // against the plain twin.
             if ((txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy))
                     && (lastPartitionIndex < 0 || !txWriter.isPartitionParquet(lastPartitionIndex))
-                    && (!isRoutedComposite() || lastOpenPartitionTs != Long.MIN_VALUE)) {
-                // Cell-aware: setStateForTimestamp resolves cellKey 0 and names the DAY container, so on
-                // a composite table this opened <day>.<txn>/<col>.d instead of <day>/<cell>.<txn>/<col>.d
-                // and suspended the table. MEASURED 2026-08-26 on a composite table with NO parquet
-                // anywhere -- "could not open read-write [file=.../2023-01-02.1/px.d.3]" -- so it is a
-                // pre-existing gap in ALTER COLUMN TYPE, not something the parquet work introduced.
-                // Resolving by partition INDEX is exact, because a composite attached-partition entry
-                // IS a cell.
+                    && !isRoutedComposite()) {
+                // setStateForPartitionIndex, not setStateForTimestamp. Only PLAIN tables reach this
+                // block now (see the guard above), and for a plain table the two are equivalent -- it is
+                // kept because resolving by INDEX is correct by construction rather than by the
+                // coincidence that a plain table has one partition per timestamp. It arrived here as the
+                // fix for a real composite failure ("could not open read-write
+                // [file=.../2023-01-02.1/px.d.3]", MEASURED 2026-08-26 with no parquet involved); that
+                // failure is now prevented one level up instead, and the rationale lives with the guard.
                 setStateForPartitionIndex(path, lastPartitionIndex);
                 openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
                 setColumnAppendPosition(columnIndex, txWriter.getTransientRowCount(), false);
