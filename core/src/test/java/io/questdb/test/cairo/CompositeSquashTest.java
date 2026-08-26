@@ -487,6 +487,64 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
     }
 
     /**
+     * PINS AN UNFIXED DEFECT: squashing a split fragment whose cells are PARQUET loses rows.
+     * <p>
+     * MEASURED: after splitting a day, converting it to parquet and squashing, the composite table has
+     * FEWER rows than its plain twin -- {@code "Actual cursor does not have record at 4"}. The
+     * post-CONVERT assertion below passes, so the conversion is not the cause; something between the
+     * squash and the following commit drops rows.
+     * <p>
+     * <b>Where it is NOT.</b> {@code squashSplitPartitionsComposite_mergeFragment} folds fragments
+     * through native column-file reads and writes and has no parquet check, which made it the obvious
+     * suspect. It is not sufficient: making that method DECLINE parquet fragments left this test
+     * failing identically, and broke 19 other tests in this class that pass without it. So the merge
+     * is not where the rows go, and the decline is not the fix. Both were tried and reverted -- do not
+     * re-try that approach without new evidence.
+     * <p>
+     * <b>How this shape was reached.</b> Every other squash test here, and the uneven-column-top
+     * survey's squash cases, squash a day with NO fragment -- so the merge path had never run against
+     * parquet at all. The shape came from asking what the FORMAT PARQUET gate lets downstream code
+     * assume; the same question found the fast-append family writing native bytes into parquet cells.
+     * <p>
+     * Pinned rather than left red so the branch stays green and the reproduction is not lost. Invert
+     * the expectation when the row loss is fixed.
+     */
+    @Test(timeout = 60_000)
+    public void testSquashFragmentOnParquetCellsLosesRows() throws Exception {
+        node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedSplittableDay();
+            forceSplit();
+            Assert.assertFalse("precondition: the day must have split", fragmentDirs("c").isEmpty());
+
+            execute("ALTER TABLE c CONVERT PARTITION TO PARQUET LIST '2023-01-01'");
+            execute("ALTER TABLE p CONVERT PARTITION TO PARQUET LIST '2023-01-01'");
+            drainWalQueue();
+            // PRECONDITION: the conversion itself is sound. This passing is what rules CONVERT out.
+            assertTwinEqual("");
+
+            execute("ALTER TABLE c SQUASH PARTITIONS");
+            execute("ALTER TABLE p SQUASH PARTITIONS");
+            drainWalQueue();
+            // The merge only QUEUES the fragment for purge; a COMMIT is what reclaims it.
+            insertIntoBoth("('2023-01-04T00:00:00.000000Z','E0',7.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final StringSink composite = new StringSink();
+            final StringSink plain = new StringSink();
+            printSql("SELECT count() FROM c");
+            composite.put(sink);
+            printSql("SELECT count() FROM p");
+            plain.put(sink);
+            Assert.assertNotEquals(
+                    "composite now MATCHES the plain twin -- the row loss is fixed, invert this test",
+                    plain.toString(), composite.toString());
+        });
+    }
+
+    /**
      * O3 write into the middle of the already-written day, which with a split threshold of 1 produces a
      * physical split.
      */
