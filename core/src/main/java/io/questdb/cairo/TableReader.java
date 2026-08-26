@@ -2312,6 +2312,28 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
             }
         }
+        // The loop above walks columnCount and touches symbolMapReaders only -- i.e. the table's REAL
+        // symbol columns. A composite table's INTERNERS (the _cell registry plus the dedicated
+        // dictionaries) are not columns and live in compositeInternerReaders, so they were left
+        // untouched here, while reloadSymbolMapCounts() -- the other arm of the same if/else in
+        // reconcileOpenPartitions0 -- does refresh them. Whenever the forceTruncate arm was taken, the
+        // reader advanced its partition list while its cell registry stayed at the previous count.
+        //
+        // MEASURED (composite fuzz, seed 1037/591), one reader instance:
+        //   I rdr=139547368 txn=9 cellKey=15                      insertPartition ran
+        //   F rdr=139547368 txn=9 cellKey=15 registry=15          registry never advanced
+        // resolveCellSegmentOrNullIfDormant then reads cellKey >= registry.size() and silently falls
+        // back to the BARE DAY path, so the reader looks for <day>.<txn> and reports
+        // "Partition ... does not exist in table directory".
+        //
+        // Byte-identical for a plain table: compositeDicts is null there and this block is skipped.
+        if (compositeDicts != null) {
+            final int internerCount = compositeInternerReaders.size();
+            final int base = txFile.getSymbolColumnCount() - internerCount;
+            for (int i = 0; i < internerCount; i++) {
+                compositeInternerReaders.getQuick(i).updateSymbolCount(txFile.getSymbolValueCount(base + i));
+            }
+        }
     }
 
     private void reloadAtTxn(TableReader srcReader, boolean reshuffle) {

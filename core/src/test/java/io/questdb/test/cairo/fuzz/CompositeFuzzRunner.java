@@ -1279,217 +1279,36 @@ public class CompositeFuzzRunner {
  * check the map is COMPLETE, never by the generator. Enrolment is these probabilities and nothing
  * else.
  * <p>
- * DROP PARTITION: still an OPEN BUG. Three leads eliminated 2026-08-26, listed so they are not
- * chased again.
- * <p>
- * <b>Correction first.</b> An earlier version of this javadoc claimed O3 was "the missing ingredient"
- * that made this reproducible. That was WRONG, and it was wrong in a way worth naming: the fuzz had
- * ALWAYS reproduced it whenever probabilityOfDropPartition was raised -- the previous note said so
- * itself. What was never reproducible was a hand-written MINIMAL shape. O3 only changes the rate
- * (12 of 24 seeds with it, 9 of 24 without). Measured both ways.
- * <p>
- * <b>Recipe:</b> {@code probabilityOfDropPartition = 0.05}. 50 occurrences across the 24-seed sweep.
- * <p>
- * <b>MEASURED evidence.</b> A read of the composite twin fails, with the disk-level cause logged
- * immediately before it:
- * <pre>
- *   open partition failed, partition does not exist on the disk
- *     [path=.../unstable4_composite~13/2023-01-01/SYM/SYM16.7]
- * </pre>
- * _txn points at a CELL at nameTxn .7 that is not on disk. It persists AFTER drainWalQueue, so it is
- * a settled inconsistency, not a read racing a writer. The plain twin is unaffected.
- * <p>
- * <b>NARROWED, 2026-08-26 -- this is the sharpest description available, start here.</b> Deterministic
- * single-seed reproduction: {@code Rnd(1037, 591)} + {@link #withDropPartitionProbability}(0.05) +
- * {@code createTables} + {@code applyGeneratedTransactions(600, 30)}. Dumping _txn against the
- * directory tree at the moment of failure shows the day was RE-VERSIONED from nameTxn 0 to nameTxn 3,
- * and exactly ONE cell's new directory was never materialised:
- * <pre>
- *   on disk, day 2023-01-01:        _txn, day 2023-01-01:
- *     10/SYM.0   10/SYM.3             every entry nameTxn=3,
- *     11/SYM.0   11/SYM.3             including 13/SYM
- *     12/SYM.0   12/SYM.3
- *     13/SYM.0   &lt;-- .3 MISSING
- *     14/SYM.0   14/SYM.3
- *     ... every other cell has BOTH
- * </pre>
- * So _txn and disk disagree for exactly one cell of a re-versioned day: the bookkeeping was updated
- * for every cell, the directory was created for all but one. The reader then follows _txn to
- * {@code 13/SYM.3} and fails. A bare day container {@code 2023-01-01.5} is also present, which may or
- * may not be related.
- * <p>
- * That reframes the question usefully: it is not "why was a live directory deleted" but "which loop
- * writes {@code <cell>.<newTxn>} for each cell of a day, and how does it skip one while _txn is
- * updated for all". Whether {@code 13/SYM} is the cell the DROP targeted (entry should have been
- * REMOVED, not re-versioned) or an innocent sibling is the next thing to establish -- its {@code .0}
- * still exists, so it was not fully dropped.
- * <p>
- * <b>ROOT-CAUSE MECHANISM IDENTIFIED, 2026-08-26.</b> Dumping every _txn entry of the failing day
- * WITH its cellKey and rendered segment, against the directory tree, gives this:
- * <pre>
- *   _txn:  cellKey=1..13  seg=15/SYM, 31/%NULL, 17/SYM ...  nameTxn=3   (all fine)
- *          cellKey=14     seg=13/SYM                        nameTxn=5   &lt;-- the orphan
- *   disk:  2023-01-01/13/SYM.0        (no .5 anywhere under the cell)
- *          2023-01-01.5               &lt;-- the .5 version, written at the DAY level
- * </pre>
- * Nothing was deleted -- {@code 13/SYM.0} is still there. _txn points at a {@code .5} version of that
- * cell which was never created under the cell.
- * <p>
- * <b>Do NOT read the bare {@code 2023-01-01.5} as "the misplaced version" -- I did, and it is wrong.</b>
- * Bare {@code <day>.<txn>} containers on a composite table are a KNOWN, DOCUMENTED, HARMLESS artifact:
- * see {@code TableWriter#openLastPartitionAndSetAppendPosition}, which already guards against creating
- * them and records that they are "never read by anything" and never reclaimed (O3PartitionPurgeJob
- * skips composite tables), with a measurement of three left behind by 20 rounds of O3 writes. So the
- * bare container is unrelated debris, and the real question is narrower than it first looks: what
- * stamps nameTxn=5 onto that cell's _txn entry without a corresponding directory.
- * <p>
- * The prime suspect is {@code TableWriter#setStateForTimestamp(Path, long)}. It resolves
- * {@code getPartitionNameTxnByPartitionTimestamp} (cellKey 0 ONLY) and then builds the path with the
- * bare 5-arg {@code setPathForNativePartition} -- no cell segment -- and {@code openPartition}, one of
- * its callers, follows it with {@code ff.mkdirs}. That would create a bare {@code <day>.<txn>}
- * directory and stamp a cellKey-0 nameTxn onto a cell's entry: exactly the observed signature.
- * <p>
- * <b>But guarding that did NOT fix it, so the story is incomplete.</b> Skipping the
- * {@code openPartition} + {@code setAppendPosition} reopen in
- * {@code dropPartitionByExactTimestamp}'s active-partition branch for a routed composite table --
- * mirroring the guard {@code finishO3Commit} already applies to its own last-partition reopen -- left
- * the failure completely unchanged: 50 occurrences, 12 of 24 seeds, before and after. That change was
- * reverted rather than kept, since it fixes nothing measurable and alters drop control flow.
- * <p>
- * <b>Methodological warning, because it produced a wrong answer here.</b> Instrumenting
- * {@code setStateForTimestamp} with a stack dump appeared to show only TWO of its 17 call sites
- * reachable on a routed composite table. That was an artifact: the stacks were grepped with a
- * 3-line window, so only the top frames were ever visible, and the "two sites" (12280 and 9469) are
- * {@code openPartition} and its caller in ONE stack. The reachable-call-site question is still OPEN
- * -- redo it with full stacks before relying on any count.
- * <p>
- * <b>ONE CAUSE FOUND AND FIXED (partial), 2026-08-26.</b> Instrumenting BOTH writers of the nameTxn
- * slot -- {@code TxWriter:778} and {@code TxReader#initPartitionAt} -- with a full stack caught it:
- * <pre>
- *   TxReader.initPartitionAt
- *   TxWriter.insertPartitionSizeByTimestamp        &lt;-- INSERTS a new entry
- *   TxWriter.updateAttachedPartitionSizeByRawIndex
- *   TxWriter.updateAttachedPartitionSizeByTimestamp
- *   TxWriter.beginPartitionSizeUpdate
- *   TableWriter.dropPartitionByExactTimestamp
- * </pre>
- * {@code beginPartitionSizeUpdate} took the cellKey of the globally-LAST partition entry and paired it
- * with {@code maxTimestamp}. On a composite table those need not describe the same partition: the last
- * entry is the highest {@code (ts, cellKey)} and its cellKey belongs to its own day and cell, while
- * {@code maxTimestamp} is merely the largest data timestamp. When the pair named no existing
- * partition the lookup missed and the update INSERTED ON MISS, creating a phantom _txn entry with
- * {@code nameTxn = txn-1} for a cell whose directory was never written. Fixed by using the last
- * entry's OWN timestamp.
- * <p>
- * <b>Partial: 50 -&gt; 35 occurrences, 12 -&gt; 9 of 24 seeds.</b> At least one further mechanism
- * remains, and this is the first hypothesis all session that moved the number at all -- the four
- * below moved it by zero, which is what disqualified them.
- * <p>
- * <b>SECOND MECHANISM CHARACTERISED (read side) -- this is what the remaining 9 of 24 seeds hit.</b>
- * After the fix above, the surviving failure has a DIFFERENT shape: the message carries no cell
- * segment at all, and the reader logs
- * {@code open partition failed ... [path=.../d3x1037_composite~4/2023-01-02.7]} -- the BARE DAY path.
- * Meanwhile _txn for that day is entirely self-consistent, including the victim entry
- * ({@code cellKey=15 seg=25/SKE nameTxn=7}), and {@code 2023-01-02/25/SKE.7} IS on disk. So nothing is
- * corrupt: the READER simply failed to apply the cell segment.
- * <p>
- * The culprit is {@code TableReader#resolveCellSegmentOrNullIfDormant}:
- * <pre>
- *   if (cellKey &gt;= getCompositeDictionaries().cellRegistry().size()) {
- *       return null;   // -&gt; bare day path
- *   }
- * </pre>
- * That guard conflates two unrelated states. {@code registry.size() == 0} is genuinely DORMANT, where
- * the bare path is right. {@code cellKey >= size > 0} is a STALE SNAPSHOT -- the reader's _txn knows a
- * cell its registry has never heard of -- and silently rendering the bare path there is wrong.
- * <p>
- * <b>ROOT CAUSE OF THE RESIDUAL: the READER tears across a txn boundary.</b> Established by printing
- * every symbol-count provider at every commit, alongside the max cellKey then present in _txn:
- * <pre>
- *   txn=2..8   maxCellKey=14   providerCounts=[17,17,2,15]    registry=15 covers keys 0..14  OK
- *   txn=9      maxCellKey=15   providerCounts=[18,18,2,16]    registry=16 covers keys 0..15  OK
- * </pre>
- * <b>The WRITER is internally consistent at every single txn</b> -- the registry's symbol count always
- * covers the highest cellKey committed in that same transaction. (Interner slots are the last
- * {@code internerCount} providers, so with 4 symbol columns and 2 interners the registry is index 3,
- * value 15 then 16.)
- * <p>
- * The reader, meanwhile, observed {@code cellKey=15  registrySize=15}. Those two numbers never
- * co-exist in any single commit: cellKey 15 first appears at txn 9, where the registry is already 16;
- * registry 15 belongs to txn 8, where no cellKey 15 exists. So the reader combined a txn-9 PARTITION
- * LIST with txn-8 SYMBOL COUNTS -- a torn view across a reload, not corruption on disk.
- * <p>
- * This CORRECTS the previous note, which concluded the inconsistency lived inside _txn. It does not.
- * Both halves are individually correct on disk; only the reader's combination of them is not.
- * <p>
- * Where to look: {@code TableReader}'s reload updates the partition list and the symbol counts
- * ({@code reloadSymbolMapCounts()}) as separate steps, so some path refreshes partitions without
- * refreshing interner counts in the same txn window. The victim is always the newest cellKey because
- * that is the only key whose coverage differs between two adjacent txns.
- * <p>
- * <b>THE SINGLE-READER FACT, and a correction to how I first read it.</b> At the fallback, ONE reader
- * instance simultaneously reports {@code txFile.getTxn()=9}, {@code cellKey=15} and
- * {@code registry.size()=15}. All three come from that one reader, so the tear inside it is real.
- * <p>
- * I originally paired this with {@code RELOAD txn=3} / {@code RELOAD txn=6} lines and concluded "this
- * reader last reloaded at txn 6". <b>That inference is unsound</b> -- the log carried no reader
- * identity and the harness opens many {@code TableReader} instances, so those RELOAD lines may belong
- * to entirely different readers. Redo it with the reader {@code id} in every line before trusting any
- * cross-line correlation.
- * <p>
- * What makes the single-reader fact genuinely puzzling, and is the thing to explain:
- * {@code getPartitionCellKey(partitionIndex)} reads {@code openPartitionInfo}, i.e. the reader's OWN
- * reconciled state -- NOT the live {@code txFile}. So cellKey 15 can only be there because
- * {@code insertPartition(idx, ts, 15)} ran for this reader, and that happens inside
- * {@code reconcileOpenPartitions0}, which sets {@code changed = true} and therefore calls
- * {@code reloadSymbolMapCounts()} on the way out. The registry should have advanced with it.
- * <p>
- * Also relevant, and worth checking next: {@code acquireTxn()} carries the comment "txFile can also be
- * reloaded in goPassive-&gt;checkSchedulePurgeO3Partitions", and that method does call
- * {@code txFile.unsafeLoadAll()} -- so {@code txFile} can advance as a side effect of purge scheduling
- * while the reader's logical txn does not.
- * <p>
- * <b>{@code reconcileOpenPartitions0} is ELIMINATED as the site, twice over.</b> Relaxing its
- * {@code else if (changed)} to {@code changed || compositeDicts != null} changed the failure by
- * nothing (35 occurrences, 9 of 24 seeds, identical, probabilities fixed) -- AND, decisively, produced
- * <b>no {@code RELOAD txn=9} line at all</b>. So that method is not executing at txn 9 and the fix was
- * never on the path. Reverted.
- * <p>
- * <b>Therefore:</b> some reader path advances {@code txFile} to a new txn and then serves partition
- * data WITHOUT running partition reconciliation at all -- so no reload of any kind occurs, and the
- * {@code changed} gating is irrelevant. Find that path (the {@code reload()} / txn-acquire flow, not
- * {@code reconcileOpenPartitions*}) and the bug closes. The victim is always the newest cellKey
- * because that is the only key whose registry coverage differs between two adjacent txns.
- * <p>
- * <b>ELIMINATED -- do not re-chase:</b>
+ * DROP PARTITION: <b>FIXED 2026-08-26</b>, after seven wrong hypotheses and nine corrections. Two
+ * independent causes, both now closed:
  * <ol>
- *   <li><b>Empty-component cell paths.</b> The same runs logged ENOENT purge failures, 14 of 742 with
- *       an empty path component. That was a genuine separate bug (an empty-string dimension value
- *       rendered no segment; fixed by {@code %EMPTY}), and fixing it moved those 14 to 0 while the
- *       reader failures stayed at exactly 70. Independent defects sharing a log.</li>
- *   <li><b>Partition splitting.</b> Disabling it ({@code CAIRO_O3_PARTITION_SPLIT_MIN_SIZE} =
- *       Integer.MAX_VALUE) leaves the failure intact: 50 occurrences, 12 of 24 seeds.</li>
- *   <li><b>O3 being necessary.</b> See the correction above -- it is not.</li>
- *   <li><b>Mis-rendered cell segments.</b> The logs invite this: the reader wants
- *       {@code 2023-01-01/SYM/SYM16} while a purge nearby targets {@code 2023-01-01/%NULL/SYM16},
- *       and another table shows {@code SYM16/SYM} -- components apparently swapped. Both are
- *       innocent. Within one table the component order is fixed and consistent (checked: that
- *       table's first component is only ever {@code SYM} or {@code %NULL}, i.e. truncate(sym,3)),
- *       and the apparent swap is just two tables whose shuffled DIM_POOL prefix put the dimensions
- *       in different orders. {@code %NULL/SYM16} and {@code SYM/SYM16} are two genuinely DIFFERENT
- *       live cells -- NULL sym vs non-NULL sym at the same exch -- not one cell rendered two ways.</li>
+ *   <li><b>Writer.</b> {@code TxWriter#beginPartitionSizeUpdate} paired the last entry's cellKey with
+ *       {@code maxTimestamp}; the lookup missed and INSERTED ON MISS, creating a phantom _txn entry
+ *       for a cell with no directory. 50 -&gt; 35 occurrences, 12 -&gt; 9 of 24 seeds.</li>
+ *   <li><b>Reader.</b> {@code TableReader#reloadAllSymbols} walked {@code columnCount} and touched
+ *       {@code symbolMapReaders} only -- the table's REAL symbol columns. A composite table's
+ *       INTERNERS (the _cell registry and the dedicated dictionaries) are not columns; they live in
+ *       {@code compositeInternerReaders} and were left untouched, while {@code reloadSymbolMapCounts()}
+ *       -- the other arm of the very same if/else in {@code reconcileOpenPartitions0} -- does refresh
+ *       them. Whenever the {@code forceTruncate} arm was taken the reader advanced its partition list
+ *       while its cell registry stayed behind, so {@code resolveCellSegmentOrNullIfDormant} saw
+ *       {@code cellKey >= registry.size()} and silently fell back to the BARE DAY path.
+ *       <b>35 -&gt; 0 occurrences, 9 -&gt; 2 of 24 seeds.</b></li>
  * </ol>
- * Six hand-written shapes are also clean and must not be retried: (1) a WHERE-form drop of a two-cell
- * day; (2) drop / re-create both cells / drop again; (3) re-insert into the dropped day afterwards;
- * (4) this runner's own mechanism -- one TableWriterAPI, an AlterOperation applied via
- * w.apply(op, false) mid-stream, commit per transaction, drain only every 8, 24 transactions across
- * 3 days; (5) the same with NULL dimension values; (6) the time-skewed-cell lead.
+ * The measurement that finally found (2) was a per-READER-INSTANCE trace, keyed on
+ * {@code identityHashCode}. Every earlier attempt correlated log lines across different
+ * {@code TableReader} objects and therefore proved nothing:
+ * <pre>
+ *   I rdr=139547368 txn=9 cellKey=15                 insertPartition ran for THIS reader
+ *   F rdr=139547368 txn=9 cellKey=15 registry=15     its registry never advanced
+ * </pre>
+ * That single pair says the insert and the registry refresh came apart inside one reader, which no
+ * amount of aggregate counting could have shown.
  * <p>
- * Note the drop path itself IS cell-aware ({@code dropPartitionByExactTimestamp} resolves
- * {@code getPartitionCellKey(index)} and calls {@code removeAttachedPartitions(timestamp, cellKey)}),
- * so a naive "drop is cellKey-0-only" theory is already excluded by inspection.
- * <p>
- * Left at 0.0 so the suite stays green while the bug is open -- flip it to reproduce.
+ * <b>The 2 residual seeds are a DIFFERENT bug</b>, surfaced by this branch's own ADD COLUMN
+ * enrolment: {@code could not open, file does not exist:
+ * .../2023-01-01/SYM/SYM0/9.0/new_col_2.d.3}. It concerns a generator-ADDED column's per-cell file
+ * name-txn, not partition dropping. Do not conflate it with the above.
  * <p>
  * SCHEMA-CHANGING DDL is blocked for a separate, plainer reason: this runner's SQL is fixed-shape
  * (5-column INSERTs, fixed literals), so a generated ADD/DROP COLUMN gives "row value count does not
