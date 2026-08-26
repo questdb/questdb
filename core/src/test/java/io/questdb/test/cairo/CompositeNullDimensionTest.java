@@ -320,15 +320,26 @@ public class CompositeNullDimensionTest extends AbstractCairoTest {
     }
 
     /**
-     * Minor 2 (review finding, NO code change -- establishes behaviour only). {@code putPathSafe("")}
-     * emits nothing, so a cell whose dimension value is the empty string {@code ''} renders an EMPTY
-     * segment -- {@code ''} is a distinct, real, NON-null ordinal, so this is a completely different
-     * code path than the {@code %NULL} token (which is ordinal-driven off {@code VALUE_IS_NULL},
-     * per Important 1 -- {@code ''} never has that ordinal). Pre-existing, not introduced by the
-     * commit under review; the new {@code putCellSegmentPathSafe} javadoc asserts injectivity as a
-     * design property without calling this out. This test establishes what ACTUALLY happens: does
-     * {@code ''} collapse onto the day directory, and does QuestDB still store/query {@code ''}
-     * distinctly from NULL regardless?
+     * FIXED 2026-08-26. This test previously recorded the empty-string segment as benign ("review
+     * finding, NO code change -- establishes behaviour only") and asserted its on-disk name was the
+     * bare {@code "exch="} prefix.
+     * <p>
+     * That was true, but only for HIVE naming -- which is all it tested, and whose prefix is the
+     * entire reason it looked harmless. Under {@code LAYOUT PLAIN} there is no {@code "col="} prefix
+     * to pad the empty value, so the cell rendered a completely EMPTY path component and got NO
+     * DIRECTORY OF ITS OWN: measured, a day holding {@code ''} and {@code 'BTC'} produced the single
+     * directory {@code [BTC]} -- two distinct cells collapsed onto one. Reachable from ordinary SQL,
+     * since {@code INSERT} preserves {@code ''} as a non-NULL symbol.
+     * <p>
+     * {@code putCellSegmentPathSafe} now emits {@code COMPOSITE_EMPTY_DIMENSION_TOKEN}
+     * ({@code %EMPTY}), injective for exactly the same reason as {@code %NULL}: {@code putPathSafe}
+     * escapes a literal {@code '%'} to {@code "%25"}, so no real value can render a bare {@code '%'}.
+     * Both layouts now agree. {@code CompositeEmptyDimensionValueTest} adds the PLAIN-layout coverage
+     * this class lacked.
+     * <p>
+     * Worth keeping as a lesson: this gap survived a review that had already LOOKED at this exact
+     * rendering. What that review missed was not the behaviour but an ASSUMPTION -- that HIVE's
+     * prefix, which kept the segment non-empty, was present in every layout.
      */
     @Test(timeout = 30_000)
     public void testEmptyStringDimensionValueDoesNotCollideWithNullOrData() throws Exception {
@@ -351,13 +362,12 @@ public class CompositeNullDimensionTest extends AbstractCairoTest {
                     "select ts, exch, px from p where exch = '' order by ts",
                     "select ts, exch, px from c where exch = '' order by ts");
 
-            // Document what the '' cell's on-disk segment actually is: putPathSafe("") writes
-            // nothing, so in HIVE naming the segment is the bare "exch=" prefix with an empty
-            // value tail -- NOT the day directory itself, and NOT the %NULL token.
+            // The '' cell now gets its own reserved token, distinct from both %NULL and any real
+            // value, and identical in HIVE and PLAIN naming.
             TableToken tableToken = engine.verifyTableName("c");
             FilesFacade ff = configuration.getFilesFacade();
             Assert.assertEquals(
-                    setOf("exch=BTC", "exch=%NULL", "exch="),
+                    setOf("exch=BTC", "exch=%NULL", "exch=%EMPTY"),
                     listCellDirNames(ff, tableToken, "2023-01-01"));
         });
     }

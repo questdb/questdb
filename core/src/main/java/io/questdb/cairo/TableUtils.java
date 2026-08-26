@@ -120,6 +120,26 @@ public final class TableUtils {
      * full argument. Must never change once a table has been written with it: it IS the directory name.
      */
     public static final String COMPOSITE_NULL_DIMENSION_TOKEN = "%NULL";
+    /**
+     * Reserved on-disk directory-name token for a composite partition dimension whose value is the
+     * EMPTY STRING -- a real, non-NULL symbol value that {@link #putPathSafe} would otherwise render
+     * as nothing at all.
+     * <p>
+     * Without it an empty value produces an EMPTY path component, and under {@code LAYOUT PLAIN}
+     * (which, unlike HIVE mode, has no {@code "col="} prefix to keep the component non-empty) the
+     * cell then has no directory of its own: measured, a two-cell day holding {@code ''} and
+     * {@code 'BTC'} produced a single directory, {@code [BTC]}. Two distinct cells collapsing onto one
+     * directory is the same injectivity failure {@link #COMPOSITE_NULL_DIMENSION_TOKEN} exists to
+     * prevent, and it is reachable from ordinary SQL: {@code INSERT} preserves {@code ''} as a
+     * non-NULL symbol (verified), so this needs no exotic writer-API path.
+     * <p>
+     * Injective for the same reason as the NULL token: {@code putPathSafe} escapes a literal
+     * {@code '%'} to {@code "%25"}, so no real value can ever render a name containing a bare
+     * {@code '%'}. A table holding the literal symbol {@code "%EMPTY"} renders {@code "%25EMPTY"} and
+     * stays a distinct cell. Must never change once a table has been written with it: it IS the
+     * directory name.
+     */
+    public static final String COMPOSITE_EMPTY_DIMENSION_TOKEN = "%EMPTY";
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
@@ -2982,6 +3002,11 @@ public final class TableUtils {
             throw CairoException.critical(0)
                     .put("composite dimension ordinal does not resolve to a value [ordinal=").put(ordinalKey)
                     .put(']');
+        } else if (value.length() == 0) {
+            // An EMPTY but non-NULL value. putPathSafe would emit nothing, giving this cell an empty
+            // path component -- and under LAYOUT PLAIN, which has no "col=" prefix to pad it, no
+            // directory of its own at all. See COMPOSITE_EMPTY_DIMENSION_TOKEN for the measurement.
+            sink.put(COMPOSITE_EMPTY_DIMENSION_TOKEN);
         } else {
             putPathSafe(sink, value);
         }
