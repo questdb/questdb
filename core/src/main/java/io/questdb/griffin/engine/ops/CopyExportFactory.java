@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
@@ -82,6 +83,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private int compressionLevel;
     private CopyExportContext copyContext;
     private int dataPageSize;
+    private @Nullable String explicitSelectText = null;
     private String fileName;
     private MessageBus messageBus;
     private int parquetVersion;
@@ -89,10 +91,9 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private boolean rawArrayEncoding = false;
     private int rowGroupSize;
     private SecurityContext securityContext;
-    private String selectText = null;
+    private @Nullable String sourceTableName = null;
     private CharSequence sqlText;
     private boolean statisticsEnabled;
-    private @Nullable String tableName = null;
     private int tableOrSelectTextPos = 0;
 
     public CopyExportFactory(
@@ -109,7 +110,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         CopyExportContext.ExportTaskEntry entry = copyContext.assignExportEntry(
                 securityContext,
-                this.tableName != null ? this.tableName : this.selectText,
+                this.sourceTableName != null ? this.sourceTableName : this.explicitSelectText,
                 this.fileName,
                 null,
                 CopyExportContext.CopyTrigger.SQL
@@ -117,11 +118,15 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         long copyID = entry.getId();
         RecordCursorFactory selectFactory = null;
         CreateTableOperationImpl createOp = null;
+        // Every routing decision this execution makes lives in locals. The parsed COPY source stays in
+        // sourceTableName / explicitSelectText, so a cached factory resolves the same source on every call.
+        String resolvedSelectText = this.explicitSelectText;
+        String taskTableName = this.sourceTableName;
         try {
-            if (this.tableName != null) {
-                TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
+            if (this.sourceTableName != null) {
+                TableToken tableToken = executionContext.getTableTokenIfExists(sourceTableName);
                 if (tableToken == null) {
-                    throw SqlException.tableDoesNotExist(tableOrSelectTextPos, tableName);
+                    throw SqlException.tableDoesNotExist(tableOrSelectTextPos, sourceTableName);
                 }
                 // A table that carries an EXPIRE ROWS policy must export through the SELECT path: the read
                 // filter that hides expired rows lives in the parser, so a table-reader export would write
@@ -130,20 +135,23 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         .getMetadataCache().mayTableHaveExpiryPolicy(tableToken);
                 if (partitionBy != -1 || mayHaveExpiryPolicy) {
                     try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
-                        int tablePartitionBy = meta.getPartitionBy();
-                        if (partitionBy != -1 && tablePartitionBy != partitionBy) {
-                            this.selectText = this.tableName;
-                        }
+                        final int tablePartitionBy = meta.getPartitionBy();
                         final String expiryPredicate = meta.getExpiryPredicate();
-                        if (expiryPredicate != null && !expiryPredicate.isEmpty()) {
-                            this.selectText = this.tableName;
+                        final boolean isSelectPathRequired = (partitionBy != -1 && tablePartitionBy != partitionBy)
+                                || (expiryPredicate != null && !expiryPredicate.isEmpty());
+                        if (isSelectPathRequired) {
+                            // The source name is a catalog identifier, and the compiler reads this value as SQL.
+                            // Quoting it keeps the query pointing at the very table the token above resolved:
+                            // a name with a space, a hyphen, a keyword or a leading digit is one identifier here,
+                            // exactly as it is in the catalog. The COPY target itself arrives in any of three
+                            // quoting forms, so the parsed token cannot serve as SQL text either.
+                            resolvedSelectText = RowExpiryUtil.quoteIdentifier(sourceTableName);
                         }
                     }
                 }
             }
 
             ParquetExportMode exportMode = ParquetExportMode.TABLE_READER;
-            String resolvedSelectText = this.selectText;
             if (resolvedSelectText != null) {
                 // Determine export mode before creating CreateTableOperation.
                 // For non-TEMP_TABLE modes the CreateTableOperation (and its
@@ -151,7 +159,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 exportIdSink.clear();
                 exportIdSink.put("copy.");
                 Numbers.appendHex(exportIdSink, copyID, true);
-                this.tableName = exportIdSink.toString();
+                taskTableName = exportIdSink.toString();
 
                 CairoEngine engine = executionContext.getCairoEngine();
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -172,7 +180,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         if (exportMode == ParquetExportMode.TEMP_TABLE) {
                             createOp = new CreateTableOperationImpl(
                                     Chars.toString(resolvedSelectText),
-                                    tableName,
+                                    taskTableName,
                                     resolvedPartitionBy,
                                     false,
                                     engine.getConfiguration().getDefaultSymbolCapacity(),
@@ -198,6 +206,9 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         Misc.free(rcf);
                     }
                 } catch (SqlException ex) {
+                    // Positions map back onto the COPY source token. A quoted source name is one character
+                    // longer than a bare one, which the mapping ignores: the table is resolved before this
+                    // compilation, so an ordinary source-name error never reaches here.
                     ex.setPosition(ex.getPosition() + tableOrSelectTextPos);
                     throw ex;
                 } catch (CairoException ex) {
@@ -205,7 +216,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     throw ex;
                 }
             } else if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
-                TableToken token = executionContext.getTableTokenIfExists(tableName);
+                TableToken token = executionContext.getTableTokenIfExists(sourceTableName);
                 try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(token)) {
                     CopyExportRequestTask.validateBloomFilterColumns(bloomFilterColumns, meta, bloomFilterColumnsPosition);
                 }
@@ -225,7 +236,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     Numbers.INT_NULL,
                     "queued",
                     0,
-                    tableName,
+                    taskTableName,
                     entry.getId()
             );
 
@@ -249,7 +260,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 task.of(
                         entry,
                         createOp,
-                        tableName,
+                        taskTableName,
                         fileName,
                         compressionCodec,
                         compressionLevel,
@@ -323,7 +334,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         this.messageBus = messageBus;
         this.copyContext = exportContext;
         if (model.getTableName() != null) {
-            this.tableName = unquote(model.getTableName()).toString();
+            this.sourceTableName = unquote(model.getTableName()).toString();
             this.tableOrSelectTextPos = model.getTableNameExpr().position;
         } else {
             assert model.getSelectText() != null;
@@ -333,7 +344,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         final ExpressionNode fileNameExpr = model.getFileName();
         this.fileName = fileNameExpr != null ? Chars.toString(GenericLexer.assertNoDots(unquote(fileNameExpr.token), fileNameExpr.position)) : null;
         this.securityContext = securityContext;
-        this.selectText = Chars.toString(model.getSelectText());
+        this.explicitSelectText = Chars.toString(model.getSelectText());
         this.partitionBy = model.getPartitionBy();
         this.compressionCodec = model.getCompressionCodec();
         this.compressionLevel = model.getCompressionLevel();
