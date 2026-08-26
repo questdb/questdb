@@ -32,36 +32,21 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * CHARACTERISATION TEST -- pins a KNOWN PRODUCT GAP, not desired behaviour.
+ * REGRESSION LOCK. Adding a POSTING-family index to a composite table must be refused AT THE
+ * STATEMENT (invariant 6), not accepted and then bricked.
  * <p>
- * Adding a POSTING-family index to a routed composite table is accepted by the ALTER statement and
- * then BRICKS the table on a later commit: {@code TableWriter#sealPostingIndexForPartition} refuses
- * on a routed composite (Task 16), but it runs inside the WAL-apply job, so the failure arrives as a
- * SUSPENDED table rather than as an error on the statement that caused it.
+ * MEASURED before this was fixed: the ALTER returned OK and the table SUSPENDED on the next merge
+ * commit, when {@code TableWriter#sealPostingIndexForPartition} refused -- that seal is cell-blind and
+ * cannot handle a routed composite's per-cell chains (Task 16). A successful DDL and a broken table:
+ * the same defect SHAPE as the FORMAT PARQUET bug fixed earlier on this branch.
  * <p>
- * That is the same defect SHAPE as the FORMAT PARQUET bug fixed earlier in this branch -- successful
- * DDL, broken table -- and it violates the same invariant 6 ("the refusal fires at the statement that
- * caused it"). Every other composite gate refuses at the statement. See
- * {@code CompositeFreshParquetGateTest#testCompositeFormatParquetRefusedAtCreate} for the fixed
- * precedent this one should eventually follow.
+ * HOW IT WAS FOUND: not by inspection. Enrolling {@code ADD COLUMN} in the composite differential
+ * fuzz surfaced it as one of the seeds that suspended the subject twin.
  * <p>
- * HOW THIS WAS FOUND: not by inspection. Enrolling {@code ADD COLUMN} in the composite differential
- * fuzz (2026-08-26) failed 5 of 24 sweep seeds, every one of them this suspension. The plan had
- * recorded ADD COLUMN as blocked only by the harness's fixed-shape INSERT; that was true but
- * incomplete, and the second blocker was the product's. See
- * {@code CompositeFuzzRunner#dropPostingIndexAddColumnOps}.
- * <p>
- * WHY IT IS NOT FIXED HERE: the natural statement-time gate needs the table's dimension count, and
- * the WAL-side metadata ({@code TableRecordMetadata}) does not expose {@code getPartitionSpec()} --
- * which is exactly why every existing composite gate opens a {@code TableReader} instead. So the fix
- * is either a reader open on the ALTER path in {@code SqlCompilerImpl#alterTableAddColumn} (covers
- * SQL only, leaving {@code TableWriterAPI#addColumn} callers exposed) or plumbing the spec to the
- * WAL writer (covers both). Choosing between those is a design call, not a drive-by edit.
- * <p>
- * <b>WHEN THE GAP IS FIXED THIS TEST WILL FAIL, BY DESIGN.</b> {@link
- * #testCompositeAddColumnWithPostingIndexSuspendsTableInsteadOfRefusing()} asserts the CURRENT bad
- * behaviour. On fixing, replace its body with the refusal assertion -- the ALTER must throw
- * "composite partitioning does not yet support ..." and the table must remain live and unsuspended.
+ * SCOPE, and why it is not narrower: the refusal fires for ANY composite table, not only a routed
+ * one, matching what {@code CompositeFreshParquetGateTest} does for FORMAT PARQUET. A dormant
+ * composite table accepting a POSTING index works only until a second cell routes, at which point it
+ * bricks -- so refusing up front prevents planting the landmine rather than waiting for it to go off.
  */
 public class CompositeAddColumnPostingGateTest extends AbstractCairoTest {
 
@@ -97,48 +82,44 @@ public class CompositeAddColumnPostingGateTest extends AbstractCairoTest {
     }
 
     /**
-     * The gap. ALTER returns OK; the table dies on the next merge commit.
-     * <p>
-     * Both halves are asserted deliberately. Asserting only the suspension would leave it ambiguous
-     * whether the statement had ALSO failed -- and "the statement refused it" is precisely the
-     * behaviour this test exists to record as ABSENT.
+     * The lock. The statement must fail, and the table must remain live and queryable afterwards --
+     * both halves matter, since a refusal that still damaged the table would be no better than the
+     * bug it replaced.
      */
     @Test
-    public void testCompositeAddColumnWithPostingIndexSuspendsTableInsteadOfRefusing() throws Exception {
+    public void testCompositeAddColumnWithPostingIndexIsRefusedAtTheStatement() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) "
-                    + "PARTITION BY DAY, exch WAL");
-            // two distinct dimension values => genuinely ROUTED, not dormant. The gate exempts
-            // dormant composite tables by design, so a single-cell table would not reach it and this
-            // test would be a false green.
-            execute("INSERT INTO c VALUES "
-                    + "('2023-01-01T01:00:00.000000Z','BTC',1.0),"
-                    + "('2023-01-01T02:00:00.000000Z','ETH',2.0)");
-            drainWalQueue();
+            final TableToken token = createRoutedComposite();
+            try {
+                execute("ALTER TABLE c ADD COLUMN extra SYMBOL INDEX TYPE POSTING");
+                Assert.fail("a POSTING index must be refused on a composite table");
+            } catch (Exception e) {
+                TestUtils.assertContains(e.getMessage(),
+                        "composite partitioning does not yet support a POSTING index");
+            }
 
-            final TableToken token = engine.verifyTableName("c");
-            Assert.assertFalse("precondition: table healthy before the ALTER",
+            // the refusal is at the statement, so the table is untouched and still usable
+            Assert.assertFalse("a refused ALTER must not suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(token));
+            execute("INSERT INTO c VALUES ('2023-01-01T03:00:00.000000Z','BTC',4.0)");
+            drainWalQueue();
+            Assert.assertFalse("the table must still accept writes after the refusal",
                     engine.getTableSequencerAPI().isSuspended(token));
 
-            // HALF ONE: the statement is accepted. This is the bug -- it should refuse here.
-            execute("ALTER TABLE c ADD COLUMN extra SYMBOL INDEX TYPE POSTING");
-            drainWalQueue();
-
-            // HALF TWO: a later merge commit reaches the seal and suspends the table.
-            execute("INSERT INTO c VALUES ('2023-01-01T01:30:00.000000Z','BTC',3.0,'X')");
-            drainWalQueue();
-
-            Assert.assertTrue(
-                    "EXPECTED-FAILURE PIN: the composite table is suspended by the POSTING seal gate. "
-                            + "If this assertion fails, the gap may have been FIXED -- check whether the "
-                            + "ALTER now refuses at the statement, and if so replace this test body with "
-                            + "the refusal assertion described in the class javadoc.",
-                    engine.getTableSequencerAPI().isSuspended(token));
-
-            final StringSink err = new StringSink();
-            TestUtils.printSql(engine, sqlExecutionContext,
-                    "select errorMessage from wal_tables() where name = 'c'", err);
-            TestUtils.assertContains(err, "composite partitioning does not yet support a POSTING index seal");
+            final StringSink sink = new StringSink();
+            TestUtils.printSql(engine, sqlExecutionContext, "SELECT count() FROM c", sink);
+            TestUtils.assertContains(sink, "3");
         });
+    }
+
+    private TableToken createRoutedComposite() throws Exception {
+        execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) "
+                + "PARTITION BY DAY, exch WAL");
+        // two distinct dimension values => genuinely routed, not dormant
+        execute("INSERT INTO c VALUES "
+                + "('2023-01-01T01:00:00.000000Z','BTC',1.0),"
+                + "('2023-01-01T02:00:00.000000Z','ETH',2.0)");
+        drainWalQueue();
+        return engine.verifyTableName("c");
     }
 }

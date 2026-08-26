@@ -937,7 +937,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private int addColumnWithType(
             @Nullable AlterOperationBuilder addColumn,
             CharSequence columnName,
-            int columnNamePosition
+            int columnNamePosition,
+            @Nullable TableToken gateTableToken
     ) throws SqlException {
         CharSequence tok;
         tok = expectToken(lexer, "column type");
@@ -1082,6 +1083,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             symbolCapacity = configuration.getDefaultSymbolCapacity();
         }
 
+        // A POSTING-family index on a composite table is a landmine: the ALTER is accepted and the
+        // table then SUSPENDS on the next merge commit, when sealPostingIndexForPartition refuses
+        // (that gate is cell-blind and cannot seal a routed composite's per-cell chains). Refuse at
+        // the statement instead, so the failure names the statement that caused it.
+        //
+        // Scope deliberately matches the FORMAT PARQUET precedent on this branch, which refuses at
+        // CREATE for ANY composite table rather than only a routed one: a dormant composite table
+        // accepting a POSTING index works only until a second cell routes, at which point it bricks.
+        // Refusing up front prevents planting the landmine rather than waiting for it.
+        if (gateTableToken != null && IndexType.isPosting(indexType)) {
+            try (TableReader compositeCheckReader = engine.getReader(gateTableToken)) {
+                if (compositeCheckReader.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
+                    throw SqlException.$(columnNamePosition,
+                                    "composite partitioning does not yet support a POSTING index [table=")
+                            .put(gateTableToken.getTableName()).put(']');
+                }
+            }
+        }
         if (addColumn != null) {
             addColumn.addColumnToList(
                     columnName,
@@ -1144,7 +1163,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             lexer.unparseLast();
                             // parse and validate the full column definition without adding to the operation
                             CharSequence existingColumnName = tableMetadata.getColumnName(columnIndex);
-                            int columnType = addColumnWithType(null, existingColumnName, columnNamePosition);
+                            int columnType = addColumnWithType(null, existingColumnName, columnNamePosition, null);
                             final int existingType = tableMetadata.getColumnType(columnIndex);
                             if (existingType != columnType) {
                                 throw SqlException
@@ -1187,7 +1206,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
             }
 
-            addColumnWithType(addColumn, columnName, columnNamePosition);
+            addColumnWithType(addColumn, columnName, columnNamePosition, tableToken);
             tok = SqlUtil.fetchNext(lexer);
 
             if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
@@ -1225,7 +1244,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tableMetadata.getTableId()
         );
         int existingColumnType = tableMetadata.getColumnType(columnIndex);
-        int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition);
+        int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition, tableToken);
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change column type");
