@@ -1403,16 +1403,26 @@ public class CompositeFuzzRunner {
  * the bare path is right. {@code cellKey >= size > 0} is a STALE SNAPSHOT -- the reader's _txn knows a
  * cell its registry has never heard of -- and silently rendering the bare path there is wrong.
  * <p>
- * Why it goes stale: {@code compositeDicts} is built in {@code openSymbolMaps()} and released in
- * {@code freeSymbolMapReaders()}, i.e. it rides the symbol-map/METADATA lifecycle. A new cell is
- * created by an ordinary DATA write, which bumps _txn and does not touch metadata -- so a reader can
- * reload _txn, see a brand-new cellKey, and still hold a registry from before it existed. That is
- * exactly why the victim is always the newest/highest cellKey (here the SKEWLATE cell inserted after
- * the generated traffic).
+ * <b>CORRECTION -- my first explanation of WHY was wrong.</b> I wrote that {@code compositeDicts}
+ * rides the symbol-map/METADATA lifecycle and therefore cannot see cells created by ordinary data
+ * writes. That is false, and checkable in two lines: {@code CellRegistry#size()} returns
+ * {@code reader.getSymbolCount()} LIVE (it caches nothing), and {@code reloadSymbolMapCounts()}
+ * already refreshes every composite interner reader -- the registry reader included -- on each _txn
+ * reload. So there is no missing reload.
  * <p>
- * Fix direction: refresh the cell registry when a _txn reload reveals a cellKey beyond it, and split
- * the dormant test ({@code size == 0}) from the staleness test rather than treating both as "dormant".
- * That is a change to reader reload semantics, so it wants doing deliberately.
+ * What IS established: at the moment of failure the reader took the bare path, so
+ * {@code cellKey >= registry.size()} genuinely held then. WHY it held is NOT established. One
+ * untested candidate worth a look: {@code reloadSymbolMapCounts()} recomputes the interner base as
+ * {@code txFile.getSymbolColumnCount() - internerCount}, so the slot it reads shifts whenever a
+ * symbol column is added or dropped -- if that base is ever resolved against a different _txn state
+ * than the metadata it was derived from, the registry would read some other column's count.
+ * <p>
+ * <b>METHOD WARNING, learned the hard way here.</b> Do NOT compare failure counts across runs with
+ * different PROBABILITIES. Every probability feeds the same {@code Rnd}, so changing one reshuffles
+ * the entire generated workload -- the runs are not the same traffic with a variable toggled, they
+ * are different traffic. Turning ADD COLUMN off "raised" failures from 35 to 75, which says nothing
+ * about ADD COLUMN. Count comparisons are only meaningful when the probabilities are IDENTICAL and
+ * only PRODUCT code changed (as in the 50 -> 35 measurement above).
  * <p>
  * <b>ELIMINATED -- do not re-chase:</b>
  * <ol>
