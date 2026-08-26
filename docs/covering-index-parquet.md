@@ -62,33 +62,34 @@ cost is not charged to the index form:
 | `avg()` | 1.14x |
 | covered gather (`sidecarRead`) | parity; INT faster |
 
-**Index-level reads.** Parquet against native over the posting suite's
-cardinality scenarios:
+**Index-level reads.** Parquet against native, each scenario measured in its own
+JVM -- running the whole suite in one leaves the million-key fixtures' memory
+pressure on everything measured after them, which understates the smaller ones by
+up to 2x:
 
 | Rows / distinct keys | point read | scan | range |
 | --- | --- | --- | --- |
-| 400k / 16 | **1.59x faster** | 3.8x | 3.7x |
-| 1.02M / 512 | **1.19x faster** | 3.9x | 4.9x |
-| 1M / 500 (zipf) | **1.97x faster** | 1.3x | 1.6x |
-| 2M / 2,000 | 1.05x | 4.2x | 7.8x |
-| 1M / 5,000 | 2.0x | 3.7x | 7.0x |
-| 1M / 10,000 | 5.0x | 1.08x | 6.8x |
-| 1.2M / 200,000 | 7.3x | **1.49x faster** | 8.5x |
-| 2M / 500,000 | 8.0x | **1.60x faster** | 8.7x |
-| 2M / 1,000,000 | 8.8x | **1.65x faster** | 8.7x |
+| 400k / 16 | **1.60x faster** | 1.66x | 2.80x |
+| 1.02M / 512 | **1.21x faster** | 2.05x | 3.22x |
+| 1M / 500 (zipf) | **1.15x faster** | **1.51x faster** | 1.08x |
+| 2M / 2,000 | **1.13x faster** | 2.08x | 5.60x |
+| 1M / 5,000 | 2.1x | 2.19x | 7.79x |
+| 1M / 10,000 | 5.3x | **1.30x faster** | 6.82x |
+| 1.2M / 200,000 | 7.7x | **1.70x faster** | 7.65x |
+| 2M / 500,000 | 8.3x | **1.87x faster** | 7.71x |
+| 2M / 1,000,000 | 8.4x | **1.73x faster** | 8.03x |
 
-Scans at high cardinality BEAT the native chain, and point reads beat it below a
-few thousand keys.
+Point reads beat the native chain up to a few thousand keys; scans beat it from
+ten thousand upwards.
 
-**Where it is still slower it is the ACCESS PATTERN, not the format.** Walking a
-partition's keys in order costs 34ns a key -- consecutive keys share a row group,
-whose values are read straight from the mapping. Jumping between random keys over
-a very high cardinality column costs about 1us, because each lands in a different
-row group and neither the `_im` directory nor the mapping has locality to offer;
-the native chain's bitpacked index is several times smaller and so keeps more of
-itself in cache. The benchmark that shows the widest gap, `indexPointRead`, is
-also the harshest version of this: 5,000 uniformly random keys against a
-freshly-opened reader every iteration.
+**What is left is RANDOM access, not the format.** Walking a partition's keys in
+order costs 34ns a key: consecutive keys share a row group, which is decoded once
+and served from. Jumping between random keys costs about 1us, because each lands
+in a different group and every step -- the `_im` key directory, the row-group
+directory, the mapping itself -- is a cache miss. The native chain's index is
+several times smaller, so more of it stays resident. Both benchmarks that remain
+slower are random-access ones: `indexPointRead` draws 5,000 uniformly random keys
+against a freshly opened reader each iteration, and `indexRangeRead` draws 500.
 
 Reproduce with `PostingIndexBenchmarkSuite`, whose `POSTING_PARQUET` and
 `covering_parquet` arms build the same fixture through `ParquetIndexSeal`, and
