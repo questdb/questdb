@@ -46,40 +46,76 @@ Source: `ParquetIndexSeal.java:107,115`.
 
 ## Read performance
 
-**The Parquet form is still slower to read than the native one**, and the gap
-widens with the number of distinct keys a query touches rather than with the
-rows it returns. Measured over the posting benchmark suite's own fixtures, both
-arms holding identical data so the index form is the only difference:
+**At parity with the native index across the SQL benchmarks, and ahead of it on
+low- and mid-cardinality point reads.** Measured against an OPTIMISED Rust build
+(`-P qdbr-release`; the default maven build is unoptimised and inflates every
+number here roughly 2x).
 
-| Benchmark | Fixture | Native | Parquet | Ratio |
-| --- | --- | --- | --- | --- |
-| `indexPointRead` | 400k rows, 16 keys | 1198 ops/s | 157 ops/s | 7.6x |
-| `indexPointRead` | 2M rows, 2000 keys | 240 ops/s | 5.0 ops/s | 48x |
-| `indexScanRead` | 400k rows, 16 keys | 3060 ops/s | 171 ops/s | 17.9x |
-| `indexRangeRead` | 400k rows, 16 keys | 6700 ops/s | 168 ops/s | 40x |
-| `sidecarRead` covered gather, 200 keys | 1M rows, 500 keys | 278 ops/s | 20 ops/s | 14x |
+Against the like-for-like arm -- the same partition converted to parquet,
+keeping a native index -- so the parquet DATA format's own cost is not charged
+to the index form:
+
+| Query | vs native index |
+| --- | --- |
+| covered `WHERE` | 1.09x faster |
+| `count()` | parity |
+| `sum()`, residual filter | parity |
+| `avg()` | 1.14x |
+| `SELECT DISTINCT` | parity |
+| `LATEST ON`, `IN` list, wide table, O3 | parity |
+
+Index-level reads over the posting benchmark suite's cardinality scenarios,
+parquet against native:
+
+| Rows / distinct keys | point read | scan |
+| --- | --- | --- |
+| 400k / 16 | **1.59x faster** | 3.9x |
+| 1M / 500 (zipf) | **1.84x faster** | 1.4x |
+| 1.02M / 512 | **1.10x faster** | 4.0x |
+| 2M / 2,000 | 1.16x | 4.3x |
+| 1M / 5,000 | 2.4x | 4.2x |
+| 1.2M / 200,000 | 8.9x | 2.0x |
+| 2M / 500,000 | 8.8x | 2.1x |
+| 2M / 1,000,000 | 9.5x | 2.5x |
+
+**Where it is still slower, and why.** A parquet read costs one decode call per
+key -- a JNI crossing, a thrift page header, a buffer -- against the native
+index's direct mapped read. That fixed cost disappears into the work when a key
+is wide, which is why low and mid cardinality are at or ahead of parity. It
+dominates when keys are narrow: at a million distinct keys a key holds two rows,
+and the call costs more than the rows it returns. Scans avoid it -- consecutive
+keys share a row group, which is decoded once and served from -- so they stay
+near 2x however narrow the keys get. Random point reads over very high
+cardinality cannot, and remain the one case that is materially slower.
 
 Reproduce with `PostingIndexBenchmarkSuite`, whose `POSTING_PARQUET` and
-`covering_parquet` arms build the same fixture through
-`ParquetIndexSeal`:
+`covering_parquet` arms build the same fixture through `ParquetIndexSeal`, and
+whose `sqlQuery` carries a `storage` arm separating the parquet data format's
+cost from the index form's:
 
 ```
+mvn -Plocal-client -Pbuild-rust-library -Pqdbr-release -pl benchmarks -am package -DskipTests
 java -cp benchmarks/target/benchmarks.jar org.questdb.PostingIndexBenchmarkSuite \
-    -Dquestdb.suite.bench=indexPointRead -Dquestdb.suite.bench.scenario=P400K \
+    -Dquestdb.suite.bench=indexPointRead -Dquestdb.suite.bench.scenario=P400K,S1 \
     -Dquestdb.suite.bench.format=POSTING,POSTING_PARQUET
 ```
 
-**Read cost is per key touched, not per row returned.** A key's postings live in
-one contiguous run of one row group; resolving and decoding that run costs
-roughly a fixed amount regardless of how many rows the key has. Queries over a
-few hot keys therefore pay little; queries sweeping thousands of distinct keys
-pay thousands of times that. Plan for the trade accordingly: the feature is
-aimed at partitions that travel, not at high-cardinality key sweeps.
+## Size
 
-So the feature trades read latency for portability: the index travels with the
-partition into cold storage, replication and S3, and reads cost more. Enable it
-where that trade is the one you want, not by default -- which is why the
-default is `native`.
+The index parquet is written **uncompressed** by default, which is what buys the
+read parity above -- an uncompressed page is never decompressed, so a lookup
+reads its key's rows rather than the page they sit in. It costs about 1.5x the
+size on a covered `DOUBLE`, up to ~2.5x on row-id-only data.
+
+For a feature whose purpose is that the index travels, that is a real trade. To
+take it back:
+
+```
+cairo.posting.index.parquet.compression.codec=LZ4_RAW
+```
+
+The data page size follows the codec, so no second change is needed. Expect
+roughly 2-2.3x slower reads for it.
 
 ## Covered column restrictions
 

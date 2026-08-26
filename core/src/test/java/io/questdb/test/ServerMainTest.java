@@ -703,8 +703,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.parallel.indexing.enabled\tQDB_CAIRO_PARALLEL_INDEXING_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.index.auto.include.timestamp\tQDB_CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.index.indexer.spill.bytes.max\tQDB_CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX\t268435456\tdefault\tfalse\tfalse\n" +
-                                    "cairo.posting.index.parquet.compression.codec\tQDB_CAIRO_POSTING_INDEX_PARQUET_COMPRESSION_CODEC\tLZ4_RAW\tdefault\tfalse\tfalse\n" +
-                                    "cairo.posting.index.parquet.data.page.size\tQDB_CAIRO_POSTING_INDEX_PARQUET_DATA_PAGE_SIZE\t16384\tdefault\tfalse\tfalse\n" +
+                                    "cairo.posting.index.parquet.compression.codec\tQDB_CAIRO_POSTING_INDEX_PARQUET_COMPRESSION_CODEC\tUNCOMPRESSED\tdefault\tfalse\tfalse\n" +
+                                    "cairo.posting.index.parquet.data.page.size\tQDB_CAIRO_POSTING_INDEX_PARQUET_DATA_PAGE_SIZE\t524288\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.index.parquet.max.keys.per.row.group\tQDB_CAIRO_POSTING_INDEX_PARQUET_MAX_KEYS_PER_ROW_GROUP\t16\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.index.parquet.partition.format\tQDB_CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT\tnative\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.index.row.id.encoding\tQDB_CAIRO_POSTING_INDEX_ROW_ID_ENCODING\tadaptive\tdefault\tfalse\tfalse\n" +

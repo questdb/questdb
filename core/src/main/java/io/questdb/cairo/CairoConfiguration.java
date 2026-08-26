@@ -702,15 +702,26 @@ public interface CairoConfiguration {
      * Compression codec for the covering index's own parquet, separate from
      * {@link #getPartitionEncoderParquetCompressionCodec()}.
      * <p>
-     * LZ4_RAW by default, matching the data partition. {@code UNCOMPRESSED}
-     * reads roughly 2.5x faster -- decompression is a large share of what a
-     * lookup does once page skipping works -- at about 3x the index parquet's
-     * size. Since the point of the parquet form is that the index TRAVELS to
-     * cold storage, that size is not obviously worth trading, so the faster
-     * setting is offered rather than chosen.
+     * <b>UNCOMPRESSED by default</b>, unlike the data partition's LZ4_RAW.
+     * <p>
+     * Decompression is what a covering-index lookup costs once the pruning
+     * works: a page is decompressed whole, and a lookup wants one key's run out
+     * of it. Uncompressed pages are never decompressed at all, which is the
+     * difference between reading a key's rows and reading the page they sit in.
+     * With it the index reaches parity with the native chain across the SQL
+     * benchmarks -- {@code avg()} 1.14x, {@code sum()} and a residual filter
+     * level, a covered {@code WHERE} slightly ahead -- and beats it on point
+     * reads at low and mid cardinality. Under LZ4_RAW the same queries run
+     * 2-2.3x slower.
+     * <p>
+     * The cost is size: the index parquet grows about 1.5x on a covered DOUBLE
+     * and up to ~2.5x on row-id-only data, which is a real trade for a feature
+     * whose purpose is that the index TRAVELS. Set this to {@code LZ4_RAW} to
+     * take it back; the data page size follows the codec, so no second change
+     * is needed.
      */
     default int getPostingIndexParquetCompressionCodec() {
-        return getPartitionEncoderParquetCompressionCodec();
+        return ParquetCompression.COMPRESSION_UNCOMPRESSED;
     }
 
     /**

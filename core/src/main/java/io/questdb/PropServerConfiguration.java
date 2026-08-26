@@ -1718,7 +1718,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 case "delta" -> PostingIndexUtils.ENCODING_DELTA;
                 default -> PostingIndexUtils.ENCODING_ADAPTIVE;
             };
-            this.postingIndexParquetCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_COMPRESSION_CODEC, "LZ4_RAW"));
+            this.postingIndexParquetCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_COMPRESSION_CODEC, "UNCOMPRESSED"));
             this.postingIndexParquetDataPageSize = getIntSize(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_DATA_PAGE_SIZE,
                     CairoConfiguration.defaultPostingIndexParquetDataPageSize(this.postingIndexParquetCompressionCodec));
             this.postingIndexParquetMaxKeysPerRowGroup = getInt(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_MAX_KEYS_PER_ROW_GROUP, 16);

@@ -45,7 +45,8 @@ import org.junit.Test;
 public class PostingIndexParquetConfigurationTest extends AbstractCairoTest {
 
     @Test
-    public void testParquetDataPageSizeDefaultsToSixteenKiB() throws Exception {
+    public void testParquetDataPageSizeFollowsACompressingCodec() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_COMPRESSION_CODEC, "LZ4_RAW");
         assertMemoryLeak(() -> Assert.assertEquals(16 * 1024, configuration.getPostingIndexParquetDataPageSize()));
     }
 
@@ -61,13 +62,11 @@ public class PostingIndexParquetConfigurationTest extends AbstractCairoTest {
         // left is walking a thrift header to find the right one, and large
         // pages minimise that. Pairing UNCOMPRESSED with the compressing
         // codec's 16 KiB costs most of the win, so the default follows.
-        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_COMPRESSION_CODEC, "UNCOMPRESSED");
         assertMemoryLeak(() -> Assert.assertEquals(512 * 1024, configuration.getPostingIndexParquetDataPageSize()));
     }
 
     @Test
     public void testParquetDataPageSizeExplicitOverridesTheCodecDefault() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_COMPRESSION_CODEC, "UNCOMPRESSED");
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_DATA_PAGE_SIZE, 8 * 1024);
         assertMemoryLeak(() -> Assert.assertEquals(8 * 1024, configuration.getPostingIndexParquetDataPageSize()));
     }
@@ -80,9 +79,9 @@ public class PostingIndexParquetConfigurationTest extends AbstractCairoTest {
 
     @Test
     public void testParquetCompressionCodecOverrideReachesWrappedConfiguration() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_COMPRESSION_CODEC, "UNCOMPRESSED");
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_COMPRESSION_CODEC, "LZ4_RAW");
         assertMemoryLeak(() -> Assert.assertEquals(
-                ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                ParquetCompression.COMPRESSION_LZ4_RAW,
                 configuration.getPostingIndexParquetCompressionCodec()
         ));
     }

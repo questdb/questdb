@@ -1910,6 +1910,21 @@ public class PostingIndexBenchmarkSuite {
             tmpDir = Files.createTempDirectory("suite-sql");
             final boolean parquetIndex = STORAGE_PARQUET_INDEX.equals(storage);
             CairoConfiguration config = new DefaultCairoConfiguration(tmpDir.toString()) {
+                // The same sweep knobs benchConfig honours. Without them the SQL
+                // arm silently ran the default codec while the index benchmarks
+                // ran whatever -Dquestdb.idx.codec asked for, and the two sets of
+                // numbers were not comparable.
+                @Override
+                public int getPostingIndexParquetCompressionCodec() {
+                    return Integer.getInteger("questdb.idx.codec", super.getPostingIndexParquetCompressionCodec());
+                }
+
+                @Override
+                public int getPostingIndexParquetDataPageSize() {
+                    final Integer explicit = Integer.getInteger("questdb.idx.page");
+                    return explicit != null ? explicit : super.getPostingIndexParquetDataPageSize();
+                }
+
                 @Override
                 public byte getPostingIndexParquetPartitionFormat() {
                     return parquetIndex
