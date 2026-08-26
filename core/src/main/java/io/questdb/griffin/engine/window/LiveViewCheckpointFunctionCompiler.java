@@ -51,6 +51,7 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
@@ -73,6 +74,10 @@ import org.jetbrains.annotations.Nullable;
  */
 public final class LiveViewCheckpointFunctionCompiler {
     private static final String STATE_PAGE_CODEC_FAMILY = "live-view-state-page";
+    // The UTC offset desugarDailyAnchor always emits beside the zone name. The zone
+    // carries the whole shift, so any other value is a hand-written anchor this does not
+    // describe rather than one it can fold into the zone's own grid.
+    private static final String UTC_ZERO_OFFSET = "+00:00";
 
     private LiveViewCheckpointFunctionCompiler() {
     }
@@ -96,10 +101,18 @@ public final class LiveViewCheckpointFunctionCompiler {
      *     carries as a cast expression, so this reads it from the definition's own
      *     {@code anchorDailyTimeUs} instead of folding the node, which is also why the
      *     three-argument form is accepted only for a DAILY anchor.</li>
+     *     <li>{@code timestamp_floor_utc('1d', ts, <origin>, '+00:00', '<zone>')} - what
+     *     {@code ANCHOR DAILY} with an IANA time zone desugars to. The buckets follow
+     *     the zone's civil day, so they are 23 or 25 hours wide across a DST transition
+     *     rather than a fixed stride, and
+     *     {@link LiveViewCheckpointAnchorPlan#ofTimeZone} computes them from the zone's
+     *     transition table. The origin and the DAILY-only restriction are read the same
+     *     way the three-argument form reads them; the offset argument is checked rather
+     *     than assumed, since only {@code desugarDailyAnchor}'s own output is known to
+     *     carry {@code '+00:00'}.</li>
      * </ul>
-     * Everything else declines, including the time-zone-aware daily anchor: it desugars
-     * to {@code timestamp_floor_utc}, whose buckets change width at a DST transition and
-     * so have no closed-form end. Declining costs a view only the localized repair path.
+     * Everything else declines, and so does a zone name this cannot resolve. Declining
+     * costs a view only the localized repair path.
      * <p>
      * The segment arithmetic is only half the contract. It bounds a repair because the
      * anchor resets state at every boundary, so the plan is withheld unless
@@ -132,20 +145,26 @@ public final class LiveViewCheckpointFunctionCompiler {
         final int timestampIndex = projectedMetadata.getTimestampIndex();
         if (timestampIndex == -1 || anchorNode == null || anchorNode.type != ExpressionNode.FUNCTION
                 || anchorNode.token == null
-                || !Chars.equalsIgnoreCase(anchorNode.token, TimestampFloorFunctionFactory.NAME)
                 || !isAnchorSegmentLocal(windowFunctions, anchorableWindowFunctions)) {
+            return null;
+        }
+        final boolean isZonedFloor =
+                Chars.equalsIgnoreCase(anchorNode.token, TimestampFloorFromOffsetUtcFunctionFactory.NAME);
+        if (!isZonedFloor && !Chars.equalsIgnoreCase(anchorNode.token, TimestampFloorFunctionFactory.NAME)) {
             return null;
         }
         final ExpressionNode unitNode;
         final ExpressionNode timestampNode;
         final long segmentOffset;
+        final CharSequence timeZone;
         final int timestampType = projectedMetadata.getTimestampType();
-        if (anchorNode.paramCount == 2) {
+        if (!isZonedFloor && anchorNode.paramCount == 2) {
             // Two children live in lhs/rhs, in the order they were written.
             unitNode = anchorNode.lhs;
             timestampNode = anchorNode.rhs;
             segmentOffset = 0;
-        } else if (anchorNode.paramCount == 3 && anchorNode.args.size() == 3
+            timeZone = null;
+        } else if (!isZonedFloor && anchorNode.paramCount == 3 && anchorNode.args.size() == 3
                 && spec.anchorKind == WindowExpression.ANCHOR_KIND_DAILY) {
             // Three or more children live in args, inverted, so the first written
             // argument is the last entry.
@@ -154,8 +173,25 @@ public final class LiveViewCheckpointFunctionCompiler {
             if (!ColumnType.isTimestamp(timestampType)) {
                 return null;
             }
-            segmentOffset = ColumnType.getTimestampDriver(timestampType)
-                    .from(spec.anchorDailyTimeUs, ColumnType.TIMESTAMP_MICRO);
+            segmentOffset = dailyAnchorOrigin(spec, timestampType);
+            timeZone = null;
+        } else if (isZonedFloor && anchorNode.paramCount == 5 && anchorNode.args.size() == 5
+                && spec.anchorKind == WindowExpression.ANCHOR_KIND_DAILY
+                && spec.anchorDailyTimeZone != null) {
+            // The same inverted args, two entries deeper: unit, ts, origin, offset, zone.
+            unitNode = anchorNode.args.getQuick(4);
+            timestampNode = anchorNode.args.getQuick(3);
+            // The zone the plan resolves has to be the zone the expression names, and the
+            // offset beside it has to be the zero the desugaring emits - a hand-written
+            // ANCHOR EXPRESSION could carry a different one, and a plan that ignored it
+            // would describe a grid the runtime does not use.
+            if (!ColumnType.isTimestamp(timestampType)
+                    || !isQuotedConstant(anchorNode.args.getQuick(1), UTC_ZERO_OFFSET)
+                    || !isQuotedConstant(anchorNode.args.getQuick(0), spec.anchorDailyTimeZone)) {
+                return null;
+            }
+            segmentOffset = dailyAnchorOrigin(spec, timestampType);
+            timeZone = spec.anchorDailyTimeZone;
         } else {
             return null;
         }
@@ -164,7 +200,7 @@ public final class LiveViewCheckpointFunctionCompiler {
                 || SqlUtil.getColumnIndexQuiet(projectedMetadata, timestampNode.token) != timestampIndex) {
             return null;
         }
-        return segmentPlan(unitNode, segmentOffset, timestampType);
+        return segmentPlan(unitNode, segmentOffset, timestampType, timeZone);
     }
 
     public static void configure(
@@ -1516,11 +1552,15 @@ public final class LiveViewCheckpointFunctionCompiler {
      * optional leading count that defaults to one. A non-constant, unquoted, or
      * unparseable token declines rather than throws - an anchor this cannot read is an
      * anchor with no fixed segment, which is an answer rather than a compile error.
+     * <p>
+     * A non-null {@code timeZone} builds the same period on that zone's civil grid
+     * instead of on the epoch-aligned one.
      */
     private static LiveViewCheckpointAnchorPlan segmentPlan(
             ExpressionNode unitNode,
             long segmentOffset,
-            int timestampType
+            int timestampType,
+            @Nullable CharSequence timeZone
     ) {
         if (unitNode == null || unitNode.type != ExpressionNode.CONSTANT || unitNode.token == null) {
             return null;
@@ -1540,7 +1580,35 @@ public final class LiveViewCheckpointFunctionCompiler {
                 return null;
             }
         }
-        return LiveViewCheckpointAnchorPlan.of(unit, stride, segmentOffset, timestampType);
+        return timeZone == null
+                ? LiveViewCheckpointAnchorPlan.of(unit, stride, segmentOffset, timestampType)
+                : LiveViewCheckpointAnchorPlan.ofTimeZone(unit, stride, segmentOffset, timestampType, timeZone);
+    }
+
+    /**
+     * The origin a DAILY anchor's buckets align to, in the designated timestamp's own
+     * units. The desugared expression carries it as a cast expression rather than as a
+     * foldable constant, so both DAILY forms read it off the definition's captured wall
+     * time instead - which is also why neither form is accepted for a hand-written
+     * {@code ANCHOR EXPRESSION}, where there is no captured wall time to read.
+     */
+    private static long dailyAnchorOrigin(LiveViewDefinition.LvAnchorSpec spec, int timestampType) {
+        return ColumnType.getTimestampDriver(timestampType).from(spec.anchorDailyTimeUs, ColumnType.TIMESTAMP_MICRO);
+    }
+
+    /**
+     * Whether {@code node} is the quoted string literal {@code expected} spells. The
+     * offset and time zone of a time-zone-aware daily anchor reach this as constants of
+     * that shape; a bind variable, an expression, or a different literal is not one, and
+     * an anchor this cannot read whole is an anchor with no fixed segment.
+     */
+    private static boolean isQuotedConstant(@Nullable ExpressionNode node, @NotNull CharSequence expected) {
+        if (node == null || node.type != ExpressionNode.CONSTANT || node.token == null) {
+            return false;
+        }
+        final CharSequence token = node.token;
+        return Chars.isQuoted(token)
+                && Chars.equals(token, 1, token.length() - 1, expected, 0, expected.length());
     }
 
     private static void validateRangeOrder(

@@ -116,13 +116,29 @@ public class LiveViewCheckpointAnchorPlanTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testAnchorDailyWithTimeZoneHasNoPlan() throws Exception {
-        // A tz-aware daily anchor desugars to timestamp_floor_utc, whose buckets change
-        // width across a DST transition. There is no closed-form end, so the anchor
-        // declines the plan rather than claiming a boundary it cannot honour.
+    public void testAnchorDailyWithTimeZonePlansTheZonesCivilDay() throws Exception {
+        // A tz-aware daily anchor desugars to timestamp_floor_utc, whose buckets follow the
+        // zone's civil day rather than a fixed stride. The plan describes them from the
+        // zone's own transition table; LiveViewCheckpointTimeZoneAnchorPlanTest is where the
+        // DST widths and the plan-versus-runtime agreement are pinned.
         assertMemoryLeak(() -> {
-            createBaseAndView("ANCHOR DAILY '00:00' 'Europe/London'");
-            Assert.assertNull(refreshAndGetPlan());
+            createBaseAndView("ANCHOR DAILY '00:00' 'Europe/Berlin'");
+            final LiveViewCheckpointAnchorPlan plan = refreshAndGetPlan();
+            Assert.assertNotNull("a tz-aware DAILY anchor must carry a fixed segment too", plan);
+            Assert.assertEquals('d', plan.getUnit());
+            Assert.assertEquals(1, plan.getStride());
+            Assert.assertEquals(0, plan.getSegmentOffset());
+
+            // Berlin runs two hours ahead of UTC in August, so its civil day starts at
+            // 22:00Z the evening before.
+            final long dayStart = ts("2026-07-31T22:00:00.000000Z");
+            final long nextDay = ts("2026-08-01T22:00:00.000000Z");
+            Assert.assertEquals(dayStart, plan.getSegmentStart(dayStart));
+            Assert.assertEquals(dayStart, plan.getSegmentStart(nextDay - 1));
+            Assert.assertEquals(nextDay, plan.getSegmentEndExclusive(dayStart));
+            Assert.assertEquals(nextDay, plan.getSegmentEndExclusive(nextDay - 1));
+            Assert.assertEquals(nextDay, plan.getSegmentStart(nextDay));
+
             execute("DROP LIVE VIEW lv");
         });
     }

@@ -83,6 +83,13 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
     // The origin of the anchor segment the trickle case corrects into, spelled as its
     // view's START FROM boundary.
     private static final String SEGMENT_ORIGIN = "2026-01-04T12:00:00.000000Z";
+    // A DST-observing zone standing in for the customer's own, which this fixture does not
+    // name. It runs an hour ahead of UTC in January, so the civil day the fixture's rows
+    // fall in opens at 23:00Z the evening before - which is the same one segment's worth of
+    // rows the no-zone shape starts from, under a boundary the zone rather than the clause
+    // decides.
+    private static final String ANCHOR_ZONE = "Europe/Berlin";
+    private static final String ZONED_SEGMENT_ORIGIN = "2026-01-03T23:00:00.000000Z";
     // The checkpoint cadence the fixture runs at, so a few-hundred-row view seals the
     // roots a million-row cadence would not. It is also what bounds how far below a
     // correction the newest usable anchor can sit.
@@ -90,6 +97,11 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
     // Corrections the trickle case makes, each one minute deeper under the batch head.
     private static final int TRICKLE_PASSES = 5;
     private static final String VIEW = "payments_view";
+    // The anchor the view under test carries, as createCustomerShape was given it. The
+    // from-base recompute has to bucket on the same one, and a zone changes which floor
+    // function that is.
+    private String anchorTime = ANCHOR_TIME;
+    private String anchorZone;
     // The view's START FROM boundary as the DDL spells it, or null when the view starts
     // from the beginning.
     private String startFrom;
@@ -373,52 +385,84 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testTheTimeZoneAnchoredViewDeclinesTheRoute() throws Exception {
-        // A daily anchor with a DST-observing zone such as Europe/Berlin desugars to
-        // timestamp_floor_utc, whose buckets change width at a DST transition and so have no
-        // closed-form end. LiveViewCheckpointFunctionCompiler.anchorPlan currently declines
-        // that shape outright. There is then no segmentation to decompose against: no closed
-        // segment to scope, no open segment to resume into, and none of this route.
+    public void testTheTimeZoneAnchoredViewArmsTheSameGuards() throws Exception {
+        // The shape the reported incident actually ran, and the one this fixture's own
+        // no-zone cases stand in for: a daily anchor at a civil midnight rather than at a
+        // UTC one. It desugars to timestamp_floor_utc, whose buckets are 23 or 25 hours wide
+        // across a DST transition and so are not fixed-stride arithmetic - but they are
+        // still a function of the designated timestamp alone, and the plan reads them off
+        // the zone's own transition table.
         //
-        // This test guards the current decline-by-shape behavior; it does not depend on whether
-        // the sampled timestamp falls inside daylight-saving time.
+        // Every guard the no-zone shape arms therefore arms here too, at the same counters:
+        // an anchor plan, an available segment scope, and the open segment's keyed resume
+        // taken once. What used to happen instead was the whole route declining by shape,
+        // on every repair, for the life of the view.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 16);
         assertMemoryLeak(() -> {
-            createCustomerShape(true, "00:00", "Europe/Berlin");
+            createCustomerShape(true, "00:00", ANCHOR_ZONE);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
 
                 final LiveViewInstance instance = viewInstance();
-                Assert.assertNull(
-                        "a daily anchor with a DST-observing zone must yield no checkpoint anchor plan",
+                Assert.assertNotNull(
+                        "a daily anchor with a DST-observing zone must yield a checkpoint anchor plan",
                         instance.getAnchorWindow().getCheckpointAnchorPlan()
                 );
-                // The gate an operator reads is "incomplete dependency" rather than "no
-                // anchor plan": the anchored functions declare an anchored dependency, and
-                // with no anchor plan to satisfy it the dependency check refuses first.
                 Assert.assertEquals(
-                        LiveViewSegmentRepairEnvelope.GATE_INCOMPLETE_DEPENDENCY,
+                        "checkpoint_segment_repair_gate must read available",
+                        LiveViewSegmentRepairEnvelope.GATE_AVAILABLE,
                         instance.getSegmentScopeGate()
                 );
 
                 driveSegmentInOrder(job, 4);
                 correct(job, 4, FIRST_HOUR, 1);
 
-                Assert.assertEquals(0, job.openSegmentKeyedPricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
-                Assert.assertEquals(0, job.segmentRepairCountForTest());
-                // The view still refreshes and still holds one output row per base row: the
-                // decline costs it the localized repair path and nothing else.
+                Assert.assertEquals(1, job.openSegmentKeyedPricedCountForTest());
+                Assert.assertEquals(1, job.openSegmentKeyedCheaperCountForTest());
+                Assert.assertEquals(1, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals(1, job.openSegmentSparseResumeCountForTest());
+                Assert.assertNotEquals(
+                        "the dependency the zone anchor declares is covered now",
+                        LiveViewCheckpointRepairPlan.DENIAL_INCOMPLETE_DEPENDENCY,
+                        instance.getCheckpointRepairLastDenialReason()
+                );
+                Assert.assertNotEquals(
+                        LiveViewCheckpointRepairPlan.DISPOSITION_BOUNDARY_REBUILD,
+                        instance.getCheckpointRepairLastDisposition()
+                );
                 assertNoRefreshFaults(VIEW);
                 Assert.assertEquals(rowCount(BASE), rowCount(VIEW));
+                assertViewMatchesRecompute();
             }
         });
     }
 
     @Test
     public void testATrickleOfLateRowsRepairsTheCorrectionDepthRatherThanTheView() throws Exception {
-        // The reported symptom, end to end: an anchored view under a steady trickle of
-        // rows a minute or two late, with no sealed root below any of them.
+        assertATrickleRepairsTheCorrectionDepth(ANCHOR_TIME, null, SEGMENT_ORIGIN);
+    }
+
+    @Test
+    public void testATimeZoneAnchoredTrickleRepairsTheCorrectionDepthToo() throws Exception {
+        // The same symptom under the anchor the reported incident actually carried: a civil
+        // midnight in a named zone rather than a UTC wall time. This shape used to have no
+        // segment plan at all, so it never reached the trickle behaviour this pair of cases
+        // measures - every repair, on every day, was the from-boundary rebuild. It reaches
+        // it now, and reaches it at the same bounds: the scan is the tail above the newest
+        // root rather than the view, and the ladder survives each pass.
+        assertATrickleRepairsTheCorrectionDepth("00:00", ANCHOR_ZONE, ZONED_SEGMENT_ORIGIN);
+    }
+
+    /**
+     * The reported symptom, end to end, over whichever daily anchor the caller names.
+     */
+    private void assertATrickleRepairsTheCorrectionDepth(
+            String anchorTime,
+            String anchorZone,
+            String segmentOrigin
+    ) throws Exception {
+        // An anchored view under a steady trickle of rows a minute or two late, with no
+        // sealed root below any of them.
         //
         // The anchor segment is a day wide, so the convergence boundary an anchored repair
         // proves sits at TOMORROW's segment end - which the runtime frontier cannot reach
@@ -449,7 +493,7 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
             // START FROM the segment origin, which is where the reported view sits: its
             // first anchor segment, so the segment start and the view boundary coincide
             // and the scan floor has nowhere to rise to yet.
-            createCustomerShape(true, ANCHOR_TIME, null, SEGMENT_ORIGIN);
+            createCustomerShape(true, anchorTime, anchorZone, segmentOrigin);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 // One hour short of the segment's start, so the bootstrap correction below
@@ -584,8 +628,10 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
      * view's own window carries.
      */
     private void assertViewMatchesRecompute() throws Exception {
-        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T" + ANCHOR_TIME
-                + ":00.000000Z'::timestamp)";
+        final String origin = "'1970-01-01T" + anchorTime + ":00.000000Z'::timestamp";
+        final String bucket = anchorZone == null
+                ? "timestamp_floor('1d', created_at, " + origin + ")"
+                : "timestamp_floor_utc('1d', created_at, " + origin + ", '+00:00', '" + anchorZone + "')";
         final String recompute = "select created_at, account_id, "
                 + "sum(amount) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_sum, "
@@ -634,6 +680,8 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
     }
 
     private void createCustomerShape(boolean isKeyIndexed, String anchorTime, String anchorZone, String startFrom) throws Exception {
+        this.anchorTime = anchorTime;
+        this.anchorZone = anchorZone;
         this.startFrom = startFrom;
         execute("create table " + BASE + " ("
                 + "created_at timestamp, "
