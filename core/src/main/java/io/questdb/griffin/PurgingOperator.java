@@ -73,9 +73,15 @@ public final class PurgingOperator {
     }
 
     /**
-     * Day-level overload for callers whose operation is still GATED for composite tables
-     * ({@code CONVERT PARTITION}, {@code DROP INDEX}, {@code UPDATE}, and the two table-root entries).
-     * Passing no cell is correct for them precisely because a composite table cannot reach them.
+     * Day-level overload. Correct for a caller that genuinely has no cell to name: {@code UPDATE}
+     * (refused for composite by design), the two table-root entries, and the deliberate once-per-day
+     * sweep that clears the stray day-root file a composite table carries alongside its cells.
+     * <p>
+     * The list this doc used to give -- "{@code CONVERT PARTITION}, {@code DROP INDEX}, {@code UPDATE}"
+     * -- went stale as those gates lifted, which is exactly the trap it warns about. Both are now
+     * supported for composite and both pass a cell segment: see {@code ConvertOperatorImpl} and
+     * {@code DropIndexOperator}. Verified 2026-08-26 by re-checking every caller rather than trusting
+     * this list.
      * <p>
      * <b>If you are enabling one of those operations for composite, do not call this.</b> A day-level
      * purge on a composite table silently leaves every cell's file on disk -- measured for

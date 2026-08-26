@@ -58,7 +58,8 @@ import io.questdb.std.ObjList;
  * against arbitrary frames simultaneously with zero row copies: {@link #recordA} (the OUTPUT record the
  * consumer reads, bound to the winning cell's current row) and {@link #probeRecord} (used only to read each
  * cell's candidate designated timestamp while advancing it). Parquet frames pin at most a couple of decode
- * slots, so composite-parquet is not supported here (and is gated on the write/convert side); a non-native
+ * slots. Composite parquet IS supported here as of 2026-08-26: a parquet cell arrives through the
+ * same page-frame memory abstraction, which materialises its row group. A non-native
  * frame raises a clear {@link CairoException}.
  * <p>
  * A day group with a single cell (a never-routed composite, or a day that happens to have one dimension

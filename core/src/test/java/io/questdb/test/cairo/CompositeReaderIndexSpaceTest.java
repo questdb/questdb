@@ -58,7 +58,6 @@ public class CompositeReaderIndexSpaceTest extends AbstractCairoTest {
      * unreachable condition is not.
      */
     @Test
-    @Ignore("blocked by TableWriter#removeColumn's isRoutedComposite() gate; un-ignore when sub-project 2 lifts it")
     public void testHivePrefixSurvivesDropOfLowerIndexColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, foo symbol, exch symbol, px double)"
