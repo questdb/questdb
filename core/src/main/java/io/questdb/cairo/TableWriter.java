@@ -18734,14 +18734,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // setPathForNativePartition(..., cellSegment), and ColumnVersionReader#packColIndex for the _cv
         // lookups (which carry cellKey in the columnIndex hi-32 bits rather than in the timestamp).
         //
-        // FOUR cellKey-blind lookups in this body have to become per-cell -- counted, because a first
-        // pass of this note said "two" and undercounted the last two:
+        // The cellKey-blind LOOKUPS are the easy half. Counted honestly, because this note has now
+        // understated the work twice -- it first said "two", then "four":
         //   1. txWriter.getPartitionNameTxnByPartitionTimestamp  (the dropped-partition wrapper)
         //   2. txWriter.isPartitionParquetByPartitionTimestamp
-        //   3. columnVersionWriter.getColumnTop(partitionTimestamp, colIdx)
-        //   4. columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx)
-        // plus this method's setStateForTimestamp + bare 5-arg path build, which the 6-arg overload
-        // already covers. 3 and 4 need packColIndex(cellKey, colIdx), NOT a different timestamp.
+        //   3. txWriter.getPartitionRowCountByTimestamp
+        //   4. columnVersionWriter.getColumnTop(partitionTimestamp, colIdx)
+        //   5. columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx)
+        //   6. mapCoveringColumnsForSeal(coveringCols, partitionTimestamp, ...)
+        // plus setStateForTimestamp + the bare 5-arg path build, which the 6-arg overload covers.
+        // 4 and 5 need packColIndex(cellKey, colIdx), NOT a different timestamp.
+        //
+        // AND THEN THE ACTUAL COST, which is structural and is why this is still not a small task:
+        // the seal feeds the indexer getPrimaryColumn(colIdx), i.e. columns.getQuick(...) -- the
+        // WRITER'S ACTIVE-TAIL column memory. finishO3Commit documents (see its `composite` branch)
+        // that for a real, routed composite table this.columns / lastOpenPartitionTs / the indexers
+        // are NEVER a valid target: processO3BlockComposite never touches this.columns, so the "last
+        // partition" they describe is the bare, non-cell day directory, and that branch deliberately
+        // skips reopening them. Sizing or reading them for a routed composite table is the same
+        // mistake that corrupted the native heap there ("malloc(): corrupted top size").
+        //
+        // So a cell-aware seal cannot simply be handed a cellKey: it has to obtain each cell's column
+        // data ITSELF (open the cell's own files, as every other composite dispatch does) instead of
+        // borrowing the writer's active tail. That is a restructure of how this method sources column
+        // memory, not a parameter change -- do it as its own piece of work, test-first.
         //
         // Treat that as a task worth doing, NOT as a blocked one -- but do it test-first: this gate
         // guards a stale/incomplete rowid chain, i.e. silently wrong answers from an index, which is
