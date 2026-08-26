@@ -110,14 +110,21 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long o3TimestampMin,
             O3Basket o3Basket,
             long newPartitionSize,
-            long oldPartitionSize
+            long oldPartitionSize,
+            // Composite: the CELL whose parquet file is being updated. The caller
+            // (o3ProcessPartitionSafe) already resolved both; before they were threaded
+            // here every path and lookup below answered for the DAY container / cellKey 0,
+            // which is why an O3 write into a converted cell was refused outright rather
+            // than performed. null / 0 for a plain table, i.e. unchanged behaviour.
+            @Nullable CharSequence cellSegment,
+            int cellKey
     ) {
         // Number of rows to insert from the O3 segment into this partition.
         final TableRecordMetadata tableWriterMetadata = tableWriter.getMetadata();
         Path path = Path.getThreadLocal(pathToTable);
-        setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+        setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn, cellSegment);
 
-        final int partitionIndex = tableWriter.getPartitionIndexByTimestamp(partitionTimestamp);
+        final int partitionIndex = tableWriter.getPartitionIndexByTimestamp(partitionTimestamp, cellKey);
         final long parquetFileSize = tableWriter.getPartitionParquetFileSize(partitionIndex);
         long duplicateCount = 0;
         long newParquetSize;
@@ -292,7 +299,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // Rewrite mode: write to a new partition directory named by txn.
                         // The old directory (srcNameTxn) is left intact and queued for removal on commit.
                         Path newPath = Path.getThreadLocal2(pathToTable);
-                        setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn);
+                        setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn, cellSegment);
                         ff.mkdirs(newPath.slash(), cairoConfiguration.getMkDirMode());
                         newPath.concat(PARQUET_PARTITION_NAME).$();
                         writerFd = TableUtils.openRW(ff, newPath.$(), LOG, opts);
@@ -596,7 +603,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // In rewrite mode, the new file is in a txn-named directory.
                 final long txnName = isRewrite ? txn : srcNameTxn;
                 path.of(pathToTable);
-                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txnName);
+                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txnName, cellSegment);
                 updateParquetIndexes(
                         partitionBy,
                         partitionTimestamp,
@@ -630,7 +637,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (isRewrite) {
                     // Rewrite mode: original is intact. Remove the new directory.
                     Path newPath = Path.getThreadLocal2(pathToTable);
-                    setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn);
+                    setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn, cellSegment);
                     if (!ff.rmdir(newPath.slash())) {
                         LOG.error().$("could not remove new partition directory after failed rewrite [path=").$(newPath).I$();
                     }
@@ -653,7 +660,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Update mode: truncate the parquet data file back to its
                 // pre-merge size. _pm is never truncated (see below).
                 path.of(pathToTable);
-                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn, cellSegment);
                 try {
                     // Swallow any error (openRW throws on an FS fault): o3BumpErrorCount
                     // below must still run to suspend the table. A failed truncate leaves
@@ -682,7 +689,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // Truncating would pull pages from under a concurrent reader's
                     // mmap and SIGBUS the JVM -- the hazard this change removes.
                     path.of(pathToTable);
-                    setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+                    setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn, cellSegment);
                     try {
                         // Make the leftover _pm tail durable, but swallow any error:
                         // o3BumpErrorCount below must still run to suspend the table.
@@ -713,9 +720,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
             path.of(pathToTable);
             if (isRewrite) {
-                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txn);
+                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txn, cellSegment);
             } else {
-                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn, cellSegment);
             }
             final long fileSize = Files.length(path.$());
             Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
@@ -812,7 +819,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     o3TimestampMin,
                     o3Basket,
                     newPartitionSize,
-                    oldPartitionSize
+                    oldPartitionSize,
+                    cellSegment,
+                    cellKey
             );
             return;
         }

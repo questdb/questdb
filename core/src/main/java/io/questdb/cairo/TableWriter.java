@@ -3167,6 +3167,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getPartitionIndex(timestamp);
     }
 
+    /**
+     * Cell-scoped {@link #getPartitionIndexByTimestamp(long)}. On a composite table several cells share
+     * one partition timestamp, so resolving by timestamp alone answers for cellKey 0; an attached entry
+     * IS a cell, so resolving by (timestamp, cellKey) is exact. For a plain table cellKey is 0 and the
+     * two agree.
+     */
+    public int getPartitionIndexByTimestamp(long timestamp, int cellKey) {
+        final int rawIndex = txWriter.findAttachedPartitionRawIndexBy(timestamp, cellKey);
+        return rawIndex < 0 ? -1 : rawIndex / txWriter.getLongsPerAttachedPartition();
+    }
+
     public long getPartitionNameTxn(int partitionIndex) {
         return txWriter.getPartitionNameTxn(partitionIndex);
     }
@@ -13924,6 +13935,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ? txWriter.isPartitionParquetByRawIndex(partitionIndexRaw)
                 : metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
         if (isParquet) {
+            // THE COLD-STORAGE BLOCKER. CONVERT PARTITION TO PARQUET already works per cell, so a
+            // composite table CAN hold parquet cells; this refusal is what the next late-arriving row
+            // then hits. Measured: plain count=4/not-suspended vs composite count=3/SUSPENDED, with the
+            // row lost. Pinned by CompositeParquetStateTest.
+            //
+            // ATTEMPTED AND REVERTED 2026-08-26. O3PartitionJob#processParquetPartition was made
+            // cell-aware (cellSegment + cellKey threaded through all nine bare path builds and the
+            // cellKey-0 getPartitionIndexByTimestamp) and this gate narrowed to the brand-new-partition
+            // case. That is necessary but NOT SUFFICIENT: the write then runs
+            //     o3 composite cell task [cellKey=0, srcDataMax=1, newSize=2]
+            // and produces a partition update carrying
+            //     isParquet=true, parquetFileSize=-1, timestampMin=1970-01-01
+            // after which the commit suspends the table with an EMPTY error message -- strictly worse
+            // than this refusal, which is why the narrowing was reverted and the threading kept.
+            //
+            // What remains: the partition-update SINK does not carry a per-cell parquet file size, and
+            // the composite sink-consumption path (o3ConsumePartitionUpdateSink, which already keeps
+            // o3PartitionUpdateSinkCellKeys) does not apply one. That is a multi-site migration of the
+            // parquet commit bookkeeping, not more path threading.
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support FORMAT PARQUET [table=")
                     .put(tableToken.getTableName()).put(']');
