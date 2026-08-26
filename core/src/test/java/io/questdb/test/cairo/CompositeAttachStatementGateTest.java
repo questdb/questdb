@@ -125,27 +125,21 @@ public class CompositeAttachStatementGateTest extends AbstractCairoTest {
             // holds -- the gate does its actual job.
             TestUtils.assertContains(sink, "3");
 
-            // KNOWN GAP, deliberately NOT asserted either way (2026-08-26).
+            // SUSPENSION IS DELIBERATE HERE -- do not "fix" it. It is pinned by
+            // CompositeDetachAttachTest#testAttachFromAnotherTableIsRefused, which asserts
+            // suspended=true together with the exact error text.
             //
-            // MEASURED here: refusedAtStatement=false, suspended=TRUE. The statement returns OK and the
-            // table suspends -- the same invariant-6 shape as the UPDATE gate fixed in 96f7279084.
-            //
-            // The control that makes this a defect rather than "how WAL ALTER works": every SIBLING
-            // attach validation in TableWriter#attachPartition RETURNS an AttachDetachStatus and is
-            // TOLERATED without suspending (measured: ATTACH_ERR_PARTITION_EXISTS logs
-            // "tolerated WAL command failure" and leaves the table live). Only the composite
-            // cross-table check throws a critical CairoException, and only it suspends.
-            //
-            // Not asserted because the remedy is a genuine choice, not a mechanical fix:
-            //   (a) return a new AttachDetachStatus (e.g. ATTACH_ERR_FOREIGN_TABLE) so it is tolerated
-            //       like its siblings -- consistent and small, but the user still gets no statement
-            //       error, so invariant 6 is still not met; or
-            //   (b) inspect the artifact at COMPILE time so the statement itself fails -- true
-            //       invariant 6, but it puts filesystem artifact inspection in the SQL compiler.
-            // Asserting today's behaviour would lock the bug in; asserting the fixed behaviour would
-            // leave a red test. So the guarantee above is locked and the gap is documented.
-            System.out.println("=== XATTACH known gap: refusedAtStatement=" + refusedAtStatement
-                    + " suspended=" + suspended);
+            // Recorded because the opposite conclusion is very inviting: every SIBLING validation in
+            // TableWriter#attachPartition returns an AttachDetachStatus and is tolerated
+            // (ATTACH_ERR_PARTITION_EXISTS logs "tolerated WAL command failure" and leaves the table
+            // live), so this check throwing looks exactly like a local inconsistency. It is not. A
+            // foreign artifact is a condition an operator must not be able to overlook, and a tolerated
+            // failure is easy to overlook; suspending forces attention. Converting it to a status was
+            // attempted and reverted -- the pinning test above is what caught it.
+            Assert.assertTrue("cross-table attach is deliberately fatal; see"
+                    + " CompositeDetachAttachTest#testAttachFromAnotherTableIsRefused", suspended);
+            Assert.assertFalse("the refusal arrives via suspension, not at the statement",
+                    refusedAtStatement);
         });
     }
 
