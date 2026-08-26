@@ -24,16 +24,13 @@
 
 package io.questdb.cairo.lv;
 
-import io.questdb.cairo.CairoColumn;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
@@ -1657,21 +1654,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void buildColumnMappings(RecordMetadata baseMetadata, TableToken baseToken) {
         columnIndexes.clear();
         columnSizeShifts.clear();
-        hydrateBaseTableOnDemand(baseToken);
-        try (MetadataCacheReader metaRO = engine.getMetadataCache().readLock()) {
-            CairoTable baseTable = metaRO.getTable(baseToken);
-            if (baseTable == null) {
-                throw CairoException.tableDoesNotExist(baseToken.getTableName());
-            }
+        // The scan metadata cannot answer this itself: it is a compiler-built projection
+        // whose getWriterIndex() is -1 for every column, which is why the resolution goes
+        // by name against the base table's own metadata.
+        try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseToken)) {
             for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
                 CharSequence colName = baseMetadata.getColumnName(i);
-                CairoColumn col = baseTable.getColumnQuiet(colName);
-                if (col == null) {
+                final int baseColumnIndex = baseTableMetadata.getColumnIndexQuiet(colName);
+                if (baseColumnIndex < 0) {
                     throw CairoException.critical(0)
                             .put("live view base column not found [view=").put(baseToken.getTableName())
                             .put(", column=").put(colName).put(']');
                 }
-                columnIndexes.add(col.getWriterIndex());
+                columnIndexes.add(baseTableMetadata.getWriterIndex(baseColumnIndex));
                 int type = baseMetadata.getColumnType(i);
                 if (ColumnType.isVarSize(type)) {
                     columnSizeShifts.add(0);
@@ -1683,43 +1678,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Fills the metadata cache with {@code baseToken} if the startup hydrator has not
-     * reached it yet, the way {@code AbstractPartitionFrameCursorFactory} does for every
-     * generic SQL read.
-     * <p>
-     * {@code onStartupAsyncHydrator} runs on its own thread and walks the catalogue one
-     * table at a time, so a refresh turn scheduled early in a restart can reach the cache
-     * before this view's base table is in it. Reading it cold is not harmless: the restore
-     * is the first thing a restart runs, it resolves the base projection through
-     * {@link #buildColumnMappings}, and a {@code table does not exist} there is caught by
-     * {@code tryRestoreFromTimeline} as an unreadable timeline. The view then retires a
-     * perfectly good checkpoint ladder and recomputes the whole window from the base table
-     * - the exact work the ladder exists to avoid - on a table every SQL cursor in the
-     * process can already read.
-     * <p>
-     * Free once warm: {@code hydrateTableOnDemand} returns on a single volatile read as
-     * soon as the cache is complete, which is the same reason the generic read path can
-     * afford to call it per cursor.
-     */
-    private void hydrateBaseTableOnDemand(@Nullable TableToken baseToken) {
-        engine.getMetadataCache().hydrateTableOnDemand(baseToken);
-    }
-
-    /**
-     * The base table's writer index for {@code columnName}, or -1 when the metadata cache
+     * The base table's writer index for {@code columnName}, or -1 when the base table
      * cannot name it. The same resolution {@link #buildColumnMappings} performs for a whole
      * projection, for callers that need one column and must not disturb the shared mapping
      * the drain built.
      */
     private int baseColumnWriterIndex(TableToken baseToken, CharSequence columnName) {
-        hydrateBaseTableOnDemand(baseToken);
-        try (MetadataCacheReader metaRO = engine.getMetadataCache().readLock()) {
-            final CairoTable baseTable = metaRO.getTable(baseToken);
-            if (baseTable == null) {
-                return -1;
-            }
-            final CairoColumn column = baseTable.getColumnQuiet(columnName);
-            return column == null ? -1 : column.getWriterIndex();
+        try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseToken)) {
+            final int index = baseTableMetadata.getColumnIndexQuiet(columnName);
+            return index < 0 ? -1 : baseTableMetadata.getWriterIndex(index);
+        } catch (CairoException e) {
+            // Contract is "-1 when the base table cannot name the column", and a base table
+            // that has gone away cannot. Callers use this to decide whether an optional
+            // column is addressable, never to drive a failure.
+            return -1;
         }
     }
 
@@ -4357,10 +4329,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     private boolean isDedupBase(LiveViewInstance instance) {
         final TableToken baseToken = instance.getDefinition().getBaseTableToken();
-        hydrateBaseTableOnDemand(baseToken);
-        try (MetadataCacheReader metaRO = engine.getMetadataCache().readLock()) {
-            final CairoTable baseTable = metaRO.getTable(baseToken);
-            return baseTable != null && baseTable.hasDedup();
+        if (baseToken == null) {
+            return false;
+        }
+        // Table metadata rather than sequencer metadata, deliberately: CairoEngine documents
+        // that the dedup flag is the one change sequencer metadata cannot confirm. A table
+        // whose dedup this answers "no" for takes repair routes a deduplicating base must
+        // not take, so a stale or absent answer here is a wrong answer, not a delayed one.
+        try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseToken)) {
+            for (int i = 0, n = baseTableMetadata.getColumnCount(); i < n; i++) {
+                if (baseTableMetadata.isDedupKey(i)) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (CairoException e) {
+            return false;
         }
     }
 
