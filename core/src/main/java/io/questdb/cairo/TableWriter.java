@@ -12144,6 +12144,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * day's cells are unambiguously "before the column existed" by timestamp alone (no same-timestamp
      * sibling-cell collision possible there), so the existing DEFAULT-partition fallback already handles
      * them correctly, exactly as it does for a plain table's older partitions.
+     * <p>
+     * <b>THAT LAST PARAGRAPH IS FALSIFIED -- measured 2026-08-26, bug OPEN.</b> An EARLIER day's cell
+     * does reach a state where the reader wants the new column's file and it was never created:
+     * <pre>
+     *   could not open, file does not exist: .../2023-01-01/SYM/SYM0/9.0/new_col_2.d.3
+     *   could not open, file does not exist: .../2023-01-01/SYM.0/new_col_1.d.5
+     * </pre>
+     * Verified that 2023-01-01 is NOT the last partition in those runs (2023-01-02 exists), so these
+     * are precisely the "earlier day" case this scoping assumes is safe. Deterministic:
+     * {@code Rnd(1111,773)} and {@code Rnd(1666,2138)} with
+     * {@code CompositeFuzzRunner#withDropPartitionProbability(0.05)}.
+     * <p>
+     * NOT established, and worth deciding before any fix: WHY an earlier day needs the file at all. Two
+     * candidates, both reachable only because this branch newly enrolled the operations that produce
+     * them -- an O3 write landing in an earlier day AFTER the ADD COLUMN, and a DROP PARTITION removing
+     * the last day so that an earlier day becomes the active one. Both would mean "earlier by timestamp"
+     * no longer implies "before the column existed".
      */
     private void writeCompositeAddColumnColumnVersions(int columnIndex, long columnNameTxn) {
         final long ts = txWriter.getLastPartitionTimestamp();

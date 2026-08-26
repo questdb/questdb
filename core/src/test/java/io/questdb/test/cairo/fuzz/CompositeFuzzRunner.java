@@ -1305,10 +1305,20 @@ public class CompositeFuzzRunner {
  * That single pair says the insert and the registry refresh came apart inside one reader, which no
  * amount of aggregate counting could have shown.
  * <p>
- * <b>The 2 residual seeds are a DIFFERENT bug</b>, surfaced by this branch's own ADD COLUMN
- * enrolment: {@code could not open, file does not exist:
- * .../2023-01-01/SYM/SYM0/9.0/new_col_2.d.3}. It concerns a generator-ADDED column's per-cell file
- * name-txn, not partition dropping. Do not conflate it with the above.
+ * <b>The 2 residual seeds are a DIFFERENT, still-OPEN bug</b>, surfaced by this branch's own ADD
+ * COLUMN enrolment. Deterministic: {@code Rnd(1111,773)} and {@code Rnd(1666,2138)} with
+ * {@link #withDropPartitionProbability}(0.05).
+ * <pre>
+ *   could not open, file does not exist: .../2023-01-01/SYM/SYM0/9.0/new_col_2.d.3
+ *   could not open, file does not exist: .../2023-01-01/SYM.0/new_col_1.d.5
+ * </pre>
+ * It falsifies a documented assumption in {@code TableWriter#writeCompositeAddColumnColumnVersions},
+ * which backfills per-cell column-version records for the LAST partition timestamp only, on the stated
+ * grounds that "any OTHER (earlier) day's cells are unambiguously before the column existed by
+ * timestamp alone". Both failures are on 2023-01-01 while 2023-01-02 exists -- i.e. exactly the
+ * earlier-day case assumed safe. See that method's javadoc for the two candidate mechanisms (an O3
+ * write landing in an earlier day after the ADD COLUMN; a DROP PARTITION making an earlier day
+ * active), neither yet established. Do not conflate this with the partition-drop corruption above.
  * <p>
  * SCHEMA-CHANGING DDL is blocked for a separate, plainer reason: this runner's SQL is fixed-shape
  * (5-column INSERTs, fixed literals), so a generated ADD/DROP COLUMN gives "row value count does not
