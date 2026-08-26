@@ -1324,6 +1324,31 @@ public class CompositeFuzzRunner {
  * REMOVED, not re-versioned) or an innocent sibling is the next thing to establish -- its {@code .0}
  * still exists, so it was not fully dropped.
  * <p>
+ * <b>ROOT-CAUSE MECHANISM IDENTIFIED, 2026-08-26.</b> Dumping every _txn entry of the failing day
+ * WITH its cellKey and rendered segment, against the directory tree, gives this:
+ * <pre>
+ *   _txn:  cellKey=1..13  seg=15/SYM, 31/%NULL, 17/SYM ...  nameTxn=3   (all fine)
+ *          cellKey=14     seg=13/SYM                        nameTxn=5   &lt;-- the orphan
+ *   disk:  2023-01-01/13/SYM.0        (no .5 anywhere under the cell)
+ *          2023-01-01.5               &lt;-- the .5 version, written at the DAY level
+ * </pre>
+ * The cell's new version was written to the BARE DAY path instead of inside the cell. Nothing was
+ * deleted; it was created in the wrong place, and _txn was pointed at it.
+ * <p>
+ * The blind spot is {@code TableWriter#setStateForTimestamp(Path, long)}. It resolves
+ * {@code getPartitionNameTxnByPartitionTimestamp} (cellKey 0 ONLY) and then builds the path with the
+ * bare 5-arg {@code setPathForNativePartition} -- no cell segment. It has <b>17 call sites</b> in
+ * TableWriter, and any of them reached on a routed composite table yields exactly this signature: a
+ * bare {@code <day>.<txn>} directory plus a cellKey-0 nameTxn stamped onto some cell's entry.
+ * <p>
+ * So the fix is an audit of those 17 call sites, giving each either the cell-aware
+ * {@code setPathForNativePartition(..., cellSegment)} or an explicit "unreachable for routed
+ * composite" justification. That is bounded work, but it is real work and it is write-path, so it
+ * wants doing test-first rather than quickly. Note the highest cellKey was the one that went wrong
+ * here, which is consistent with an active-tail/"last partition" caller -- {@code finishO3Commit}
+ * already skips its own last-partition reopen for composite for precisely this reason, so that
+ * exemption evidently does not cover every such path.
+ * <p>
  * <b>ELIMINATED -- do not re-chase:</b>
  * <ol>
  *   <li><b>Empty-component cell paths.</b> The same runs logged ENOENT purge failures, 14 of 742 with
