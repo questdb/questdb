@@ -100,7 +100,7 @@ public class CompositeFuzzRunner {
     private long baselineMultiCellFastAppendEligibleCount;
     private long baselineO3MergeCommitCount;
     private int comparedShapeCount;
-    private double dropPartitionProbability;
+    private double dropPartitionProbability = 0.05;
     private int droppedAddColumnOps;
     private String compositeName;
     private int gatedAttempted;
@@ -1279,99 +1279,34 @@ public class CompositeFuzzRunner {
  * check the map is COMPLETE, never by the generator. Enrolment is these probabilities and nothing
  * else.
  * <p>
- * DROP PARTITION: <b>FIXED 2026-08-26</b>, after seven wrong hypotheses and nine corrections. Two
- * independent causes, both now closed:
+ * DROP PARTITION: <b>FIXED and ENROLLED, 2026-08-26.</b> It failed 12 of 24 seeds when this
+ * investigation started; all 24 now pass with it generating at 0.05, which is the default here.
+ * THREE independent causes, every one a per-cell concept handled through a cellKey-0-only API:
  * <ol>
- *   <li><b>Writer.</b> {@code TxWriter#beginPartitionSizeUpdate} paired the last entry's cellKey with
+ *   <li><b>Writer, {@code TxWriter#beginPartitionSizeUpdate}.</b> Paired the last ENTRY's cellKey with
  *       {@code maxTimestamp}; the lookup missed and INSERTED ON MISS, creating a phantom _txn entry
  *       for a cell with no directory. 50 -&gt; 35 occurrences, 12 -&gt; 9 of 24 seeds.</li>
- *   <li><b>Reader.</b> {@code TableReader#reloadAllSymbols} walked {@code columnCount} and touched
- *       {@code symbolMapReaders} only -- the table's REAL symbol columns. A composite table's
- *       INTERNERS (the _cell registry and the dedicated dictionaries) are not columns; they live in
- *       {@code compositeInternerReaders} and were left untouched, while {@code reloadSymbolMapCounts()}
- *       -- the other arm of the very same if/else in {@code reconcileOpenPartitions0} -- does refresh
- *       them. Whenever the {@code forceTruncate} arm was taken the reader advanced its partition list
- *       while its cell registry stayed behind, so {@code resolveCellSegmentOrNullIfDormant} saw
- *       {@code cellKey >= registry.size()} and silently fell back to the BARE DAY path.
- *       <b>35 -&gt; 0 occurrences, 9 -&gt; 2 of 24 seeds.</b></li>
+ *   <li><b>Reader, {@code TableReader#reloadAllSymbols}.</b> Walked {@code columnCount} and touched
+ *       {@code symbolMapReaders} only, so a composite table's INTERNERS were never refreshed on that
+ *       arm -- the reader advanced its partition list while its cell registry stayed behind and
+ *       {@code resolveCellSegmentOrNullIfDormant} fell back to the BARE DAY path.
+ *       35 -&gt; 0 occurrences, 9 -&gt; 2 of 24 seeds.</li>
+ *   <li><b>{@code ColumnVersionWriter#replaceInitialPartitionRecords}.</b> On a drop it moves a
+ *       column's "added at" record back to the new last partition and writes a compensating
+ *       column-top -- with the cellKey-0-only forms, so SIBLING cells got none while the moved default
+ *       claimed the column existed at their day. A reader on a sibling then opened a
+ *       {@code <col>.d.<txn>} file that was never created. Fixed by collecting the moved columns and
+ *       backfilling each sibling with ITS OWN row count, mirroring
+ *       {@code writeCompositeAddColumnColumnVersions}. 2 -&gt; 0 of 24 seeds.</li>
  * </ol>
- * The measurement that finally found (2) was a per-READER-INSTANCE trace, keyed on
- * {@code identityHashCode}. Every earlier attempt correlated log lines across different
- * {@code TableReader} objects and therefore proved nothing:
- * <pre>
- *   I rdr=139547368 txn=9 cellKey=15                 insertPartition ran for THIS reader
- *   F rdr=139547368 txn=9 cellKey=15 registry=15     its registry never advanced
- * </pre>
- * That single pair says the insert and the registry refresh came apart inside one reader, which no
- * amount of aggregate counting could have shown.
+ * Each measurement above holds every probability FIXED and changes only product code, so the counts
+ * are comparable (see the method warning below for why that matters).
  * <p>
- * <b>The 2 residual seeds are a DIFFERENT, still-OPEN bug</b>, surfaced by this branch's own ADD
- * COLUMN enrolment. Deterministic: {@code Rnd(1111,773)} and {@code Rnd(1666,2138)} with
- * {@link #withDropPartitionProbability}(0.05).
- * <pre>
- *   could not open, file does not exist: .../2023-01-01/SYM/SYM0/9.0/new_col_2.d.3
- *   could not open, file does not exist: .../2023-01-01/SYM.0/new_col_1.d.5
- * </pre>
- * It falsifies a documented assumption in {@code TableWriter#writeCompositeAddColumnColumnVersions},
- * which backfills per-cell column-version records for the LAST partition timestamp only, on the stated
- * grounds that "any OTHER (earlier) day's cells are unambiguously before the column existed by
- * timestamp alone". Both failures are on 2023-01-01 while 2023-01-02 exists -- i.e. exactly the
- * earlier-day case assumed safe. See that method's javadoc for the two candidate mechanisms (an O3
- * write landing in an earlier day after the ADD COLUMN; a DROP PARTITION making an earlier day
- * active) -- <b>both now ELIMINATED by measurement</b>: the failing partition is at version
- * {@code .0}, the original, never rewritten, so nothing added rows to it after the column appeared.
- * <b>STILL OPEN, cause NOT established -- and the SITE is now known, which is the useful part.</b>
- * The reader opens a {@code <col>.d.<txn>} file the writer never created, for a cell whose day
- * predates the column.
- * <p>
- * The failing code is {@code TableReader} (~2377-2394), which does NOT go through
- * {@code ColumnVersionReader#getColumnTop} at all. It resolves the record itself and applies its own
- * guard:
- * <pre>
- *   versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, cellKey, writerIndex);
- *   columnTop = versionRecordIndex > -1 ? getColumnTopByIndex(versionRecordIndex) : 0;
- *   ...
- *   hasVersionRecord = versionRecordIndex > -1;
- *   isColTopPartTsOk = getColumnTopPartitionTimestamp(writerIndex) &lt;= partitionTimestamp;
- *   if (columnRowCount &gt; 0 &amp;&amp; (hasVersionRecord || isColTopPartTsOk)) {  // opens the file
- * </pre>
- * For the failing case BOTH flags should be false, so the file should not be opened -- yet it is. That
- * is the unexplained step, and it is where the next probe must go.
- * <p>
- * <b>ROOT-CAUSED: {@code ColumnVersionWriter#replaceInitialPartitionRecords} is cellKey-blind.</b>
- * Called from {@code dropPartitionByExactTimestamp}. When a DROP leaves a column's "added at"
- * partition pointing beyond the new last partition, it moves it back and writes a compensating
- * column-top record -- but both steps use the 2-arg, cellKey-0-only forms, so on a composite day only
- * cellKey 0 gets that record. Every SIBLING cell gets none, while the moved default now claims the
- * column was added at their day. A reader on a sibling finds no record, evaluates
- * {@code colTopPartTs <= partitionTimestamp} true, and opens a file that was never created.
- * <p>
- * The chain, each step measured rather than argued:
- * <pre>
- *   writer wrote default = 2023-01-02 only (4 writes, all addColumn)   -> write side clean
- *   reader read  default = 2023-01-01                                  -> contradiction
- *   colIdx == wIdx == 6, name=new_col_1                                -> index mismatch ELIMINATED
- *   cvrVersion == txFileColumnVersion (INSYNC=true)                    -> stale _cv ELIMINATED
- *   replaceInitialPartitionRecords moves the record, on drop only      -> the only path left
- * </pre>
- * That last line matches the reproduction exactly: this bug needs
- * {@link #withDropPartitionProbability} to fire at all, and the method's own comment says "This can
- * happen as a resul of partition drop".
- * <p>
- * Fix shape, recorded at that method: it needs the day's cells and their individual row counts, which
- * live in TxWriter and not in ColumnVersionWriter -- a signature change plus a decision about what row
- * count each sibling's compensating record carries, since {@code transientRowCount} is the LAST cell's
- * rather than every cell's.
- * <p>
- * <b>Note every earlier probe measured the WRONG METHOD.</b> They instrumented
- * {@code getColumnTop(ts, cellKey, col)}, which measured correct in 13 calls -- because the failing
- * path never calls it. Two explanations built on those readings (cellKey aliasing; unstable default
- * partition) are retracted; the "unstable" reading was the composite and PLAIN twins mixed in one log
- * with no table identity.
- * <p>
- * Also eliminated by measurement: the ADD COLUMN backfill's scoping, an O3 write landing in an earlier
- * day, and a DROP making an earlier day active -- the failing partition sits at version {@code .0},
- * never rewritten. Do not conflate this with the partition-drop corruption above.
+ * Nine mechanisms were eliminated by measurement before the right ones were found, and five probes
+ * were spoiled by a missing identity or scope field -- the last provider is the registry (it was not),
+ * the edit applied (it had not), these lines share a reader (they did not), these lines share a table
+ * (they did not), this method is on the failing path (it was not). Before reading any probe on this
+ * code, verify it observes the thing you think it observes.
  * <p>
  * SCHEMA-CHANGING DDL is blocked for a separate, plainer reason: this runner's SQL is fixed-shape
  * (5-column INSERTs, fixed literals), so a generated ADD/DROP COLUMN gives "row value count does not
@@ -1481,7 +1416,7 @@ public class CompositeFuzzRunner {
                     0.0,   // probabilityOfColumnTypeChange     (supported; generator literal problem)
                     1.0,   // probabilityOfDataInsert
                     0.1,   // probabilityOfSameTimestamp
-                    dropPartitionProbability, // see withDropPartitionProbability + javadoc
+                    dropPartitionProbability, // ENROLLED by default; see createTables + javadoc
                     0.0,   // probabilityOfConvertPartitionToParquet  (SP3: supported, per cell)
                     0.0,   // probabilityOfConvertPartitionToNative   (SP3: supported, per cell)
                     0.0,   // probabilityOfTruncate

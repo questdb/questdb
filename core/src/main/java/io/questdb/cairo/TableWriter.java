@@ -582,6 +582,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // cost). Lazily allocated on first composite dispatch; cleared at the same point
     // o3PartitionUpdateSink itself is reset (top of processO3BlockComposite) since block addresses
     // are only meaningful within one call.
+    private final IntList movedDefaultColumns = new IntList();
     private LongIntHashMap o3PartitionUpdateSinkCellKeys;
     private long o3RowCount;
     private MemoryMAT o3TimestampMem;
@@ -9459,7 +9460,41 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
             txWriter.bumpTruncateVersion();
             columnVersionWriter.removePartition(timestamp);
-            columnVersionWriter.replaceInitialPartitionRecords(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
+            // replaceInitialPartitionRecords writes its compensating column-top with the cellKey-0-only
+            // upsert, so on a multi-cell day only cellKey 0 is covered while the moved "added at"
+            // record now claims the column was added at that whole day. A reader on any SIBLING cell
+            // then finds no record, sees colTopPartTs <= partitionTimestamp, concludes the column
+            // fully exists, and opens a <col>.d.<txn> file that was never created --
+            // "could not open, file does not exist: .../2023-01-01/SYM.0/new_col_1.d.5".
+            //
+            // Backfill the siblings here, where the per-cell row counts live. Same shape and same
+            // semantic as writeCompositeAddColumnColumnVersions: each cell's compensating top is ITS
+            // OWN row count, so all of that cell's pre-existing rows read as lacking the column.
+            // transientRowCount, which the call below uses, is only the last cell's.
+            movedDefaultColumns.clear();
+            columnVersionWriter.replaceInitialPartitionRecords(
+                    txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount(), movedDefaultColumns);
+            if (movedDefaultColumns.size() > 0 && isRoutedComposite()) {
+                final long lastTs = txWriter.getLastPartitionTimestamp();
+                int idx = txWriter.findAttachedPartitionIndexByLoTimestamp(lastTs);
+                if (idx > -1) {
+                    final int pn = txWriter.getPartitionCount();
+                    for (; idx < pn && txWriter.getPartitionTimestampByIndex(idx) == lastTs; idx++) {
+                        final int siblingCellKey = txWriter.getPartitionCellKey(idx);
+                        if (siblingCellKey == 0) {
+                            continue; // already covered by the call above
+                        }
+                        final long cellRowCount = txWriter.getPartitionSize(idx);
+                        for (int c = 0, cn = movedDefaultColumns.size(); c < cn; c++) {
+                            final int movedColumnIndex = movedDefaultColumns.getQuick(c);
+                            if (columnVersionWriter.getRecordIndex(lastTs, siblingCellKey, movedColumnIndex) < 0) {
+                                columnVersionWriter.upsert(lastTs, siblingCellKey, movedColumnIndex,
+                                        columnVersionWriter.getDefaultColumnNameTxn(movedColumnIndex), cellRowCount);
+                            }
+                        }
+                    }
+                }
+            }
 
             // No need to truncate before, files to be deleted.
             closeActivePartition(false);

@@ -26,6 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import org.jetbrains.annotations.Nullable;
+import io.questdb.std.IntList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -231,6 +233,20 @@ public class ColumnVersionWriter extends ColumnVersionReader {
      * cell's). Not a one-line edit, which is why it is documented rather than guessed at.
      */
     public void replaceInitialPartitionRecords(long lastPartitionTimestamp, long transientRowCount) {
+        replaceInitialPartitionRecords(lastPartitionTimestamp, transientRowCount, null);
+    }
+
+    /**
+     * As {@link #replaceInitialPartitionRecords(long, long)}, but additionally COLLECTS the writer
+     * column indexes whose "added at" record was moved, into {@code movedColumnsOut} when non-null.
+     * <p>
+     * A composite caller needs that list: the compensating column-top this method writes uses the
+     * cellKey-0-only {@code upsert(ts, columnIndex, ...)}, so on a multi-cell day only cellKey 0 is
+     * covered and every SIBLING cell is left with no record while the moved default now claims the
+     * column was added at their day. The caller ({@code TableWriter#dropPartitionByExactTimestamp})
+     * backfills the siblings per cell, which is where the per-cell row counts live.
+     */
+    public void replaceInitialPartitionRecords(long lastPartitionTimestamp, long transientRowCount, @Nullable IntList movedColumnsOut) {
         // Remove all default partitions that point beyond the last partition
         // Replace them as if the column was added to the last partition
         for (int i = 0, n = cachedColumnVersionList.size(); i < n; i += BLOCK_SIZE) {
@@ -252,6 +268,9 @@ public class ColumnVersionWriter extends ColumnVersionReader {
                     int recordIndex = getRecordIndex(lastPartitionTimestamp, columnIndex);
                     if (recordIndex < 0) {
                         upsert(lastPartitionTimestamp, columnIndex, columnNameTxn, transientRowCount);
+                    }
+                    if (movedColumnsOut != null) {
+                        movedColumnsOut.add(columnIndex);
                     }
                 }
             } else {
