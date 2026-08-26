@@ -269,6 +269,49 @@ public class CompositePerCellParquetTest extends AbstractCompositeTwinTest {
     }
 
     /**
+     * ALTER COLUMN TYPE over a day whose cells are PARQUET keeps the table healthy and the data intact.
+     * <p>
+     * Two real defects were fixed to get here, both PRE-EXISTING and both reproduced on a composite
+     * table with NO parquet anywhere, so neither came from the parquet work:
+     * <ul>
+     *   <li>{@code changeColumnType} opened the new column's files via {@code setStateForTimestamp},
+     *       which resolves cellKey 0 and names the DAY container -- "could not open read-write
+     *       [file=.../2023-01-02.1/px.d.3]", suspending the table. Now resolved by partition INDEX,
+     *       which on a composite table names a cell exactly.</li>
+     *   <li>with that fixed it reached {@code setColumnAppendPosition}, whose {@code getColumnTop}
+     *       asserts a partition is currently open. A composite table routinely has none -- it never
+     *       keeps the bare day container open -- so the eager open is skipped when nothing is open;
+     *       the files are created when the partition is next opened for a write.</li>
+     * </ul>
+     * The deferred parquet-to-native refusal added alongside is NOT exercised here: for DOUBLE to
+     * FLOAT the engine reports "parquet storage is compatible with existing type, lazy decode handles
+     * conversion" and never converts a partition at all. It stays as defence in depth, and this test
+     * deliberately does not claim to cover it.
+     */
+    @Test(timeout = 60_000)
+    public void testColumnTypeChangeOverParquetCellsKeepsDataIntact() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedTwoCellDay();
+            execute("ALTER TABLE c CONVERT PARTITION TO PARQUET LIST '" + DAY + "'");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            execute("ALTER TABLE c ALTER COLUMN px TYPE FLOAT");
+            execute("ALTER TABLE p ALTER COLUMN px TYPE FLOAT");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            assertTwinEqual("", " ORDER BY ts, exch");
+            // and the table still accepts writes afterwards
+            insertIntoBoth("('2023-01-03T01:00:00.000000Z','E0',9.0)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            assertTwinEqual("", " ORDER BY ts, exch");
+        });
+    }
+
+    /**
      * Seeds one day routed to TWO cells, plus a later day so the converted one is not the active
      * partition. Each commit is single-cell on purpose: an interleaved multi-cell commit has its own
      * unrelated gate on a table carrying a var-size column, and tripping it here would measure the

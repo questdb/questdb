@@ -1646,10 +1646,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // open new column files (skip when last partition is parquet - no native files)
             int lastPartitionIndex = txWriter.getPartitionCount() - 1;
+            // The composite clause is not an optimisation. This block eagerly opens the new column's
+            // files for the currently-open last partition and then calls setColumnAppendPosition, which
+            // reads getColumnTop(columnIndex) and asserts lastOpenPartitionTs is set. A composite table
+            // routinely has NO open partition -- it never keeps the bare day container open -- so the
+            // assert fires and suspends the table. There is nothing to extend when nothing is open:
+            // the files are created when the partition is next opened for a write.
             if ((txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy))
-                    && (lastPartitionIndex < 0 || !txWriter.isPartitionParquet(lastPartitionIndex))) {
-                long partitionTimestamp = txWriter.getLastPartitionTimestamp();
-                setStateForTimestamp(path, partitionTimestamp);
+                    && (lastPartitionIndex < 0 || !txWriter.isPartitionParquet(lastPartitionIndex))
+                    && (!isRoutedComposite() || lastOpenPartitionTs != Long.MIN_VALUE)) {
+                // Cell-aware: setStateForTimestamp resolves cellKey 0 and names the DAY container, so on
+                // a composite table this opened <day>.<txn>/<col>.d instead of <day>/<cell>.<txn>/<col>.d
+                // and suspended the table. MEASURED 2026-08-26 on a composite table with NO parquet
+                // anywhere -- "could not open read-write [file=.../2023-01-02.1/px.d.3]" -- so it is a
+                // pre-existing gap in ALTER COLUMN TYPE, not something the parquet work introduced.
+                // Resolving by partition INDEX is exact, because a composite attached-partition entry
+                // IS a cell.
+                setStateForPartitionIndex(path, lastPartitionIndex);
                 openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
                 setColumnAppendPosition(columnIndex, txWriter.getTransientRowCount(), false);
                 path.trimTo(pathSize);
@@ -2226,6 +2239,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
         if (isRoutedComposite()) {
+            // The DEFERRED form must NOT be silently satisfied by an immediate commit. Its caller
+            // (ConvertOperatorImpl, for a column-type change over parquet partitions) batches several
+            // conversions and commits them together via commitPendingParquetToNativeConversions, which
+            // is still cell-blind and still gated. Committing per-cell right here would quietly change
+            // that caller's atomicity contract instead of failing, so refuse -- reusing the pending
+            // conversions literal, which is exactly what is unsupported.
+            if (!doCommit) {
+                throw CairoException.critical(0)
+                        .put("composite partitioning does not support pending parquet-to-native conversions [table=")
+                        .put(tableToken.getTableName()).put(']');
+            }
             return convertCompositePartitionParquetToNative(partitionTimestamp);
         }
 
