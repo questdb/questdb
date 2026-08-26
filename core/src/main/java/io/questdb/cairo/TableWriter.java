@@ -20079,6 +20079,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return timestampAddr;
     }
 
+    /**
+     * AUDIT NOTE (cellKey-0 / active-tail sweep, 2026-08-26). Calls
+     * {@code txWriter.switchPartitions} (cellKey-0 lookup off {@code maxTimestamp}) and then
+     * {@code openPartition}, which resolves via the cell-blind {@code setStateForTimestamp} and
+     * {@code ff.mkdirs} the bare {@code <day>.<txn>} directory. No composite guard at its caller,
+     * unlike {@code openLastPartitionAndSetAppendPosition}, which returns early for
+     * {@code isRoutedComposite()} with the same reasoning.
+     * <p>
+     * Flagged, not patched: this is the ACTIVE-TAIL family, not the cellKey-0 family. Threading a
+     * cellKey in would not fix a concept that has no single meaning on a multi-cell day. See
+     * {@code repairDataGaps} and {@code applyLagToLastPartition} for the other two members.
+     */
     private void switchPartition(long timestamp) {
         // Before partition can be switched, we need to index records
         // added so far. Index writers will start point to different

@@ -100,7 +100,7 @@ public class CompositeFuzzRunner {
     private long baselineMultiCellFastAppendEligibleCount;
     private long baselineO3MergeCommitCount;
     private int comparedShapeCount;
-    private double dropPartitionProbability = 0.05;
+    private double dropPartitionProbability;
     private int droppedAddColumnOps;
     private String compositeName;
     private int gatedAttempted;
@@ -1279,8 +1279,16 @@ public class CompositeFuzzRunner {
  * check the map is COMPLETE, never by the generator. Enrolment is these probabilities and nothing
  * else.
  * <p>
- * DROP PARTITION: <b>FIXED and ENROLLED, 2026-08-26.</b> It failed 12 of 24 seeds when this
- * investigation started; all 24 now pass with it generating at 0.05, which is the default here.
+ * DROP PARTITION: <b>THREE causes FIXED 2026-08-26 -- but NOT enrolled by default, and the reason
+ * matters.</b> It failed 12 of 24 fixed sweep seeds when this investigation started and all 24 pass
+ * now. I turned it on by default on that basis; the very next wide run,
+ * {@code CompositeFuzzUnstableTest} -- which draws its seeds from the clock precisely to explore
+ * shapes the fixed seeds do not -- found a fresh divergence at a SKEWEARLY row. So "all 24 fixed seeds
+ * pass" is NOT "safe to enable by default", and the default is back to 0.0 with the knob retained.
+ * <p>
+ * That is worth stating plainly: the fixed sweep is a regression guard, not evidence of absence. Use
+ * {@link #withDropPartitionProbability}(0.05) to keep hunting; expect the unstable test to keep
+ * finding things until it stops.
  * THREE independent causes, every one a per-cell concept handled through a cellKey-0-only API:
  * <ol>
  *   <li><b>Writer, {@code TxWriter#beginPartitionSizeUpdate}.</b> Paired the last ENTRY's cellKey with
@@ -1416,7 +1424,7 @@ public class CompositeFuzzRunner {
                     0.0,   // probabilityOfColumnTypeChange     (supported; generator literal problem)
                     1.0,   // probabilityOfDataInsert
                     0.1,   // probabilityOfSameTimestamp
-                    dropPartitionProbability, // ENROLLED by default; see createTables + javadoc
+                    dropPartitionProbability, // OFF by default -- see javadoc; knob is withDropPartitionProbability
                     0.0,   // probabilityOfConvertPartitionToParquet  (SP3: supported, per cell)
                     0.0,   // probabilityOfConvertPartitionToNative   (SP3: supported, per cell)
                     0.0,   // probabilityOfTruncate
