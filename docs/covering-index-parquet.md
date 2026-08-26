@@ -91,6 +91,27 @@ is that the cost is per MAPPING -- a pooled TableReader maps once per
 partition-open and serves many queries, where these benchmarks open a reader
 every iteration and then make as few as 500 lookups.
 
+### Mechanisms tried and rejected
+
+Recorded so they are not retried. Each was fully implemented and measured, not
+reasoned about.
+
+| Mechanism | Result | Why |
+| --- | --- | --- |
+| Delta-pack `row_id` | 65x smaller, point reads **40-44x worse** | a delta block decodes from its start, so a point read pays for the whole block |
+| Narrow `row_id` to INT | all tests green, four faster cells turned **slower** | the width branch lands in the `hasNext` fast path |
+| Flat per-key offset array in `_im` | not built | 8 bytes/key = 8 MB at a million keys against today's 4 MB directory, and the row-group search remains |
+| Cap the parquet form by cardinality | not built | the range-read crossover sits between 512 and 2,000 keys, so parity everywhere means refusing the parquet form above ~512 distinct keys, which removes the feature rather than fixing it |
+
+`key_id` keeps its delta packing: it is written for layout and never read back,
+so the decode cost does not apply.
+
+What remains is the parquet page layer. A lookup walks directory -> row group ->
+page offset -> data where native walks `.pk` -> `.pv`, and that extra layer is
+what makes the index portable. Closing it means work outside this format --
+QuestDB's shared cursor layer, or an integer encoding that survives random
+access, which parquet does not offer.
+
 Reproduce with `PostingIndexBenchmarkSuite`, whose `POSTING_PARQUET` and
 `covering_parquet` arms build the same fixture through `ParquetIndexSeal`, and
 whose `sqlQuery` carries a `storage` arm separating the parquet data format's
