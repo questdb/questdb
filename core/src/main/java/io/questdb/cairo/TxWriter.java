@@ -96,8 +96,19 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             // returns 0 (guarded on the plain stride), so this is byte-identical there.
             int lastIndex = getPartitionCount() - 1;
             int cellKey = lastIndex > -1 ? getPartitionCellKey(lastIndex) : 0;
+            // Use the last entry's OWN timestamp, not maxTimestamp. Taking the cellKey from the last
+            // ENTRY while taking the timestamp from maxTimestamp pairs two values that need not
+            // describe the same partition on a composite table: the last entry is the highest
+            // (ts, cellKey), and its cellKey belongs to ITS day and ITS cell, while maxTimestamp is
+            // merely the largest data timestamp. When the pair named no existing partition the lookup
+            // missed and updateAttachedPartitionSizeByRawIndex INSERTED ON MISS -- creating a phantom
+            // _txn entry carrying nameTxn = txn-1 for a cell whose directory was never written.
+            //
+            // Byte-identical for a plain table: there the last entry IS the partition holding
+            // maxTimestamp, so both expressions floor to the same value.
+            long lastTimestamp = lastIndex > -1 ? getPartitionTimestampByIndex(lastIndex) : maxTimestamp;
             recordStructureVersion++;
-            updateAttachedPartitionSizeByTimestamp(maxTimestamp, cellKey, transientRowCount, txn - 1);
+            updateAttachedPartitionSizeByTimestamp(lastTimestamp, cellKey, transientRowCount, txn - 1);
         }
     }
 

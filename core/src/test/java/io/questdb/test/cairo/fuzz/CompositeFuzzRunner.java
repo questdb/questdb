@@ -1363,6 +1363,28 @@ public class CompositeFuzzRunner {
  * {@code openPartition} and its caller in ONE stack. The reachable-call-site question is still OPEN
  * -- redo it with full stacks before relying on any count.
  * <p>
+ * <b>ONE CAUSE FOUND AND FIXED (partial), 2026-08-26.</b> Instrumenting BOTH writers of the nameTxn
+ * slot -- {@code TxWriter:778} and {@code TxReader#initPartitionAt} -- with a full stack caught it:
+ * <pre>
+ *   TxReader.initPartitionAt
+ *   TxWriter.insertPartitionSizeByTimestamp        &lt;-- INSERTS a new entry
+ *   TxWriter.updateAttachedPartitionSizeByRawIndex
+ *   TxWriter.updateAttachedPartitionSizeByTimestamp
+ *   TxWriter.beginPartitionSizeUpdate
+ *   TableWriter.dropPartitionByExactTimestamp
+ * </pre>
+ * {@code beginPartitionSizeUpdate} took the cellKey of the globally-LAST partition entry and paired it
+ * with {@code maxTimestamp}. On a composite table those need not describe the same partition: the last
+ * entry is the highest {@code (ts, cellKey)} and its cellKey belongs to its own day and cell, while
+ * {@code maxTimestamp} is merely the largest data timestamp. When the pair named no existing
+ * partition the lookup missed and the update INSERTED ON MISS, creating a phantom _txn entry with
+ * {@code nameTxn = txn-1} for a cell whose directory was never written. Fixed by using the last
+ * entry's OWN timestamp.
+ * <p>
+ * <b>Partial: 50 -&gt; 35 occurrences, 12 -&gt; 9 of 24 seeds.</b> At least one further mechanism
+ * remains, and this is the first hypothesis all session that moved the number at all -- the four
+ * below moved it by zero, which is what disqualified them.
+ * <p>
  * <b>ELIMINATED -- do not re-chase:</b>
  * <ol>
  *   <li><b>Empty-component cell paths.</b> The same runs logged ENOENT purge failures, 14 of 742 with
