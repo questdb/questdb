@@ -1350,11 +1350,21 @@ public class CompositeFuzzRunner {
  * that cell carry the column, and opens a file that was never created.
  * <p>
  * That is the same SHAPE as the DROP PARTITION torn read already fixed on this branch: writer
- * internally consistent, reader holding a value from a different point in time. Two candidates, and
- * they are distinguishable by a probe rather than by argument -- a stale/torn
- * {@code columnVersionReader}, or a {@code writerIndex} vs {@code columnIndex} mismatch (the reader
- * logs {@code wIdx}, the writer logs its own {@code columnIndex}; after adds/drops these need not
- * denote the same column).
+ * internally consistent, reader holding a value from a different point in time. Of the two candidates,
+ * <b>one is now ELIMINATED and one CONFIRMED</b> by a single probe at the failing site:
+ * <pre>
+ *   Q ts=2023-01-01 cellKey=1 colIdx=6 wIdx=6 name=new_col_1
+ *     colTopPartTs=2023-01-01  cvrTxn=6  readerTxn=11  txFileTxn=11
+ * </pre>
+ * {@code colIdx == wIdx == 6} and the name is {@code new_col_1} -- the very column whose file is
+ * missing -- so the {@code writerIndex}/{@code columnIndex} mismatch idea is dead. What remains is the
+ * reader being at txn 11 (both {@code readerTxn} and {@code txFileTxn}) while its
+ * {@code columnVersionReader} reports version 6: a COLUMN-VERSION reader lagging the rest of the
+ * reader's state, exactly the shape of the interner staleness fixed in {@code reloadAllSymbols}.
+ * <p>
+ * One caveat before acting: {@code getVersion()} is the _cv file's own version counter, not a txn, so
+ * "6 vs 11" is suggestive rather than conclusive on its own. Confirm by logging the _cv version the
+ * WRITER produced when it wrote this column's default record, and check the reader ever reaches it.
  * <p>
  * <b>Note every earlier probe measured the WRONG METHOD.</b> They instrumented
  * {@code getColumnTop(ts, cellKey, col)}, which measured correct in 13 calls -- because the failing
