@@ -2927,6 +2927,7 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     public void testSealCapsKeysPerRowGroup() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_MAX_KEYS_PER_ROW_GROUP, 16);
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_MIN_ROWS_PER_ROW_GROUP, 8192);
         assertMemoryLeak(() -> {
             inputRoot = root;
             createPackedKeyTable();
@@ -2961,11 +2962,26 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                     for (int i = 0; i < groups; i++) {
                         final long keysInGroup =
                                 reader.getChunkMaxStat(i, keyIdColumn) - reader.getChunkMinStat(i, keyIdColumn) + 1;
-                        Assert.assertTrue(
-                                "row group " + i + " holds " + keysInGroup + " keys, over the cap",
-                                keysInGroup <= 16
-                        );
+                        final long rows = reader.getRowGroupNumRows(i);
                         shared |= keysInGroup > 1;
+                        if (keysInGroup <= 16) {
+                            continue;
+                        }
+                        // The cap is CONDITIONAL on the row floor: a group may
+                        // carry more than 16 keys, but only because closing at
+                        // 16 would have left it under 8192 rows. Narrow keys are
+                        // exactly the case the floor exists for -- without it
+                        // this fixture's 500 keys would make 500/16 tiny groups,
+                        // and a high-cardinality partition would make thousands.
+                        // The last group is exempt: it closes at end of data.
+                        if (i == groups - 1) {
+                            continue;
+                        }
+                        Assert.assertTrue(
+                                "row group " + i + " holds " + keysInGroup + " keys over the cap with only "
+                                        + rows + " rows, so the floor did not justify it",
+                                rows >= 8192
+                        );
                     }
                     // Capping must not degenerate into one key per group, which
                     // would trade the whole point of packing for the bound.

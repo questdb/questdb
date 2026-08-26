@@ -461,6 +461,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int postingIndexParquetCompressionCodec;
     private final int postingIndexParquetDataPageSize;
     private final int postingIndexParquetMaxKeysPerRowGroup;
+    private final int postingIndexParquetMinRowsPerRowGroup;
     private final byte postingIndexParquetPartitionFormat;
     private final byte postingIndexRowIdEncoding;
     private final long postingIndexerSpillBytesMax;
@@ -1718,8 +1719,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 default -> PostingIndexUtils.ENCODING_ADAPTIVE;
             };
             this.postingIndexParquetCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_COMPRESSION_CODEC, "LZ4_RAW"));
-            this.postingIndexParquetDataPageSize = getIntSize(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_DATA_PAGE_SIZE, 16 * 1024);
+            this.postingIndexParquetDataPageSize = getIntSize(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_DATA_PAGE_SIZE,
+                    CairoConfiguration.defaultPostingIndexParquetDataPageSize(this.postingIndexParquetCompressionCodec));
             this.postingIndexParquetMaxKeysPerRowGroup = getInt(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_MAX_KEYS_PER_ROW_GROUP, 16);
+            this.postingIndexParquetMinRowsPerRowGroup = getInt(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_MIN_ROWS_PER_ROW_GROUP, 8192);
             this.postingIndexParquetPartitionFormat = switch (getString(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native")) {
                 case "parquet" -> PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET;
                 default -> PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE;
@@ -4673,6 +4676,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPostingIndexParquetMaxKeysPerRowGroup() {
             return postingIndexParquetMaxKeysPerRowGroup;
+        }
+
+        @Override
+        public int getPostingIndexParquetMinRowsPerRowGroup() {
+            return postingIndexParquetMinRowsPerRowGroup;
         }
 
         @Override

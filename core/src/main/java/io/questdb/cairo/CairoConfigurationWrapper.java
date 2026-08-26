@@ -925,6 +925,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPostingIndexParquetMinRowsPerRowGroup() {
+        return getDelegate().getPostingIndexParquetMinRowsPerRowGroup();
+    }
+
+    @Override
     public byte getPostingIndexParquetPartitionFormat() {
         return getDelegate().getPostingIndexParquetPartitionFormat();
     }

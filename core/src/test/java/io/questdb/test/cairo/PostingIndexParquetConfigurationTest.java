@@ -56,6 +56,23 @@ public class PostingIndexParquetConfigurationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetDataPageSizeDefaultFollowsTheCodec() throws Exception {
+        // Uncompressed pages are never decompressed, so the only per-page cost
+        // left is walking a thrift header to find the right one, and large
+        // pages minimise that. Pairing UNCOMPRESSED with the compressing
+        // codec's 16 KiB costs most of the win, so the default follows.
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_COMPRESSION_CODEC, "UNCOMPRESSED");
+        assertMemoryLeak(() -> Assert.assertEquals(512 * 1024, configuration.getPostingIndexParquetDataPageSize()));
+    }
+
+    @Test
+    public void testParquetDataPageSizeExplicitOverridesTheCodecDefault() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_COMPRESSION_CODEC, "UNCOMPRESSED");
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_DATA_PAGE_SIZE, 8 * 1024);
+        assertMemoryLeak(() -> Assert.assertEquals(8 * 1024, configuration.getPostingIndexParquetDataPageSize()));
+    }
+
+    @Test
     public void testParquetMaxKeysPerRowGroupOverrideReachesWrappedConfiguration() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_MAX_KEYS_PER_ROW_GROUP, 8);
         assertMemoryLeak(() -> Assert.assertEquals(8, configuration.getPostingIndexParquetMaxKeysPerRowGroup()));

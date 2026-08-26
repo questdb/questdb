@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.mp.continuation.DelayedFireable;
 import io.questdb.mp.continuation.TimerShards;
@@ -731,22 +732,66 @@ public interface CairoConfiguration {
     }
 
     /**
+     * Rows a row group must hold before
+     * {@link #getPostingIndexParquetMaxKeysPerRowGroup()} is allowed to close
+     * it.
+     * <p>
+     * The key cap bounds how much of a group a lookup wastes, which is the
+     * right control when keys are wide. When they are NARROW it is a disaster:
+     * 500k keys over 2M rows is 4 rows a key, so 16 keys is a 64-row group and
+     * the partition ends up with ~31,000 of them. Every one carries a column
+     * chunk per column in the {@code _im} and in the index parquet's own
+     * footer, so the metadata dwarfs the data and a point read went 197x slower
+     * than native rather than the 4-7x seen at low cardinality.
+     * <p>
+     * The floor makes the cap conditional: groups still close at 16 keys once
+     * they are big enough to be worth addressing, and grow past it when the
+     * keys are too narrow for that. Decode waste stays bounded by the PAGE
+     * size, not the group size, so wide groups do not cost reads what the
+     * metadata would.
+     */
+    default int getPostingIndexParquetMinRowsPerRowGroup() {
+        return 8192;
+    }
+
+    /**
      * Data page size for the covering index's own parquet, which is NOT
      * {@link #getPartitionEncoderParquetDataPageSize()}. A page is the unit the
      * reader can skip when it decodes one key's contiguous run, so the data
      * partition's 1 MiB default makes a whole row group a single page and
      * leaves nothing to skip.
      * <p>
-     * 16 KiB, measured against an OPTIMISED Rust build with the key cap in
-     * place. The curve is U-shaped -- pages too small cost more page-header
-     * walking per lookup than they save in decompression -- but its minimum
-     * moves with both of those, and 64 KiB was tuned before either. On 2M rows
-     * / 2000 keys: 4 KiB 44.7 ms, 8 KiB 37.5 ms, 16 KiB 33.1 ms, 32 KiB 33.6
-     * ms, 64 KiB 43.1 ms. Flat between 12 and 32 KiB, so treat the exact value
-     * as a plateau rather than a peak.
+     * <b>The right value depends on the codec, so the default follows it.</b>
+     * Under a compressing codec a page is the unit that gets decompressed, so
+     * a page much larger than a key's run wastes work: the curve is U-shaped
+     * and bottoms at 16 KiB. Uncompressed pages are not decompressed at all,
+     * so that cost disappears and only the other side of the curve is left --
+     * walking one thrift page header per page to find the right one -- which
+     * large pages minimise. Measured on {@code avg(price)} over one key of a
+     * 400k-row, 200-key table, against 14.4 us for the native index:
+     * <pre>
+     *   LZ4_RAW      16 KiB    67.0 us
+     *   LZ4_RAW      64 KiB   117.0 us
+     *   UNCOMPRESSED 16 KiB    37.0 us
+     *   UNCOMPRESSED 64 KiB    19.4 us
+     *   UNCOMPRESSED 256 KiB   15.1 us
+     *   UNCOMPRESSED 1 MiB     14.8 us
+     * </pre>
+     * Pairing them wrongly costs most of the difference, which is why this is
+     * derived rather than a fixed number the two properties can disagree on.
+     * An explicit {@code cairo.posting.index.parquet.data.page.size} still
+     * wins.
      */
     default int getPostingIndexParquetDataPageSize() {
-        return 16 * 1024;
+        return defaultPostingIndexParquetDataPageSize(getPostingIndexParquetCompressionCodec());
+    }
+
+    /**
+     * The data page size that suits {@code codec}. See
+     * {@link #getPostingIndexParquetDataPageSize()} for the measurements.
+     */
+    static int defaultPostingIndexParquetDataPageSize(int codec) {
+        return codec == ParquetCompression.COMPRESSION_UNCOMPRESSED ? 512 * 1024 : 16 * 1024;
     }
 
     default byte getPostingIndexParquetPartitionFormat() {

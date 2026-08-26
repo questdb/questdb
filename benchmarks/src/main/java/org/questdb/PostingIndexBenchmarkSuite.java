@@ -595,6 +595,31 @@ public class PostingIndexBenchmarkSuite {
     private static DefaultCairoConfiguration benchConfig(String root) {
         return new DefaultCairoConfiguration(root) {
             @Override
+            public int getPostingIndexParquetCompressionCodec() {
+                // -Dquestdb.idx.codec=<parquet codec ordinal>, so a sweep can
+                // vary the index's codec without a rebuild. 0 is UNCOMPRESSED.
+                return Integer.getInteger("questdb.idx.codec", super.getPostingIndexParquetCompressionCodec());
+            }
+
+            @Override
+            public int getPostingIndexParquetDataPageSize() {
+                // Unset means "whatever the codec implies", which is the
+                // pairing the product default encodes.
+                final Integer explicit = Integer.getInteger("questdb.idx.page");
+                return explicit != null ? explicit : super.getPostingIndexParquetDataPageSize();
+            }
+
+            @Override
+            public int getPostingIndexParquetMaxKeysPerRowGroup() {
+                return Integer.getInteger("questdb.idx.rgkeys", super.getPostingIndexParquetMaxKeysPerRowGroup());
+            }
+
+            @Override
+            public int getPostingIndexParquetMinRowsPerRowGroup() {
+                return Integer.getInteger("questdb.idx.rgminrows", super.getPostingIndexParquetMinRowsPerRowGroup());
+            }
+
+            @Override
             public byte getPostingIndexRowIdEncoding() {
                 return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
             }
@@ -918,7 +943,7 @@ public class PostingIndexBenchmarkSuite {
      * the reader prunes with, so a single whole-partition group would hand the
      * parquet arm a fixture with nothing to prune and flatter it.
      */
-    private static LongList syntheticRowGroupBoundaries(CairoConfiguration config, long firstRowId, long totalRows) {
+    private static LongList syntheticRowGroupBoundaries(CairoConfiguration config, long totalRows) {
         // 0 is not "one row per group" - it is the encoder's sentinel for "use
         // my own default", which is 512*512. Taking it literally builds one
         // boundary per row, and since the seal stores every boundary that alone
@@ -926,11 +951,14 @@ public class PostingIndexBenchmarkSuite {
         // worse than it is.
         final int configured = config.getPartitionEncoderParquetRowGroupSize();
         final long groupSize = configured > 0 ? configured : 512L * 512L;
+        // Cumulative row COUNTS, which start at 0 -- not row ids. Offsetting
+        // them by firstRowId is what S8, whose rows start at 1e9, rejects with
+        // "first data row group boundary must be 0".
         final LongList boundaries = new LongList();
         for (long cum = 0; cum < totalRows; cum += groupSize) {
-            boundaries.add(firstRowId + cum);
+            boundaries.add(cum);
         }
-        boundaries.add(firstRowId + totalRows);
+        boundaries.add(totalRows);
         return boundaries;
     }
 
@@ -992,7 +1020,7 @@ public class PostingIndexBenchmarkSuite {
                     coveredWriterIndices,
                     coveredAddrs,
                     coveredColumnTops,
-                    syntheticRowGroupBoundaries(config, firstRowId, totalRows)
+                    syntheticRowGroupBoundaries(config, totalRows)
             );
         } finally {
             Misc.free(rowKeys);

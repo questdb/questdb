@@ -230,7 +230,8 @@ public final class ParquetIndexSeal {
                     keyIdsAddr, rowIdsAddr, rowCount,
                     groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs,
                     keyDirEntries, groupKeyDirCounts,
-                    configuration.getPostingIndexParquetMaxKeysPerRowGroup()
+                    configuration.getPostingIndexParquetMaxKeysPerRowGroup(),
+                    configuration.getPostingIndexParquetMinRowsPerRowGroup()
             );
             imFileSize = writeIndexArtifacts(
                     configuration, ff, path, plen, indexColumnName, indexTxn, keySpaceSize,
@@ -396,7 +397,8 @@ public final class ParquetIndexSeal {
             LongList groupRowIdMaxs,
             IntList keyDirEntries,
             IntList groupKeyDirCounts,
-            int maxKeysPerRowGroup
+            int maxKeysPerRowGroup,
+            int minRowsPerRowGroup
     ) {
         long groupLo = 0;
         long keyLo = 0;
@@ -426,7 +428,13 @@ public final class ParquetIndexSeal {
             keysInGroup++;
             // Closing on either bound, and both close at a key boundary, so the
             // key-alignment invariant holds however the group filled up.
-            if (keyHi - groupLo >= TARGET_ROW_GROUP_ROWS || keysInGroup >= maxKeysPerRowGroup) {
+            //
+            // The key cap only applies once the group is worth addressing.
+            // Without the floor, narrow keys -- 500k of them over 2M rows is 4
+            // rows each -- close a group every 64 rows and bury the partition
+            // in per-group metadata.
+            if (keyHi - groupLo >= TARGET_ROW_GROUP_ROWS
+                    || (keysInGroup >= maxKeysPerRowGroup && keyHi - groupLo >= minRowsPerRowGroup)) {
                 closeRowGroup(keyIdsAddr, rowIdsAddr, groupLo, keyHi, groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs, keyDirEntries, groupKeyDirCounts);
                 groupLo = keyHi;
                 keysInGroup = 0;
