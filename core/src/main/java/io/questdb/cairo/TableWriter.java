@@ -16986,6 +16986,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * make the table unreadable.
      */
     private boolean convertCompositePartitionNativeToParquet(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
+        // Consolidate a SPLIT day before converting it, which is what the plain path does:
+        // convertPartitionNativeToParquet calls squashPartitionForce(partitionIndex) as its first
+        // mutating step. Composite returns before reaching that call, and the cell collection below
+        // matches on the EXACT partition timestamp -- but a split fragment shares the day's calendar
+        // FLOOR while carrying its own raw timestamp, so it is never collected. It was left native
+        // beside the parquet cells this method then writes.
+        //
+        // That mixed day is precisely the shape squashSplitPartitionsComposite_mergeFragment now has to
+        // refuse: merging a native fragment into a parquet cell lands raw column bytes on data.parquet
+        // and destroys the footer ("invalid _pm file: failed to resolve footer"). Squashing here removes
+        // the shape at its source, and the ordering matters -- at this point nothing in the day is
+        // parquet yet (the PHASE 1 loop below rejects a day that already holds a parquet cell), so that
+        // refusal cannot fire on this call.
+        //
+        // squashPartitionForce is safe to reach from here: it scopes its range with hasSplitFragments,
+        // which distinguishes a genuine fragment (same floor, DIFFERENT raw timestamp) from a sibling
+        // cell (same raw timestamp), and squashSplitPartitions routes composite tables to the
+        // cell-scoped composite merge.
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(i)) == partitionTimestamp) {
+                squashPartitionForce(i);
+                break;
+            }
+        }
+
         final IntList cellKeys = new IntList();
         final IntList rawIndexes = new IntList();
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
