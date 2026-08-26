@@ -10345,7 +10345,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         if (txWriter.isPartitionParquet(i)) {
                             indexParquetPartition(indexer, columnName, i, columnIndex, columnNameTxn, indexValueBlockSize, indexType, plen, timestamp);
                         } else if (ff.exists(dFile(path.trimTo(plen), columnName, columnNameTxn))) {
-                            indexNativePartition(indexer, columnName, columnIndex, columnNameTxn, indexValueBlockSize, indexType, plen, timestamp);
+                            indexNativePartition(indexer, columnName, columnIndex, columnNameTxn, indexValueBlockSize, indexType, plen, timestamp, i);
                         }
                     }
                 }
@@ -10412,7 +10412,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int indexValueBlockSize,
             byte indexType,
             int plen,
-            long timestamp
+            long timestamp,
+            // Composite: the attached-partition index of the CELL being indexed. The caller's loop has
+            // it, and already uses it to resolve columnNameTxn per cell; the size and column-top reads
+            // below were still by TIMESTAMP, i.e. cellKey 0. On cells with different column tops, a
+            // non-zero cell was indexed from cell 0's top and its rows never entered the index --
+            // MEASURED as an indexed WHERE returning NOTHING while NO_INDEX returned the row and the
+            // data itself was intact. Covered by CompositeUnevenColumnTopSurveyTest.
+            int partitionIndex
     ) {
         // Skip partitions that already have a fully-sealed posting index (resume after restart).
         // A partition is fully indexed when the .pk key file has a valid seqlock (seq_start == seq_end)
@@ -10428,14 +10435,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // ALTER TABLE ALTER COLUMN ADD INDEX (older partitions): building a fresh index from scratch.
         createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, true);
-        final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
-        final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
+        final int cellKey = txWriter.getPartitionCellKey(partitionIndex);
+        final long partitionSize = txWriter.getPartitionSize(partitionIndex);
+        final long columnTop = columnVersionWriter.getColumnTop(timestamp, cellKey, columnIndex);
 
         if (columnTop > -1 && partitionSize > columnTop) {
             long columnDataFd = openRO(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
             try {
                 indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
-                indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
+                indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxn(partitionIndex));
                 configureCoveringIfNeeded(indexer, columnIndex, timestamp);
                 // Tag this seal's chain entry with the txn the upcoming
                 // clearTodoAndCommitMeta will assign. Must come AFTER
