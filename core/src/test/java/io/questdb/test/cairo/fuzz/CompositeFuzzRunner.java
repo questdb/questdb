@@ -1422,10 +1422,24 @@ public class CompositeFuzzRunner {
  * This CORRECTS the previous note, which concluded the inconsistency lived inside _txn. It does not.
  * Both halves are individually correct on disk; only the reader's combination of them is not.
  * <p>
- * Where to look: {@code TableReader}'s reload path updates the partition list and the symbol counts
- * ({@code reloadSymbolMapCounts()}) as separate steps. Any path that refreshes partitions without
- * refreshing interner counts in the same txn window reproduces this exactly. The victim is always the
- * newest cellKey because that is the only key whose coverage differs between two adjacent txns.
+ * Where to look: {@code TableReader}'s reload updates the partition list and the symbol counts
+ * ({@code reloadSymbolMapCounts()}) as separate steps, so some path refreshes partitions without
+ * refreshing interner counts in the same txn window. The victim is always the newest cellKey because
+ * that is the only key whose coverage differs between two adjacent txns.
+ * <p>
+ * <b>The obvious candidate is ELIMINATED.</b> {@code reconcileOpenPartitions0} ends with
+ * {@code else if (changed) reloadSymbolMapCounts()}, which couples the interner reload to the
+ * partition SET changing -- wrong in principle for composite, whose interner counts advance with DATA.
+ * Relaxing it to {@code changed || compositeDicts != null} changed the failure by NOTHING: 35
+ * occurrences and 9 of 24 seeds, identical, probabilities held fixed. Reverted rather than kept, since
+ * it buys nothing measurable and adds work to a reload hot path. In hindsight it was predictable --
+ * inserting cellKey 15's partition entry sets {@code changed = true} anyway, so that branch was never
+ * being skipped in the failing case.
+ * <p>
+ * So the tear is real and measured, but the code path that produces it is still unidentified. Next
+ * probe: log {@code txFile.getTxn()} together with the registry count at every
+ * {@code reloadSymbolMapCounts()} AND at the bare-path fallback, and find the window where the two
+ * txns differ.
  * <p>
  * <b>ELIMINATED -- do not re-chase:</b>
  * <ol>
