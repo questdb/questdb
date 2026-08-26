@@ -501,6 +501,14 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * is not where the rows go, and the decline is not the fix. Both were tried and reverted -- do not
      * re-try that approach without new evidence.
      * <p>
+     * <b>Also ruled out:</b> {@code o3ConsumePartitionUpdateSink_processSplitPartitionRemoval}'s
+     * "split one line from the parent" branch, which was the next suspect because it resolves the
+     * parent through the cellKey-0 {@code setStateForTimestamp} and then reads the parent's NATIVE
+     * timestamp column -- neither of which works for a composite parquet parent. It does not run in
+     * this scenario: its "splitting last line of the partition" log line appears ZERO times in the
+     * failing run. Checked in the log rather than reasoned about, after two wrong attributions on this
+     * same defect.
+     * <p>
      * <b>How this shape was reached.</b> Every other squash test here, and the uneven-column-top
      * survey's squash cases, squash a day with NO fragment -- so the merge path had never run against
      * parquet at all. The shape came from asking what the FORMAT PARQUET gate lets downstream code
