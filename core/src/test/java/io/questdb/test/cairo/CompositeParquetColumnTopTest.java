@@ -140,6 +140,55 @@ public class CompositeParquetColumnTopTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * O3 INTO a converted cell, with UNEVEN column tops.
+     * <p>
+     * The cold-storage fix that made this shape work at all was verified with a table that had no
+     * ADD COLUMN, i.e. every column top 0 -- the same vacuous setup that let the CONVERT data loss
+     * hide behind four green tests. This re-checks that fix under the condition that actually
+     * discriminates.
+     */
+    @Test
+    public void testO3IntoConvertedCellWithUnevenColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            createUnevenCells("c5", ", exch");
+            createUnevenCells("p5", "");
+
+            execute("ALTER TABLE c5 CONVERT PARTITION TO PARQUET LIST '2023-10-01'");
+            execute("ALTER TABLE p5 CONVERT PARTITION TO PARQUET LIST '2023-10-01'");
+            drainWalQueue();
+            assertMatchesTwin("c5", "p5");   // precondition
+
+            // O3 into the converted ETH cell, BEFORE its existing rows, carrying a tag value.
+            execute("INSERT INTO c5 VALUES ('2023-10-01T00:30:00.000000Z','ETH',9.0,'E0')");
+            execute("INSERT INTO p5 VALUES ('2023-10-01T00:30:00.000000Z','ETH',9.0,'E0')");
+            drainWalQueue();
+            assertNotSuspended("c5");
+
+            assertMatchesTwin("c5", "p5");
+            final StringSink count = new StringSink();
+            TestUtils.printSql(engine, sqlExecutionContext, "SELECT count() FROM c5", count);
+            TestUtils.assertContains(count, "7");
+        });
+    }
+
+    /** SQUASH over converted cells with uneven tops -- another shape never probed in this condition. */
+    @Test
+    public void testSquashOverParquetCellsWithUnevenColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            createUnevenCells("c6", ", exch");
+            createUnevenCells("p6", "");
+            execute("ALTER TABLE c6 CONVERT PARTITION TO PARQUET LIST '2023-10-01'");
+            execute("ALTER TABLE p6 CONVERT PARTITION TO PARQUET LIST '2023-10-01'");
+            drainWalQueue();
+            execute("ALTER TABLE c6 SQUASH PARTITIONS");
+            execute("ALTER TABLE p6 SQUASH PARTITIONS");
+            drainWalQueue();
+            assertNotSuspended("c6");
+            assertMatchesTwin("c6", "p6");
+        });
+    }
+
     private void assertMatchesTwin(String composite, String plain) throws Exception {
         final StringSink c = new StringSink();
         final StringSink p = new StringSink();
