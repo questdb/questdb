@@ -1289,6 +1289,20 @@ public class CompositeFuzzRunner {
  * That is worth stating plainly: the fixed sweep is a regression guard, not evidence of absence. Use
  * {@link #withDropPartitionProbability}(0.05) to keep hunting; expect the unstable test to keep
  * finding things until it stops.
+ * <p>
+ * <b>The one it found is OPEN and now deterministically reproducible:</b>
+ * <pre>
+ *   CompositeFuzzRunner.of(engine, TestUtils.generateRandom(null, 345549849791363L, 1787735726165L))
+ *           .withDropPartitionProbability(0.05)
+ *   -&gt; Row 238 ts expected 2023-01-02T00:00:00Z SKEWEARLY SKEWEARLY 0.5 0
+ *      but was  2023-01-02T00:21:23.066143Z SYM2 SYM0 ...
+ * </pre>
+ * The PLAIN twin has the SKEWEARLY rows at that position and the composite twin does not, so the
+ * composite side is missing rows this harness inserts AFTER the generated traffic
+ * ({@code insertTimeSkewedCell}) -- i.e. after any generated DROP has run. Note
+ * {@code TestUtils.generateRandom}, NOT {@code new Rnd}: the former primes the stream with two
+ * {@code nextBoolean()} calls and a bare {@code new Rnd} does not reproduce (see
+ * {@code CompositeFuzzUnstableTest}'s javadoc).
  * THREE independent causes, every one a per-cell concept handled through a cellKey-0-only API:
  * <ol>
  *   <li><b>Writer, {@code TxWriter#beginPartitionSizeUpdate}.</b> Paired the last ENTRY's cellKey with

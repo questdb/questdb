@@ -40,20 +40,20 @@ import org.junit.Test;
  * those two are what a pull request needs to pass (fixed seeds, bounded, same result every run); this
  * one is what finds the next defect.
  * <p>
- * <b>CAVEAT, measured 2026-08-26: the recipe below did NOT work once.</b> A divergence on
- * {@code unstable3}, found once DROP PARTITION generation was switched on, did not reproduce from the
- * seed attributed to that run -- an isolated {@code new Rnd(A, B)} at the same drop probability
- * passed. Two explanations, NOT distinguished:
- * <ul>
- *   <li>the run-to-seed mapping is ambiguous in the log (seeds appear in PAIRS, so taking "the 4th
- *       line" as run 3 may simply be the wrong seed); or</li>
- *   <li>the six runs share one {@code engine} in this method, so a failure can depend on state left by
- *       earlier runs -- pools, purge scheduling, the static counters the anti-vacuity floors read --
- *       and no single seed reproduces it.</li>
- * </ul>
- * If the second holds, the recipe below is unsound as written; the fix is an unambiguous run-to-seed
- * log line AND making each run stand alone. Worth settling before anyone relies on a failure here
- * being chaseable: an exploratory test whose failures cannot be reproduced trains people to ignore it.
+ * <b>THE REPRODUCTION RECIPE BELOW IS WRONG -- corrected 2026-08-26, and this cost real time.</b>
+ * {@code new Rnd(A, B)} is NOT what this test runs. {@code TestUtils#generateRandom} constructs the
+ * Rnd and then calls {@code nextBoolean()} TWICE to de-bias it, so a bare {@code new Rnd(A, B)}
+ * replays a different stream and the failure does not reproduce -- measured: an isolated
+ * {@code new Rnd(345549849791363L, 1787735726165L)} PASSED, while
+ * {@code TestUtils.generateRandom(null, 345549849791363L, 1787735726165L)} reproduced the divergence
+ * byte-for-byte, same row, same values.
+ * <p>
+ * <b>Use {@code TestUtils.generateRandom(null, A, B)} to reproduce, never {@code new Rnd(A, B)}.</b>
+ * <p>
+ * Two explanations I recorded before measuring are both ELIMINATED, noted so they are not re-derived:
+ * the seed pairs in the log are NOT ambiguous (generateRandom simply logs twice, via {@code log.info}
+ * and {@code System.out.printf}), and the failure does NOT depend on state shared across the six runs
+ * -- a single isolated run reproduces it exactly.
  * <p>
  * <b>Reproducing a failure.</b> Every run logs its seeds. Re-run the exact failing case with
  * {@code -Dfuzz.s0=<A> -Dfuzz.s1=<B>} (honoured by {@link TestUtils#generateRandom(Log)}), or pin them
