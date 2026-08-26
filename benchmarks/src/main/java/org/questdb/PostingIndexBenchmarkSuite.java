@@ -166,9 +166,23 @@ public class PostingIndexBenchmarkSuite {
                         .warmupIterations(1)
                         .measurementIterations(2);
             } else {
-                builder.warmupIterations(2).warmupTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
-                        .measurementIterations(3).measurementTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
-                        .forks(0);
+                // Benchmarks contaminate each other in a shared JVM: a 5,000-key
+                // scan measured 3.11x SLOWER alongside two others and 1.73x
+                // FASTER alone, three runs agreeing within 2%. Forking makes a
+                // trustworthy number the default rather than folklore.
+                final int iters = Integer.getInteger("questdb.suite.bench.iterations", 2);
+                builder.forks(1)
+                        .jvmArgsAppend(
+                                "--enable-native-access=ALL-UNNAMED",
+                                "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                                "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+                                "--add-opens=java.base/java.nio=ALL-UNNAMED",
+                                "--add-opens=java.base/java.time.zone=ALL-UNNAMED",
+                                "--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED")
+                        .warmupIterations(1)
+                        .warmupTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
+                        .measurementIterations(iters)
+                        .measurementTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1));
             }
             results = new Runner(builder.build()).run();
             printSummary(results);
