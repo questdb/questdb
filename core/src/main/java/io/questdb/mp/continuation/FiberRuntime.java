@@ -39,11 +39,11 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
 public final class FiberRuntime {
+    public static final int NO_WORKER = -1;
     private static final long ADMISSION_OPEN = Long.MIN_VALUE;
     private static final long ADMISSION_PERMIT_MASK = Long.MAX_VALUE;
     private static final int GLOBAL_PROBE_INTERVAL = 61;
     private static final Log LOG = LogFactory.getLog(FiberRuntime.class);
-    public static final int NO_WORKER = -1;
     private static final int PROCESS_OWNED = 2;
     private static final int PROCESS_RELEASED = 1;
     private static final int PROCESS_TERMINATED = 0;
@@ -584,16 +584,6 @@ public final class FiberRuntime {
     }
 
     @TestOnly
-    public int getRunQueueCapacity() {
-        return runQueue.capacity();
-    }
-
-    @TestOnly
-    public int getLocalQueueCapacityForTesting(int workerId) {
-        return getShardForTesting(workerId).localQueue.capacity();
-    }
-
-    @TestOnly
     public static int calculateLocalQueueCapacityForTesting(int initialMaxLiveCount, int workerCount) {
         return FiberLocalRunQueue.calculateCapacity(initialMaxLiveCount, workerCount);
     }
@@ -601,6 +591,16 @@ public final class FiberRuntime {
     @TestOnly
     public static int getGlobalProbeIntervalForTesting() {
         return GLOBAL_PROBE_INTERVAL;
+    }
+
+    @TestOnly
+    public boolean claimLocalHeadForTesting(int workerId, long expectedHead) {
+        return getShardForTesting(workerId).localQueue.claimHeadForTesting(expectedHead);
+    }
+
+    @TestOnly
+    public int getLocalQueueCapacityForTesting(int workerId) {
+        return getShardForTesting(workerId).localQueue.capacity();
     }
 
     @TestOnly
@@ -614,6 +614,16 @@ public final class FiberRuntime {
     }
 
     @TestOnly
+    public int getRunQueueCapacity() {
+        return runQueue.capacity();
+    }
+
+    @TestOnly
+    public void initializeLocalPositionForTesting(int workerId, long position) {
+        getShardForTesting(workerId).localQueue.initializeEmptyPositionForTesting(position);
+    }
+
+    @TestOnly
     public boolean isPoolBoundForTesting() {
         return bindingRole == BindingRole.POOL_BOUND;
     }
@@ -621,16 +631,6 @@ public final class FiberRuntime {
     @TestOnly
     public boolean offerLocalForTesting(int workerId, Fiber fiber) {
         return getShardForTesting(workerId).localQueue.offer(fiber);
-    }
-
-    @TestOnly
-    public boolean claimLocalHeadForTesting(int workerId, long expectedHead) {
-        return getShardForTesting(workerId).localQueue.claimHeadForTesting(expectedHead);
-    }
-
-    @TestOnly
-    public void initializeLocalPositionForTesting(int workerId, long position) {
-        getShardForTesting(workerId).localQueue.initializeEmptyPositionForTesting(position);
     }
 
     @TestOnly
@@ -1862,9 +1862,9 @@ public final class FiberRuntime {
     }
 
     public static final class OwnerContext {
-        private final int workerId;
         private final FiberRuntime runtime;
         private final Shard shard;
+        private final int workerId;
 
         private OwnerContext(FiberRuntime runtime, int workerId, Shard shard) {
             this.runtime = runtime;
@@ -1888,9 +1888,9 @@ public final class FiberRuntime {
         private static final int UNSTARTED = 0;
         private final FiberLocalRunQueue localQueue;
         private final AtomicInteger ownerState = new AtomicInteger(UNSTARTED);
+        private final int workerId;
         private int globalProbeCountdown;
         private int stealCursor;
-        private final int workerId;
 
         private Shard(int workerId, int capacity, int globalProbeCountdown, int stealCursor) {
             this.workerId = workerId;

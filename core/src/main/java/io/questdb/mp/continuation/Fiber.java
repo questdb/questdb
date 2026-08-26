@@ -537,6 +537,10 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return executionState(executionState);
     }
 
+    int getLastMountWorkerId() {
+        return lastMountWorkerId;
+    }
+
     int getNotificationState() {
         return notificationState;
     }
@@ -803,16 +807,12 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         }
     }
 
-    void setRegistryIndex(int registryIndex) {
-        this.registryIndex = registryIndex;
-    }
-
     void setLastMountWorkerId(int workerId) {
         lastMountWorkerId = workerId;
     }
 
-    int getLastMountWorkerId() {
-        return lastMountWorkerId;
+    void setRegistryIndex(int registryIndex) {
+        this.registryIndex = registryIndex;
     }
 
     void stage(FiberTask task, long reservationEpoch) {

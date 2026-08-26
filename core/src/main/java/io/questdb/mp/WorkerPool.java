@@ -329,13 +329,18 @@ public class WorkerPool implements Closeable {
     }
 
     @TestOnly
+    public int getReadyWorkerCountForTesting() {
+        return workerWakeController != null ? workerWakeController.getReadyCount() : 0;
+    }
+
+    @TestOnly
     public boolean isHaltTerminalSuccessfulForTesting(long timeoutNanos) {
         return isHaltComplete(true, System.nanoTime() + Math.max(0, timeoutNanos), false);
     }
 
     @TestOnly
-    public int getReadyWorkerCountForTesting() {
-        return workerWakeController != null ? workerWakeController.getReadyCount() : 0;
+    public boolean isWorkerReadyForTesting(int workerId) {
+        return workerWakeController != null && workerWakeController.isReady(workerId);
     }
 
     @TestOnly
@@ -360,13 +365,10 @@ public class WorkerPool implements Closeable {
     }
 
     @TestOnly
-    public boolean isWorkerReadyForTesting(int workerId) {
-        return workerWakeController != null && workerWakeController.isReady(workerId);
-    }
-
-    @TestOnly
-    public boolean wakeOneForTesting(int preferredWorkerId) {
-        return workerWakeController != null && workerWakeController.wakeOne(preferredWorkerId);
+    public void unregisterReadyWorkerForTesting(int workerId) {
+        if (workerWakeController != null) {
+            workerWakeController.unregisterReady(workerId);
+        }
     }
 
     @TestOnly
@@ -377,10 +379,8 @@ public class WorkerPool implements Closeable {
     }
 
     @TestOnly
-    public void unregisterReadyWorkerForTesting(int workerId) {
-        if (workerWakeController != null) {
-            workerWakeController.unregisterReady(workerId);
-        }
+    public boolean wakeOneForTesting(int preferredWorkerId) {
+        return workerWakeController != null && workerWakeController.wakeOne(preferredWorkerId);
     }
 
     @TestOnly
