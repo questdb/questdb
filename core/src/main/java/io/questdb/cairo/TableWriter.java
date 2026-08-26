@@ -11791,7 +11791,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // or the previous partition was just re-created in this commit
                     // in this case we can remove the current partition fully
                     partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn, partitionCellKey);
-                    txWriter.removeAttachedPartitions(partitionTimestamp);
+                    // (ts, cellKey)-resolving: the one-arg form drops cellKey 0's _txn entry regardless
+                    // of which cell the remove candidate on the line above actually names. Found by the
+                    // cellKey-0 call-site audit; the sibling site in this same method was fixed earlier
+                    // and these two were missed. Byte-identical for plain and dormant-composite tables.
+                    txWriter.removeAttachedPartitions(partitionTimestamp, partitionCellKey);
                 } else {
                     try {
                         // The safe way to remove the split is to split one line from the parent partition
@@ -11852,7 +11856,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         // Now it's safe to remove the empty split partition
                         partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn, partitionCellKey);
-                        txWriter.removeAttachedPartitions(partitionTimestamp);
+                        // (ts, cellKey)-resolving -- see the sibling call above.
+                        txWriter.removeAttachedPartitions(partitionTimestamp, partitionCellKey);
                     } finally {
                         path.trimTo(pathSize);
                         other.trimTo(pathSize);
