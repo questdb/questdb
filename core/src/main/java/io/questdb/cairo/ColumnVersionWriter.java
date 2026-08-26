@@ -201,6 +201,35 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
+    /**
+     * <b>KNOWN BUG for composite tables, root-caused 2026-08-26 -- this method is cellKey-blind.</b>
+     * <p>
+     * When a DROP leaves a column's "added at" partition pointing beyond the new last partition, this
+     * moves it back and writes a compensating column-top record so the column reads as absent for the
+     * pre-existing rows. Both of those steps use the 2-arg, cellKey-0-only forms
+     * ({@code getRecordIndex(ts, columnIndex)}, {@code upsert(ts, columnIndex, ...)}), so on a
+     * composite day only cellKey 0 gets the compensating record. Every SIBLING cell of that day gets
+     * none -- while the moved default now says the column was added at their day.
+     * <p>
+     * A reader on such a sibling then finds no explicit record, evaluates
+     * {@code colTopPartTs <= partitionTimestamp} as true, concludes the column fully exists, and opens
+     * a {@code <col>.d.<txn>} file that was never created:
+     * <pre>
+     *   could not open, file does not exist: .../2023-01-01/SYM.0/new_col_1.d.5
+     * </pre>
+     * Measured end to end on {@code Rnd(1666,2138)} with
+     * {@code CompositeFuzzRunner#withDropPartitionProbability(0.05)}: the writer only ever wrote
+     * 2023-01-02 as that column's default (4 writes, all from {@code addColumn}), the reader read
+     * 2023-01-01, its {@code columnVersionReader} was verified IN SYNC
+     * ({@code cvrVersion == txFileColumnVersion}), and {@code colIdx == wIdx} named the right column.
+     * This method moving the record is the only remaining explanation, and its own comment says
+     * "This can happen as a resul of partition drop" -- which is exactly when it reproduces.
+     * <p>
+     * Fixing it needs the day's cells and their individual row counts, which live in {@code TxWriter},
+     * not here -- so it is a signature change plus a decision about what row count each sibling cell's
+     * compensating record should carry ({@code transientRowCount} is the LAST cell's, not every
+     * cell's). Not a one-line edit, which is why it is documented rather than guessed at.
+     */
     public void replaceInitialPartitionRecords(long lastPartitionTimestamp, long transientRowCount) {
         // Remove all default partitions that point beyond the last partition
         // Replace them as if the column was added to the last partition
