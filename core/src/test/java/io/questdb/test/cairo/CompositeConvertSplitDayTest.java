@@ -151,15 +151,9 @@ public class CompositeConvertSplitDayTest extends AbstractCompositeTwinTest {
             engine.releaseInactive();
             assertTwinEqual("");
 
-            // KNOWN RESIDUAL, deliberately not asserted: the merged fragment's DIRECTORY is not
-            // reclaimed by the following commit -- measured, 2023-01-01T010000-000001 survives it.
-            // Squashing before the conversion detaches the fragment, and the subsequent purge does not
-            // remove its directory once the day has become parquet; an explicit squash on a NATIVE day
-            // does get reclaimed (see CompositeSquashTest). This is the orphan-directory class the
-            // branch already documents as non-corrupting: the entry is gone from the attached list, the
-            // rows are correct, and nothing reads the stale directory. Asserting it here would make
-            // this test red for a storage-reclaim gap rather than for the consolidation behaviour it
-            // exists to check. Worth fixing separately -- it wastes disk until the table is rebuilt.
+            // KNOWN LEAK, pinned separately by testMergedFragmentDirectoryIsLeaked below rather than
+            // asserted here, so this test stays about consolidation. The merged fragment's directory
+            // survives; see that test for the measurements.
             Assert.assertFalse(
                     "sanity: the leaked directory should still be OFF the attached list -- if it is "
                             + "attached again, this is no longer a mere reclaim gap",
@@ -244,6 +238,60 @@ public class CompositeConvertSplitDayTest extends AbstractCompositeTwinTest {
     private boolean tableHasAttachedFragment() throws SqlException {
         printSql("SELECT count() FROM table_partitions('c') WHERE name LIKE '%T%'");
         return !sink.toString().contains("\n0\n");
+    }
+
+    /**
+     * PINS AN UNFIXED LEAK: composite squash never reclaims the merged fragment's directory.
+     * <p>
+     * After a squash merges a fragment into the day's cells, the fragment is correctly detached from
+     * the attached-partition list -- {@code table_partitions()} shows the consolidated day and the rows
+     * are right -- but {@code 2023-01-01T010000-000001/E0.1} stays on disk forever.
+     * <p>
+     * MEASURED, and each of these ruled out an explanation I had reached for:
+     * <ul>
+     *   <li>NOT specific to parquet or to CONVERT. An explicit {@code SQUASH PARTITIONS} on a purely
+     *       NATIVE day leaks identically. An earlier revision of this file claimed the native case was
+     *       reclaimed; that was wrong, and this pin replaces it.</li>
+     *   <li>NOT merely deferred to the async purge. Running {@code O3PartitionPurgeJob} to exhaustion
+     *       after releasing all readers and writers leaves the directory in place.</li>
+     *   <li>NOT an empty-container remnant: the directory still holds the cell {@code E0.1}.</li>
+     *   <li>NOT a wrong enqueue: the merge queues {@code (fragTs, srcNameTxn, cellKey)}, the fragment's
+     *       own timestamp. The only purge failure logged in the drain is a DIFFERENT candidate,
+     *       {@code /c~1/2023-01-01/E0 errno=2} -- the day cell at a name-txn that no longer exists.
+     *       Why the fragment's own candidate never produces an unlink attempt is the open question.</li>
+     * </ul>
+     * <p>
+     * Non-corrupting -- nothing reads the stale directory and no query sees it -- but it wastes disk
+     * permanently, growing with every split that gets squashed. Pinned rather than left silent so the
+     * reproduction is not lost; invert when the reclaim is fixed.
+     */
+    @Test(timeout = 60_000)
+    public void testMergedFragmentDirectoryIsLeaked() throws Exception {
+        node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedSplittableDay();
+            forceSplit();
+            Assert.assertFalse("precondition: the day must have split", fragmentDirs("c").isEmpty());
+
+            execute("ALTER TABLE c SQUASH PARTITIONS");
+            drainWalQueue();
+            insertIntoBoth("('2023-01-04T00:00:00.000000Z','E0',7.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            // The squash itself is correct: nothing fragmented remains ATTACHED, and the rows agree.
+            Assert.assertFalse(
+                    "the fragment must not remain attached -- that would be a different, worse bug",
+                    tableHasAttachedFragment());
+            assertTwinEqual("");
+
+            // ... but its directory is still there. Invert this when reclaim is fixed.
+            Assert.assertFalse(
+                    "composite squash now reclaims the merged fragment's directory -- the leak is fixed, "
+                            + "invert this test. Remaining: " + fragmentDirs("c"),
+                    fragmentDirs("c").isEmpty());
+        });
     }
 
     private List<String> dayDirs(String table) throws IOException {
