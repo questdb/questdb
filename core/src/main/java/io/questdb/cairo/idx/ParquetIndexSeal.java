@@ -658,18 +658,14 @@ public final class ParquetIndexSeal {
                             -1,
                             false
                     ));
-            // row_id ascends within a key's run and across the group, which is
-            // exactly what delta packing is for -- and what the native chain
-            // does with its own delta-FoR. PLAIN spends 8 bytes a posting, so
-            // the index carries several times the bytes the native form does
-            // and a scan pays for every one of them.
-            addSchemaColumn(columnNames, columnMetadata, "row_id", SYNTHETIC_COLUMN_ID, ColumnType.LONG,
-                    TableUtils.packParquetConfig(
-                            Integer.getInteger("questdb.idx.rowid.encoding", ParquetEncoding.ENCODING_DELTA_BINARY_PACKED),
-                            ParquetCompression.COMPRESSION_UNCOMPRESSED + 1,
-                            -1,
-                            false
-                    ));
+            // row_id stays PLAIN, deliberately. Delta packing shrinks it a lot
+            // -- and was tried -- but a delta block has to be decoded from its
+            // start, so reading one key's run out of the middle of a group pays
+            // for every posting before it. Measured: point reads went from 8-9x
+            // slower than native to 40-44x and range reads from 4-9x to 15-32x,
+            // while scans, which read a group start to end anyway, were
+            // unaffected. Random access is what this column is for.
+            addSchemaColumn(columnNames, columnMetadata, "row_id", SYNTHETIC_COLUMN_ID, ColumnType.LONG);
             for (int slot = 0; slot < coverCount; slot++) {
                 addSchemaColumn(
                         columnNames, columnMetadata, coveredNames.getQuick(slot),
