@@ -1320,12 +1320,30 @@ public class CompositeFuzzRunner {
  * write landing in an earlier day after the ADD COLUMN; a DROP PARTITION making an earlier day
  * active) -- <b>both now ELIMINATED by measurement</b>: the failing partition is at version
  * {@code .0}, the original, never rewritten, so nothing added rows to it after the column appeared.
- * <b>STILL OPEN, cause NOT established.</b> The failure is confirmed and reproducible: the DEFAULT
- * column-version path returns top 0 -- "column fully exists in this partition" -- for a cell whose day
- * predates the column, so the reader opens a file the writer never created. What it is NOT: an earlier
- * note here claimed {@code getColumnTopPartitionTimestamp} is cellKey-blind and aliases across cells.
- * It is not -- {@code getRecordIndex(long, int)} delegates to cellKey 0 and compares the full packed
- * (cellKey, columnIndex). Retracted, see that method's own comment.
+ * <b>STILL OPEN, cause NOT established -- and the SITE is now known, which is the useful part.</b>
+ * The reader opens a {@code <col>.d.<txn>} file the writer never created, for a cell whose day
+ * predates the column.
+ * <p>
+ * The failing code is {@code TableReader} (~2377-2394), which does NOT go through
+ * {@code ColumnVersionReader#getColumnTop} at all. It resolves the record itself and applies its own
+ * guard:
+ * <pre>
+ *   versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, cellKey, writerIndex);
+ *   columnTop = versionRecordIndex > -1 ? getColumnTopByIndex(versionRecordIndex) : 0;
+ *   ...
+ *   hasVersionRecord = versionRecordIndex > -1;
+ *   isColTopPartTsOk = getColumnTopPartitionTimestamp(writerIndex) &lt;= partitionTimestamp;
+ *   if (columnRowCount &gt; 0 &amp;&amp; (hasVersionRecord || isColTopPartTsOk)) {  // opens the file
+ * </pre>
+ * For the failing case BOTH flags should be false, so the file should not be opened -- yet it is. That
+ * is the unexplained step, and it is where the next probe must go.
+ * <p>
+ * <b>Every probe on this bug so far measured the WRONG METHOD.</b> They instrumented
+ * {@code getColumnTop(ts, cellKey, col)}, which measured correct in 13 calls
+ * ({@code recIdx=-1, defaultTs=2023-01-02, ts=2023-01-01 -> top=-1}, exactly right) -- because this
+ * path never calls it. Two earlier explanations built on those readings (cellKey aliasing; unstable
+ * default partition) are retracted; the "unstable" reading was almost certainly the composite and
+ * PLAIN twins mixed in one log with no table identity.
  * <p>
  * Also eliminated by measurement: the ADD COLUMN backfill's scoping, an O3 write landing in an earlier
  * day, and a DROP making an earlier day active -- the failing partition sits at version {@code .0},
