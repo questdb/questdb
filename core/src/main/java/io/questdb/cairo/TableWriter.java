@@ -6886,19 +6886,50 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * AUDIT NOTE (cellKey-0 / active-tail sweep, 2026-08-26). This operates on
-     * {@code lastPartitionTimestamp} -- the writer's ACTIVE TAIL -- and updates its size with the
-     * cellKey-0-only {@code updatePartitionSizeByTimestamp}. Both are suspect for a routed composite
-     * table: {@code finishO3Commit} documents that the active-tail fields describe the bare, non-cell
-     * day directory and are "NEVER a valid target" there, and neither caller (around lines 5717/5748)
-     * carries a composite guard.
+     * AUDIT NOTE (cellKey-0 / active-tail sweep, 2026-08-26; reachability RESOLVED same day). This
+     * operates on {@code lastPartitionTimestamp} -- the writer's ACTIVE TAIL -- and updates its size
+     * with the cellKey-0-only {@code updatePartitionSizeByTimestamp}. Both would be wrong for a routed
+     * composite table: {@code finishO3Commit} documents that the active-tail fields describe the bare,
+     * non-cell day directory and are "NEVER a valid target" there.
      * <p>
-     * NOT patched, and not because it looks safe. Threading a cellKey into the size update alone would
-     * not fix an active-tail concept that has no single meaning on a multi-cell day -- it would just
-     * make the line look handled. This belongs with {@code repairDataGaps} as a path needing a real
-     * per-cell design, and is flagged rather than half-fixed.
+     * Deliberately NOT patched, and the reason is now measured rather than assumed: this method is
+     * UNREACHABLE for a composite table. The audit's earlier wording ("neither caller carries a
+     * composite guard") was too weak -- it looked at the two call sites inside
+     * {@code applyFromWalLagToLastPartition} instead of that method's own callers, three of which are
+     * hard-gated for composite. See the drift-lock assert in the body for the fourth (a genuine
+     * fall-through, safe only via {@code needFullCommit}) and for the positive control behind the
+     * claim.
+     * <p>
+     * So threading a cellKey in here would add per-cell handling to dead code. If a real composite
+     * fast-append ever lands (see {@code compositeFastAppendEligibleCount}), it needs its own per-cell
+     * path -- not a retrofit of this one, whose active-tail concept has no single meaning on a
+     * multi-cell day.
      */
     private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
+        // DRIFT LOCK (measured 2026-08-26). This active-tail apply is cell-blind: it writes through
+        // this.columns, which for a composite table is never repointed at a real <day>/<cell> segment,
+        // so a row taking this path lands in the orphan bare day directory -- silent loss, not a crash.
+        //
+        // Three of the four routes here are hard-gated for composite (canFastCommit / canFastCommitNew
+        // via applyFromWalLagToLastPartitionPossible's dimCount check; tryFastAppendInOrderBlock's own
+        // early return). The FOURTH is not: processWalCommit's `if (!needFullCommit || canFastCommitNew)`
+        // is false-false for composite, so control FALLS THROUGH to the unguarded direct call just below
+        // it. That call is reachable in principle and harmless only because needFullCommit is forced true
+        // for every composite commit, so lag never accumulates and getLagRowCount() is always 0.
+        //
+        // MEASURED, not reasoned: a temporary throw here fired 0 times across the 508-test composite
+        // suite. Inverting it to plain tables fired 180 times and failed 105 of those same tests, which
+        // is the positive control proving the path is heavily exercised in that very run and the zero is
+        // real rather than a dead edit.
+        //
+        // That safety is therefore an emergent property of a gate maintained elsewhere, and
+        // tryFastAppendInOrderBlock's own comment already warns these gates "are maintained separately
+        // and intentionally diverge, so the two can drift apart". Assert rather than throw: assertions
+        // are on under test and fuzz, so any future relaxation of needFullCommit fails loudly in CI,
+        // while production behaviour is unchanged.
+        assert metadata.getPartitionSpec().getDimensionCount() == 0
+                : "applyLagToLastPartition is cell-blind and must never run for a composite table "
+                + "[table=" + tableToken.getTableName() + ", lagRowCount=" + lagRowCount + "]";
         long initialTransientRowCount = txWriter.transientRowCount;
         txWriter.transientRowCount += lagRowCount;
         txWriter.updatePartitionSizeByTimestamp(lastPartitionTimestamp, txWriter.transientRowCount);
@@ -20105,11 +20136,43 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * unlike {@code openLastPartitionAndSetAppendPosition}, which returns early for
      * {@code isRoutedComposite()} with the same reasoning.
      * <p>
-     * Flagged, not patched: this is the ACTIVE-TAIL family, not the cellKey-0 family. Threading a
-     * cellKey in would not fix a concept that has no single meaning on a multi-cell day. See
-     * {@code repairDataGaps} and {@code applyLagToLastPartition} for the other two members.
+     * Not patched, and the reachability question is now CLOSED for all three members of the
+     * ACTIVE-TAIL family -- none of them is a live composite hazard:
+     * <ul>
+     *   <li>{@code repairDataGaps} -- explicitly gated, returns the timestamp unchanged for a real
+     *       composite table (a deliberate no-op; the repair walk is by-day and would undercount
+     *       siblings).</li>
+     *   <li>{@code applyLagToLastPartition} -- measured unreachable, and now assert-locked; see its
+     *       body for the fall-through it depends on and the positive control.</li>
+     *   <li>this method -- REACHABLE for a composite table, contrary to the "composite implies WAL"
+     *       argument; a drift-lock assert here fired 20 times and was removed. Reached by holding a raw
+     *       writer ({@code engine.getWriter} -> {@code newRow}), which bypasses the WAL apply path.
+     *       Test-only today, so no production defect -- but see the body: that is a weaker claim than
+     *       unreachability, and anything that writes a composite table through {@code newRow} gets the
+     *       cell-blind active tail.</li>
+     * </ul>
+     * The family remains real as a DESIGN observation: threading a cellKey into any of them would not
+     * fix a concept that has no single meaning on a multi-cell day. What changed is that none of them
+     * needs fixing today, so a future composite fast-append must build its own per-cell path rather
+     * than retrofit these.
      */
     private void switchPartition(long timestamp) {
+        // MEASURED 2026-08-26, and it refuted the obvious argument. A drift-lock assert
+        // (dimCount == 0) was added here on the reasoning that composite is refused at CREATE for a
+        // non-WAL table, so this non-WAL newRow path is unreachable. It FIRED 20 times across the
+        // composite suite and was removed as false.
+        //
+        // Why the argument was wrong: "composite implies WAL" constrains how rows arrive through SQL,
+        // not who may open a TableWriter. Holding a raw writer on a WAL composite table
+        // (engine.getWriter -> newRow -> ROW_ACTION_SWITCH_PARTITION) reaches straight through to here,
+        // bypassing the WAL apply path and its composite dispatch entirely. Today that is a test-only
+        // idiom (CompositeDictPersistenceTest, CompositeRoutingTest), which is why no production defect
+        // follows -- but "no production caller" is a much weaker statement than "unreachable", and only
+        // the first one is true.
+        //
+        // Contrast applyLagToLastPartition, whose own unreachability claim IS measured (0 fires, with a
+        // 180-fire positive control) and is assert-locked there. The difference between these two is
+        // the whole lesson: that one was measured, this one was argued.
         // Before partition can be switched, we need to index records
         // added so far. Index writers will start point to different
         // files after switch.
