@@ -405,68 +405,72 @@ public class WorkerPool implements Closeable {
 
     public void start(@Nullable Log log) {
         if (!closed.get() && running.compareAndSet(false, true)) {
+            int startedWorkerCount = 0;
+            try {
+                // very common cleaner
+                // it is set up from start() to make sure it is called last
+                // some other thread local cleaners are liable to access thread local Path instances
+                setupPathCleaner();
 
-            // very common cleaner
-            // it is set up from start() to make sure it is called last
-            // some other thread local cleaners are liable to access thread local Path instances
-            setupPathCleaner();
-
-            for (int i = 0; i < workerCount; i++) {
-                final int index = i;
-                Worker worker = new Worker(
-                        poolName,
-                        i,
-                        workerAffinity[i],
-                        workerJobs.getQuick(i),
-                        halted,
-                        _ -> Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index)),
-                        haltOnError,
-                        yieldThreshold,
-                        napThreshold,
-                        sleepThreshold,
-                        sleepMs,
-                        metrics,
-                        continuationQueue,
-                        log
-                );
-                worker.setPriority(priority);
-                worker.setDaemon(daemons);
-                // Add + spawn under workersLock so a concurrent halt() first pass never reads the list
-                // torn (ObjList.add mutates a non-volatile pos/buffer). The worker is spawned inside the
-                // monitor too, so halt() either has not yet seen this worker (it is not spawned) or sees
-                // it fully published -- never a spawned-but-invisible worker that would loop on freed
-                // resources.
-                synchronized (workersLock) {
-                    // Fire the test seam INSIDE the monitor so a test can hold the add critical section
-                    // open and prove a concurrent halt() first pass is held off (serialized), never
-                    // reading a half-built list. The seam is a strict no-op when unset.
-                    final Runnable beforeWorkerAdded = beforeWorkerAddedForTesting;
-                    if (beforeWorkerAdded != null) {
-                        beforeWorkerAdded.run();
+                for (int i = 0; i < workerCount; i++) {
+                    final int index = i;
+                    Worker worker = new Worker(
+                            poolName,
+                            i,
+                            workerAffinity[i],
+                            workerJobs.getQuick(i),
+                            halted,
+                            _ -> Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index)),
+                            haltOnError,
+                            yieldThreshold,
+                            napThreshold,
+                            sleepThreshold,
+                            sleepMs,
+                            metrics,
+                            continuationQueue,
+                            log
+                    );
+                    worker.setPriority(priority);
+                    worker.setDaemon(daemons);
+                    // Add + spawn under workersLock so a concurrent halt() first pass never reads the list
+                    // torn (ObjList.add mutates a non-volatile pos/buffer). The worker is spawned inside the
+                    // monitor too, so halt() either has not yet seen this worker (it is not spawned) or sees
+                    // it fully published -- never a spawned-but-invisible worker that would loop on freed
+                    // resources.
+                    synchronized (workersLock) {
+                        // Fire the test seam INSIDE the monitor so a test can hold the add critical section
+                        // open and prove a concurrent halt() first pass is held off (serialized), never
+                        // reading a half-built list. The seam is a strict no-op when unset.
+                        final Runnable beforeWorkerAdded = beforeWorkerAddedForTesting;
+                        if (beforeWorkerAdded != null) {
+                            beforeWorkerAdded.run();
+                        }
+                        // Re-check closed inside the critical section, before spawning. A concurrent
+                        // halt(long) sets closed and frees freeOnExit under this same monitor; if the seam
+                        // (or a real OOM-stalled launch) held the add open while halt() ran, freeOnExit is
+                        // already gone by the time this loop resumes. Spawning a worker now would loop it on
+                        // freed resources -- a use-after-free plus an orphan thread. Break instead: the
+                        // workers added so far will be halt-signalled once the add critical section releases,
+                        // and started.countDown() below still runs so a waiting halt() proceeds.
+                        if (closed.get()) {
+                            break;
+                        }
+                        workers.add(worker);
+                        worker.start();
+                        startedWorkerCount++;
                     }
-                    // Re-check closed inside the critical section, before spawning. A concurrent
-                    // halt(long) sets closed and frees freeOnExit under this same monitor; if the seam
-                    // (or a real OOM-stalled launch) held the add open while halt() ran, freeOnExit is
-                    // already gone by the time this loop resumes. Spawning a worker now would loop it on
-                    // freed resources -- a use-after-free plus an orphan thread. Break instead: the
-                    // workers added so far will be halt-signalled once the add critical section releases,
-                    // and started.countDown() below still runs so a waiting halt() proceeds.
-                    if (closed.get()) {
-                        countDownUnstartedWorkers(i);
-                        break;
-                    }
-                    workers.add(worker);
-                    worker.start();
                 }
+                if (log != null) {
+                    log.debug().$("worker pool started [pool=").$(poolName).I$();
+                }
+                final Runnable beforeStarted = beforeStartedSignalForTesting;
+                if (beforeStarted != null) {
+                    beforeStarted.run();
+                }
+            } finally {
+                countDownUnstartedWorkers(startedWorkerCount);
+                started.countDown();
             }
-            if (log != null) {
-                log.debug().$("worker pool started [pool=").$(poolName).I$();
-            }
-            final Runnable beforeStarted = beforeStartedSignalForTesting;
-            if (beforeStarted != null) {
-                beforeStarted.run();
-            }
-            started.countDown();
         }
     }
 

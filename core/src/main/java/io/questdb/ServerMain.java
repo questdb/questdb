@@ -292,6 +292,9 @@ public class ServerMain implements Closeable {
             if (workerPoolManager != null && !workerPoolManager.haltBy(deadlineNanos)) {
                 return false;
             }
+            if (!engine.isCloseReady(deadlineNanos)) {
+                return false;
+            }
             freeOnExit.close();
             final Thread hook = shutdownHookThread;
             if (hook != null && hook != Thread.currentThread()) {

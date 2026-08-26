@@ -324,6 +324,45 @@ public class WorkerPoolBootFailureTest {
         }
     }
 
+    @Test
+    public void testStartFailureAfterWorkerStartedAllowsHalt() throws Exception {
+        final String failureMessage = "worker-start-failure";
+        final WorkerPool pool = newDaemonWorkerPool("failed-start", 2);
+        final AtomicBoolean resourceFreed = new AtomicBoolean();
+        final CountDownLatch workerStarted = new CountDownLatch(1);
+        pool.assign(workerContext -> {
+            workerStarted.countDown();
+            return false;
+        });
+        pool.freeOnExit(closeableJob(() -> resourceFreed.set(true)));
+
+        final AtomicLong seamInvocations = new AtomicLong();
+        pool.setBeforeWorkerAddedForTesting(() -> {
+            if (seamInvocations.getAndIncrement() == 1) {
+                try {
+                    Assert.assertTrue("worker 0 must run before worker 1 fails to start",
+                            workerStarted.await(10, TimeUnit.SECONDS));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+                throw new OutOfMemoryError(failureMessage);
+            }
+        });
+
+        try {
+            pool.start();
+            Assert.fail("start() must propagate the injected worker-start failure");
+        } catch (OutOfMemoryError e) {
+            Assert.assertEquals(failureMessage, e.getMessage());
+        } finally {
+            pool.setBeforeWorkerAddedForTesting(null);
+            pool.haltAndAssertCleanForTest(TimeUnit.SECONDS.toNanos(10));
+        }
+
+        Assert.assertTrue("halt() must free freeOnExit after a partial start failure", resourceFreed.get());
+    }
+
     /**
      * When start() stalls between running=true and started.countDown() (realistic on an OOM mid-launch:
      * the worker thread is spawned and looping, but the start latch never counts down), a bounded halt

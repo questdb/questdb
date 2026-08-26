@@ -24,8 +24,13 @@
 
 package io.questdb.test;
 
+import io.questdb.Bootstrap;
+import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.wal.QdbrWalLocker;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.HttpServerConfiguration;
@@ -457,6 +462,53 @@ public class ServerMainBoundedShutdownTest extends AbstractBootstrapTest {
             Assert.assertNull(terminalFailure.get());
             Assert.assertEquals(Boolean.TRUE, boundedResult.get());
             Assert.assertTrue(server.isCloseComplete());
+        });
+    }
+
+    @Test
+    public void testServerMainRetainsFreeOnExitUntilEngineIsCloseReady() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger closeCalls = new AtomicInteger();
+            final AtomicInteger closeReadyCalls = new AtomicInteger();
+            final AtomicBoolean isCloseReady = new AtomicBoolean();
+            final Bootstrap bootstrap = new Bootstrap(new PropBootstrapConfiguration(), getServerMainArgs()) {
+                @Override
+                public CairoEngine newCairoEngine() {
+                    final CairoConfiguration configuration = getConfiguration().getCairoConfiguration();
+                    return new CairoEngine(configuration, new QdbrWalLocker(), true) {
+                        @Override
+                        public void close() {
+                            closeCalls.incrementAndGet();
+                            super.close();
+                        }
+
+                        @Override
+                        public boolean isCloseReady(long deadlineNanos) {
+                            closeReadyCalls.incrementAndGet();
+                            return isCloseReady.get() && super.isCloseReady(deadlineNanos);
+                        }
+                    };
+                }
+            };
+            final ServerMain server = new ServerMain(bootstrap);
+            try {
+                Assert.assertFalse(server.closeBy(
+                        System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+                ));
+                Assert.assertFalse(server.isCloseComplete());
+                Assert.assertEquals(0, closeCalls.get());
+                Assert.assertEquals(1, closeReadyCalls.get());
+
+                isCloseReady.set(true);
+                Assert.assertTrue(server.closeBy(
+                        System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+                ));
+                Assert.assertTrue(server.isCloseComplete());
+                Assert.assertEquals(1, closeCalls.get());
+                Assert.assertEquals(2, closeReadyCalls.get());
+            } finally {
+                server.close();
+            }
         });
     }
 
