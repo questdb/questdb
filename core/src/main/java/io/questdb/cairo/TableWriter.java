@@ -16510,7 +16510,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 parquetBloomFilterIndexes,
                 -1L,
                 partitionSeqTxn,
-                cellSegment
+                cellSegment,
+                // A composite attached entry IS a cell, so partitionIndex resolves it exactly; a plain
+                // table's entries all report 0.
+                txWriter.getPartitionCellKey(partitionIndex)
         );
     }
 

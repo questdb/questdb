@@ -2003,7 +2003,9 @@ public final class TableUtils {
     ) {
         return produceParquetFromNative(path, other, pathSize, partitionTimestamp, partitionNameTxn, parquetNameTxn,
                 tableName, partitionRowCount, metadata, columnVersionReader, symbolTableProvider, configuration,
-                bloomFilterColumns, bloomFilterFpp, bloomFilterIndexes, squashTracker, seqTxn, null);
+                // No cellSegment => no cell => cellKey 0. This overload is the PLAIN-table entry point;
+                // a composite table always goes through the cellSegment-carrying form.
+                bloomFilterColumns, bloomFilterFpp, bloomFilterIndexes, squashTracker, seqTxn, null, 0);
     }
 
     /**
@@ -2032,7 +2034,12 @@ public final class TableUtils {
             DirectIntList bloomFilterIndexes,
             long squashTracker,
             long seqTxn,
-            @Nullable CharSequence cellSegment
+            @Nullable CharSequence cellSegment,
+            // Composite: the CELL being encoded. _cv is keyed by (timestamp, cellKey, column), so the
+            // 2-arg getRecordIndex below answered for cellKey 0 -- every cell of a day was encoded with
+            // cell 0's column top and name txn. Where the tops differ, a non-zero cell's values were
+            // encoded as absent and read back NULL. 0 for a plain table.
+            int cellKey
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final int partitionBy = metadata.getPartitionBy();
@@ -2084,7 +2091,7 @@ public final class TableUtils {
                     // column is dropped or re-keyed by ALTER COLUMN TYPE. Mirror TableReader.
                     final int writerIndex = tableColumnMetadata.getWriterIndex();
 
-                    final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
+                    final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, cellKey, writerIndex);
                     long columnNameTxn = columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex);
                     if (columnNameTxn == -1) {
                         columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
