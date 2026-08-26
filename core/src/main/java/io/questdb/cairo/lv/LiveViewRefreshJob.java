@@ -1657,6 +1657,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void buildColumnMappings(RecordMetadata baseMetadata, TableToken baseToken) {
         columnIndexes.clear();
         columnSizeShifts.clear();
+        hydrateBaseTableOnDemand(baseToken);
         try (MetadataCacheReader metaRO = engine.getMetadataCache().readLock()) {
             CairoTable baseTable = metaRO.getTable(baseToken);
             if (baseTable == null) {
@@ -1682,12 +1683,36 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Fills the metadata cache with {@code baseToken} if the startup hydrator has not
+     * reached it yet, the way {@code AbstractPartitionFrameCursorFactory} does for every
+     * generic SQL read.
+     * <p>
+     * {@code onStartupAsyncHydrator} runs on its own thread and walks the catalogue one
+     * table at a time, so a refresh turn scheduled early in a restart can reach the cache
+     * before this view's base table is in it. Reading it cold is not harmless: the restore
+     * is the first thing a restart runs, it resolves the base projection through
+     * {@link #buildColumnMappings}, and a {@code table does not exist} there is caught by
+     * {@code tryRestoreFromTimeline} as an unreadable timeline. The view then retires a
+     * perfectly good checkpoint ladder and recomputes the whole window from the base table
+     * - the exact work the ladder exists to avoid - on a table every SQL cursor in the
+     * process can already read.
+     * <p>
+     * Free once warm: {@code hydrateTableOnDemand} returns on a single volatile read as
+     * soon as the cache is complete, which is the same reason the generic read path can
+     * afford to call it per cursor.
+     */
+    private void hydrateBaseTableOnDemand(@Nullable TableToken baseToken) {
+        engine.getMetadataCache().hydrateTableOnDemand(baseToken);
+    }
+
+    /**
      * The base table's writer index for {@code columnName}, or -1 when the metadata cache
      * cannot name it. The same resolution {@link #buildColumnMappings} performs for a whole
      * projection, for callers that need one column and must not disturb the shared mapping
      * the drain built.
      */
     private int baseColumnWriterIndex(TableToken baseToken, CharSequence columnName) {
+        hydrateBaseTableOnDemand(baseToken);
         try (MetadataCacheReader metaRO = engine.getMetadataCache().readLock()) {
             final CairoTable baseTable = metaRO.getTable(baseToken);
             if (baseTable == null) {
@@ -4332,6 +4357,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     private boolean isDedupBase(LiveViewInstance instance) {
         final TableToken baseToken = instance.getDefinition().getBaseTableToken();
+        hydrateBaseTableOnDemand(baseToken);
         try (MetadataCacheReader metaRO = engine.getMetadataCache().readLock()) {
             final CairoTable baseTable = metaRO.getTable(baseToken);
             return baseTable != null && baseTable.hasDedup();
