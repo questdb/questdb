@@ -31,14 +31,17 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * A materialized view over a COMPOSITE-partitioned base table is refused, loudly.
+ * A materialized view over a COMPOSITE-partitioned base table is SUPPORTED as of 2026-08-26.
  * <p>
- * This gate is deliberately conservative rather than a statement that the combination is broken.
- * {@code cairo/mv/} contains no composite awareness and no composite mat-view test existed, so the
- * combination was simply unexercised: neither supported nor refused. Refresh reads the base through
- * ordinary SQL, which IS twin-correct for composite, so it may well work -- but this feature's rule
- * is that composite behaves exactly like its plain twin or fails loudly, and "probably fine" is
- * neither. Sub-project 7 replaces this gate with either proven support or a permanent refusal.
+ * This class was the gate's regression lock, and its own doc set the exit condition: "Sub-project 7
+ * replaces this gate with either proven support or a permanent refusal." The proof is
+ * {@link io.questdb.test.cairo.CompositeMatViewTest} -- a view over a composite base against a view
+ * over its plain twin, matching both at creation and after incremental refresh, including an
+ * out-of-order insert into an already-populated cell. The suspicion recorded here turned out to be
+ * right: refresh reads the base through ordinary SQL, which is twin-correct for composite.
+ * <p>
+ * The tests are kept rather than deleted, inverted to assert the combination WORKS -- including over
+ * a dormant composite base, which was the edge the gate was most careful about.
  * <p>
  * {@link #testMatViewOverPlainBaseStillWorks()} is the POSITIVE CONTROL. Without it, the gate could
  * be rejecting every base table and this suite would still pass.
@@ -46,39 +49,40 @@ import org.junit.Test;
 public class CompositeMatViewGateTest extends AbstractCairoTest {
 
     @Test
-    public void testMatViewOverCompositeBaseIsRejected() throws Exception {
+    public void testMatViewOverCompositeBaseWorks() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, exch SYMBOL, px DOUBLE)"
                     + " TIMESTAMP(ts) PARTITION BY DAY, exch WAL");
             execute("INSERT INTO base VALUES ('2024-01-01T00:00:00.000000Z', 'BTC', 1.0)");
             drainWalQueue();
-            try {
-                execute("CREATE MATERIALIZED VIEW mv AS ("
-                        + "SELECT ts, avg(px) AS ap FROM base SAMPLE BY 1h) PARTITION BY DAY");
-                Assert.fail("expected a composite base to be refused");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "composite");
-            }
+            execute("CREATE MATERIALIZED VIEW mv AS ("
+                    + "SELECT ts, avg(px) AS ap FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalQueue();
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            assertQuery("SELECT view_status FROM materialized_views() WHERE view_name = 'mv'")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("view_status\nvalid\n");
         });
     }
 
     /**
-     * The gate must not fire for a DORMANT composite table either way round: a table declared
-     * composite is composite whether or not it has routed a second cell yet, so this asserts the
-     * refusal is driven by the declared partition spec, not by runtime routing state.
+     * A DORMANT composite base -- declared composite, no rows routed yet. This was the edge the gate
+     * was most careful about, so it is kept, inverted: creating a view over it must work rather than
+     * be refused for a routing state the base has not reached yet.
      */
     @Test
-    public void testMatViewOverEmptyCompositeBaseIsRejected() throws Exception {
+    public void testMatViewOverEmptyCompositeBaseWorks() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base_empty (ts TIMESTAMP, exch SYMBOL, px DOUBLE)"
                     + " TIMESTAMP(ts) PARTITION BY DAY, exch WAL");
-            try {
-                execute("CREATE MATERIALIZED VIEW mv_empty AS ("
-                        + "SELECT ts, avg(px) AS ap FROM base_empty SAMPLE BY 1h) PARTITION BY DAY");
-                Assert.fail("expected a composite base to be refused even when empty");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "composite");
-            }
+            execute("CREATE MATERIALIZED VIEW mv_empty AS ("
+                    + "SELECT ts, avg(px) AS ap FROM base_empty SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalQueue();
+            drainMatViewQueue(engine);
+            assertQuery("SELECT count() FROM mv_empty")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n0\n");
         });
     }
 

@@ -4882,23 +4882,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // Deliberately positioned before any table is created, and thrown at the base table name so
         // the error carries a caret like its siblings ("base table must be a WAL table", "live views
         // are not allowed as base tables in V1"). Removing this gate is sub-project 7's deliverable.
-        final TableToken matViewBaseToken = executionContext.getTableTokenIfExists(createMatViewOp.getBaseTableName());
-        if (matViewBaseToken != null && !matViewBaseToken.isMatView()) {
-            // Reader metadata, because the partition spec lives on TableReaderMetadata; this method
-            // already opens a base reader further down, so the idiom is not new here.
-            try (TableReader baseReader = engine.getReader(matViewBaseToken)) {
-                final PartitionSpec spec = baseReader.getMetadata().getPartitionSpec();
-                if (spec != null && spec.getDimensionCount() > 0) {
-                    // getTableNamePosition(), not a base-table position: CreateMatViewOperation
-                    // exposes no base-name position (unlike CreateLiveViewOperation, whose
-                    // validation block sits nearby and DOES). The caret therefore points at the view
-                    // name; the message names the base table explicitly to compensate.
-                    throw SqlException.$(createMatViewOp.getTableNamePosition(),
-                                    "materialized views are not yet supported over a composite-partitioned base table [name=")
-                            .put(createMatViewOp.getBaseTableName()).put(']');
-                }
-            }
-        }
+        // SP7 (2026-08-26): a materialized view over a composite-partitioned base is SUPPORTED, and the
+        // gate that stood here is gone. Lifted on measurement rather than inspection: a view over a
+        // composite base and one over its plain twin produce identical results both at creation AND
+        // after incremental refresh, including an out-of-order insert into an existing cell and a new
+        // day. See CompositeMatViewTest.
 
         final long sqlId = queryRegistry.register(createMatViewOp.getSqlText(), executionContext);
         final long beginNanos = configuration.getNanosecondClock().getTicks();
