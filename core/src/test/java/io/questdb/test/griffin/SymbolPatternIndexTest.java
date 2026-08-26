@@ -51,6 +51,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
 import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.griffin.engine.table.HeapRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
@@ -126,6 +127,16 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             f.close();
             return out;
         }
+    }
+
+    private Function findFilter(RecordCursorFactory factory) {
+        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
+            if (current.getFilter() != null) {
+                return current.getFilter();
+            }
+        }
+        Assert.fail("no filter found under " + factory.getClass().getSimpleName());
+        return null;
     }
 
     @Test
@@ -255,18 +266,18 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     /**
-     * Execution-mode sweep for the estimate-to-delegate cursor hand-off. Each shape reaches the
-     * hand-off through a different partition-frame factory or a different key-list build, and each
-     * must still open exactly one table reader per cursor open:
+     * Execution-mode sweep for single-reader cursor opens. The adaptive shapes reach the
+     * estimate-to-delegate hand-off through different partition-frame factories or key-list builds;
+     * the descending shape bypasses that route. Each must open exactly one table reader per cursor open:
      * <ul>
      *   <li>a WAL table, whose reader the apply job advances independently of the query;</li>
      *   <li>an interval-filtered query, which uses {@code IntervalPartitionFrameCursorFactory} and is
      *       the {@code size() == -1} shape the estimate special-cases;</li>
      *   <li>a negated pattern, whose {@code buildEffectiveKeys()} enumerates the whole symbol
      *       dictionary and therefore has the widest exposure to a dictionary that grew;</li>
-     *   <li>a descending scan, where the delegate asks for the opposite direction to the one the
-     *       estimate opened. That is the one shape the hand-off cannot serve, so it opens a second
-     *       reader - and rebuilds both key lists against it, which is what keeps it coherent.</li>
+     *   <li>an unlimited descending designated-timestamp query, which bypasses the adaptive route
+     *       because its index delegates cannot stream backward, and opens one reader for the ordinary
+     *       backward scan.</li>
      * </ul>
      */
     @Test
@@ -299,21 +310,19 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             assertRowsAndReaderAcquisitions(
                     "ti",
                     "SELECT sym, v FROM ti WHERE sym LIKE 'A%' ORDER BY ts DESC",
-                    2,
+                    1,
                     "sym\tv\nAB\t2\nAA\t1\n"
             );
         });
     }
 
     /**
-     * The descending scan is the one shape the estimate-to-delegate hand-off cannot serve: the
-     * delegate asks for the opposite direction, so the pinned cursor is released and a second reader
-     * is opened. That second reader may already carry a newer transaction, so the adaptive factory
-     * rebuilds both key lists against it. Without that rebuild the query would filter the new
-     * transaction's rows through the old transaction's symbol keys and drop the introduced symbol.
+     * The ordinary backward scan used for an unlimited descending designated-timestamp pattern query
+     * opens one reader. A commit triggered when that reader returns must therefore land wholly after
+     * the drained result rather than split one query across two table transactions.
      */
     @Test
-    public void testCommitAtEstimateReaderReturnKeepsDescendingRouteCoherent() throws Exception {
+    public void testCommitAtReaderReturnKeepsDescendingScanCoherent() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE td (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO td VALUES ('AA', 1, 0), ('BB', 2, 86_400_000_000)");
@@ -323,7 +332,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                     "SELECT sym, v FROM td WHERE sym LIKE 'A%' ORDER BY ts DESC",
                     3,
                     4,
-                    2,
+                    1,
                     "sym\tv\nAA\t1\n",
                     "sym\tv\nAC\t4\nAA\t3\nAA\t1\n"
             );
@@ -1399,9 +1408,164 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testInvalidPatternLimitCompilationClosesPartitionFactory() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            final int[] partitionFactoryCloseCount = new int[1];
+            FullPartitionFrameCursorFactory.setCloseObserverForTesting(factory -> partitionFactoryCloseCount[0]++);
+            try {
+                assertExceptionNoLeakCheck(
+                        "SELECT * FROM t WHERE sym LIKE 'a%' LIMIT 5 + 0.3",
+                        44,
+                        "invalid type: DOUBLE"
+                );
+            } finally {
+                FullPartitionFrameCursorFactory.clearCloseObserverForTesting();
+            }
+            Assert.assertEquals(1, partitionFactoryCloseCount[0]);
+        });
+    }
+
+    @Test
+    public void testNegativeLimitPatternUsesBackwardLimitedFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('aa', 1, 0),
+                        ('zz', 2, 1),
+                        ('ab', 3, 2),
+                        (null, 4, 3),
+                        ('ba', 5, 4),
+                        ('ac', 6, 5),
+                        ('zz', 7, 6),
+                        ('ad', 8, 7)
+                    """);
+
+            final String query = "SELECT sym, v FROM t WHERE sym LIKE 'a%' LIMIT -3";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Filter workers: 1", "limit: 3", "Row backward scan");
+            assertQuery(query).expectSize().returns("sym\tv\nab\t3\nac\t6\nad\t8\n");
+
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%'")
+                    .withPlanContaining("AdaptiveSymbolPattern")
+                    .returns("sym\tv\naa\t1\nab\t3\nac\t6\nad\t8\n");
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' LIMIT 2")
+                    .withPlanContaining("AdaptiveSymbolPattern")
+                    .returns("sym\tv\naa\t1\nab\t3\n");
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' LIMIT 1+1")
+                    .withPlanContaining("AdaptiveSymbolPattern")
+                    .returns("sym\tv\naa\t1\nab\t3\n");
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' LIMIT 0")
+                    .expectSize()
+                    .returns("sym\tv\n");
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' LIMIT -(1+2)")
+                    .expectSize()
+                    .withPlanContaining("limit: 3", "Row backward scan")
+                    .withPlanNotContaining("AdaptiveSymbolPattern")
+                    .returns("sym\tv\nab\t3\nac\t6\nad\t8\n");
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' LIMIT null::long")
+                    .expectSize()
+                    .withPlanContaining("AdaptiveSymbolPattern")
+                    .returns("sym\tv\naa\t1\nab\t3\nac\t6\nad\t8\n");
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' ORDER BY ts DESC LIMIT -2")
+                    .expectSize()
+                    .withPlanContaining("limit: 2", "Row forward scan")
+                    .withPlanNotContaining("AdaptiveSymbolPattern")
+                    .returns("sym\tv\nab\t3\naa\t1\n");
+
+            final int maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
+            final String overflowQuery = "SELECT sym, v FROM t WHERE sym LIKE 'a%' LIMIT -" + (maxNegativeLimit + 1);
+            try (RecordCursorFactory factory = engine.select(overflowQuery, sqlExecutionContext)) {
+                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail("negative LIMIT above the configured maximum must fail");
+                }
+            } catch (SqlException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "absolute LIMIT value is too large, maximum allowed value: " + maxNegativeLimit
+                );
+                Assert.assertEquals(overflowQuery.indexOf('-'), e.getPosition());
+            }
+        });
+    }
+
+    @Test
+    public void testPatternRuntimeAndCoveringLimitModes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('aa', 1, 0), ('zz', 2, 1), ('ab', 3, 2), (null, 4, 3), ('ac', 5, 4)");
+
+            final String runtimeQuery = "SELECT sym, v FROM t WHERE sym LIKE 'a%' LIMIT :lim";
+            bindVariableService.setLong("lim", -2);
+            assertQuery(runtimeQuery)
+                    .expectSize()
+                    .withPlanContaining("limit: 2", "Row backward scan")
+                    .withPlanNotContaining("AdaptiveSymbolPattern")
+                    .returns("sym\tv\nab\t3\nac\t5\n");
+            bindVariableService.setLong("lim", 2);
+            assertQuery(runtimeQuery)
+                    .withPlanContaining("limit: 2", "Row forward scan")
+                    .withPlanNotContaining("AdaptiveSymbolPattern")
+                    .returns("sym\tv\naa\t1\nab\t3\n");
+            bindVariableService.setLong("lim", 0);
+            assertQuery(runtimeQuery).returns("sym\tv\n");
+            bindVariableService.setLong("lim", Numbers.LONG_NULL);
+            assertQuery(runtimeQuery)
+                    .withPlanNotContaining("AdaptiveSymbolPattern")
+                    .returns("sym\tv\naa\t1\nab\t3\nac\t5\n");
+
+            execute("CREATE TABLE tc (sym SYMBOL INDEX TYPE POSTING INCLUDE (v), v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tc SELECT * FROM t");
+            assertQuery("SELECT sym, v FROM tc WHERE sym LIKE 'a%'")
+                    .withPlanContaining("AdaptiveSymbolPattern", "CoveringIndex")
+                    .returns("sym\tv\naa\t1\nab\t3\nac\t5\n");
+            assertQuery("SELECT sym, v FROM tc WHERE sym LIKE 'a%' LIMIT 2")
+                    .withPlanContaining("AdaptiveSymbolPattern", "CoveringIndex")
+                    .returns("sym\tv\naa\t1\nab\t3\n");
+            assertQuery("SELECT sym, v FROM tc WHERE sym LIKE 'a%' LIMIT -2")
+                    .expectSize()
+                    .withPlanContaining("limit: 2", "Row backward scan")
+                    .withPlanNotContaining("AdaptiveSymbolPattern", "CoveringIndex")
+                    .returns("sym\tv\nab\t3\nac\t5\n");
+        });
+    }
+
+    @Test
+    public void testDescOrderAvoidsSortWhenPatternRouteCannotStreamBackward() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('aa', 1, 0), ('ba', 2, 1), ('ab', 3, 2), (null, 4, 3)");
+
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' ORDER BY ts DESC")
+                    .withPlanContaining("Row backward scan")
+                    .withPlanNotContaining("Sort", "AdaptiveSymbolPattern")
+                    .returns("sym\tv\nab\t3\naa\t1\n");
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%'")
+                    .withPlanContaining("AdaptiveSymbolPattern")
+                    .returns("sym\tv\naa\t1\nab\t3\n");
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' ORDER BY ts")
+                    .withPlanContaining("AdaptiveSymbolPattern")
+                    .withPlanNotContaining("Sort")
+                    .returns("sym\tv\naa\t1\nab\t3\n");
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' ORDER BY ts DESC LIMIT 1")
+                    .expectSize()
+                    .withPlanContaining("Async Top K")
+                    .returns("sym\tv\nab\t3\n");
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' ORDER BY ts DESC LIMIT -1")
+                    .expectSize()
+                    .withPlanContaining("limit: 1", "Row forward scan")
+                    .withPlanNotContaining("AdaptiveSymbolPattern")
+                    .returns("sym\tv\naa\t1\n");
+        });
+    }
+
     /**
-     * Descending designated-timestamp order flips the index scan direction; index-path result must still
-     * equal the scan+filter ground truth (same rows, same DESC order).
+     * Descending designated-timestamp order bypasses the pattern index when there is no LIMIT; the
+     * resulting backward scan must equal the explicitly hinted scan+filter ground truth.
      */
     @Test
     public void testDescOrderMatchesScanFilter() throws Exception {
@@ -2338,6 +2502,133 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     /**
+     * A LIKE residual owns mutable matcher state, so the async filter must compile one filter per
+     * worker. The plain bitmap pattern route cannot expose page frames and would force this shape
+     * through a serial outer filter; retain the ordinary scan route instead.
+     */
+    @Test
+    public void testNonThreadSafeResidualPreservesParallelFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, txt STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('aa', 'xxaZbyy', 0),
+                        ('ab', 'nomatch', 1),
+                        ('ba', 'xxaZbyy', 2),
+                        ('aa', null, 3),
+                        (null, 'xxaZbyy', 4)
+                    """);
+
+            assertQuery("SELECT sym, txt FROM t WHERE sym LIKE 'a%' AND txt LIKE '%a_b%'")
+                    .withPlanContaining("Async Filter workers: 1")
+                    .withPlanNotContaining("AdaptiveSymbolPattern")
+                    .returns("sym\ttxt\naa\txxaZbyy\n");
+        });
+    }
+
+    /**
+     * A covered POSTING route can expose page frames, so a non-thread-safe LIKE residual must use
+     * worker-local filter clones without giving up the adaptive covering route.
+     */
+    @Test
+    public void testNonThreadSafeResidualPreservesCoveredParallelFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX TYPE POSTING INCLUDE (txt), txt STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('aa', 'xxaZbyy', 0),
+                        ('ab', 'nomatch', 1),
+                        ('ba', 'xxaZbyy', 2),
+                        ('aa', null, 3),
+                        (null, 'xxaZbyy', 4)
+                    """);
+            execute("INSERT INTO t SELECT 'zz', 'nomatch', timestamp_sequence(5, 1) FROM long_sequence(200)");
+
+            final String query = "SELECT sym, txt FROM t WHERE sym LIKE 'a%' AND txt LIKE '%a_b%'";
+            try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                final AsyncFilterAtom atom = (AsyncFilterAtom) TestUtils.findAtom(factory, query);
+                TestUtils.findPerWorkerLocks(factory, query);
+                Assert.assertNotSame(atom.getFilter(-1), atom.getFilter(0));
+                Assert.assertEquals("PreparedSymbolPatternFilter", atom.getFilter(-1).getClass().getSimpleName());
+                Assert.assertEquals("AndBooleanFunction", atom.getFilter(0).getClass().getSimpleName());
+            }
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Filter workers: 1", "AdaptiveSymbolPattern", "CoveringIndex");
+            AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+            assertQuery(query).returns("sym\ttxt\naa\txxaZbyy\n");
+            Assert.assertTrue(AdaptiveSymbolPatternRecordCursorFactory.testCoveringInvocations.get() > 0);
+        });
+    }
+
+    @Test
+    public void testNonThreadSafeCoveredResidualUnderParallelGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (txt, grp, v),
+                        txt STRING,
+                        grp SYMBOL,
+                        v LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                        ('aa', 'xxaZbyy', 'g1', 1, 0),
+                        ('ab', 'nomatch', 'g1', 2, 1),
+                        ('aa', 'qqa1brr', 'g2', 3, 2),
+                        ('ba', 'xxaZbyy', 'g2', 4, 3),
+                        ('aa', null, 'g3', 5, 4),
+                        (null, 'xxaZbyy', 'g3', 6, 5)
+                    """);
+
+            try (TableReader reader = engine.getReader("t")) {
+                final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+                final QueryModel model = QueryModel.FACTORY.newInstance();
+                final ExpressionNode expression;
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    expression = compiler.testParseExpression("txt LIKE '%a_b%'", model);
+                }
+                final Function residual = parser.parseFunction(expression, reader.getMetadata(), sqlExecutionContext);
+                try {
+                    Assert.assertEquals("ConstLikeStrFunction", residual.getClass().getSimpleName());
+                    Assert.assertFalse(residual.isThreadSafe());
+                } finally {
+                    residual.close();
+                }
+            }
+
+            final String filteredQuery = "SELECT sym, txt, grp, v FROM t WHERE sym LIKE 'a%' AND txt LIKE '%a_b%'";
+            try (RecordCursorFactory factory = engine.select(filteredQuery, sqlExecutionContext)) {
+                final Function preparedFilter = findFilter(factory);
+                Assert.assertEquals("PreparedSymbolPatternFilter", preparedFilter.getClass().getSimpleName());
+                Assert.assertFalse(preparedFilter.isThreadSafe());
+            }
+            final String scanQuery = "SELECT /*+ no_symbol_pattern_index(t) */ sym, txt, grp, v FROM t WHERE sym LIKE 'a%' AND txt LIKE '%a_b%'";
+            try (RecordCursorFactory factory = engine.select(scanQuery, sqlExecutionContext)) {
+                final Function fullExpressionFilter = findFilter(factory);
+                Assert.assertEquals("AndBooleanFunction", fullExpressionFilter.getClass().getSimpleName());
+                Assert.assertFalse(fullExpressionFilter.isThreadSafe());
+            }
+
+            assertQuery("SELECT grp, sum(v) FROM t WHERE sym LIKE 'a%' AND txt LIKE '%a_b%' ORDER BY grp")
+                    .expectSize()
+                    .withPlanContaining("Async Group By", "AdaptiveSymbolPattern", "CoveringIndex")
+                    .returns("grp\tsum\ng1\t1\ng2\t3\n");
+            assertQuery("SELECT sum(v) FROM t WHERE sym LIKE 'a%' AND txt LIKE '%a_b%'")
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("Async Group By", "AdaptiveSymbolPattern", "CoveringIndex")
+                    .returns("sum\n4\n");
+            assertQuery("SELECT sym, txt, grp, v FROM t WHERE sym LIKE 'a%' AND txt LIKE '%a_b%' ORDER BY v LIMIT 1")
+                    .expectSize()
+                    .withPlanContaining("Async Top K", "AdaptiveSymbolPattern", "CoveringIndex")
+                    .returns("sym\ttxt\tgrp\tv\naa\txxaZbyy\tg1\t1\n");
+        });
+    }
+
+    /**
      * C3: with no covering delegate the bitmap index route is reachable, and it cannot supply page
      * frames, so the only wrapper the code generator could put above the adaptive factory was a serial
      * filter -- on EVERY open, including the majority that fall back to a full scan. The plan must now
@@ -3048,9 +3339,8 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
      * result, which the builder cannot express.
      * <p>
      * {@code expectedReaderAcquisitions} pins the mechanism alongside the row set: one acquisition
-     * means the estimate handed its own cursor to the delegate, so no commit can slip between them
-     * at all; two means the delegate needed the opposite scan direction and rebuilt both key lists
-     * against the reader it opened instead.
+     * means either the estimate handed its cursor to the delegate or the query used one ordinary scan,
+     * so no commit can split the result; two means an adaptive delegate needed a different cursor.
      */
     private void assertCoherentSnapshotUnderCommitAtReaderReturn(
             String tableName,
@@ -3112,8 +3402,8 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
 
     /**
      * Drains {@code query} and asserts both its rows and how many table readers the open acquired.
-     * One acquisition is the whole point of the estimate-to-delegate cursor hand-off: a route that
-     * acquires a second reader is a route a concurrent commit can split across two transactions.
+     * One acquisition proves that either the estimate-to-delegate hand-off or an ordinary scan kept
+     * the open on one reader; a second acquisition can expose the query to a concurrent commit.
      */
     private void assertRowsAndReaderAcquisitions(
             String tableName,

@@ -51,6 +51,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -158,6 +159,9 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         if (limitLoFunction != null) {
             limitLoFunction.init(frameSequence.getSymbolTableSource(), executionContext);
             rowsRemaining = limitLoFunction.getLong(null);
+            if (rowsRemaining == Numbers.LONG_NULL) {
+                rowsRemaining = Long.MAX_VALUE;
+            }
             // on negative limit we will be looking for positive number of rows
             // while scanning table from the highest timestamp to the lowest
             if (rowsRemaining > -1) {
@@ -262,6 +266,9 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             try {
                 limitLoFunction.init(frameSequence.getSymbolTableSource(), sink.getExecutionContext());
                 rowsRemaining = limitLoFunction.getLong(null);
+                if (rowsRemaining == Numbers.LONG_NULL) {
+                    rowsRemaining = Long.MAX_VALUE;
+                }
             } catch (Exception e) {
                 rowsRemaining = Long.MAX_VALUE;
             }

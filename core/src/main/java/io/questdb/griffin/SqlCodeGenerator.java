@@ -2164,6 +2164,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             @Nullable ExpressionNode filterExpr,
             RecordMetadata metadata
     ) throws SqlException {
+        // Filter-stealing parents may receive the prepared symbol-pattern owner while filterExpr
+        // still describes the original full predicate. Recompiling that expression intentionally
+        // produces a different class; all other callers retain the same-class assertion.
+        return compileWorkerFiltersConditionally(
+                executionContext,
+                filter,
+                sharedQueryWorkerCount,
+                filterExpr,
+                metadata,
+                !(filter instanceof AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter)
+        );
+    }
+
+    private @Nullable ObjList<Function> compileWorkerFiltersConditionally(
+            SqlExecutionContext executionContext,
+            @Nullable Function filter,
+            int sharedQueryWorkerCount,
+            @Nullable ExpressionNode filterExpr,
+            RecordMetadata metadata,
+            boolean isSameClassExpected
+    ) throws SqlException {
         if (filter != null && !filter.isThreadSafe() && sharedQueryWorkerCount > 0) {
             assert filterExpr != null;
             ObjList<Function> workerFilters = new ObjList<>();
@@ -2172,7 +2193,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     restoreWhereClause(filterExpr); // restore original filters in node query models
                     Function workerFilter = compileBooleanFilter(filterExpr, metadata, executionContext);
                     workerFilters.extendAndSet(i, workerFilter);
-                    assert filter.getClass() == workerFilter.getClass();
+                    assert !isSameClassExpected || filter.getClass() == workerFilter.getClass();
                 }
             } catch (Throwable th) {
                 Misc.freeObjList(workerFilters);
@@ -12662,6 +12683,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IntList columnIndexes,
             IntList columnSizeShifts
     ) throws SqlException {
+        // The bitmap and covering delegates cannot stream rows backward across multiple symbol keys.
+        // For an unlimited designated-timestamp DESC query, keep the ordinary backward scan instead
+        // of adding a full sort above an adaptive factory that may select one of those delegates.
+        // Limited queries retain the adaptive route because their top-K/limit operators bound the work.
+        if (model.isOrderDescendingByDesignatedTimestampOnly() && model.getLimitAdviceLo() == null) {
+            return null;
+        }
+
         // 1) split the filter into top-level AND conjuncts
         final ObjList<ExpressionNode> conjuncts = new ObjList<>();
         collectAndConjuncts(intrinsicModel.filter, conjuncts);
@@ -12701,6 +12730,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         RecordCursorFactory indexDelegate = null;
         RecordCursorFactory scanDelegate = null;
         try {
+            // Every adaptive route can open a multi-key symbol delegate, and none of those delegates can
+            // scan backward globally. A negative limit must therefore use the ordinary async filter path,
+            // which pushes the absolute row count into a backward page-frame scan. Runtime limits have an
+            // unknown sign at compile time, so route them conservatively as well.
+            final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+            try {
+                if (limitLoFunction != null && mayBeNegativeLimit(limitLoFunction, executionContext)) {
+                    return null;
+                }
+            } finally {
+                Misc.free(limitLoFunction);
+            }
+
             // 4) compile the POSITIVE pattern predicate; bail out (freeing it) unless it is a key-set provider
             providerFunction = functionParser.parseFunction(positiveNode, queryMeta, executionContext);
             if (!(providerFunction instanceof SymbolKeySetProvider)) {
@@ -12786,6 +12828,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             effectiveKeys
                     );
                 }
+            }
+
+            // A non-thread-safe residual needs per-worker filter clones. Without a covering delegate
+            // the adaptive factory cannot expose page frames, so an outer filter would run serially.
+            // Return to the ordinary scan path, which already compiles and owns those worker clones.
+            if (coveringDelegate == null && executionContext.isParallelFilterEnabled() && !preparedFilter.isThreadSafe()) {
+                Misc.free(indexDelegate);
+                Misc.free(patternFilter);
+                return null;
             }
 
             scanDelegate = new PageFrameRecordCursorFactory(
@@ -12950,7 +13001,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return true;
         }
         limitLoFunction.init(null, executionContext);
-        return limitLoFunction.getLong(null) < 0;
+        final long limit = limitLoFunction.getLong(null);
+        return limit != Numbers.LONG_NULL && limit < 0;
     }
 
     private int prepareLatestByColumnIndexes(ObjList<ExpressionNode> latestBy, RecordMetadata myMeta) throws SqlException {
@@ -13217,11 +13269,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         try {
-            if (executionContext.isParallelFilterEnabled()
-                    && adaptiveFactory.supportsPageFrameCursor()
-                    && filter.isThreadSafe()) {
+            if (executionContext.isParallelFilterEnabled() && adaptiveFactory.supportsPageFrameCursor()) {
                 final IntHashSet filterUsedColumnIndexes = new IntHashSet();
                 collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
+                final ExpressionNode filterExprCopy = deepClone(expressionNodePool, filterExpr);
+                // Worker clones compile the original full predicate, not the prepared filter wrapper,
+                // so their concrete class intentionally differs even though their result is equivalent.
+                final ObjList<Function> perWorkerFilters = compileWorkerFiltersConditionally(
+                        executionContext,
+                        filter,
+                        executionContext.getSharedQueryWorkerCount(),
+                        filterExpr,
+                        queryMeta,
+                        false
+                );
                 return new AsyncFilteredRecordCursorFactory(
                         executionContext.getCairoEngine(),
                         configuration,
@@ -13230,8 +13291,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         filter,
                         filterUsedColumnIndexes,
                         reduceTaskFactory,
-                        null,
-                        deepClone(expressionNodePool, filterExpr),
+                        perWorkerFilters,
+                        filterExprCopy,
                         null,
                         0,
                         executionContext.getSharedQueryWorkerCount(),
