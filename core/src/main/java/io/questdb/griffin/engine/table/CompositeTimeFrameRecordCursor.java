@@ -560,12 +560,9 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
             return false;
         }
         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
-        if (frame.getFormat() != PartitionFormat.NATIVE) {
-            throw CairoException.critical(0)
-                    .put("composite time-frame permutation supports native partitions only [table=")
-                    .put(reader.getTableToken().getTableName())
-                    .put(']');
-        }
+        // As in CompositeMergePartitionRecordCursor: parquet cells come through the same page-frame
+        // memory abstraction, so the permutation needs no format-specific handling. Refusal removed on
+        // the same 2026-08-26 measurement.
         pulledFrameIndex = frameCount;
         frameAddressCache.add(frameCount, frame);
         frameCount++;

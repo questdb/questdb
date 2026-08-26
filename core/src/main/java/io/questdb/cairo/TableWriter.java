@@ -16789,11 +16789,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * half-converted, and only then does PHASE 2 take the single commit.
      */
     private boolean convertCompositePartitionParquetToNative(long partitionTimestamp) {
+        return convertCompositePartitionParquetToNative(partitionTimestamp, -1);
+    }
+
+    /**
+     * @param onlyCellKey convert just this cell, or -1 for every cell of the day. The single-cell form
+     *                    is what produces a day holding a MIX of native and parquet cells -- a state
+     *                    per-cell conversion makes reachable and whole-partition conversion never could.
+     */
+    private boolean convertCompositePartitionParquetToNative(long partitionTimestamp, int onlyCellKey) {
         partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
         final IntList cellKeys = new IntList();
         final IntList rawIndexes = new IntList();
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
-            if (txWriter.getPartitionTimestampByIndex(i) == partitionTimestamp) {
+            if (txWriter.getPartitionTimestampByIndex(i) == partitionTimestamp
+                    && (onlyCellKey < 0 || txWriter.getPartitionCellKey(i) == onlyCellKey)) {
                 cellKeys.add(txWriter.getPartitionCellKey(i));
                 rawIndexes.add(i * txWriter.getLongsPerAttachedPartition());
             }
@@ -16894,6 +16904,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @TestOnly
     public boolean convertCompositePartitionToNativeForTest(long partitionTimestamp) {
         return convertCompositePartitionParquetToNative(partitionTimestamp);
+    }
+
+    /**
+     * Test seam converting a SINGLE cell back to native, to build a mixed native/parquet day.
+     */
+    @TestOnly
+    public boolean convertCompositeCellToNativeForTest(long partitionTimestamp, int cellKey) {
+        return convertCompositePartitionParquetToNative(partitionTimestamp, cellKey);
     }
 
     /**

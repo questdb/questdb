@@ -1584,12 +1584,16 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void formatParquetPartitionFileName(int partitionIndex, Path sink, long nameTxn) {
+        // Cell-aware for the same reason formatNativePartitionDirName is: a composite table's parquet
+        // lives per CELL, at <day>/<cell>.<nameTxn>/data.parquet. Without the segment this named the
+        // bare day and the reader reported the cell directory missing.
         TableUtils.setPathForParquetPartition(
                 sink,
                 timestampType,
                 partitionBy,
                 openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),
-                nameTxn
+                nameTxn,
+                resolveCellSegmentOrNullIfDormant(partitionIndex, new StringSink())
         );
     }
 
@@ -1599,7 +1603,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                 timestampType,
                 partitionBy,
                 openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),
-                nameTxn
+                nameTxn,
+                resolveCellSegmentOrNullIfDormant(partitionIndex, new StringSink())
         );
     }
 

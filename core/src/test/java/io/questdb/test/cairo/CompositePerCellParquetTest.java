@@ -142,6 +142,75 @@ public class CompositePerCellParquetTest extends AbstractCompositeTwinTest {
     }
 
     /**
+     * Task 5 acceptance: a composite table whose cells are PARQUET reads exactly like its native twin,
+     * across every shape the cross-cell merge serves.
+     * <p>
+     * The refusal that used to stand in the merge cursor turned out to be over-conservative: parquet
+     * cells arrive through the same {@code PageFrameMemoryRecord}/{@code frameMemoryPool} abstraction as
+     * native ones, so no format-specific handling was needed. The real gap was on the READER, whose
+     * parquet path builders were cell-less.
+     * <p>
+     * Shapes chosen because they exercise different consumers of the merge: a bare scan, an explicit
+     * ts order (forward and backward), an aggregate, and LATEST ON.
+     */
+    @Test(timeout = 60_000)
+    public void testParquetCellsReadIdenticallyToTheNativeTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedTwoCellDay();
+            try (TableWriter w = getWriter("c")) {
+                w.convertCompositePartitionToParquetForTest(parseFloorPartialTimestamp(DAY), null, 0.01);
+            }
+            engine.releaseInactive();
+
+            // assertTwinEqual compares the forward rows, the count AND the backward ts sequence
+            assertTwinEqual("", " ORDER BY ts, exch");
+            assertTwinEqual(" WHERE exch = 'E0'", " ORDER BY ts");
+            assertTwinEqual(" WHERE ts >= '" + DAY + "' AND ts < '2023-01-02'", " ORDER BY ts, exch");
+
+            assertSqlCursors("SELECT sum(px) FROM p", "SELECT sum(px) FROM c");
+            assertSqlCursors("SELECT exch, count() FROM p ORDER BY exch", "SELECT exch, count() FROM c ORDER BY exch");
+            // ORDER BY exch is required, not cosmetic: LATEST ON leaves the order BETWEEN groups
+            // unspecified, and composite and plain resolve groups differently. MEASURED 2026-08-26 --
+            // the unordered form diverges identically on a purely NATIVE composite table with no
+            // parquet anywhere, i.e. it is the known pre-existing LATEST-ON PARTITION BY ordering
+            // quirk, not anything this sub-project introduced. Attributed before adjusting, so this
+            // is a fair comparison rather than a masked defect.
+            assertSqlCursors("SELECT ts, exch, px FROM p LATEST ON ts PARTITION BY exch ORDER BY exch",
+                    "SELECT ts, exch, px FROM c LATEST ON ts PARTITION BY exch ORDER BY exch");
+        });
+    }
+
+    /**
+     * A day with ONE parquet cell and one still native -- the state per-cell conversion makes possible
+     * and whole-partition conversion never could. If the reader resolved format per DAY rather than per
+     * cell, this is the shape that exposes it; a fully-converted table would not.
+     */
+    @Test(timeout = 60_000)
+    public void testMixedNativeAndParquetCellsInOneDay() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            seedTwoCellDay();
+
+            // convert the whole day, then bring ONE cell back to native
+            final long day = parseFloorPartialTimestamp(DAY);
+            try (TableWriter w = getWriter("c")) {
+                w.convertCompositePartitionToParquetForTest(day, null, 0.01);
+            }
+            try (TableWriter w = getWriter("c")) {
+                w.convertCompositeCellToNativeForTest(day, 0);
+            }
+            engine.releaseInactive();
+
+            assertQuery("SELECT count() FROM table_partitions('c') WHERE isParquet = true")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n1\n");
+            assertTwinEqual("", " ORDER BY ts, exch");
+            assertTwinEqual(" WHERE exch = 'E1'", " ORDER BY ts");
+        });
+    }
+
+    /**
      * Seeds one day routed to TWO cells, plus a later day so the converted one is not the active
      * partition. Each commit is single-cell on purpose: an interleaved multi-cell commit has its own
      * unrelated gate on a table carrying a var-size column, and tripping it here would measure the

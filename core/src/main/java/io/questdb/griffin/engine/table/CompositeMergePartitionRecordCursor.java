@@ -233,12 +233,13 @@ class CompositeMergePartitionRecordCursor extends AbstractPageFrameRecordCursor 
         }
         // Stay cancellable across a long multi-frame scan (time-throttled, as in the plain cursor).
         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
-        if (frame.getFormat() != PartitionFormat.NATIVE) {
-            throw CairoException.critical(0)
-                    .put("composite cross-cell merge supports native partitions only [table=")
-                    .put(reader.getTableToken().getTableName())
-                    .put(']');
-        }
+        // Parquet cells are read through the SAME PageFrameMemoryRecord/frameMemoryPool abstraction as
+        // native ones -- the pool materialises a parquet row group, exactly as it does for a plain
+        // parquet table -- so this cursor needs no format-specific handling.
+        // The refusal that stood here was over-conservative. MEASURED 2026-08-26: with per-cell
+        // conversion in place, a composite table whose cells are ALL parquet reads identically to its
+        // plain twin. The real gap was on the reader's side, where formatParquetPartitionFileName and
+        // formatParquetPartitionMetadataFileName built cell-LESS paths; fixed there.
         pulledFrameIndex = frameCount;
         frameAddressCache.add(frameCount, frame);
         frameCount++;
