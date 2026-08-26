@@ -44,37 +44,161 @@ public class QueryTracingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMigrationAddsTimingColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            engine.execute(
+                    "CREATE TABLE '_query_trace' (" +
+                            "ts TIMESTAMP, query_text VARCHAR, execution_micros LONG, principal VARCHAR" +
+                            ") TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL"
+            );
+            try (QueryTracingJob ignore = new QueryTracingJob(engine)) {
+                assertQuery("SELECT \"column\" FROM (SHOW COLUMNS FROM '_query_trace') WHERE \"column\" IN ('wait_micros', 'first_row_micros')")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("column\nwait_micros\nfirst_row_micros\n");
+            }
+
+            engine.execute("DROP TABLE '_query_trace'");
+            engine.execute(
+                    "CREATE TABLE '_query_trace' (" +
+                            "ts TIMESTAMP, query_text VARCHAR, execution_micros LONG, principal VARCHAR, wait_micros LONG" +
+                            ") TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL"
+            );
+            try (QueryTracingJob ignore = new QueryTracingJob(engine)) {
+                assertQuery("SELECT \"column\" FROM (SHOW COLUMNS FROM '_query_trace') WHERE \"column\" = 'first_row_micros'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("column\nfirst_row_micros\n");
+            }
+
+            engine.execute("DROP TABLE '_query_trace'");
+            engine.execute(
+                    "CREATE TABLE '_query_trace' (" +
+                            "ts TIMESTAMP, query_text VARCHAR, execution_micros LONG, principal VARCHAR, first_row_micros LONG" +
+                            ") TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL"
+            );
+            try (QueryTracingJob ignore = new QueryTracingJob(engine)) {
+                assertQuery("SELECT \"column\" FROM (SHOW COLUMNS FROM '_query_trace') WHERE \"column\" = 'wait_micros'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("column\nwait_micros\n");
+            }
+        });
+    }
+
+    @Test
     public void testQueryTracing() throws Exception {
         try (WorkerPool workerPool = new WorkerPool(() -> 1);
              QueryTracingJob job = new QueryTracingJob(engine)
         ) {
             workerPool.assign(job);
             workerPool.start(LOG);
-            String exampleQuery = "SELECT table_name FROM tables()";
-            assertQuery(exampleQuery)
-                    .noLeakCheck()
-                    .returnsOnce("table_name\n");
-            int sleepMillis = 100;
-            while (true) {
-                Thread.sleep(sleepMillis);
-                try {
-                    assertQuery(String.format("SELECT %s, %s from %s WHERE %s='%s' LIMIT 1",
-                            COLUMN_QUERY_TEXT,
-                            COLUMN_PRINCIPAL,
-                            TABLE_NAME,
-                            COLUMN_QUERY_TEXT,
-                            exampleQuery
-                    ))
-                            .noLeakCheck()
-                            .returnsOnce(String.format("%s\t%s\n%s\tadmin\n", COLUMN_QUERY_TEXT, COLUMN_PRINCIPAL, exampleQuery));
-                    break;
-                } catch (SqlException | AssertionError e) {
-                    if (sleepMillis >= 6400) {
-                        throw e;
+            try {
+                String exampleQuery = "SELECT table_name FROM tables()";
+                assertQuery(exampleQuery)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("table_name\n");
+                int sleepMillis = 100;
+                while (true) {
+                    Thread.sleep(sleepMillis);
+                    try {
+                        assertQuery(String.format("SELECT %s, %s from %s WHERE %s='%s' LIMIT 1",
+                                COLUMN_QUERY_TEXT,
+                                COLUMN_PRINCIPAL,
+                                TABLE_NAME,
+                                COLUMN_QUERY_TEXT,
+                                exampleQuery
+                        ))
+                                .noLeakCheck()
+                                .returns(String.format("%s\t%s\n%s\tadmin\n", COLUMN_QUERY_TEXT, COLUMN_PRINCIPAL, exampleQuery));
+                        break;
+                    } catch (SqlException | AssertionError e) {
+                        if (sleepMillis >= 6400) {
+                            throw e;
+                        }
+                        sleepMillis *= 2;
                     }
-                    sleepMillis *= 2;
                 }
+            } finally {
+                workerPool.halt();
             }
         }
+    }
+
+    @Test
+    public void testTraceRowCarriesTimingColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "SELECT 1 AS x";
+            try (WorkerPool workerPool = new WorkerPool(() -> 1);
+                 QueryTracingJob job = new QueryTracingJob(engine)
+            ) {
+                workerPool.assign(job);
+                workerPool.start(LOG);
+                try {
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("x\n1\n");
+                    int sleepMillis = 100;
+                    while (true) {
+                        Thread.sleep(sleepMillis);
+                        try {
+                            assertQuery("SELECT count() > 0 AS has_trace FROM _query_trace WHERE query_text = '" + query + "' AND wait_micros = 0 AND first_row_micros >= 0 AND first_row_micros <= execution_micros")
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("has_trace\ntrue\n");
+                            break;
+                        } catch (SqlException | AssertionError e) {
+                            if (sleepMillis >= 6400) {
+                                throw e;
+                            }
+                            sleepMillis *= 2;
+                        }
+                    }
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testZeroRowQueryHasNullFirstRow() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "SELECT table_name FROM tables() WHERE table_name = 'no_such'";
+            try (WorkerPool workerPool = new WorkerPool(() -> 1);
+                 QueryTracingJob job = new QueryTracingJob(engine)
+            ) {
+                workerPool.assign(job);
+                workerPool.start(LOG);
+                try {
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("table_name\n");
+                    int sleepMillis = 100;
+                    while (true) {
+                        Thread.sleep(sleepMillis);
+                        try {
+                            assertQuery("SELECT count() > 0 AS has_trace FROM _query_trace WHERE query_text = '" + query.replace("'", "''") + "' AND first_row_micros IS NULL AND wait_micros = 0")
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("has_trace\ntrue\n");
+                            break;
+                        } catch (SqlException | AssertionError e) {
+                            if (sleepMillis >= 6400) {
+                                throw e;
+                            }
+                            sleepMillis *= 2;
+                        }
+                    }
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
     }
 }
