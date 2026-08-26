@@ -100,6 +100,7 @@ public class CompositeFuzzRunner {
     private long baselineMultiCellFastAppendEligibleCount;
     private long baselineO3MergeCommitCount;
     private int comparedShapeCount;
+    private double dropPartitionProbability;
     private int droppedAddColumnOps;
     private String compositeName;
     private int gatedAttempted;
@@ -738,6 +739,21 @@ public class CompositeFuzzRunner {
         );
     }
 
+    /**
+     * Enables generated {@code DROP PARTITION} operations, which are OFF by default because they
+     * reproduce a known open bug (see this class's DROP PARTITION javadoc for the evidence and the
+     * four eliminated leads).
+     * <p>
+     * Exists so reproducing it is one call rather than editing a hardcoded probability and rebuilding
+     * -- the reproduction recipe was previously prose, and prose recipes rot.
+     *
+     * @param probability per-transaction probability; 0.05 is what the recorded measurements used
+     */
+    public CompositeFuzzRunner withDropPartitionProbability(double probability) {
+        this.dropPartitionProbability = probability;
+        return this;
+    }
+
     public String plainName() {
         return plainName;
     }
@@ -1283,6 +1299,31 @@ public class CompositeFuzzRunner {
  * _txn points at a CELL at nameTxn .7 that is not on disk. It persists AFTER drainWalQueue, so it is
  * a settled inconsistency, not a read racing a writer. The plain twin is unaffected.
  * <p>
+ * <b>NARROWED, 2026-08-26 -- this is the sharpest description available, start here.</b> Deterministic
+ * single-seed reproduction: {@code Rnd(1037, 591)} + {@link #withDropPartitionProbability}(0.05) +
+ * {@code createTables} + {@code applyGeneratedTransactions(600, 30)}. Dumping _txn against the
+ * directory tree at the moment of failure shows the day was RE-VERSIONED from nameTxn 0 to nameTxn 3,
+ * and exactly ONE cell's new directory was never materialised:
+ * <pre>
+ *   on disk, day 2023-01-01:        _txn, day 2023-01-01:
+ *     10/SYM.0   10/SYM.3             every entry nameTxn=3,
+ *     11/SYM.0   11/SYM.3             including 13/SYM
+ *     12/SYM.0   12/SYM.3
+ *     13/SYM.0   &lt;-- .3 MISSING
+ *     14/SYM.0   14/SYM.3
+ *     ... every other cell has BOTH
+ * </pre>
+ * So _txn and disk disagree for exactly one cell of a re-versioned day: the bookkeeping was updated
+ * for every cell, the directory was created for all but one. The reader then follows _txn to
+ * {@code 13/SYM.3} and fails. A bare day container {@code 2023-01-01.5} is also present, which may or
+ * may not be related.
+ * <p>
+ * That reframes the question usefully: it is not "why was a live directory deleted" but "which loop
+ * writes {@code <cell>.<newTxn>} for each cell of a day, and how does it skip one while _txn is
+ * updated for all". Whether {@code 13/SYM} is the cell the DROP targeted (entry should have been
+ * REMOVED, not re-versioned) or an innocent sibling is the next thing to establish -- its {@code .0}
+ * still exists, so it was not fully dropped.
+ * <p>
  * <b>ELIMINATED -- do not re-chase:</b>
  * <ol>
  *   <li><b>Empty-component cell paths.</b> The same runs logged ENOENT purge failures, 14 of 742 with
@@ -1421,7 +1462,7 @@ public class CompositeFuzzRunner {
                     0.0,   // probabilityOfColumnTypeChange     (supported; generator literal problem)
                     1.0,   // probabilityOfDataInsert
                     0.1,   // probabilityOfSameTimestamp
-                    0.0,   // probabilityOfDropPartition  (open bug, see javadoc)
+                    dropPartitionProbability, // see withDropPartitionProbability + javadoc
                     0.0,   // probabilityOfConvertPartitionToParquet  (SP3: supported, per cell)
                     0.0,   // probabilityOfConvertPartitionToNative   (SP3: supported, per cell)
                     0.0,   // probabilityOfTruncate
