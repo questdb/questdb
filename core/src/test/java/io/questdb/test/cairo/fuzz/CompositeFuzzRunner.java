@@ -1292,6 +1292,14 @@ public class CompositeFuzzRunner {
  *   <li><b>Partition splitting.</b> Disabling it ({@code CAIRO_O3_PARTITION_SPLIT_MIN_SIZE} =
  *       Integer.MAX_VALUE) leaves the failure intact: 50 occurrences, 12 of 24 seeds.</li>
  *   <li><b>O3 being necessary.</b> See the correction above -- it is not.</li>
+ *   <li><b>Mis-rendered cell segments.</b> The logs invite this: the reader wants
+ *       {@code 2023-01-01/SYM/SYM16} while a purge nearby targets {@code 2023-01-01/%NULL/SYM16},
+ *       and another table shows {@code SYM16/SYM} -- components apparently swapped. Both are
+ *       innocent. Within one table the component order is fixed and consistent (checked: that
+ *       table's first component is only ever {@code SYM} or {@code %NULL}, i.e. truncate(sym,3)),
+ *       and the apparent swap is just two tables whose shuffled DIM_POOL prefix put the dimensions
+ *       in different orders. {@code %NULL/SYM16} and {@code SYM/SYM16} are two genuinely DIFFERENT
+ *       live cells -- NULL sym vs non-NULL sym at the same exch -- not one cell rendered two ways.</li>
  * </ol>
  * Six hand-written shapes are also clean and must not be retried: (1) a WHERE-form drop of a two-cell
  * day; (2) drop / re-create both cells / drop again; (3) re-insert into the dropped day afterwards;
