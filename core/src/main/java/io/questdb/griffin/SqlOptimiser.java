@@ -644,6 +644,16 @@ public class SqlOptimiser implements Mutable {
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
     }
 
+    /**
+     * Reports whether every bound in a timestamp predicate is known at parse time, so that
+     * analyzeAndOffset() can bake the calendar offset into the interval bounds. A bind variable or a
+     * scalar sub-query resolves only at execution time and must stay a residual filter.
+     * <p>
+     * A cast is transparent here rather than dynamic: {@code ::} parses to a "cast" FUNCTION node, so
+     * rejecting it outright would strand a static bound like {@code null::timestamp} in a filter. The
+     * recursion below still walks the cast's operand, so {@code $1::timestamp} and a cast sub-query
+     * stay rejected through their own arms.
+     */
     private static boolean isStaticTimestampPredicate(ExpressionNode node) {
         if (node == null) {
             return true;
@@ -659,6 +669,7 @@ public class SqlOptimiser implements Mutable {
                 && (node.type != FUNCTION
                 || !(isInKeyword(node.token)
                 || isBetweenKeyword(node.token)
+                || isCastKeyword(node.token)
                 || Chars.equalsIgnoreCase(node.token, "and_offset")))) {
             return false;
         }
@@ -5874,6 +5885,34 @@ public class SqlOptimiser implements Mutable {
             } else {
                 runtimeTerms = concatFilters(legacy, expressionNodePool, runtimeTerms, term);
             }
+        }
+        if (isHorizonJoin(model)) {
+            // A HORIZON JOIN folds its aggregate into the join factory, so the constant-fold path in
+            // generateJoins must not short-circuit the whole factory to an empty table on a compile-time
+            // constant-FALSE term: a non-keyed aggregate must still emit its single null-aggregate row.
+            // Anchor every const term (compile-time and runtime) on the master's WHERE clause instead,
+            // exactly where assignFilters routes every other master-only HORIZON JOIN predicate. A const
+            // term references no columns and the master is never NULL-extended, so a master filter is
+            // equivalent to a post-join filter; the constant-FALSE master then empties via generateFilter,
+            // and the non-keyed aggregate emits its row while the keyed aggregate emits none. The offset
+            // pseudo-table and slave models reject any WHERE clause (validateHorizonJoinFilter), so the
+            // master is the only valid anchor; leaving compile-time terms on constWhereClause would route
+            // them back through the empty-table short-circuit.
+            ExpressionNode constTerms = compileTimeTerms;
+            if (runtimeTerms != null) {
+                constTerms = concatFilters(legacy, expressionNodePool, constTerms, runtimeTerms);
+            }
+            model.setConstWhereClause(null);
+            if (constTerms != null) {
+                IQueryModel masterModel = model.getJoinModels().getQuick(0);
+                masterModel.setWhereClause(concatFilters(
+                        legacy,
+                        expressionNodePool,
+                        masterModel.getWhereClause(),
+                        constTerms
+                ));
+            }
+            return;
         }
         model.setConstWhereClause(compileTimeTerms);
         if (runtimeTerms != null) {
