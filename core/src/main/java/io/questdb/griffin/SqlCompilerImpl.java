@@ -5586,6 +5586,34 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         TableToken updateTableToken = updateQueryModel.getUpdateTableToken();
         final IQueryModel selectQueryModel = updateQueryModel.getNestedModel();
 
+        // INVARIANT 6, fixed 2026-08-26: refuse at the STATEMENT, not on apply.
+        //
+        // UPDATE is permanently unsupported for composite tables -- UpdateOperatorImpl.executeUpdate
+        // documents why the ban is load-bearing for column-file purge correctness rather than a mere
+        // scope reduction. But that gate runs inside the WAL APPLY job, so the statement returned OK and
+        // the table SUSPENDED afterwards: the same "successful statement, bricked table" shape as the
+        // FORMAT PARQUET and POSTING gates fixed earlier on this branch.
+        //
+        // MEASURED: the composite twin suspended with "composite partitioning does not support UPDATE"
+        // in every one of six random-seed fuzz sweeps, while the harness still reported 0 failures --
+        // it classifies UPDATE as a gated op and tolerates the suspension. The suspension was real.
+        //
+        // Skipped during WAL application: by then the statement has already been accepted and recorded,
+        // and UpdateOperatorImpl's own gate is the correct backstop there. Gating here too would only
+        // change which of the two raises the identical error.
+        if (!executionContext.isWalApplication()) {
+            try (TableReader compositeCheckReader = engine.getReader(updateTableToken)) {
+                if (compositeCheckReader.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
+                    throw SqlException.$(lexer.lastTokenPosition(),
+                            "composite partitioning does not support UPDATE [table=")
+                            .put(updateTableToken.getTableName()).put(']');
+                }
+            } catch (CairoException ignored) {
+                // Table not readable here (dropped, or a type this check cannot open). Not this gate's
+                // business to report -- the normal path raises the accurate error a moment later.
+            }
+        }
+
         // Update IQueryModel structure is
         // IQueryModel with SET column expressions
         // |-- IQueryModel of select-virtual or select-choose of data selected for update

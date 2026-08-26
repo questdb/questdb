@@ -306,6 +306,14 @@ public class CompositeFuzzRunner {
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "composite");
             threwSynchronously = true;
+        } catch (SqlException e) {
+            // SqlException is NOT a CairoException, so catching only the latter made this method
+            // blind to any gate that refuses at COMPILE time. Added 2026-08-26 when the UPDATE gate
+            // moved from the WAL-apply path to the statement (invariant 6): the refusal started
+            // arriving as SqlException and escaped this handler entirely, erroring the run rather
+            // than being recognised as the gate firing correctly.
+            TestUtils.assertContains(e.getFlyweightMessage(), "composite");
+            threwSynchronously = true;
         }
         if (!threwSynchronously) {
             // Most composite DDL gates fire asynchronously, from the WAL-apply job, not from
