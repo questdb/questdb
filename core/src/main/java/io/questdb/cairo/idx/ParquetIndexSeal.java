@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexMetaFileWriter;
 import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.DirectIntList;
@@ -270,11 +271,30 @@ public final class ParquetIndexSeal {
             int writerIndex,
             int columnType
     ) {
+        addSchemaColumn(columnNames, columnMetadata, name, writerIndex, columnType, 0);
+    }
+
+    /**
+     * @param parquetConfig packed per-column parquet config, or 0 for the
+     *                      writer's defaults. Pack it with
+     *                      {@link TableUtils#packParquetConfig} -- a bare
+     *                      encoding id is IGNORED, because the Rust side reads
+     *                      the override only when the packed EXPLICIT bit is
+     *                      set, and says nothing when it is not.
+     */
+    private static void addSchemaColumn(
+            DirectUtf8Sink columnNames,
+            DirectLongList columnMetadata,
+            CharSequence name,
+            int writerIndex,
+            int columnType,
+            int parquetConfig
+    ) {
         final int start = columnNames.size();
         columnNames.put(name);
         columnMetadata.add(columnNames.size() - start);
         columnMetadata.add((long) writerIndex << 32 | (columnType & 0xFFFFFFFFL));
-        columnMetadata.add(0);
+        columnMetadata.add(parquetConfig);
     }
 
     private static long appendStreamedBuffer(FilesFacade ff, long fd, long buffer, long fileOffset, LPSZ fileName) {
@@ -626,8 +646,30 @@ public final class ParquetIndexSeal {
             columnMetadata.reopen();
             columnData.reopen();
 
-            addSchemaColumn(columnNames, columnMetadata, "key_id", SYNTHETIC_COLUMN_ID, ColumnType.INT);
-            addSchemaColumn(columnNames, columnMetadata, "row_id", SYNTHETIC_COLUMN_ID, ColumnType.LONG);
+            // key_id is non-decreasing within a group by construction -- the
+            // seal writes it key-major -- so it delta packs to almost nothing.
+            // It is never read back (the _im directory answers what it used to),
+            // but it is still written, and its chunk statistics are what the
+            // key-alignment check reads.
+            addSchemaColumn(columnNames, columnMetadata, "key_id", SYNTHETIC_COLUMN_ID, ColumnType.INT,
+                    TableUtils.packParquetConfig(
+                            Integer.getInteger("questdb.idx.keyid.encoding", ParquetEncoding.ENCODING_DELTA_BINARY_PACKED),
+                            ParquetCompression.COMPRESSION_UNCOMPRESSED + 1,
+                            -1,
+                            false
+                    ));
+            // row_id ascends within a key's run and across the group, which is
+            // exactly what delta packing is for -- and what the native chain
+            // does with its own delta-FoR. PLAIN spends 8 bytes a posting, so
+            // the index carries several times the bytes the native form does
+            // and a scan pays for every one of them.
+            addSchemaColumn(columnNames, columnMetadata, "row_id", SYNTHETIC_COLUMN_ID, ColumnType.LONG,
+                    TableUtils.packParquetConfig(
+                            Integer.getInteger("questdb.idx.rowid.encoding", ParquetEncoding.ENCODING_DELTA_BINARY_PACKED),
+                            ParquetCompression.COMPRESSION_UNCOMPRESSED + 1,
+                            -1,
+                            false
+                    ));
             for (int slot = 0; slot < coverCount; slot++) {
                 addSchemaColumn(
                         columnNames, columnMetadata, coveredNames.getQuick(slot),
