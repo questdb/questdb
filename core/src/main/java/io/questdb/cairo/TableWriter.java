@@ -9579,16 +9579,42 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // up metadata with logical partition delete, we have to uphold the effort and
             // re-compute table size and its minTimestamp from what remains on disk
 
-            // find out if we are removing min partition
+            // Recomputed AFTER the removal, from the SURVIVING first partition.
+            //
+            // It used to be computed before, guarded by `timestamp == getPartitionTimestampByIndex(0)`
+            // and read from partition index 1. Both halves assume one entry per day, which is false for
+            // composite: the guard compares DAYS, so it fires when the dropped cell merely shares a day
+            // with index 0 even though index 0 survives; and index 1 may be a sibling CELL of the same
+            // day rather than the next day.
+            //
+            // MEASURED (fuzz seed 349814382132829/1787739990697, see report): dropping a multi-cell day
+            // cell-by-cell set minTimestamp to a SIBLING cell's minimum -- legitimate at the time, since
+            // that day still had partitions -- and nothing recomputed it once the last sibling went. The
+            // table was left with minTimestamp inside a day it no longer had any partition for, which
+            // trips the `minTimestamp >= partition[0]` assert in commitWalInsertTransactions and
+            // suspends the table. With assertions off (production) it silently persists that state.
+            //
+            // The surviving index 0 IS the table minimum by definition, so this needs no assumption
+            // about which entry went away. Byte-identical for a plain table: there the removed entry is
+            // at index 0 exactly when it holds the minimum, and the new index 0 is the old index 1.
             long nextMinTimestamp = minTimestamp;
-            if (timestamp == txWriter.getPartitionTimestampByIndex(0)) {
-                nextMinTimestamp = readMinTimestamp();
-            }
 
             // NOTE: this method should not commit to _txn file
             // In case multiple partition parts are deleted, they should be deleted atomically
             txWriter.beginPartitionSizeUpdate();
-            txWriter.removeAttachedPartitions(timestamp, cellKey);
+            final int removedIndex = txWriter.removeAttachedPartitions(timestamp, cellKey);
+            if (txWriter.getPartitionCount() == 0) {
+                // The drop emptied the table. Leaving minTimestamp at its old value strands it
+                // permanently: the WAL/O3 commit path folds the incoming batch in with
+                // min(existing, batchMin), so a stale minimum always wins over any later data and is
+                // never recomputed. MEASURED -- this, not the multi-cell sibling read, is what left
+                // minTimestamp inside a dropped day on the fuzz seed; fixing only the sibling case
+                // above left the table still suspending at the same assert.
+                // MAX_VALUE is the identity for that min, so the next commit's minimum takes effect.
+                nextMinTimestamp = Long.MAX_VALUE;
+            } else if (removedIndex == 0) {
+                nextMinTimestamp = readMinTimestampAtIndex(0);
+            }
             txWriter.setMinTimestamp(nextMinTimestamp);
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
             txWriter.bumpTruncateVersion();
@@ -16743,10 +16769,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Reads the minimum timestamp of partition index 1, i.e. assuming index 0 is about to be removed.
+     * Callers that have ALREADY removed the entry must use {@link #readMinTimestampAtIndex(int)} with
+     * index 0 instead -- on a composite table index 1 may be a sibling CELL of the same day rather
+     * than the next day, so "index 1" is not a reliable spelling of "the next surviving partition".
+     */
     private long readMinTimestamp() {
+        return readMinTimestampAtIndex(1);
+    }
+
+    private long readMinTimestampAtIndex(int partitionIndex) {
         other.of(path).trimTo(pathSize); // reset the path to table root
-        final long timestamp = txWriter.getPartitionTimestampByIndex(1);
-        final boolean isParquet = txWriter.isPartitionParquet(1);
+        final long timestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final boolean isParquet = txWriter.isPartitionParquet(partitionIndex);
         try {
             // SP1D: partition index 1 is a CELL on a composite table, so its data is at
             // <day>/<cell>.<txn> and setStateForTimestamp's day-level path finds nothing. Measured:
@@ -16757,13 +16793,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (isRoutedComposite()) {
                 final StringSink cellSegmentSink = Misc.getThreadLocalSink();
                 cellSegmentSink.clear();
-                renderCellSegment(cellSegmentSink, txWriter.getPartitionCellKey(1));
+                renderCellSegment(cellSegmentSink, txWriter.getPartitionCellKey(partitionIndex));
                 setPathForNativePartition(other, timestampType, partitionBy, timestamp,
-                        txWriter.getPartitionNameTxn(1), cellSegmentSink);
+                        txWriter.getPartitionNameTxn(partitionIndex), cellSegmentSink);
             } else {
                 setStateForTimestamp(other, timestamp);
             }
-            return isParquet ? readMinTimestampParquet(other) : readMinTimestampNative(other, timestamp);
+            return isParquet ? readMinTimestampParquet(other, partitionIndex) : readMinTimestampNative(other, timestamp);
         } finally {
             other.trimTo(pathSize);
         }
@@ -16784,9 +16820,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private long readMinTimestampParquet(Path partitionPath) {
+    private long readMinTimestampParquet(Path partitionPath, int partitionIndex) {
         try {
-            final long parquetFileSize = txWriter.getPartitionParquetFileSize(1);
+            // Index threaded through rather than hardcoded to 1: readMinTimestampAtIndex can now be
+            // called with index 0 (after a removal), and reading the parquet size from a DIFFERENT
+            // partition than the one whose isParquet flag was tested trips
+            // "parquet file size read on a native partition" whenever the two disagree. Measured in
+            // TableReaderReloadFuzzTest#testConvertPartition.
+            final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
             int partitionDirLen = partitionPath.size();
             openParquetMetadataOrThrow(partitionPath, partitionDirLen, parquetFileSize);
             final int parquetTsIndex = parquetMetaReader.getDesignatedTimestampColumnIndex();

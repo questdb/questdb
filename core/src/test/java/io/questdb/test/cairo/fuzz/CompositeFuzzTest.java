@@ -40,6 +40,45 @@ public class CompositeFuzzTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * REGRESSION LOCK for the stranded {@code minTimestamp}. Promoted from a random-seed find, which is
+     * exactly why {@code CompositeFuzzUnstableTest} earns its keep: a seed that catches a real defect
+     * gets pinned here so it cannot regress silently.
+     * <p>
+     * MEASURED before the fix: a {@code DROP PARTITION} that emptied the table left {@code minTimestamp}
+     * at its old value. The WAL/O3 commit path folds an incoming batch in with
+     * {@code min(existing, batchMin)}, so that stale minimum outlived every later insert and was never
+     * recomputed. The table ended up with {@code minTimestamp} inside a day it had no partition for,
+     * tripping {@code assert minTimestamp >= partition[0]} in {@code commitWalInsertTransactions} and
+     * SUSPENDING. With assertions off -- i.e. production -- it silently persists that state instead.
+     * <p>
+     * NOT composite-specific in principle; composite merely reaches the empty state far more often,
+     * because each day fans out into cells that drop individually.
+     * <p>
+     * Asserts non-suspension EXPLICITLY as well as twin equality. During development an earlier version
+     * of this probe omitted {@code assertTwinEqual} and reported BUILD SUCCESS while the table suspended
+     * underneath it -- a green run that proved nothing. A suspended twin must fail loudly here.
+     * <p>
+     * Seed uses {@code TestUtils.generateRandom(LOG, A, B)}, NOT {@code new Rnd(A, B)}: the two differ
+     * by two priming {@code nextBoolean()} calls and do not produce the same stream.
+     */
+    @Test
+    public void testDropEmptyingTableDoesNotStrandMinTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = io.questdb.test.tools.TestUtils.generateRandom(
+                    io.questdb.log.LogFactory.getLog(CompositeFuzzTest.class),
+                    349814382132829L, 1787739990697L);
+            CompositeFuzzRunner runner = CompositeFuzzRunner.of(engine, rnd);
+            runner.createTables("strandedmin");
+            runner.applyGeneratedTransactions(600, 30);
+            org.junit.Assert.assertFalse("composite twin suspended -- minTimestamp stranded again",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("strandedmin_composite")));
+            org.junit.Assert.assertFalse("plain twin suspended",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("strandedmin_plain")));
+            runner.assertTwinEqual();
+        });
+    }
+
     @Test
     public void testAxesVaryAcrossSeeds() throws Exception {
         assertMemoryLeak(() -> {
