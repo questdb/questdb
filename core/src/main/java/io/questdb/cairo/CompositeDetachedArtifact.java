@@ -62,11 +62,27 @@ import org.jetbrains.annotations.Nullable;
  * Together those say the composite branch of attachPartition cannot be reached from COPY either, and
  * this class is fully dead.
  *
- * That is INFERRED, not proven -- no test drives COPY into a composite table. Deleting ~400 lines on
- * inference is the exact move that went wrong earlier on this branch, where a "clearly redundant"
- * refusal turned out to be deliberate and test-pinned. So: prove it with a COPY-into-composite test
- * first, then delete. The cost of waiting is dead code; the cost of being wrong is a broken import
- * path with no test to catch it.
+ * That is INFERRED, not proven. Deleting ~400 lines on inference is the exact move that went wrong
+ * earlier on this branch, where a "clearly redundant" refusal turned out to be deliberate and
+ * test-pinned.
+ *
+ * TWO ATTEMPTS AT THE PROVING TEST FAILED, recorded so the third starts ahead:
+ *   1. driving the import with a single CopyImportRequestJob.drain(0) -- that returns IMMEDIATELY
+ *      without processing, so the test reported "still composite" and passed while the row count
+ *      showed the COPY had never run. A vacuous green.
+ *   2. driving it by looping on job.run() until a latch trips (the CopyImportTest#createJobThread
+ *      pattern) -- the latch NEVER tripped and the test hung until JUnit killed it at 20 minutes.
+ *      The job never reported work, i.e. the COPY request was never dispatched to the parallel
+ *      importer at all.
+ *
+ * Attempt 2's hang is itself the most informative result so far: it suggests COPY naming an existing
+ * WAL table does not reach ParallelCsvFileImporter by that route. But "suggests" is not "proves", and
+ * the next attempt needs to establish HOW a COPY request is dispatched (enqueued for the job vs run
+ * inline) before asserting anything. Any such test MUST assert the import actually ran -- a row count
+ * or an error -- or it will pass without exercising the path, as attempt 1 did.
+ *
+ * The cost of waiting is dead code; the cost of being wrong is a broken import path with no test to
+ * catch it.
  */
 public final class CompositeDetachedArtifact {
 
