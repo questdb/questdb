@@ -1981,18 +1981,51 @@ public final class TableUtils {
             long squashTracker,
             long seqTxn
     ) {
+        return produceParquetFromNative(path, other, pathSize, partitionTimestamp, partitionNameTxn, parquetNameTxn,
+                tableName, partitionRowCount, metadata, columnVersionReader, symbolTableProvider, configuration,
+                bloomFilterColumns, bloomFilterFpp, bloomFilterIndexes, squashTracker, seqTxn, null);
+    }
+
+    /**
+     * Cell-aware counterpart, for converting ONE cell of a composite day to its own parquet file.
+     * <p>
+     * This method rebuilds both the source and destination paths from the timestamp and name-txns,
+     * overwriting whatever the caller had set, so a cell-aware caller cannot simply pre-position the
+     * paths -- the segment has to be threaded in. A {@code null} {@code cellSegment} renders exactly as
+     * before, so plain tables are untouched.
+     */
+    public static long produceParquetFromNative(
+            Path path,
+            Path other,
+            int pathSize,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long parquetNameTxn,
+            String tableName,
+            long partitionRowCount,
+            TableMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            SymbolTableProvider symbolTableProvider,
+            CairoConfiguration configuration,
+            @Nullable CharSequence bloomFilterColumns,
+            double bloomFilterFpp,
+            DirectIntList bloomFilterIndexes,
+            long squashTracker,
+            long seqTxn,
+            @Nullable CharSequence cellSegment
+    ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final int partitionBy = metadata.getPartitionBy();
         final int timestampType = metadata.getTimestampType();
 
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
         if (!ff.exists(path.$())) {
             throw CairoException.nonCritical().put("partition directory does not exist [path=").put(path).put(']');
         }
         final int partitionDirLen = path.size();
         final int pathRootSize = configuration.getDbRoot().length();
 
-        setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+        setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
         if (ff.exists(other.$())) {
             LOG.info().$("parquet for native partition already present [path=").$substr(pathRootSize, path).I$();
             return ff.length(other.$());
@@ -2088,7 +2121,7 @@ public final class TableUtils {
                             ff.madvise(columnSecondaryAddr, columnSecondarySize, Files.POSIX_MADV_SEQUENTIAL);
 
                             // recover the partition path
-                            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
                         } else if (ColumnType.isVarSize(columnType)) {
                             partitionDescriptor.addColumn(columnName, columnType, columnId, columnTop, parquetEncodingConfig);
 
@@ -2161,7 +2194,7 @@ public final class TableUtils {
                 double fpp = Double.isNaN(bloomFilterFpp) ? configuration.getPartitionEncoderParquetBloomFilterFpp() : bloomFilterFpp;
 
                 // Open _pm file for the Rust encoder to write simultaneously.
-                setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
                 parquetMetaFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
 
                 bloomFilterIndexes.clear();
@@ -2178,7 +2211,7 @@ public final class TableUtils {
                 }
 
                 // Restore parquet file path for encoding.
-                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
 
                 PartitionEncoder.encodeWithOptions(
                         partitionDescriptor,
@@ -2205,7 +2238,7 @@ public final class TableUtils {
                 if (commitMode != CommitMode.NOSYNC) {
                     ff.fsync(parquetMetaFd);
                     if (!Os.isWindows()) {
-                        setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                        setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
                         // Drop the trailing /_pm component to fsync the partition dir itself.
                         other.parent();
                         final long dirFd = TableUtils.openRONoCache(ff, other.$(), LOG);
@@ -2214,7 +2247,7 @@ public final class TableUtils {
                         }
                     }
                 }
-                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
                 return ff.length(other.$());
             }
         } catch (CairoException e) {
@@ -2231,11 +2264,11 @@ public final class TableUtils {
                 ff.close(parquetMetaFd);
                 parquetMetaFd = -1;
             }
-            setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+            setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
             if (ff.exists(other.$()) && !ff.removeQuiet(other.$())) {
                 LOG.error().$("could not remove parquet _pm on rollback [path=").$(other).I$();
             }
-            setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+            setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
             if (ff.exists(other.$()) && !ff.removeQuiet(other.$())) {
                 LOG.error().$("could not remove parquet file on rollback [path=").$(other).I$();
             }

@@ -8042,10 +8042,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void copyOrRebuildColumnIndexes(long partitionTimestamp, long newPartitionNameTxn, long partitionRowCount) {
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        final long oldPartitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn);
+        copyOrRebuildColumnIndexes(partitionTimestamp, txWriter.getPartitionNameTxn(partitionIndex), null, newPartitionNameTxn, partitionRowCount);
+    }
+
+    /**
+     * Cell-aware counterpart: both the source and destination directories nest under {@code cellSegment}
+     * for a composite table. The 3-arg form resolves the old name-txn through a cellKey-0 lookup and
+     * builds both paths with the bare overload, which on a composite day names the phantom bare-day
+     * container rather than any cell.
+     */
+    private void copyOrRebuildColumnIndexes(
+            long partitionTimestamp,
+            long oldPartitionNameTxn,
+            @Nullable CharSequence cellSegment,
+            long newPartitionNameTxn,
+            long partitionRowCount
+    ) {
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn, cellSegment);
         final int srcDirLen = path.size();
-        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn);
+        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn, cellSegment);
         final int dstDirLen = other.size();
 
         try {
@@ -16216,6 +16231,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long produceParquetFromNative(Path path, Path other, long partitionTimestamp, int partitionIndex, long partitionNameTxn, long parquetNameTxn, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
+        return produceParquetFromNative(path, other, partitionTimestamp, partitionIndex, partitionNameTxn, parquetNameTxn, bloomFilterColumns, bloomFilterFpp, null);
+    }
+
+    private long produceParquetFromNative(Path path, Path other, long partitionTimestamp, int partitionIndex, long partitionNameTxn, long parquetNameTxn, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp, @Nullable CharSequence cellSegment) {
         final long partitionRowCount = getPartitionSize(partitionIndex);
         // _pm seqTxn: the partition's own offset-3 (stable across instances), high-water if unstamped.
         long partitionSeqTxn = txWriter.getNativePartitionSeqTxn(partitionIndex);
@@ -16239,7 +16258,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 bloomFilterFpp,
                 parquetBloomFilterIndexes,
                 -1L,
-                partitionSeqTxn
+                partitionSeqTxn,
+                cellSegment
         );
     }
 
@@ -16634,6 +16654,137 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * {@link CompositeDetachedArtifact#checkSameTable} has already refused a foreign artifact -- a
      * cellKey is table-local.
      */
+    /**
+     * Per-cell CONVERT PARTITION TO PARQUET for a composite day. Task 2b of the per-cell parquet plan.
+     * <p>
+     * Each cell becomes its own {@code <day>/<cell>.<txn>/data.parquet}, preserving the 1:1 between a
+     * cell and a {@code _txn} partition record -- which is what keeps per-cell DROP/DETACH addressing
+     * working after conversion, and what lets a day hold a MIX of native and parquet cells.
+     * <p>
+     * <b>Ordering is the atomicity mechanism, and it is deliberate.</b> Invariant 3 requires all cells or
+     * none, but each cell's encode writes real files long before anything commits. So PHASE 1 encodes
+     * every cell while touching no {@code _txn}/{@code _cv} state at all: a failure there rolls back by
+     * deleting the directories it created, and the day is still wholly native because nothing else was
+     * mutated yet. Only once every cell has encoded does PHASE 2 do the bookkeeping and take the single
+     * commit. There is no window in which some cells are parquet and others are not.
+     * <p>
+     * NOT reachable from SQL yet -- {@code convertPartitionNativeToParquet}'s gate is still closed,
+     * because until the cross-cell merge cursors can read parquet cells, converting one would simply
+     * make the table unreadable.
+     */
+    private boolean convertCompositePartitionNativeToParquet(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
+        final IntList cellKeys = new IntList();
+        final IntList rawIndexes = new IntList();
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) == partitionTimestamp) {
+                cellKeys.add(txWriter.getPartitionCellKey(i));
+                rawIndexes.add(i * txWriter.getLongsPerAttachedPartition());
+            }
+        }
+        if (cellKeys.size() == 0) {
+            throw CairoException.nonCritical()
+                    .put("cannot convert partition to parquet, partition does not exist [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+
+        final ObjList<String> cellSegments = new ObjList<>();
+        final LongList fileLengths = new LongList();
+        // captured BEFORE phase 2, because updatePartitionSizeAndTxnByRawIndex re-stamps each record's
+        // name-txn to the current one. Reading them back afterwards would hand phase 3 the NEW txn and
+        // delete the parquet directory just created -- measured: both cells converted, _txn said parquet,
+        // and every data.parquet had been removed again.
+        final LongList oldCellNameTxns = new LongList();
+        final ObjList<String> createdDirs = new ObjList<>();
+        final StringSink segmentSink = new StringSink();
+        final long parquetNameTxn = getTxn();
+
+        // PHASE 1 -- encode every cell. No _txn or _cv mutation in here.
+        try {
+            for (int i = 0, n = cellKeys.size(); i < n; i++) {
+                final int rawIndex = rawIndexes.getQuick(i);
+                if (txWriter.isPartitionParquetByRawIndex(rawIndex)) {
+                    throw CairoException.nonCritical()
+                            .put("cannot convert a day holding a parquet cell [table=")
+                            .put(tableToken.getTableName()).put(']');
+                }
+                segmentSink.clear();
+                renderCellSegment(segmentSink, cellKeys.getQuick(i));
+                final String cellSegment = segmentSink.toString();
+                cellSegments.add(cellSegment);
+
+                final long cellNameTxn = txWriter.getPartitionNameTxnByRawIndex(rawIndex);
+                oldCellNameTxns.add(cellNameTxn);
+                setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, cellNameTxn, cellSegment);
+                if (!ff.exists(path.$())) {
+                    throw CairoException.nonCritical().put("cell directory does not exist [path=").put(path).put(']');
+                }
+
+                setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
+                createDirsOrFail(ff, other, configuration.getMkDirMode());
+                createdDirs.add(other.toString());
+
+                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
+                fileLengths.add(produceParquetFromNative(
+                        path, other, partitionTimestamp, rawIndex / txWriter.getLongsPerAttachedPartition(),
+                        cellNameTxn, parquetNameTxn, bloomFilterColumns, bloomFilterFpp, cellSegment));
+            }
+        } catch (Throwable th) {
+            for (int i = 0, n = createdDirs.size(); i < n; i++) {
+                // absolute paths, re-established with of() -- concat onto the table root would prefix
+                // the root twice and delete nothing
+                other.of(createdDirs.getQuick(i));
+                if (!ff.rmdir(other.slash())) {
+                    LOG.error().$("could not remove partially converted cell [path=").$(other).I$();
+                }
+            }
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+            throw th;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+
+        // PHASE 2 -- bookkeeping for every cell, then ONE commit.
+        for (int i = 0, n = cellKeys.size(); i < n; i++) {
+            final int rawIndex = rawIndexes.getQuick(i);
+            final int cellKey = cellKeys.getQuick(i);
+            final long cellRowCount = txWriter.getPartitionSizeByRawIndex(rawIndex);
+
+            copyOrRebuildColumnIndexes(partitionTimestamp, oldCellNameTxns.getQuick(i), cellSegments.getQuick(i), parquetNameTxn, cellRowCount);
+            zeroColumnTopsAfterParquetRewrite(partitionTimestamp, cellKey, cellRowCount, false);
+            txWriter.updatePartitionSizeAndTxnByRawIndex(rawIndex, cellRowCount);
+            txWriter.setPartitionParquetGeneratedByRawIndex(rawIndex, true);
+            txWriter.setPartitionParquetByRawIndex(rawIndex, fileLengths.getQuick(i));
+        }
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.bumpPartitionTableVersion();
+        commitTxWriter();
+
+        // PHASE 3 -- post-commit housekeeping. Failures here must not undo the committed conversion.
+        try {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+            }
+            for (int i = 0, n = cellKeys.size(); i < n; i++) {
+                safeDeletePartitionDir(partitionTimestamp, oldCellNameTxns.getQuick(i), cellKeys.getQuick(i));
+            }
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        }
+        return true;
+    }
+
+    /**
+     * Test seam for {@link #convertCompositePartitionNativeToParquet}: the SQL-facing entry point is
+     * still gated, so this is how task 2b is exercised before the readers of task 5 exist.
+     */
+    @TestOnly
+    public boolean convertCompositePartitionToParquetForTest(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
+        return convertCompositePartitionNativeToParquet(partitionTimestamp, bloomFilterColumns, bloomFilterFpp);
+    }
+
     private long readCompositeSizeMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName) {
         final IntList cellKeys = attachCellKeys;
         final LongList cellSizes = attachCellSizes;
@@ -20145,13 +20296,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *                       produces all rows.
      */
     private void zeroColumnTopsAfterParquetRewrite(long partitionTimestamp, long partitionRowCount, boolean zeroAllColumns) {
+        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, 0, partitionRowCount, zeroAllColumns);
+    }
+
+    /**
+     * Cell-aware counterpart. The timestamp-keyed accessors below resolve cellKey 0, so on a composite
+     * day they would read and zero the FIRST cell's column tops whichever cell was converted.
+     * {@code cellKey == 0} is byte-identical to the 3-arg form.
+     */
+    private void zeroColumnTopsAfterParquetRewrite(long partitionTimestamp, int cellKey, long partitionRowCount, boolean zeroAllColumns) {
         final int columnCount = metadata.getColumnCount();
         for (int column = 0; column < columnCount; column++) {
             if (metadata.getColumnType(column) > 0) {
-                final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, column);
+                final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, column);
                 boolean midColTop = colTop > 0 && colTop < partitionRowCount;
                 if (colTop != 0 && (zeroAllColumns || midColTop)) {
-                    columnVersionWriter.upsertColumnTop(partitionTimestamp, column, 0);
+                    columnVersionWriter.upsertColumnTop(partitionTimestamp, cellKey, column, 0);
                 }
             }
         }
