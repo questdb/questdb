@@ -348,6 +348,11 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
      */
     @Test
     public void testANarrowRowIdRangeDecodesFewerRowGroupsThanTheKeysWholeRun() throws Exception {
+        // The point is that a WINDOW skips row groups, so the key's run has to
+        // span several. Pinned rather than inherited: the product default is
+        // sized for read latency and puts this fixture's 400k rows in one group,
+        // which would leave nothing to skip and the assertion vacuous.
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_MIN_ROWS_PER_ROW_GROUP, 8192);
         assertMemoryLeak(() -> {
             createHotKeyParquetTable("x", 400_000, "hot");
             try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
@@ -356,7 +361,13 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
                 final AbstractParquetPostingIndexReader indexReader =
                         (AbstractParquetPostingIndexReader) reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD);
 
-                final long wholeRows = drain(indexReader.getCursor(key, 0, Long.MAX_VALUE));
+                // A COVERED walk, deliberately: asking for no covered value lets
+                // the reader address row_id in the mapping and decode nothing at
+                // all, which would leave this test measuring zero against zero.
+                // Requesting a cover slot keeps the decoder on the path whose
+                // row-group skipping is what is under test.
+                final int[] covers = {0};
+                final long wholeRows = drain(indexReader.getCursor(key, 0, Long.MAX_VALUE, covers));
                 final long whole = indexReader.getDecodedRowGroupCount();
                 Assert.assertTrue(
                         "the fixture must give the hot key more than one row group, got " + whole,
@@ -364,7 +375,7 @@ public class ParquetPostingIndexReaderTest extends AbstractCairoTest {
                 );
 
                 final long before = indexReader.getDecodedRowGroupCount();
-                final long narrowRows = drain(indexReader.getCursor(key, 0, 999));
+                final long narrowRows = drain(indexReader.getCursor(key, 0, 999, covers));
                 final long narrow = indexReader.getDecodedRowGroupCount() - before;
                 Assert.assertTrue(
                         "a narrow row-id range must decode fewer row groups: narrow=" + narrow

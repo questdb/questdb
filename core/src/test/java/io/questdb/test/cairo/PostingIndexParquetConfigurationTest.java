@@ -62,7 +62,7 @@ public class PostingIndexParquetConfigurationTest extends AbstractCairoTest {
         // left is walking a thrift header to find the right one, and large
         // pages minimise that. Pairing UNCOMPRESSED with the compressing
         // codec's 16 KiB costs most of the win, so the default follows.
-        assertMemoryLeak(() -> Assert.assertEquals(512 * 1024, configuration.getPostingIndexParquetDataPageSize()));
+        assertMemoryLeak(() -> Assert.assertEquals(2 * 1024 * 1024, configuration.getPostingIndexParquetDataPageSize()));
     }
 
     @Test

@@ -762,7 +762,7 @@ public interface CairoConfiguration {
      * metadata would.
      */
     default int getPostingIndexParquetMinRowsPerRowGroup() {
-        return 8192;
+        return 65536;
     }
 
     /**
@@ -802,7 +802,12 @@ public interface CairoConfiguration {
      * {@link #getPostingIndexParquetDataPageSize()} for the measurements.
      */
     static int defaultPostingIndexParquetDataPageSize(int codec) {
-        return codec == ParquetCompression.COMPRESSION_UNCOMPRESSED ? 512 * 1024 : 16 * 1024;
+        // 2 MiB uncompressed, which is sized to hold a whole row group's
+        // row_id chunk -- 100k rows at 8 bytes -- in ONE page. A chunk that
+        // spills to a second page cannot be addressed directly and falls back
+        // to decoding, which is the difference between a point read beating the
+        // native chain and trailing it 4x.
+        return codec == ParquetCompression.COMPRESSION_UNCOMPRESSED ? 2 * 1024 * 1024 : 16 * 1024;
     }
 
     default byte getPostingIndexParquetPartitionFormat() {

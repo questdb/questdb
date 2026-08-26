@@ -230,6 +230,36 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             hasNext = false;
         }
 
+        /**
+         * First index in {@code [lo, hi)} whose row id is at least
+         * {@code value}, or {@code hi}. The run ascends, so this is a binary
+         * search rather than a scan.
+         */
+        private static long seekFirstAtLeast(long rowIdPtr, long lo, long hi, long value) {
+            while (lo < hi) {
+                final long mid = (lo + hi) >>> 1;
+                if (Unsafe.getUnsafe().getLong(rowIdPtr + (mid << 3)) < value) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            return lo;
+        }
+
+        /** First index in {@code [lo, hi)} whose row id exceeds {@code value}, or {@code hi}. */
+        private static long seekFirstAbove(long rowIdPtr, long lo, long hi, long value) {
+            while (lo < hi) {
+                final long mid = (lo + hi) >>> 1;
+                if (Unsafe.getUnsafe().getLong(rowIdPtr + (mid << 3)) <= value) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            return lo;
+        }
+
         @Override
         public boolean hasNext() {
             if (hasNext) {
@@ -352,9 +382,21 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                         decodedGroup = true;
                         directRowIds = true;
                         rowIdPtr = pidxAddr + dataOffset;
-                        rowInGroup = rowLo;
-                        groupRows = rowHi;
+                        // The run is ascending, so the caller's window is a
+                        // sub-range of it and can be found rather than filtered
+                        // for. Walking the whole run and testing each row is
+                        // what made a windowed read cost the same as an
+                        // unwindowed one, where the native chain seeks into its
+                        // stride index and reads only what the window asks for.
+                        rowInGroup = seekFirstAtLeast(rowIdPtr, rowLo, rowHi, minValue);
+                        groupRows = seekFirstAbove(rowIdPtr, rowInGroup, rowHi, maxValue);
                         lastTouchedRowGroup = rg;
+                        if (rowInGroup >= groupRows) {
+                            // The window excludes this group's run entirely.
+                            rg++;
+                            decodedGroup = false;
+                            continue;
+                        }
                         return true;
                     }
                 }
