@@ -411,22 +411,31 @@ public class CompositeFuzzRunner {
         TableWriterAPI compositeWriter = engine.getTableWriterAPI(compositeName, "composite fuzz apply");
         TableWriterAPI plainWriter = engine.getTableWriterAPI(plainName, "composite fuzz apply");
         try {
-            // Applying the same operation to BOTH writers from ONE Rnd reproduces identical values
-            // only because FuzzInsertOperation#apply opens with rnd.reset(s1, s0), replaying from a
-            // seed stored on the operation itself.
+            // Both twins must see the SAME random stream for every operation, so the Rnd state is
+            // snapshotted before the composite apply and restored before the plain one.
             //
-            // That invariant is NARROW: rnd.reset appears in FuzzInsertOperation and in NO other
-            // Fuzz*Operation. Task 1 is safe because it generates inserts exclusively. ANY task that
-            // widens the generated operation mix (Task 2 onwards) MUST re-verify this per operation
-            // type -- an operation that does not reset would consume from the shared stream and hand
-            // the second twin different values, silently producing a false failure or, worse,
-            // matching garbage.
+            // This USED to rely on FuzzInsertOperation#apply opening with rnd.reset(s1, s0), replaying
+            // from a seed stored on the operation itself -- an invariant that held only because Task 1
+            // generated inserts exclusively, and that this method's own comment warned had to be
+            // re-verified per operation type before the mix was widened. MEASURED 2026-08-26: it does
+            // not hold. rnd.reset appears in NO other Fuzz*Operation, so enabling DROP PARTITION or
+            // CONVERT let those operations consume from the shared stream and handed the SECOND twin
+            // different row values -- surfacing as SYM/value divergence that reads exactly like a
+            // composite data bug and is not one.
+            //
+            // Snapshot/restore removes the dependency entirely rather than auditing each operation:
+            // whether an operation resets internally, consumes, or does neither, both applies start
+            // from identical state. For inserts this is behaviour-preserving, since reset(s1, s0) makes
+            // the incoming state irrelevant anyway.
             Rnd applyRnd = new Rnd();
             for (int i = 0, n = transactions.size(); i < n; i++) {
                 FuzzTransaction transaction = transactions.getQuick(i);
                 for (int opIndex = 0, opCount = transaction.operationList.size(); opIndex < opCount; opIndex++) {
                     FuzzTransactionOperation operation = transaction.operationList.getQuick(opIndex);
+                    final long applySeed0 = applyRnd.getSeed0();
+                    final long applySeed1 = applyRnd.getSeed1();
                     operation.apply(applyRnd, engine, compositeWriter, -1, null);
+                    applyRnd.reset(applySeed0, applySeed1);
                     operation.apply(applyRnd, engine, plainWriter, -1, null);
                 }
                 if (transaction.rollback) {
@@ -1204,9 +1213,9 @@ public class CompositeFuzzRunner {
                     0.0,   // probabilityOfColumnTypeChange     (supported; blocked by this harness)
                     1.0,   // probabilityOfDataInsert
                     0.1,   // probabilityOfSameTimestamp
-                    0.0,   // probabilityOfDropPartition        (supported; see the Rnd note above)
-                    0.0,   // probabilityOfConvertPartitionToParquet (supported; see the Rnd note)
-                    0.0,   // probabilityOfConvertPartitionToNative  (supported; see the Rnd note)
+                    0.0,   // probabilityOfDropPartition             (see UNATTRIBUTED note above)
+                    0.0,   // probabilityOfConvertPartitionToParquet  (SP3: supported, per cell)
+                    0.0,   // probabilityOfConvertPartitionToNative   (SP3: supported, per cell)
                     0.0,   // probabilityOfTruncate
                     0.0,   // probabilityOfDropTable
                     0.0,   // probabilityOfSetTtl
