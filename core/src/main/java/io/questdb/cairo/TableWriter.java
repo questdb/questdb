@@ -3686,6 +3686,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$safe(getTableToken().getTableName()).I$();
             return;
         }
+        final MetadataCache metadataCache = engine.getMetadataCache();
+        final long expiryPolicyUpdateVersion = metadata.getMetadataVersion() + 1;
+        // Mark every transition, including replacement SET and DROP, before mutating metadata. Pending reads
+        // bypass the old cache entry, and the epoch makes a parser that already observed the old gate retry.
+        final long previousPendingExpiryVersion = metadataCache.markExpiryPolicyPossible(
+                getTableToken().getTableId(),
+                expiryPolicyUpdateVersion
+        );
         if (predicate != null) {
             // Defense-in-depth backstop for the CREATE-vs-ALTER race: a dependent view -- materialized or
             // live -- may have been registered against this base after alterTableSetExpire's compile-time
@@ -3702,18 +3710,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$(", dependents=").$(dependents.size())
                         .$(", firstDependent=").$safe(dependents.getQuick(0).getTableName())
                         .I$();
+                metadataCache.cancelExpiryPolicyUpdate(
+                        getTableToken().getTableId(),
+                        expiryPolicyUpdateVersion,
+                        previousPendingExpiryVersion
+                );
                 return;
             }
         }
 
-        final MetadataCache metadataCache = engine.getMetadataCache();
-        final long expiryPolicyUpdateVersion = metadata.getMetadataVersion() + 1;
-        // Mark every transition, including replacement SET and DROP, before mutating metadata. Pending reads
-        // bypass the old cache entry, and the epoch makes a parser that already observed the old gate retry.
-        final long previousPendingExpiryVersion = metadataCache.markExpiryPolicyPossible(
-                getTableToken().getTableId(),
-                expiryPolicyUpdateVersion
-        );
         try {
             metadata.setExpiry(predicate, cleanupIntervalMicros);
         } catch (Throwable th) {

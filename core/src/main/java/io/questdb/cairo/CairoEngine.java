@@ -1891,10 +1891,11 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (baseTableName != null) {
                     try (TableReader baseReader = getReader(baseTableName)) {
                         final CharSequence basePredicate = baseReader.getMetadata().getExpiryPredicate();
-                        if (basePredicate != null && basePredicate.length() > 0) {
+                        if ((basePredicate != null && basePredicate.length() > 0)
+                                || getMetadataCache().isExpiryPolicyUpdatePending(baseReader.getTableToken())) {
                             throw CairoException.nonCritical().put("cannot create materialized view over '")
                                     .put(baseTableName)
-                                    .put("': the base concurrently acquired an EXPIRE ROWS policy");
+                                    .put("': the base's EXPIRE ROWS policy changed concurrently");
                         }
                     }
                 }

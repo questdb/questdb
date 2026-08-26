@@ -47,12 +47,17 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Hardening tests for the EXPIRE ROWS feature, covering the level-3-review fixes:
@@ -1355,6 +1360,87 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     "the base carries an EXPIRE ROWS policy"
             );
             Assert.assertNull(engine.getTableTokenIfExists("b"));
+        });
+    }
+
+    @Test
+    public void testCreateDependentDuringExpiryMetaSwapRejected() throws Exception {
+        // The CREATE-vs-ALTER interleaving that neither dependents check can see: the ALTER passes its
+        // checks and marks the transition, the CREATE then registers a dependent and re-reads a base whose
+        // _meta still carries no policy, and only then does the ALTER swap _meta. On the on-disk predicate
+        // alone both sides pass, leaving a policied base with a dependent that copies its expired rows on
+        // refresh. The CREATE therefore also consults the pending mark, which the ALTER sets before it tests
+        // for dependents, so whichever side publishes first is visible to the other.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            drainWalAndMatViewQueues();
+            execute("create materialized view a as (select * from base)");
+            drainWalAndMatViewQueues();
+
+            final TableToken aToken = engine.verifyTableName("a");
+            final CountDownLatch swapBarrierReached = new CountDownLatch(1);
+            final CountDownLatch resumeSwap = new CountDownLatch(1);
+            final AtomicReference<Throwable> applyError = new AtomicReference<>();
+
+            // Sequenced while a has no dependents, so both of the ALTER's own dependents checks pass.
+            execute("alter materialized view a set expire rows when v < 2.0");
+
+            // Pause the WAL-apply writer after it marks the transition and before it swaps _meta: exactly the
+            // window in which a's on-disk metadata still reports no policy.
+            TableWriter.setExpiryMetaSwapBarrier(() -> {
+                swapBarrierReached.countDown();
+                try {
+                    if (!resumeSwap.await(30, TimeUnit.SECONDS)) {
+                        throw new AssertionError("timed out resuming the _meta swap");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+            });
+
+            final Thread applyThread = new Thread(() -> {
+                try {
+                    drainWalQueue();
+                } catch (Throwable th) {
+                    applyError.set(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "expire-apply");
+
+            try {
+                applyThread.start();
+                Assert.assertTrue(
+                        "writer did not reach the pre-swap barrier",
+                        swapBarrierReached.await(30, TimeUnit.SECONDS)
+                );
+
+                boolean rejected = false;
+                try {
+                    execute("create materialized view b as (select * from a)");
+                } catch (CairoException e) {
+                    rejected = true;
+                    TestUtils.assertContains(e.getFlyweightMessage(), "EXPIRE ROWS policy changed concurrently");
+                }
+                Assert.assertTrue("CREATE must be rejected while a's policy change is in flight", rejected);
+                Assert.assertNull("the half-created dependent must be rolled back", engine.getTableTokenIfExists("b"));
+            } finally {
+                resumeSwap.countDown();
+                TableWriter.setExpiryMetaSwapBarrier(null);
+                applyThread.join(TimeUnit.SECONDS.toMillis(30));
+            }
+
+            Assert.assertFalse("WAL apply did not finish", applyThread.isAlive());
+            if (applyError.get() != null) {
+                throw new AssertionError("WAL apply failed", applyError.get());
+            }
+            drainWalAndMatViewQueues();
+
+            // The invariant the guards protect: a carries the policy and has no dependent over it.
+            Assert.assertNotNull("a must carry the policy once the ALTER lands", expiryPredicate("a"));
+            Assert.assertNull("no dependent may exist over the policied view", engine.getTableTokenIfExists("b"));
+            Assert.assertFalse("a must not be suspended", engine.getTableSequencerAPI().isSuspended(aToken));
         });
     }
 
