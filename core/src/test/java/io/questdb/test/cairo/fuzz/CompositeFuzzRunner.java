@@ -1327,16 +1327,22 @@ public class CompositeFuzzRunner {
                     //
                     // The other three stay at 0.0, and NOT because they are unsupported -- all three
                     // are supported for composite now. Each has its own remaining blocker:
-                    //   REMOVE  -- MEASURED: "table 'x' column 'exch' is pinned by composite
-                    //              partitioning". The generator picks a column uniformly, so it
-                    //              eventually picks a dimension column; the composite refuses that
-                    //              drop (by design, refuseDroppingCompositePinnedColumn) while the
-                    //              plain twin drops it happily, so the twins diverge structurally.
-                    //              Needs pinned-column drops routed through applyGatedOperation and
-                    //              SKIPPED on the reference too.
-                    //   RENAME  -- DERIVED, not measured: same shape as REMOVE (rename retargets the
-                    //              same pinned column), so it is expected to diverge the same way for
-                    //              the same reason. Verify before relying on this.
+                    //   REMOVE  -- the generator picks a column uniformly, so it eventually picks a
+                    //              DIMENSION column. Enrolling it needs those drops filtered out (the
+                    //              same way dropUnsupportedAddColumnOps filters), because they cannot
+                    //              be applied to both twins alike.
+                    //              READ THIS BEFORE ENROLLING IT: the refusal
+                    //              (refuseDroppingCompositePinnedColumn, "cannot drop column 'x'
+                    //              referenced by a composite partition dimension") lives in
+                    //              SqlCompilerImpl -- i.e. on the SQL path ONLY. This fuzz drops via
+                    //              TableWriterAPI#apply, which does NOT pass through it. So the
+                    //              expectation is NOT "composite refuses, plain succeeds"; it is
+                    //              UNKNOWN and worth finding out, because a writer-API drop of a
+                    //              dimension column may well be accepted and leave the spec pointing
+                    //              at a column that no longer exists. Establish that first, as its own
+                    //              question -- do not assume the SQL gate protects this path.
+                    //   RENAME  -- DERIVED, not measured: same shape as REMOVE, and the same SQL-path
+                    //              caveat applies. Verify before relying on it.
                     //   TYPE    -- MEASURED: "inconvertible types: DOUBLE -> TIMESTAMP_NS". A
                     //              FuzzTransactionGenerator-level literal problem, not a composite one.
                     0.05,  // probabilityOfAddingNewColumn      (ENROLLED)
