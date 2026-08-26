@@ -207,11 +207,13 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * of the two, because a user who never types {@code SQUASH} still accumulates fragments and nothing
      * tells them.
      */
-    @Ignore("SP1E residual, MEASURED: under 6 O3 rounds the composite table keeps 6 split fragments"
-            + " where its plain twin keeps 3 -- composite squashes less aggressively because the"
-            + " automatic path is threshold-based and reaches the cell-scoped merge less often. Data"
-            + " parity holds (assertTwinEqual passes); this is steady-state fragment COUNT, not"
-            + " correctness. Un-ignore when composite matches the twin.")
+    @Ignore("SP1E residual, RE-VERIFIED 2026-08-26 and still exact: under 6 O3 rounds the composite"
+            + " table keeps 6 split fragments where its plain twin keeps 3 (composite=[010000, 103000,"
+            + " 113000, 123000, 133000, 143000], plain=[103000.3, 123000.5, 143000.6]) -- composite"
+            + " squashes less aggressively because the automatic path is threshold-based and reaches"
+            + " the cell-scoped merge less often. Data parity holds (assertTwinEqual passes); this is"
+            + " steady-state fragment COUNT, a read-performance residual, not correctness. Un-ignore"
+            + " when composite matches the twin.")
     @Test(timeout = 60_000)
     public void testAutomaticSquashDoesNotAccumulateFragments() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -294,8 +296,9 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * documented elsewhere in TableWriter, and strictly better than the earlier state where the txn
      * still referenced a deleted directory.
      */
-    @Ignore("SP1E residual: tail-fragment directory is not reclaimed by the purge drain. Orphan dir,"
-            + " not corruption -- the fragment is detached and the rows are merged. Un-ignore when the"
+    @Ignore("SP1E residual, RE-VERIFIED 2026-08-26 and still exact: the tail-fragment directory"
+            + " [2023-01-01T010000-000001] is not reclaimed by the purge drain. Orphan dir, not"
+            + " corruption -- the fragment is detached and its rows are merged. Un-ignore when the"
             + " drain reclaims tail fragments.")
     @Test(timeout = 60_000)
     public void testTailFragmentDirectoryIsReclaimed() throws Exception {

@@ -43,8 +43,14 @@ import org.junit.Test;
  * writing a plan that assumes either. Each test is a twin comparison: whatever the operation does to a
  * composite table it must do to its plain twin.
  * <p>
- * All {@code @Ignore}d — they are run by temporarily lifting the writer-side gates, exactly as 1D
- * Task 1 was run, and the findings recorded. They are NOT a claim that any of this works.
+ * NO LONGER a survey of ignored probes. When this was written every test here was {@code @Ignore}d
+ * and run only by temporarily lifting a writer-side gate. All eight now RUN, because the gates they
+ * were measuring have since been lifted on the strength of what they measured -- DROP COLUMN, ADD
+ * INDEX, DROP INDEX, RENAME COLUMN, ALTER COLUMN TYPE including to SYMBOL. What remain are genuine
+ * assertions, not recorded findings.
+ * <p>
+ * Two exceptions state their own limits inline: the indexed-WHERE test asserts the GATE fires and
+ * that NO_INDEX matches the twin, because that restriction is real and measured.
  * <p>
  * <b>This survey produced THREE successive false positives, each caught only by checking a different
  * observable than the last: rows, then structure flags, then on-disk files. Its first summary said

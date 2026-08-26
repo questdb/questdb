@@ -62,10 +62,11 @@ import java.util.stream.Stream;
  *     cell's nameTxn is the initial {@code -1} sentinel, deleting sibling data never selected.
  *     DESTROYS DATA SILENTLY, which makes it the one that matters most.</li>
  * </ol>
- * All four are {@code @Ignore}d until the gate is narrowed in Task 5 — the same pattern
- * {@link CompositeO3PurgeSkipTest} followed from wave 0 until sub-project 1A fixed it. While ignored
- * they fail with the gate's own message, which proves the gate is present but says nothing about the
- * mechanisms; each is written so that it keeps failing for its OWN reason once the gate is lifted.
+ * All four RUN now: the gate was narrowed as planned, and each test went on to fail (and then pass)
+ * for its OWN reason rather than for the gate's message -- which is what they were written for. The
+ * "all four are @Ignore'd" note that stood here was left behind by that transition and is corrected
+ * rather than deleted, because a class doc claiming its own tests prove nothing is worse than no doc
+ * at all.
  */
 public class CompositeDropPartitionWholeDayTest extends AbstractCompositeTwinTest {
 
