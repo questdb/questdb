@@ -1427,15 +1427,27 @@ public class CompositeFuzzRunner {
  * refreshing interner counts in the same txn window. The victim is always the newest cellKey because
  * that is the only key whose coverage differs between two adjacent txns.
  * <p>
- * <b>THE WINDOW, measured.</b> Logging {@code txFile.getTxn()} at every
- * {@code reloadSymbolMapCounts()} and at the fallback gives:
- * <pre>
- *   RELOAD   txn=3  registryBefore=15
- *   RELOAD   txn=6  registryBefore=15
- *   FALLBACK txn=9  cellKey=15  registry=15     &lt;-- txFile at 9, last reload was 6
- * </pre>
- * {@code txFile} advances to txn 9 unconditionally -- which is why cellKey 15 is visible -- while the
- * interner counts were last refreshed at txn 6. That is the tear, exactly.
+ * <b>THE SINGLE-READER FACT, and a correction to how I first read it.</b> At the fallback, ONE reader
+ * instance simultaneously reports {@code txFile.getTxn()=9}, {@code cellKey=15} and
+ * {@code registry.size()=15}. All three come from that one reader, so the tear inside it is real.
+ * <p>
+ * I originally paired this with {@code RELOAD txn=3} / {@code RELOAD txn=6} lines and concluded "this
+ * reader last reloaded at txn 6". <b>That inference is unsound</b> -- the log carried no reader
+ * identity and the harness opens many {@code TableReader} instances, so those RELOAD lines may belong
+ * to entirely different readers. Redo it with the reader {@code id} in every line before trusting any
+ * cross-line correlation.
+ * <p>
+ * What makes the single-reader fact genuinely puzzling, and is the thing to explain:
+ * {@code getPartitionCellKey(partitionIndex)} reads {@code openPartitionInfo}, i.e. the reader's OWN
+ * reconciled state -- NOT the live {@code txFile}. So cellKey 15 can only be there because
+ * {@code insertPartition(idx, ts, 15)} ran for this reader, and that happens inside
+ * {@code reconcileOpenPartitions0}, which sets {@code changed = true} and therefore calls
+ * {@code reloadSymbolMapCounts()} on the way out. The registry should have advanced with it.
+ * <p>
+ * Also relevant, and worth checking next: {@code acquireTxn()} carries the comment "txFile can also be
+ * reloaded in goPassive-&gt;checkSchedulePurgeO3Partitions", and that method does call
+ * {@code txFile.unsafeLoadAll()} -- so {@code txFile} can advance as a side effect of purge scheduling
+ * while the reader's logical txn does not.
  * <p>
  * <b>{@code reconcileOpenPartitions0} is ELIMINATED as the site, twice over.</b> Relaxing its
  * {@code else if (changed)} to {@code changed || compositeDicts != null} changed the failure by
