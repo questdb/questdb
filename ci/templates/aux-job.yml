@@ -65,3 +65,68 @@ jobs:
           echo "Checking JAR: $JAR_FILE"
           ./ci/check-bytecode-size.sh --jar "$JAR_FILE" --threshold 8000
         displayName: "Check bytecode size"
+
+  # Native JIT tests. core/CMakeLists.txt gates the jittests target behind JIT_TEST, which defaults
+  # to FALSE, so the asmjit-based tests covering the scalar and four-lane filter backends in
+  # core/src/main/c/share/jit built nowhere and ran nowhere. The binary exits non-zero when a case
+  # fails, so running it is the gate.
+  #
+  # A separate job rather than another step in RunOn: the build compiles the whole questdb library
+  # (asmjit is embedded, so its translation units are compiled twice) plus liburing, which is 10-20
+  # minutes this stage would otherwise spend serially, and it writes into
+  # core/target/classes/io/questdb/bin-local, where a locally built libquestdb.so SHADOWS the
+  # committed one (io/questdb/std/Os.java). Its own workspace keeps both problems out of the lint
+  # job. The gate covers the native side only - a Java-only change to CompiledFilterIRSerializer
+  # does not set the flag, by design, since test_app.cpp builds its own IR and runs no Java.
+  - job: NativeJitTests
+    displayName: "Native JIT tests"
+    pool: hetzner-incus
+    timeoutInMinutes: 30
+    variables:
+      CXX_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CXX_SOURCE_CODE_CHANGED']]
+    steps:
+      - checkout: self
+        fetchDepth: 1
+        lfs: false
+        submodules: false
+      - template: use-hetzner-apt-mirrors.yml
+        parameters:
+          shouldRun: and(succeeded(), eq(variables['CXX_SOURCE_CODE_CHANGED'], 'true'))
+      - bash: |
+          set -eux
+          # gcc is already present (the core and Rust builds need it); add cmake and nasm (the
+          # x86-64 asmlib) only when missing, as the client native build does.
+          if ! command -v cmake >/dev/null 2>&1 || ! command -v nasm >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y cmake nasm build-essential
+          fi
+          # The library embeds jni.h from JAVA_HOME.
+          export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-25-openjdk-amd64}"
+          # This job checks out without submodules; the questdb library the tests link needs these.
+          # No --depth: two of the four pin a SHA that is not a branch tip, and a shallow fetch of an
+          # unadvertised object is not guaranteed to be served.
+          git submodule update --init \
+            core/src/main/c/share/zlib \
+            core/src/main/c/share/fsst \
+            core/src/main/c/share/simdjson \
+            core/src/main/c/share/jemalloc
+          cd core
+          # The static-library link step writes here and does not create the directory itself.
+          mkdir -p target/classes/io/questdb/bin-local
+          cmake -B build/jittest -DCMAKE_BUILD_TYPE=Release -DJIT_TEST=TRUE
+          # An explicit job count: a bare --parallel passes make an unbounded -j, and this graph is
+          # ~190 objects including four -O3 SIMD variants and the simdjson amalgamation.
+          cmake --build build/jittest --target jittests --parallel "$(nproc)"
+          ./target/classes/io/questdb/bin-local/jittests
+        displayName: "Build and run native JIT tests (jittests)"
+        condition: and(succeeded(), eq(variables['CXX_SOURCE_CODE_CHANGED'], 'true'))
+      - bash: |
+          set -ux
+          # Leave no locally built library behind: bin-local shadows the committed one for any JVM
+          # that later runs off this workspace, and zlib's CMakeLists renames zconf.h in the SOURCE
+          # tree, which dirties the submodule.
+          rm -rf "$(Build.SourcesDirectory)/core/target/classes/io/questdb/bin-local"
+          rm -rf "$(Build.SourcesDirectory)/core/questdb"
+          git -C "$(Build.SourcesDirectory)/core/src/main/c/share/zlib" checkout -- . || true
+        displayName: "Clean native build artifacts"
+        condition: eq(variables['CXX_SOURCE_CODE_CHANGED'], 'true')
