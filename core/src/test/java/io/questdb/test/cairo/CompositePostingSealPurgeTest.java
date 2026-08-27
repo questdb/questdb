@@ -24,7 +24,9 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Os;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -61,6 +63,100 @@ import java.util.stream.Stream;
  * test for what a workload reaching it would need to do.
  */
 public class CompositePostingSealPurgeTest extends AbstractCompositeTwinTest {
+
+    /**
+     * PINS A CONFIRMED LEAK: superseded POSTING seals are never reclaimed on a composite table.
+     * <p>
+     * Reaching {@link io.questdb.cairo.PostingSealPurgeOperator} needs a workload that SUPERSEDES a
+     * seal. Sequential appends do not -- they reseal {@code .pv.0} in place (see the other test in this
+     * class). O3 writes INTO an already-sealed day do: each rewrite leaves the previous seal behind and
+     * queues a purge candidate.
+     * <p>
+     * With the purge job then driven to exhaustion, the plain twin reclaims its superseded
+     * {@code sym.pv.0} and the composite table does not -- the operator builds
+     * {@code <day>/} with the bare 5-arg {@code setPathForNativePartition} while the real seals live at
+     * {@code <day>/<cell>.<nameTxn>/}. Same cell-blind-path family as the rest of this branch.
+     * <p>
+     * <b>Not fixed here, and the reason is a scope decision.</b> The operator would need the cellKey,
+     * and {@code PostingSealPurgeJob#appendTask} persists its task fields as ROWS in a purge-log
+     * system table with a fixed column set. Adding a cellKey column is a system-table schema change
+     * plus a migration question for existing rows -- the same boundary reached by the cell-blind
+     * column-version purge in {@code CompositeColumnPurgeTest}. Both leaks share that one fix.
+     */
+    @Test(timeout = 120_000)
+    public void testO3IntoSealedDayReachesTheSealPurge() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedTwins();
+
+            // Seal a day with in-order writes.
+            insertIntoBoth("('2023-01-01T10:00:00.000000Z','E0','S0',1.0),"
+                    + "('2023-01-01T11:00:00.000000Z','E0','S1',2.0),"
+                    + "('2023-01-01T12:00:00.000000Z','E1','S2',3.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+            final java.util.List<String> sealedBefore = postingFiles("c");
+
+            // Now O3 INTO that sealed day, repeatedly -- each rewrite supersedes the previous seal.
+            for (int i = 1; i <= 5; i++) {
+                insertIntoBoth("('2023-01-01T0" + i + ":30:00.000000Z','E0','S" + (i % 3) + "'," + (i * 2.5) + ")");
+                drainWalQueue();
+                engine.releaseInactive();
+            }
+
+            // Data and INDEXED reads must survive whatever the purge did.
+            assertTwinEqual("");
+            assertTwinEqual(" WHERE sym = 'S1'");
+            assertTwinEqual(" WHERE sym = 'S2'");
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            assertTwinEqual("");
+            assertTwinEqual(" WHERE sym = 'S0'");
+
+            final List<String> compositeBeforePurge = postingFiles("c");
+            final List<String> plainBeforePurge = postingFiles("p");
+
+            // Drive the seal purge itself. This is the operator with the cell-blind path.
+            try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                while (job.run()) {
+                    Os.pause();
+                }
+            }
+
+            // The purge must not have cost us any data or any indexed row.
+            assertTwinEqual("");
+            assertTwinEqual(" WHERE sym = 'S0'");
+            assertTwinEqual(" WHERE sym = 'S1'");
+
+            final long compositeSupersededAfter = countSuperseded(postingFiles("c"));
+            final long plainSupersededAfter = countSuperseded(postingFiles("p"));
+
+            Assert.assertTrue(
+                    "precondition: the O3 rewrites must actually have superseded a seal on BOTH sides, "
+                            + "else the purge has nothing to do and this proves nothing. composite="
+                            + compositeBeforePurge + ", plain=" + plainBeforePurge,
+                    countSuperseded(compositeBeforePurge) > 0 && countSuperseded(plainBeforePurge) > 0);
+
+            // PINS A CONFIRMED, UNFIXED LEAK. The plain twin reclaims its superseded seal; the
+            // composite table does not, because PostingSealPurgeOperator addresses <day>/ and the
+            // real seals live at <day>/<cell>.<nameTxn>/. MEASURED:
+            //
+            //   plain     [2023-01-01.5/sym.pv.0, sym.pv.1]  ->  [2023-01-01.5/sym.pv.1]
+            //   composite [2023-01-01/E0.5/sym.pv.0, sym.pv.1, ...]  ->  UNCHANGED
+            //
+            // Non-corrupting: every assertion above -- rows and INDEXED reads, before and after the
+            // purge runs -- passes. The superseded seal is simply never reclaimed and accumulates
+            // with each rewrite of a sealed cell.
+            Assert.assertEquals(
+                    "the plain twin must still reclaim its superseded seal, else this comparison is "
+                            + "measuring nothing. plain " + plainBeforePurge + " -> " + postingFiles("p"),
+                    0, plainSupersededAfter);
+            Assert.assertTrue(
+                    "composite now reclaims superseded posting seals -- the leak is fixed, invert this "
+                            + "assertion. composite " + compositeBeforePurge + " -> " + postingFiles("c"),
+                    compositeSupersededAfter > 0);
+        });
+    }
 
     /**
      * Repeated commits into an indexed composite table reseal the posting index, superseding earlier
@@ -124,6 +220,26 @@ public class CompositePostingSealPurgeTest extends AbstractCompositeTwinTest {
                             + "Found: " + postingFiles("c"),
                     2, postingFiles("c").stream().filter(f -> f.contains(".pv.")).count());
         });
+    }
+
+    /**
+     * How many superseded seal versions are present: a directory holding {@code sym.pv.0} AND
+     * {@code sym.pv.1} has one superseded version, since only the newest is live.
+     */
+    private long countSuperseded(List<String> files) {
+        long extra = 0;
+        final java.util.Map<String, Integer> perDir = new java.util.HashMap<>();
+        for (String f : files) {
+            if (!f.contains(".pv.")) {
+                continue;
+            }
+            final String dir = f.substring(0, Math.max(0, f.lastIndexOf('/') + 1));
+            perDir.merge(dir, 1, Integer::sum);
+        }
+        for (int count : perDir.values()) {
+            extra += count - 1;
+        }
+        return extra;
     }
 
     /**
