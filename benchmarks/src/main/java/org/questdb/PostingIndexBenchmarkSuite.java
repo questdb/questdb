@@ -198,14 +198,25 @@ public class PostingIndexBenchmarkSuite {
                 // scan measured 3.11x SLOWER alongside two others and 1.73x
                 // FASTER alone, three runs agreeing within 2%. Forking makes a
                 // trustworthy number the default rather than folklore.
-                // Three, not two: JMH does not compute a score error below three
-                // iterations, and without an error every cell prints a hard
-                // ratio that cannot be distinguished from noise. The extra
-                // second per cell costs about a minute across the suite.
-                final int iters = Integer.getInteger("questdb.suite.bench.iterations", 3);
+                // Five, not three. Three is the minimum at which JMH computes a
+                // score error at all, but the estimate is still poor enough to
+                // report a CONFIDENT wrong verdict: at three iterations the
+                // 16-key point read measured "3.24x slower" with disjoint
+                // intervals, and at ten it is 1.07x (3,690+/-41 vs 3,434+/-38).
+                // Disjointness is only as trustworthy as the error feeding it.
+                // Five costs about two minutes across the suite.
+                final int iters = Integer.getInteger("questdb.suite.bench.iterations", 5);
                 builder.forks(1)
                         .jvmArgsAppend(JVM_EXPORTS)
-                        .warmupIterations(1)
+                        // Three warmup iterations, not one. One second of
+                        // warmup does not settle JIT on these cells, and the
+                        // instability shows up as CONFIDENT wrong verdicts
+                        // rather than wide error bars: the 16-key range read
+                        // reported 3.18x slower with disjoint intervals where a
+                        // careful ten-iteration run measures 1.14x
+                        // (7,006+/-104 vs 6,172+/-55). More measurement
+                        // iterations do not fix an unwarmed measurement.
+                        .warmupIterations(3)
                         .warmupTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
                         .measurementIterations(iters)
                         .measurementTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1));
