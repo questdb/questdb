@@ -147,16 +147,15 @@ public class CompositePostingSealPurgeTest extends AbstractCompositeTwinTest {
                             + compositeBeforePurge + ", plain=" + plainBeforePurge,
                     countSuperseded(compositeBeforePurge) > 0 && countSuperseded(plainBeforePurge) > 0);
 
-            // PINS A CONFIRMED, UNFIXED LEAK. The plain twin reclaims its superseded seal; the
-            // composite table does not, because PostingSealPurgeOperator addresses <day>/ and the
-            // real seals live at <day>/<cell>.<nameTxn>/. MEASURED:
+            // Both sides must end with no superseded seal left. Before the fix the composite table
+            // kept them forever, because PostingSealPurgeOperator addressed <day>/ while the real
+            // seals live at <day>/<cell>.<nameTxn>/:
             //
             //   plain     [2023-01-01.5/sym.pv.0, sym.pv.1]  ->  [2023-01-01.5/sym.pv.1]
             //   composite [2023-01-01/E0.5/sym.pv.0, sym.pv.1, ...]  ->  UNCHANGED
             //
-            // Non-corrupting: every assertion above -- rows and INDEXED reads, before and after the
-            // purge runs -- passes. The superseded seal is simply never reclaimed and accumulates
-            // with each rewrite of a sealed cell.
+            // The plain assertion below is not redundant: without it this comparison would pass
+            // vacuously in the world where the purge stopped reclaiming on BOTH sides.
             Assert.assertEquals(
                     "the plain twin must still reclaim its superseded seal, else this comparison is "
                             + "measuring nothing. plain " + plainBeforePurge + " -> " + postingFiles("p"),
