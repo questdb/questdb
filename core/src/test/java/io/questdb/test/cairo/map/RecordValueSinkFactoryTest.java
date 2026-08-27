@@ -166,6 +166,31 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIsSupportedColumnTypeAgreesWithGetInstance() {
+        // isSupportedColumnType() hand-mirrors getInstance()'s switch under a "keep in sync" comment,
+        // and callers rely on it to reject a type before getInstance() throws. Walk the whole tag
+        // space so the two cannot drift: every tag getInstance() can emit a sink for must be reported
+        // as supported, and every tag it rejects must be reported as unsupported.
+        final BytecodeAssembler asm = new BytecodeAssembler();
+        final ListColumnFilter filter = new ListColumnFilter();
+        filter.add(1); // 1-based, so this selects column 0
+        for (short tag = ColumnType.UNDEFINED; tag <= ColumnType.NULL; tag++) {
+            boolean isSinkGenerated;
+            try {
+                RecordValueSinkFactory.getInstance(asm, new SingleColumnType(tag), filter);
+                isSinkGenerated = true;
+            } catch (UnsupportedOperationException e) {
+                isSinkGenerated = false;
+            }
+            Assert.assertEquals(
+                    ColumnType.nameOf(tag),
+                    isSinkGenerated,
+                    RecordValueSinkFactory.isSupportedColumnType(tag)
+            );
+        }
+    }
+
+    @Test
     public void testSubset() {
         SingleColumnType keyTypes = new SingleColumnType(ColumnType.INT);
         TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)

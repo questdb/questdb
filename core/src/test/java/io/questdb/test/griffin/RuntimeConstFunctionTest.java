@@ -157,6 +157,56 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                 f.close();
             }
         }
+        // INT overflow: an overflowing INT arithmetic arg wraps mod 2^32, and every width the
+        // wrapper serves is that wrapped value sign-extended - the wrapper caches one int and
+        // inherits IntFunction's wider getters, so no context can see the pre-wrap product.
+        {
+            final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new IntFunction() {
+                @Override
+                public int getInt(Record rec) {
+                    return (int) -2_856_928_958L; // +1_438_038_338
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            });
+            try {
+                f.init(null, sqlExecutionContext);
+                assertEquals(1_438_038_338, f.getInt(null));
+                assertEquals(1_438_038_338L, f.getLong(null));
+                assertEquals(1_438_038_338L, f.getTimestamp(null));
+                assertEquals(1_438_038_338L, f.getDate(null));
+            } finally {
+                f.close();
+            }
+        }
+        // INT NULL: an IntFunction arg whose getInt() returns INT_NULL. init() reads getInt() directly,
+        // so the cached int is INT_NULL with no LONG_NULL round-trip. It caches the widened long from the
+        // arg's inherited IntFunction.getLong(), which maps INT_NULL to LONG_NULL, and the inherited
+        // getDouble() widens INT_NULL to NaN - exactly like a real INT function over a NULL column.
+        {
+            final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new IntFunction() {
+                @Override
+                public int getInt(Record rec) {
+                    return Numbers.INT_NULL;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            });
+            try {
+                f.init(null, sqlExecutionContext);
+                assertEquals(Numbers.INT_NULL, f.getInt(null));
+                assertEquals(Numbers.LONG_NULL, f.getLong(null));
+                assertTrue("NULL int must widen to NaN", Numbers.isNull(f.getDouble(null)));
+            } finally {
+                f.close();
+            }
+        }
     }
 
     @Test
@@ -171,12 +221,12 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
             bindVariableService.setStr("b0", "-357724");
             // the intermediate DOUBLE, read straight through the widening getter
             assertSqlCursors(
-                    "SELECT (c - -357724L) e0 FROM t",
+                    "SELECT (c - -357_724L) e0 FROM t",
                     "SELECT (c - :b0::LONG) e0 FROM t"
             );
             // and narrowed to CHAR, the exact projection the fuzzer flagged
             assertSqlCursors(
-                    "SELECT (c - -357724L)::CHAR e0 FROM t",
+                    "SELECT (c - -357_724L)::CHAR e0 FROM t",
                     "SELECT (c - :b0::LONG)::CHAR e0 FROM t"
             );
         });
@@ -263,7 +313,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
             }, c, f -> f.getChar(null), 'Q');
         }
 
-        // INT
+        // INT - one cached value serves every width, so init() reads the subtree exactly once.
         {
             final int[] c = {0};
             assertCachedRoundTrip(new IntFunction() {
@@ -489,7 +539,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testCompositeRuntimeConstArgIsWrappedAndEvaluatedOnce() throws SqlException {
+    public void testCompositeRuntimeConstArgIsWrappedAndEvaluatedInInit() throws SqlException {
         evalCounter.set(0);
         registerTestFunctions();
 
@@ -506,14 +556,187 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         assertTrue(inner instanceof UnaryFunction);
         assertFalse(((UnaryFunction) inner).getArg() instanceof RuntimeConstFunction);
 
-        // behavioral: evaluated once in init(), regardless of row count
+        // behavioral: the subtree is evaluated in init(), never per row. What matters most is that
+        // the count does not grow with the row count.
         f.init(null, sqlExecutionContext);
-        assertEquals(1, evalCounter.get());
+        final int afterInit = evalCounter.get();
+        assertEquals("an INT subtree is read once in init()", 1, afterInit);
         for (int i = 0; i < 100; i++) {
             assertEquals(7, f.getInt(null));
         }
-        assertEquals("runtime-constant subtree must be evaluated once per cursor", 1, evalCounter.get());
+        assertEquals("runtime-constant subtree must not be re-evaluated per row", afterInit, evalCounter.get());
         f.close();
+    }
+
+    @Test
+    public void testIntRuntimeConstInheritsArgThreadSafetyLikeEveryOtherWrapper() throws SqlException {
+        // Every wrapper, INT included, is read-only after init(), so all of them inherit the arg's
+        // thread-safety (UnaryFunction.isThreadSafe) and one instance serves every parallel worker.
+        //
+        // A lazy getter that derived a value outside init() would mutate state after init() and
+        // force isThreadSafe()=false. BinaryFunction.isThreadSafe() ANDs its children, so a single
+        // false anywhere in a predicate makes SqlCodeGenerator.compileWorkerFiltersConditionally
+        // re-parse and re-compile the *whole* filter once per shared query worker - an ordinary
+        // prepared statement like "WHERE i = :x + 1" wraps ":x + 1" as an INT runtime constant and
+        // would pay N compiles on an N-worker box.
+        //
+        // This pins that: an override would flip the first assertion.
+        final RuntimeConstFunction intFn = RuntimeConstFunction.newInstance(new IntFunction() {
+            @Override
+            public int getInt(Record rec) {
+                return 42;
+            }
+
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+
+            @Override
+            public boolean isThreadSafe() {
+                return true;
+            }
+        });
+        try {
+            assertTrue("INT wrapper inherits a thread-safe arg", intFn.isThreadSafe());
+        } finally {
+            intFn.close();
+        }
+
+        // ... and inherits a non-thread-safe arg too - pure delegation, no override.
+        final RuntimeConstFunction intFnUnsafe = RuntimeConstFunction.newInstance(new IntFunction() {
+            @Override
+            public int getInt(Record rec) {
+                return 42;
+            }
+
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+
+            @Override
+            public boolean isThreadSafe() {
+                return false;
+            }
+        });
+        try {
+            assertFalse("INT wrapper inherits a non-thread-safe arg", intFnUnsafe.isThreadSafe());
+        } finally {
+            intFnUnsafe.close();
+        }
+
+        // LONG behaves identically - the two wrappers agree.
+        final RuntimeConstFunction longFnSafe = RuntimeConstFunction.newInstance(new LongFunction() {
+            @Override
+            public long getLong(Record rec) {
+                return 42L;
+            }
+
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+
+            @Override
+            public boolean isThreadSafe() {
+                return true;
+            }
+        });
+        try {
+            assertTrue("LONG wrapper inherits a thread-safe arg", longFnSafe.isThreadSafe());
+        } finally {
+            longFnSafe.close();
+        }
+
+        final RuntimeConstFunction longFnUnsafe = RuntimeConstFunction.newInstance(new LongFunction() {
+            @Override
+            public long getLong(Record rec) {
+                return 42L;
+            }
+
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+
+            @Override
+            public boolean isThreadSafe() {
+                return false;
+            }
+        });
+        try {
+            assertFalse("LONG wrapper inherits a non-thread-safe arg", longFnUnsafe.isThreadSafe());
+        } finally {
+            longFnUnsafe.close();
+        }
+    }
+
+    @Test
+    public void testIntRuntimeConstReadsTheArgOnlyFromInit() throws SqlException {
+        // The thread-safety report above is only sound while no getter touches the arg or writes a
+        // field. init() reads the arg exactly once - one value serves every width - and every row
+        // after that is served from the cached field. A lazy wide getter would show up here as a
+        // second evaluation on the first LONG read.
+        final int[] argReads = {0};
+        final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new IntFunction() {
+            @Override
+            public int getInt(Record rec) {
+                argReads[0]++;
+                return (int) -2_856_928_958L; // +1_438_038_338 as INT
+            }
+
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+        });
+        try {
+            f.init(null, sqlExecutionContext);
+            assertEquals("init() must read the arg exactly once", 1, argReads[0]);
+
+            for (int i = 0; i < 100; i++) {
+                assertEquals(1_438_038_338, f.getInt(null));
+                assertEquals(1_438_038_338L, f.getLong(null));
+                assertEquals(1_438_038_338L, f.getTimestamp(null));
+            }
+            assertEquals("no getter may read the arg after init()", 1, argReads[0]);
+        } finally {
+            f.close();
+        }
+    }
+
+    @Test
+    public void testIntRuntimeConstReInitRefreshesCachedValue() throws SqlException {
+        // init() runs once per cursor and must refresh the cached value, so re-running the same
+        // factory for a new cursor (a re-bound prepared statement) re-evaluates the arg instead of
+        // serving the previous cursor's value.
+        final int[] narrow = {10};
+        final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new IntFunction() {
+            @Override
+            public int getInt(Record rec) {
+                return narrow[0];
+            }
+
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+        });
+        try {
+            // first cursor
+            f.init(null, sqlExecutionContext);
+            assertEquals(10, f.getInt(null));
+            assertEquals(10L, f.getLong(null));
+
+            // re-bind / re-cursor: the arg now evaluates to a new value
+            narrow[0] = 20;
+            f.init(null, sqlExecutionContext);
+            assertEquals(20, f.getInt(null));
+            assertEquals(20L, f.getLong(null));
+        } finally {
+            f.close();
+        }
     }
 
     @Test
@@ -603,7 +826,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE trades AS (" +
-                            "  SELECT (x * 1000000)::timestamp ts, x amount FROM long_sequence(10)" +
+                            "  SELECT (x * 1_000_000)::timestamp ts, x amount FROM long_sequence(10)" +
                             ") TIMESTAMP(ts) PARTITION BY NONE"
             );
 
@@ -613,13 +836,13 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
             bindVariableService.setTimestamp(0, 6_000_000L);
 
             assertSqlCursors(
-                    "SELECT sum(CASE WHEN ts >= dateadd('s', -2, 6000000::timestamp) THEN amount ELSE 0 END) s FROM trades",
+                    "SELECT sum(CASE WHEN ts >= dateadd('s', -2, 6_000_000::timestamp) THEN amount ELSE 0 END) s FROM trades",
                     "SELECT sum(CASE WHEN ts >= dateadd('s', -2, $1::timestamp) THEN amount ELSE 0 END) s FROM trades"
             );
 
             // reference value: 6s threshold - 2s => 4s; rows ts >= 4s have amount 4..10 -> 49
             assertQuery(
-                    "SELECT sum(CASE WHEN ts >= dateadd('s', -2, 6000000::timestamp) THEN amount ELSE 0 END) s FROM trades"
+                    "SELECT sum(CASE WHEN ts >= dateadd('s', -2, 6_000_000::timestamp) THEN amount ELSE 0 END) s FROM trades"
             ).noRandomAccess().expectSize().returns("s\n49\n");
         });
     }
@@ -723,7 +946,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE trades AS (" +
-                            "  SELECT (x * 1000000)::timestamp ts, x amount FROM long_sequence(10)" +
+                            "  SELECT (x * 1_000_000)::timestamp ts, x amount FROM long_sequence(10)" +
                             ") TIMESTAMP(ts) PARTITION BY NONE"
             );
 
@@ -741,6 +964,53 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testEndToEndParallelFilterReadsIntRuntimeConstViaGetLong() throws Exception {
+        // Companion to testEndToEndParallelFilterSharesFoldedThreshold, but for the INT wrapper's
+        // widened getLong() path: an overflowing INT runtime-const product (:b0::INT * 17_161::SHORT)
+        // read through a LONG-promoting multiply by a per-row LONG column, inside an async (parallel)
+        // filter. The INT wrapper is read-only after init(), so all four workers share one instance;
+        // this asserts they concurrently read the widened long correctly, matching the literal form
+        // whose constants fold at compile time. 166_478 * 17_161 = 2_856_928_958 overflows INT
+        // (getInt() wraps to -1_438_038_338, getLong() widens to +2_856_928_958), so the product
+        // with the positive LONG column is positive on every row and the filter keeps them all.
+        final WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE t AS (" +
+                                    "  SELECT (x * 1_000_000)::timestamp ts, x::long bigv" +
+                                    "  FROM long_sequence(1000)" +
+                                    ") TIMESTAMP(ts) PARTITION BY NONE",
+                            sqlExecutionContext
+                    );
+
+                    // prove the async (parallel) filter path is taken for this table/config
+                    assertQuery("SELECT bigv FROM t WHERE (166_478 * 17_161::SHORT) * bigv > 0")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .assertsPlanContaining("Async");
+
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setStr("b0", "166478");
+
+                    // folded ($b0-derived) INT runtime-const vs literal, both executed in parallel
+                    TestUtils.assertSqlCursors(
+                            compiler,
+                            sqlExecutionContext,
+                            "SELECT bigv FROM t WHERE (166_478 * 17_161::SHORT) * bigv > 0",
+                            "SELECT bigv FROM t WHERE (:b0::INT * 17_161::SHORT) * bigv > 0",
+                            LOG,
+                            false
+                    );
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
     public void testEndToEndParallelFilterSharesFoldedThreshold() throws Exception {
         // Highest-risk path: a folded runtime-constant threshold in a WHERE predicate, shared across
         // (thread-safe) or cloned per (non-thread-safe) parallel-filter workers reading the cached
@@ -754,14 +1024,14 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                 (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE trades AS (" +
-                                    "  SELECT (x * 1000000)::timestamp ts, (x * 1000000)::timestamp ts2, x amount" +
+                                    "  SELECT (x * 1_000_000)::timestamp ts, (x * 1_000_000)::timestamp ts2, x amount" +
                                     "  FROM long_sequence(1000)" +
                                     ") TIMESTAMP(ts) PARTITION BY NONE",
                             sqlExecutionContext
                     );
 
                     // prove the async (parallel) filter path is taken for this table/config
-                    assertQuery("SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, 500000000::timestamp)")
+                    assertQuery("SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, 500_000_000::timestamp)")
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
@@ -774,8 +1044,73 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                     TestUtils.assertSqlCursors(
                             compiler,
                             sqlExecutionContext,
-                            "SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, 500000000::timestamp)",
+                            "SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, 500_000_000::timestamp)",
                             "SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, $1::timestamp)",
+                            LOG,
+                            false
+                    );
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
+    public void testEndToEndParallelGroupByReadsIntRuntimeConstViaGetLong() throws Exception {
+        // The GROUP BY twin of testEndToEndParallelFilterReadsIntRuntimeConstViaGetLong, and the shape
+        // that makes the INT wrapper's thread-safety load-bearing: mode() over a boolean whose right
+        // operand is an overflowing INT runtime-const product, read at LONG width. ModeBooleanGroupByFunction
+        // keeps no map and once hard-coded isThreadSafe()=true, so every parallel worker gets the *same*
+        // wrapper instance regardless of what the wrapper reports - a wrapper that mutated a field on the
+        // first getLong() would race here. The wrapper is now read-only after init(), so sharing is safe.
+        //
+        // 786_870_912 * 8 = 6_294_967_296 overflows INT and wraps to 2_000_000_000. l is LONG, so
+        // "l > product" resolves the LONG comparison, which reads the INT product through getLong() -
+        // an exact sign extension of the wrap. Every worker must see that same threshold: reading a
+        // stale or re-derived value here would move the boundary and change each group's mode.
+        final WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE t AS (" +
+                                    "  SELECT (x * 1_000_000)::timestamp ts, (x % 4)::int k, (x * 5_000_000)::long l" +
+                                    "  FROM long_sequence(1000)" +
+                                    ") TIMESTAMP(ts) PARTITION BY NONE",
+                            sqlExecutionContext
+                    );
+
+                    // prove the async (parallel) GROUP BY path is taken for this table/config
+                    assertQuery("SELECT k, mode(l > 786_870_912 * 8::SHORT) m FROM t ORDER BY k")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .assertsPlanContaining("Async Group By");
+
+                    // l straddles the wrapped threshold, so the booleans genuinely vary inside every
+                    // group (600 of the 1000 rows are true) and each group's mode resolves to true.
+                    assertQuery("SELECT k, mode(l > 786_870_912 * 8::SHORT) m FROM t ORDER BY k")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    k\tm
+                                    0\ttrue
+                                    1\ttrue
+                                    2\ttrue
+                                    3\ttrue
+                                    """);
+
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setStr("b0", "166478");
+
+                    // folded ($b0-derived) INT runtime-const vs literal, both executed in parallel
+                    TestUtils.assertSqlCursors(
+                            compiler,
+                            sqlExecutionContext,
+                            "SELECT k, mode(l > 166_478 * 17_161::SHORT) m FROM t ORDER BY k",
+                            "SELECT k, mode(l > :b0::INT * 17_161::SHORT) m FROM t ORDER BY k",
                             LOG,
                             false
                     );
@@ -790,7 +1125,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE trades AS (" +
-                            "  SELECT (x * 1000000)::timestamp ts, x amount FROM long_sequence(10)" +
+                            "  SELECT (x * 1_000_000)::timestamp ts, x amount FROM long_sequence(10)" +
                             ") TIMESTAMP(ts) PARTITION BY NONE"
             );
 
@@ -811,7 +1146,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE trades AS (" +
-                            "  SELECT (x * 1000000)::timestamp ts, x amount FROM long_sequence(10)" +
+                            "  SELECT (x * 1_000_000)::timestamp ts, x amount FROM long_sequence(10)" +
                             ") TIMESTAMP(ts) PARTITION BY NONE"
             );
 
@@ -861,7 +1196,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE trades AS (" +
-                            "  SELECT (x * 1000000)::timestamp ts, (x * 1000000)::timestamp ts2, x amount" +
+                            "  SELECT (x * 1_000_000)::timestamp ts, (x * 1_000_000)::timestamp ts2, x amount" +
                             "  FROM long_sequence(10)" +
                             ") TIMESTAMP(ts) PARTITION BY NONE"
             );
@@ -874,7 +1209,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
             bindVariableService.setTimestamp(0, 6_000_000L);
 
             assertSqlCursors(
-                    "SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, 6000000::timestamp)",
+                    "SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, 6_000_000::timestamp)",
                     "SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, $1::timestamp)"
             );
 
@@ -887,11 +1222,21 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
     }
 
     private void assertCachedRoundTrip(Function arg, int[] counter, ValueReader reader, Object expected) throws SqlException {
+        assertCachedRoundTrip(arg, counter, reader, expected, 1);
+    }
+
+    private void assertCachedRoundTrip(
+            Function arg,
+            int[] counter,
+            ValueReader reader,
+            Object expected,
+            int expectedInitEvals
+    ) throws SqlException {
         final RuntimeConstFunction f = RuntimeConstFunction.newInstance(arg);
         try {
             f.init(null, sqlExecutionContext);
             final int afterInit = counter[0];
-            assertEquals("arg must be evaluated exactly once in init()", 1, afterInit);
+            assertEquals("arg must be evaluated exactly " + expectedInitEvals + " time(s) in init()", expectedInitEvals, afterInit);
             for (int i = 0; i < 64; i++) {
                 assertEquals("cached value must round-trip", expected, reader.read(f));
             }
