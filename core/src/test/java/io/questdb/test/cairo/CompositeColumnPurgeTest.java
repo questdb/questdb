@@ -40,16 +40,30 @@ import java.util.stream.Stream;
  * <p>
  * {@code ColumnPurgeOperator#setUpPartitionPath} builds the target table's partition path with the
  * bare 5-arg {@code setPathForNativePartition} -- no cell segment -- and neither
- * {@code ColumnPurgeJob} nor {@code ColumnPurgeTask} carries a composite gate. On a composite table the
- * real column files live at {@code <day>/<cell>.<nameTxn>/}, while the day container holds only
- * zero-byte phantoms, so a cell-blind purge cannot be addressing the files it means to.
+ * {@code ColumnPurgeJob} nor {@code ColumnPurgeTask} carries a composite gate. It reaches files it
+ * DELETES, via both {@code VACUUM} and the background purge job, so on paper it is the same
+ * cell-blind-path family as the rest of this branch.
  * <p>
- * That is the same shape as every other defect on this branch -- a path built without the cellKey --
- * and it reaches files it DELETES, via both {@code VACUUM} and the background purge job. This class
- * establishes what actually happens: whether stale column versions leak, or something worse.
+ * <b>MEASURED: there is no leak here, and an earlier revision of this file claiming one was wrong.</b>
+ * After ALTER COLUMN TYPE and VACUUM, every cell holds ONLY the new version:
+ * <pre>
+ *   2023-01-01/E0/px.d.1   2023-01-01/E1/px.d.1   2023-01-02/E0/px.d.1
+ *   2023-01-01/exch.d   2023-01-01/ts.d        (day phantoms; px.d is what VACUUM removed)
+ * </pre>
+ * No stale {@code px.d} (version 0) survives in any cell -- the column conversion cleans up per cell as
+ * it rewrites, so by the time the purge runs there is nothing per-cell left to reclaim. The single file
+ * VACUUM removes is the DAY-LEVEL phantom, and that removal is benign: measured, the day still takes
+ * further inserts across cells, still converts to parquet, and the rows still match the plain twin.
  * <p>
- * The oracle is the plain twin. Both tables get identical statements; whatever reclaim the plain table
- * performs, the composite one should match, and the ROWS must agree regardless.
+ * So the cell-blind path is real but currently harmless on this route. What is NOT established is
+ * whether some other route strands a per-cell column version -- if one does, this purge could not
+ * reclaim it. That would need a scenario that leaves a superseded per-cell file behind, which nothing
+ * here produces. Compare {@code CompositePostingSealPurgeTest}, where exactly such a scenario DOES
+ * exist (O3 into an already-sealed day) and the equivalent cell-blindness was a genuine leak, now
+ * fixed by enumerating cell directories.
+ * <p>
+ * The oracle is the plain twin. Both tables get identical statements, and the ROWS must agree at every
+ * stage regardless of what the purge does.
  */
 public class CompositeColumnPurgeTest extends AbstractCompositeTwinTest {
 
@@ -92,9 +106,9 @@ public class CompositeColumnPurgeTest extends AbstractCompositeTwinTest {
             // cell's column files would show up here.
             assertTwinEqual("");
 
-            // PIN: everything VACUUM removes on the composite table is a DAY-LEVEL file, i.e. the
-            // cell-blind path. The real stale column versions live under <day>/<cell>.<nameTxn>/ and are
-            // never reached, so they are never reclaimed.
+            // PIN: everything VACUUM removes on the composite table is a DAY-LEVEL file, i.e. via the
+            // cell-blind path. Note this is NOT evidence of a leak -- measured, the cells hold only the
+            // NEW version (px.d.1) by this point, so there is nothing per-cell left to reclaim.
             final java.util.List<String> removed = new ArrayList<>(beforeC);
             removed.removeAll(relFiles("c"));
             Assert.assertFalse(
