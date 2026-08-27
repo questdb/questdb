@@ -243,6 +243,71 @@ public class CompositeCtasTest extends AbstractCairoTest {
         return out;
     }
 
+    /**
+     * An ALIASED EXPRESSION dimension over a CTAS: {@code (expr) AS alias}.
+     * <p>
+     * This was refused because resolving one needs the builder's DDL-time safe-subset walk, and the
+     * builder is cleared before a CTAS's metadata exists. The walk splits cleanly though: the
+     * determinism check needs no columns and runs at build() time, while the column checks defer to
+     * the select's metadata alongside the rest of the spec.
+     */
+    @Test(timeout = 120_000)
+    public void testCtasWithAnAliasedExpressionDimension() throws Exception {
+        assertMemoryLeak(() -> {
+            seedSource();
+
+            execute("CREATE TABLE c AS (SELECT * FROM src) TIMESTAMP(ts) "
+                    + "PARTITION BY DAY, (upper(exch)) AS venue LAYOUT PLAIN WAL");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            Assert.assertEquals("one cell per distinct expression value", 2, cellDirs("c", "2023-01-01").size());
+            printSql("SELECT count() FROM c");
+            TestUtils.assertContains(sink, "count\n5\n");
+            assertSameRowsAsSource();
+        });
+    }
+
+    /**
+     * The same deferral must still refuse a nondeterministic expression -- at build() time, where the
+     * check needs no columns, so nothing is created.
+     */
+    @Test(timeout = 120_000)
+    public void testCtasWithNonDeterministicExpressionDimensionIsRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            seedSource();
+            try {
+                execute("CREATE TABLE c AS (SELECT * FROM src) TIMESTAMP(ts) "
+                        + "PARTITION BY DAY, (rnd_symbol('a','b')) AS venue LAYOUT PLAIN WAL");
+                Assert.fail("a nondeterministic expression dimension must be refused");
+            } catch (Exception e) {
+                Assert.assertNotNull(e.getMessage());
+            }
+            printSql("SELECT count() FROM tables() WHERE table_name = 'c'");
+            Assert.assertEquals("a refused CTAS must leave no table behind", "count\n0\n", sink.toString());
+        });
+    }
+
+    /**
+     * And an expression naming a column the SELECT does not produce must be refused too -- the check
+     * that needs the metadata, deferred with the rest.
+     */
+    @Test(timeout = 120_000)
+    public void testCtasExpressionDimensionOverUnknownColumnIsRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            seedSource();
+            try {
+                execute("CREATE TABLE c AS (SELECT ts, px FROM src) TIMESTAMP(ts) "
+                        + "PARTITION BY DAY, (upper(exch)) AS venue LAYOUT PLAIN WAL");
+                Assert.fail("an expression over a column the select does not produce must be refused");
+            } catch (Exception e) {
+                TestUtils.assertContains(e.getMessage(), "exch");
+            }
+            printSql("SELECT count() FROM tables() WHERE table_name = 'c'");
+            Assert.assertEquals("a refused CTAS must leave no table behind", "count\n0\n", sink.toString());
+        });
+    }
+
     private void assertSameRowsAsSource() throws SqlException {
         printSql("SELECT ts, exch, px FROM c ORDER BY ts");
         final String composite = sink.toString();

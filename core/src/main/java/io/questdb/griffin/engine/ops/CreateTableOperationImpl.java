@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionDimension;
 import io.questdb.cairo.PartitionSpec;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
@@ -53,6 +54,7 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -85,6 +87,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private final IntList parquetEncodingConfigs = new IntList();
     private final String selectText;
     private ObjList<ExpressionNode> deferredClusterExprs;
+    private final StringSink exprTextSink = new StringSink();
+    private ObjList<CharSequence> deferredDimensionAliases;
     private ObjList<ExpressionNode> deferredDimensionExprs;
     private byte deferredNamingMode = PartitionSpec.MODE_HIVE;
     private int deferredTimeUnit = PartitionBy.NONE;
@@ -690,10 +694,12 @@ public class CreateTableOperationImpl implements CreateTableOperation {
      */
     public void setDeferredPartitionDimensions(
             ObjList<ExpressionNode> dimensionExprs,
+            ObjList<CharSequence> dimensionAliases,
             ObjList<ExpressionNode> clusterColumnExprs,
             byte namingMode,
             int timeUnit
     ) {
+        this.deferredDimensionAliases = dimensionAliases;
         this.deferredDimensionExprs = dimensionExprs;
         this.deferredClusterExprs = clusterColumnExprs;
         this.deferredNamingMode = namingMode;
@@ -709,6 +715,26 @@ public class CreateTableOperationImpl implements CreateTableOperation {
      * What is left is exactly the part that needs the columns: mapping each dimension to a column
      * INDEX, and requiring it to be a SYMBOL.
      */
+    /**
+     * Every column an aliased expression dimension references must be produced by the SELECT. The
+     * plain CREATE TABLE path checks this against declared columns
+     * ({@code CreateTableOperationBuilderImpl#assertColumnsExist}); for a CTAS the column list is the
+     * select's metadata, so the same walk runs here.
+     */
+    private void assertExpressionColumnsExist(ExpressionNode node, RecordMetadata metadata) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.LITERAL && metadata.getColumnIndexQuiet(node.token) < 0) {
+            throw SqlException.invalidColumn(node.position, node.token);
+        }
+        assertExpressionColumnsExist(node.lhs, metadata);
+        assertExpressionColumnsExist(node.rhs, metadata);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            assertExpressionColumnsExist(node.args.getQuick(i), metadata);
+        }
+    }
+
     private void resolveDeferredPartitionSpec(RecordMetadata metadata) throws SqlException {
         if (deferredDimensionExprs == null && deferredClusterExprs == null) {
             return;
@@ -729,6 +755,19 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
         for (int i = 0, n = deferredDimensionExprs != null ? deferredDimensionExprs.size() : 0; i < n; i++) {
             final ExpressionNode node = deferredDimensionExprs.getQuick(i);
+            final CharSequence alias = deferredDimensionAliases != null ? deferredDimensionAliases.getQuick(i) : null;
+            if (alias != null) {
+                // An aliased `(expr) AS alias` dimension. Its determinism was checked at build() time,
+                // where no column knowledge is needed; what is left is that every column it references
+                // is produced by the SELECT.
+                assertExpressionColumnsExist(node, metadata);
+                exprTextSink.clear();
+                node.toSink(exprTextSink);
+                spec.addDimension(new PartitionDimension(
+                        PartitionDimension.KIND_EXPRESSION, -1, 0,
+                        Chars.toString(alias), exprTextSink.toString()));
+                continue;
+            }
             if (node.type != ExpressionNode.LITERAL && node.type != ExpressionNode.FUNCTION) {
                 throw SqlException.$(node.position, "partition expression must be aliased with AS");
             }

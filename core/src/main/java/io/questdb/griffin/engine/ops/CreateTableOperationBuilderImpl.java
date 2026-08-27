@@ -193,14 +193,12 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                             .put(tableNameExpr.token).put(']');
                 }
                 for (int i = 0; i < ctasDimCount; i++) {
-                    // An aliased `(expr) AS alias` dimension needs the builder's DDL-time safe-subset
-                    // walk (resolveExpressionDimension), which is not available once the builder has
-                    // been cleared and reused. Expression dimensions over a CTAS are their own piece
-                    // of work; refuse them here rather than resolve them differently from the plain
-                    // CREATE TABLE path.
+                    // An aliased `(expr) AS alias` dimension: the safe-subset walk splits along the
+                    // same line as everything else here. Determinism needs no column knowledge, so it
+                    // runs NOW and a nondeterministic expression is refused before anything exists.
+                    // The column checks need the select's metadata and travel with the deferred spec.
                     if (partitionDimensionAliases.getQuick(i) != null) {
-                        throw SqlException.$(partitionDimensionExprs.getQuick(i).position,
-                                "composite partitioning does not yet support an aliased expression dimension with CREATE TABLE AS SELECT");
+                        assertDeterministic(partitionDimensionExprs.getQuick(i));
                     }
                 }
             }
@@ -241,7 +239,12 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 for (int i = 0; i < ctasClusterCount; i++) {
                     clusters.add(clusterExprs.getQuick(i));
                 }
-                ctasOp.setDeferredPartitionDimensions(dims, clusters, namingMode, getPartitionByFromExpr());
+                final ObjList<CharSequence> dimAliases = new ObjList<>(ctasDimCount);
+                for (int i = 0; i < ctasDimCount; i++) {
+                    final CharSequence a = partitionDimensionAliases.getQuick(i);
+                    dimAliases.add(a == null ? null : Chars.toString(a));
+                }
+                ctasOp.setDeferredPartitionDimensions(dims, dimAliases, clusters, namingMode, getPartitionByFromExpr());
             }
             return ctasOp;
         }
