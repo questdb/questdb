@@ -923,12 +923,28 @@ public class PropServerConfigurationTest {
         // undocumented keys, and documenting them is a separate piece of work.
         final ObjList<String> lines = readShippedServerConfLines();
         final ObjList<String> undocumented = new ObjList<>();
+        int matched = 0;
         for (PropertyKey key : PropertyKey.values()) {
             final String path = key.getPropertyPath();
-            if (path.startsWith("cairo.live.view.") && !isKeyDocumentedIn(lines, path)) {
-                undocumented.add(path);
+            if (path.startsWith("cairo.live.view.")) {
+                matched++;
+                if (!isKeyDocumentedIn(lines, path)) {
+                    undocumented.add(path);
+                }
             }
         }
+        // The failure below fires only on a NON-EMPTY list, so an empty filter passes it
+        // silently: rename the prefix, or change the shape PropertyKey reports paths in, and
+        // this test guards nothing while still claiming to guard the template. Pin the
+        // population first. The floor sits below the 27 keys the prefix carries today, so a
+        // retired key does not turn the guard into a chore, and far above the zero a rename
+        // would leave behind.
+        Assert.assertTrue(
+                "the cairo.live.view. filter matched " + matched + " keys: the prefix or the way"
+                        + " PropertyKey reports paths has moved, and this test no longer guards"
+                        + " conf/server.conf",
+                matched >= 20
+        );
         if (undocumented.size() > 0) {
             Assert.fail("live view keys missing from conf/server.conf: " + undocumented);
         }

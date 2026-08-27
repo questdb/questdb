@@ -325,17 +325,17 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long liveViewCheckpointCompactionInterval;
     private final long liveViewCheckpointMaxDurationMicros;
     private final long liveViewCheckpointPurgeInterval;
-    private final int liveViewCheckpointRepairMaxChainedBoundaries;
     private final boolean liveViewCheckpointRepairIsolatedRuntimeEnabled;
-    private final boolean liveViewCheckpointRepairPerSegmentEnabled;
     private final boolean liveViewCheckpointRepairKeyedReplayEnabled;
-    private final boolean liveViewCheckpointRepairOpenSegmentKeyedReplayEnabled;
-    private final boolean liveViewCheckpointRepairSegmentYieldEnabled;
-    private final boolean liveViewCheckpointRepairSparsePublicationEnabled;
-    private final long liveViewCheckpointRepairReplayMaxRows;
     private final long liveViewCheckpointRepairKeyedScanIndexOpenRows;
+    private final int liveViewCheckpointRepairMaxChainedBoundaries;
+    private final boolean liveViewCheckpointRepairOpenSegmentKeyedReplayEnabled;
+    private final boolean liveViewCheckpointRepairPerSegmentEnabled;
+    private final long liveViewCheckpointRepairReplayMaxRows;
     private final long liveViewCheckpointRepairScanMaxKeys;
     private final long liveViewCheckpointRepairScanMaxRows;
+    private final boolean liveViewCheckpointRepairSegmentYieldEnabled;
+    private final boolean liveViewCheckpointRepairSparsePublicationEnabled;
     private final long liveViewCheckpointRows;
     private final boolean liveViewEnabled;
     private final int liveViewFlushRetryMax;
@@ -4260,11 +4260,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isLiveViewCheckpointAdaptiveCadenceEnabled() {
-            return liveViewCheckpointAdaptiveCadenceEnabled;
-        }
-
-        @Override
         public long getLiveViewCheckpointMaxDurationMicros() {
             return liveViewCheckpointMaxDurationMicros;
         }
@@ -4275,8 +4270,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getLiveViewCheckpointRepairReplayMaxRows() {
-            return liveViewCheckpointRepairReplayMaxRows;
+        public long getLiveViewCheckpointRepairKeyedScanIndexOpenRows() {
+            return liveViewCheckpointRepairKeyedScanIndexOpenRows;
         }
 
         @Override
@@ -4285,38 +4280,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isLiveViewCheckpointRepairIsolatedRuntimeEnabled() {
-            return liveViewCheckpointRepairIsolatedRuntimeEnabled;
-        }
-
-        @Override
-        public boolean isLiveViewCheckpointRepairPerSegmentEnabled() {
-            return liveViewCheckpointRepairPerSegmentEnabled;
-        }
-
-        @Override
-        public boolean isLiveViewCheckpointRepairKeyedReplayEnabled() {
-            return liveViewCheckpointRepairKeyedReplayEnabled;
-        }
-
-        @Override
-        public boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled() {
-            return liveViewCheckpointRepairOpenSegmentKeyedReplayEnabled;
-        }
-
-        @Override
-        public boolean isLiveViewCheckpointRepairSegmentYieldEnabled() {
-            return liveViewCheckpointRepairSegmentYieldEnabled;
-        }
-
-        @Override
-        public boolean isLiveViewCheckpointRepairSparsePublicationEnabled() {
-            return liveViewCheckpointRepairSparsePublicationEnabled;
-        }
-
-        @Override
-        public long getLiveViewCheckpointRepairKeyedScanIndexOpenRows() {
-            return liveViewCheckpointRepairKeyedScanIndexOpenRows;
+        public long getLiveViewCheckpointRepairReplayMaxRows() {
+            return liveViewCheckpointRepairReplayMaxRows;
         }
 
         @Override
@@ -5512,6 +5477,41 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isIOURingEnabled() {
             return ioURingEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointAdaptiveCadenceEnabled() {
+            return liveViewCheckpointAdaptiveCadenceEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairIsolatedRuntimeEnabled() {
+            return liveViewCheckpointRepairIsolatedRuntimeEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairKeyedReplayEnabled() {
+            return liveViewCheckpointRepairKeyedReplayEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled() {
+            return liveViewCheckpointRepairOpenSegmentKeyedReplayEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairPerSegmentEnabled() {
+            return liveViewCheckpointRepairPerSegmentEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairSegmentYieldEnabled() {
+            return liveViewCheckpointRepairSegmentYieldEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewCheckpointRepairSparsePublicationEnabled() {
+            return liveViewCheckpointRepairSparsePublicationEnabled;
         }
 
         @Override

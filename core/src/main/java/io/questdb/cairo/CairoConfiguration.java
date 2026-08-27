@@ -355,14 +355,6 @@ public interface CairoConfiguration {
     long getLiveViewCheckpointCompactionInterval();
 
     /**
-     * Whether a live view may shorten its configured checkpoint duration cadence
-     * after observing out-of-order correction depth. The learned cadence never
-     * exceeds {@link #getLiveViewCheckpointMaxDurationMicros()} and never runs
-     * more frequently than the view's {@code FLUSH EVERY} interval.
-     */
-    boolean isLiveViewCheckpointAdaptiveCadenceEnabled();
-
-    /**
      * Wall-clock ceiling between consecutive head-checkpoint writes for a
      * live view. The refresh worker writes a fresh head once this duration
      * has elapsed since the prior write, even when
@@ -383,19 +375,40 @@ public interface CairoConfiguration {
     long getLiveViewCheckpointPurgeInterval();
 
     /**
-     * Per-turn budget on the base rows one localized out-of-order repair may
-     * replay. The repair's convergence boundary makes its work finite, but a
-     * dense interval can still hold more rows than one refresh turn should
-     * carry, so a replay that crosses this budget stops at the end of the
-     * current timestamp group and continues in a later turn. It publishes
-     * nothing while suspended: the replacement stays uncommitted in the
-     * live-view writer the repair holds, and no generation names its staged
-     * roots. The turn also ends on
-     * {@link #getLiveViewRefreshTurnMaxDurationMicros()}, whichever comes
-     * first. A value {@code <= 0} disables the row budget, leaving the
-     * wall-clock one alone to bound the turn.
+     * What a keyed repair scan is charged for one index open, in base rows, so the two
+     * halves of its price are comparable.
+     * <p>
+     * A keyed scan opens the index once per <b>partition</b> - {@code TableReader} caches an
+     * index reader per (partition, column, direction), so a base partitioned by hour against
+     * a daily anchor segment performs 24 opens whatever the affected key count {@code |Q|}
+     * and the frame split {@code F} are. It then substitutes one index-backed row cursor per
+     * affected key into every page frame it crosses, and {@code HeapRowCursorFactory}
+     * rebuilds those cursors per frame, for {@code 24 * F * |Q|} <b>seeks</b> of the readers
+     * those 24 opens produced, where {@code F} is the number of frames
+     * {@link #getSqlPageFrameMinRows()} and the shared query worker count split one
+     * partition into. Together they are what sinks a keyed scan over a sparse key domain,
+     * and neither is rows, so the comparison against the whole-range scan needs both
+     * expressed in them.
+     * <p>
+     * This value prices the open; a seek pops a pooled cursor off an already-open reader
+     * rather than opening and mapping two files, and is charged this price divided by
+     * {@code LiveViewCheckpointKeyedScanCost.INDEX_SEEKS_PER_INDEX_OPEN}, so one setting
+     * moves both terms. That six is policy, not physics - a warm seek measures 33 to 44 base
+     * rows against an index open's ~4,000, nearer 90:1 - and is picked so the shipped 256
+     * derives a seek of 42, inside the measured band. Read this as a price, then, not as a
+     * measurement to calibrate: set it to a machine's real open cost and every seek is
+     * over-charged by the same factor.
+     * <p>
+     * The default is deliberately conservative on the half that decides: the derived seek
+     * sits at the top of its measured band, and it outweighs the open half as soon as a
+     * partition carries more than six {@code (key, frame)} pairs. Erring high there only
+     * ever moves a marginal segment onto the whole-range scan, which is correct for every
+     * shape and merely reads more. The open-segment resume caps both halves lower -
+     * reported-density measurements price its posting-index setup at four rows - because
+     * that route pays neither the stored-row merge nor the whole-state publication the
+     * conservative price was set against. See {@code LiveViewCheckpointKeyedScanCost}.
      */
-    long getLiveViewCheckpointRepairReplayMaxRows();
+    long getLiveViewCheckpointRepairKeyedScanIndexOpenRows();
 
     /**
      * Budget on the logical boundaries one out-of-order repair may re-version as a
@@ -420,161 +433,19 @@ public interface CairoConfiguration {
     int getLiveViewCheckpointRepairMaxChainedBoundaries();
 
     /**
-     * Whether an out-of-order repair that converges below the runtime frontier replays
-     * through a second compiled runtime of the view's own SELECT, instead of through the
-     * primary one the forward drain stands in.
-     * <p>
-     * Such a repair reconstructs the state of the range it repairs, and proves by
-     * converging that the state above that range was already correct. Replaying through
-     * the primary runtime therefore means taking the whole window state aside first and
-     * putting it back afterwards - a copy as large as the state itself, paid twice per
-     * repair, and at 20M keys per anchor day the largest allocation on the path. The
-     * isolated runtime holds only the keys of the range being repaired, so the primary's
-     * state, dirty sets and checkpoint baseline are never read, written or wiped.
-     * <p>
-     * False restores that exchange, which is what every converging repair took before the
-     * isolated runtime existed - an escape hatch, and the control column a measurement
-     * runs against. It costs one extra compiled factory per view that ever takes a
-     * converging repair, which is why an operator can decline it.
+     * Per-turn budget on the base rows one localized out-of-order repair may
+     * replay. The repair's convergence boundary makes its work finite, but a
+     * dense interval can still hold more rows than one refresh turn should
+     * carry, so a replay that crosses this budget stops at the end of the
+     * current timestamp group and continues in a later turn. It publishes
+     * nothing while suspended: the replacement stays uncommitted in the
+     * live-view writer the repair holds, and no generation names its staged
+     * roots. The turn also ends on
+     * {@link #getLiveViewRefreshTurnMaxDurationMicros()}, whichever comes
+     * first. A value {@code <= 0} disables the row budget, leaving the
+     * wall-clock one alone to bound the turn.
      */
-    boolean isLiveViewCheckpointRepairIsolatedRuntimeEnabled();
-
-    /**
-     * Whether an out-of-order repair decomposes its change set into the anchor segments it
-     * touches and repairs each of them over its own range, instead of taking one union
-     * range running from the anchor below the deepest correction to the frontier.
-     * <p>
-     * The union range pays twice for the distance it reaches: the replay reads every base
-     * row in it, and the apply rewrites every live-view partition it covers, whole. False
-     * restores that range, which is what every repair took before the decomposition
-     * existed - an escape hatch, and the control column a measurement runs against.
-     */
-    boolean isLiveViewCheckpointRepairPerSegmentEnabled();
-
-    /**
-     * Whether one anchor segment's out-of-order repair may stop on the refresh turn's
-     * budget and continue on a later turn, instead of running to completion inside the
-     * turn that started it.
-     * <p>
-     * A segment repair reads and re-emits the whole segment, so its cost is the anchor
-     * period's own base rows - up to a day of them for {@code ANCHOR DAILY} - however few
-     * rows the correction that triggered it carried. The loop that drives one owns a
-     * single pinned base snapshot across every segment it takes, so a replay that parks
-     * has to park the rest of the loop with it;
-     * {@link io.questdb.cairo.lv.LiveViewCheckpointRepairSession} carries that loop
-     * position, and the resuming turn finishes the parked segment and then the ones
-     * behind it. Nothing durable moves in between - the replacement is uncommitted and no
-     * generation names the staged roots - so a reader sees the pre-repair view until the
-     * loop publishes.
-     * <p>
-     * False keeps a segment replay inside one turn, which is what the loop did before the
-     * yield existed - an escape hatch, and the control column a measurement runs
-     * against. The turn budgets themselves are unchanged either way; see
-     * {@link #getLiveViewCheckpointRepairReplayMaxRows()} and
-     * {@link #getLiveViewRefreshTurnMaxDurationMicros()} for what a turn is allowed to
-     * spend.
-     */
-    boolean isLiveViewCheckpointRepairSegmentYieldEnabled();
-
-    /**
-     * Whether a live view CREATEd under this configuration marks its designated timestamp
-     * and its projected partition key as dedup keys, so a later repair can publish only
-     * the rows it recomputed.
-     * <p>
-     * A repair publishes with {@code WAL_DEDUP_MODE_REPLACE_RANGE}, which deletes the
-     * replaced interval wholesale and so has to carry every row of it - including, for a
-     * keyed repair, the rows the merge copies forward untouched. Publishing only the
-     * affected keys' rows instead needs {@code WAL_DEDUP_MODE_UPSERT_NEW}, which needs the
-     * view's own table to carry the dedup keys the upsert collapses on. This is what puts
-     * them there.
-     * <p>
-     * It is a <b>CREATE-time schema decision</b>, not a route: a view created with this on
-     * carries the keys for its lifetime, and turning it off afterwards does not take them
-     * away. It also costs the view's ordinary forward path, which stops coalescing its
-     * commits into blocks and stops holding rows in the WAL lag - every commit on a
-     * dedup-keyed table carries a non-default dedup mode, and
-     * {@code WalTxnDetails} forces a full commit for each of those. It defaults to true,
-     * so a view that would rather keep those forward commits coalesced than let its
-     * repairs publish sparsely is CREATEd with this off. It is also the reason the
-     * ordinary commit is stamped {@code WAL_DEDUP_MODE_NO_DEDUP} rather than left at the
-     * default: the view's output may legitimately hold two rows sharing a
-     * {@code (timestamp, key)} pair, and a default-mode commit on a dedup-keyed table
-     * would collapse them.
-     * <p>
-     * A view whose output carries no key the pair can be named through - a compound or
-     * expression PARTITION BY, a key of another type, a key the SELECT drops - gets no
-     * dedup keys whatever this says, because there would be no identity to publish on.
-     */
-    boolean isLiveViewCheckpointRepairSparsePublicationEnabled();
-
-    /**
-     * Whether a per-segment out-of-order repair may follow only the keys a correction
-     * touched through the base's posting index, instead of reading every row of the
-     * segment it landed in.
-     * <p>
-     * The rows such a repair publishes are the same rows a whole-segment replay
-     * publishes: it recomputes the affected keys' output from the base and copies every
-     * other key's row forward from the view's own stored segment, so the
-     * {@code REPLACE_RANGE} it commits still carries the segment's full row set. What it
-     * saves is the window evaluation and the base column reads for the keys the
-     * correction did not touch; what it costs is one sequential read of the view's own
-     * output for that segment, and one property: a row copied forward is no longer
-     * recomputed from the base, so a divergence below it is preserved rather than
-     * corrected. That property is why the switch exists at all; it defaults to true, so
-     * an operator who wants every repair to recompute its whole segment from the base
-     * sets it to false.
-     * <p>
-     * A segment takes the keyed route only where every gate
-     * {@code LiveViewSegmentRepairEnvelope.keyedScanGate} reports holds, the correction's key
-     * domain was collected in full, and {@code LiveViewCheckpointKeyedScanCost} prices
-     * the keyed read below the whole-segment one. Everything else reads whole, which is
-     * what every repair did before this existed.
-     */
-    boolean isLiveViewCheckpointRepairKeyedReplayEnabled();
-
-    /**
-     * Whether a repair of a correction landing in the <b>open</b> anchor segment may follow
-     * the keys that correction touched, instead of replaying every base row from its anchor
-     * to the end of the base table.
-     * <p>
-     * The route publishes as an upsert on the view's own dedup keys rather than as a range
-     * replacement, so it reaches only a view created under
-     * {@link #isLiveViewCheckpointRepairSparsePublicationEnabled()}, and it carries the same
-     * property change the closed-segment keyed replay does: a key the correction did not
-     * touch keeps its stored row rather than being recomputed from the base. Inside the
-     * open segment that is the current day's data, which is what an operator takes back by
-     * setting this to false. It defaults to true.
-     * <p>
-     * The route also needs its own arithmetic proof, which is what keeps the repair
-     * independent of the interval it repairs: an insert-only correction to an unfiltered
-     * view over a base that does not deduplicate emits exactly one output row per new base
-     * row, so every checkpoint position follows from the durable ones plus that exact
-     * count. A view outside that shape replays every row above its anchor whatever this
-     * says.
-     */
-    boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled();
-
-    /**
-     * What one index open costs a keyed repair scan, in base rows, so the two halves of
-     * its price are comparable.
-     * <p>
-     * A keyed scan substitutes one index-backed row cursor per affected key into every page
-     * frame it crosses, and {@code HeapRowCursorFactory} rebuilds those cursors per frame -
-     * so a base partitioned by hour against a daily anchor segment opens the index
-     * {@code 24 * F * |Q|} times before it reads a row, where {@code F} is the number of
-     * frames {@link #getSqlPageFrameMinRows()} and the shared query worker count split one
-     * partition into. That term is what sinks a keyed scan over a sparse key domain, and it
-     * is not rows, so the comparison against the whole-range scan needs it expressed in
-     * them.
-     * <p>
-     * The default is deliberately conservative: overstating an index open only ever moves a
-     * marginal segment onto the whole-range scan, which is correct for every shape and
-     * merely reads more. The open-segment resume caps it lower - reported-density
-     * measurements price its posting-index setup at four rows - because that route pays
-     * neither the stored-row merge nor the whole-state publication the conservative price
-     * was set against. See {@code LiveViewCheckpointKeyedScanCost}.
-     */
-    long getLiveViewCheckpointRepairKeyedScanIndexOpenRows();
+    long getLiveViewCheckpointRepairReplayMaxRows();
 
     /**
      * Budget on the partition keys one localized out-of-order repair may plan
@@ -1402,6 +1273,149 @@ public interface CairoConfiguration {
     boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
+
+    /**
+     * Whether a live view may shorten its configured checkpoint duration cadence
+     * after observing out-of-order correction depth. The learned cadence never
+     * exceeds {@link #getLiveViewCheckpointMaxDurationMicros()} and never runs
+     * more frequently than the view's {@code FLUSH EVERY} interval.
+     */
+    boolean isLiveViewCheckpointAdaptiveCadenceEnabled();
+
+    /**
+     * Whether an out-of-order repair that converges below the runtime frontier replays
+     * through a second compiled runtime of the view's own SELECT, instead of through the
+     * primary one the forward drain stands in.
+     * <p>
+     * Such a repair reconstructs the state of the range it repairs, and proves by
+     * converging that the state above that range was already correct. Replaying through
+     * the primary runtime therefore means taking the whole window state aside first and
+     * putting it back afterwards - a copy as large as the state itself, paid twice per
+     * repair, and at 20M keys per anchor day the largest allocation on the path. The
+     * isolated runtime holds only the keys of the range being repaired, so the primary's
+     * state, dirty sets and checkpoint baseline are never read, written or wiped.
+     * <p>
+     * False restores that exchange, which is what every converging repair took before the
+     * isolated runtime existed - an escape hatch, and the control column a measurement
+     * runs against. It costs one extra compiled factory per view that ever takes a
+     * converging repair, which is why an operator can decline it.
+     */
+    boolean isLiveViewCheckpointRepairIsolatedRuntimeEnabled();
+
+    /**
+     * Whether a per-segment out-of-order repair may follow only the keys a correction
+     * touched through the base's posting index, instead of reading every row of the
+     * segment it landed in.
+     * <p>
+     * The rows such a repair publishes are the same rows a whole-segment replay
+     * publishes: it recomputes the affected keys' output from the base and copies every
+     * other key's row forward from the view's own stored segment, so the
+     * {@code REPLACE_RANGE} it commits still carries the segment's full row set. What it
+     * saves is the window evaluation and the base column reads for the keys the
+     * correction did not touch; what it costs is one sequential read of the view's own
+     * output for that segment, and one property: a row copied forward is no longer
+     * recomputed from the base, so a divergence below it is preserved rather than
+     * corrected. That property is why the switch exists at all; it defaults to true, so
+     * an operator who wants every repair to recompute its whole segment from the base
+     * sets it to false.
+     * <p>
+     * A segment takes the keyed route only where every gate
+     * {@code LiveViewSegmentRepairEnvelope.keyedScanGate} reports holds, the correction's key
+     * domain was collected in full, and {@code LiveViewCheckpointKeyedScanCost} prices
+     * the keyed read below the whole-segment one. Everything else reads whole, which is
+     * what every repair did before this existed.
+     */
+    boolean isLiveViewCheckpointRepairKeyedReplayEnabled();
+
+    /**
+     * Whether a repair of a correction landing in the <b>open</b> anchor segment may follow
+     * the keys that correction touched, instead of replaying every base row from its anchor
+     * to the end of the base table.
+     * <p>
+     * The route publishes as an upsert on the view's own dedup keys rather than as a range
+     * replacement, so it reaches only a view created under
+     * {@link #isLiveViewCheckpointRepairSparsePublicationEnabled()}, and it carries the same
+     * property change the closed-segment keyed replay does: a key the correction did not
+     * touch keeps its stored row rather than being recomputed from the base. Inside the
+     * open segment that is the current day's data, which is what an operator takes back by
+     * setting this to false. It defaults to true.
+     * <p>
+     * The route also needs its own arithmetic proof, which is what keeps the repair
+     * independent of the interval it repairs: an insert-only correction to an unfiltered
+     * view over a base that does not deduplicate emits exactly one output row per new base
+     * row, so every checkpoint position follows from the durable ones plus that exact
+     * count. A view outside that shape replays every row above its anchor whatever this
+     * says.
+     */
+    boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled();
+
+    /**
+     * Whether an out-of-order repair decomposes its change set into the anchor segments it
+     * touches and repairs each of them over its own range, instead of taking one union
+     * range running from the anchor below the deepest correction to the frontier.
+     * <p>
+     * The union range pays twice for the distance it reaches: the replay reads every base
+     * row in it, and the apply rewrites every live-view partition it covers, whole. False
+     * restores that range, which is what every repair took before the decomposition
+     * existed - an escape hatch, and the control column a measurement runs against.
+     */
+    boolean isLiveViewCheckpointRepairPerSegmentEnabled();
+
+    /**
+     * Whether one anchor segment's out-of-order repair may stop on the refresh turn's
+     * budget and continue on a later turn, instead of running to completion inside the
+     * turn that started it.
+     * <p>
+     * A segment repair reads and re-emits the whole segment, so its cost is the anchor
+     * period's own base rows - up to a day of them for {@code ANCHOR DAILY} - however few
+     * rows the correction that triggered it carried. The loop that drives one owns a
+     * single pinned base snapshot across every segment it takes, so a replay that parks
+     * has to park the rest of the loop with it;
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointRepairSession} carries that loop
+     * position, and the resuming turn finishes the parked segment and then the ones
+     * behind it. Nothing durable moves in between - the replacement is uncommitted and no
+     * generation names the staged roots - so a reader sees the pre-repair view until the
+     * loop publishes.
+     * <p>
+     * False keeps a segment replay inside one turn, which is what the loop did before the
+     * yield existed - an escape hatch, and the control column a measurement runs
+     * against. The turn budgets themselves are unchanged either way; see
+     * {@link #getLiveViewCheckpointRepairReplayMaxRows()} and
+     * {@link #getLiveViewRefreshTurnMaxDurationMicros()} for what a turn is allowed to
+     * spend.
+     */
+    boolean isLiveViewCheckpointRepairSegmentYieldEnabled();
+
+    /**
+     * Whether a live view CREATEd under this configuration marks its designated timestamp
+     * and its projected partition key as dedup keys, so a later repair can publish only
+     * the rows it recomputed.
+     * <p>
+     * A repair publishes with {@code WAL_DEDUP_MODE_REPLACE_RANGE}, which deletes the
+     * replaced interval wholesale and so has to carry every row of it - including, for a
+     * keyed repair, the rows the merge copies forward untouched. Publishing only the
+     * affected keys' rows instead needs {@code WAL_DEDUP_MODE_UPSERT_NEW}, which needs the
+     * view's own table to carry the dedup keys the upsert collapses on. This is what puts
+     * them there.
+     * <p>
+     * It is a <b>CREATE-time schema decision</b>, not a route: a view created with this on
+     * carries the keys for its lifetime, and turning it off afterwards does not take them
+     * away. It also costs the view's ordinary forward path, which stops coalescing its
+     * commits into blocks and stops holding rows in the WAL lag - every commit on a
+     * dedup-keyed table carries a non-default dedup mode, and
+     * {@code WalTxnDetails} forces a full commit for each of those. It defaults to true,
+     * so a view that would rather keep those forward commits coalesced than let its
+     * repairs publish sparsely is CREATEd with this off. It is also the reason the
+     * ordinary commit is stamped {@code WAL_DEDUP_MODE_NO_DEDUP} rather than left at the
+     * default: the view's output may legitimately hold two rows sharing a
+     * {@code (timestamp, key)} pair, and a default-mode commit on a dedup-keyed table
+     * would collapse them.
+     * <p>
+     * A view whose output carries no key the pair can be named through - a compound or
+     * expression PARTITION BY, a key of another type, a key the SELECT drops - gets no
+     * dedup keys whatever this says, because there would be no identity to publish on.
+     */
+    boolean isLiveViewCheckpointRepairSparsePublicationEnabled();
 
     boolean isLiveViewEnabled();
 

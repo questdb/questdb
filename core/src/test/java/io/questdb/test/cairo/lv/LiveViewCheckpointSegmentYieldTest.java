@@ -58,6 +58,56 @@ import org.junit.Test;
  */
 public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
 
+    // The route a repair took beside the rows it replayed taking it, which is the pair a
+    // park holds apart for as many turns as it lasts.
+    private static final String REPAIR_READING =
+            "SELECT checkpoint_repair_in_progress, checkpoint_repair_last_disposition,"
+                    + " o3_resume_replay_rows, o3_boundary_replay_rows, o3_replay_scan_rows"
+                    + " FROM live_views()";
+    private static final String REPAIR_READING_HEADER =
+            "checkpoint_repair_in_progress\tcheckpoint_repair_last_disposition\t"
+                    + "o3_resume_replay_rows\to3_boundary_replay_rows\to3_replay_scan_rows\n";
+
+    @Test
+    public void testAParkedSegmentRepairNamesNoDispositionAheadOfItsCounters() throws Exception {
+        // What a reader of live_views() must not be shown: a repair's route beside counters
+        // that carry none of its rows. The disposition is settled when the segment repair is
+        // planned and the o3_* counters move only when its replay finishes, so the two are
+        // published from different moments. A park holds those moments apart for whole
+        // refresh turns, which is what makes the gap readable without racing the worker.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                // Head rows, so the runtime's own segment is the fifth day and the three
+                // seeded days are all closed below it. Forward-only work runs no repair, so
+                // the pair is NULL and every counter is still zero here.
+                commit(row(5, 1, "acct-1") + ", " + row(5, 2, "acct-2"), job);
+
+                execute("insert into tx values " + row(2, 5, "acct-1"));
+                drainWalQueue();
+                driveUntilParked(job);
+
+                // Mid-repair. checkpoint_repair_in_progress is the column that says a repair
+                // is in flight; the disposition names the last one that ran, and this one has
+                // not replayed a row yet.
+                assertQuery(REPAIR_READING)
+                        .noLeakCheck().noRandomAccess()
+                        .returns(REPAIR_READING_HEADER + "true\t\t0\t0\t0\n");
+
+                driveRefreshToQuiescence(job);
+                Assert.assertNull(viewInstance().getSuspendedRepair());
+                // And when it lands, the route and its cost land together.
+                assertQuery(REPAIR_READING)
+                        .noLeakCheck().noRandomAccess()
+                        .returns(REPAIR_READING_HEADER + "false\tlocalized rebuild\t0\t1\t6\n");
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
     @Test
     public void testASegmentRepairYieldsOnItsTurnBudgetAndResumes() throws Exception {
         // The base case: one closed segment, nothing at the head, and a replay budget that

@@ -4666,6 +4666,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final String viewName = instance.getDefinition().getViewName();
         final int readerColumnIndex = compiledPlan.getPageFrameFactory().getBaseColumnIndex(scanColumnIndex);
         final long indexOpenRows = engine.getConfiguration().getLiveViewCheckpointRepairKeyedScanIndexOpenRows();
+        final long indexSeekRows = LiveViewCheckpointKeyedScanCost.indexSeekRows(indexOpenRows);
         try {
             final SymbolMapReader symbols = reader.getSymbolMapReader(readerColumnIndex);
             scanCost.of(reader);
@@ -4702,9 +4703,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 final boolean cheaper = LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(
                         postingRows,
                         keyedScanCost.getIndexOpens(),
+                        keyedScanCost.getIndexSeeks(),
                         keyedScanKeys.size(),
                         wholeRangeRows,
-                        indexOpenRows
+                        indexOpenRows,
+                        indexSeekRows
                 );
                 keyedScanPricedCount++;
                 keyedScanPostingRows += postingRows;
@@ -4718,8 +4721,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", keys=").$(keyedScanKeys.size())
                         .$(", postingRows=").$(postingRows)
                         .$(", indexOpens=").$(keyedScanCost.getIndexOpens())
+                        .$(", indexSeeks=").$(keyedScanCost.getIndexSeeks())
                         .$(", keyedCostRows=").$(LiveViewCheckpointKeyedScanCost.keyedScanCostRows(
-                                postingRows, keyedScanCost.getIndexOpens(), keyedScanKeys.size(), indexOpenRows))
+                                postingRows,
+                                keyedScanCost.getIndexOpens(),
+                                keyedScanCost.getIndexSeeks(),
+                                keyedScanKeys.size(),
+                                indexOpenRows,
+                                indexSeekRows))
                         .$(", wholeRangeRows=").$(wholeRangeRows)
                         .$(", keyedCheaper=").$(cheaper).I$();
             }
@@ -4821,7 +4830,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // The gate above admitted the exact, insert-only arithmetic path and nothing else,
         // so this is the price of the only open route there is; closed segments keep the
         // configured price and its original safety margin.
+        //
+        // The cap covers BOTH halves of the setup term. Those A/Bs were run against a model
+        // that counted one charge per (key, partition) and priced each at four, so the total
+        // they validated is 4 * |Q|. Under the corrected two-term model the half that carries
+        // |Q| is the per-(key, frame) seek, so capping only the per-partition open would
+        // leave the seek at its derived price - 42 rows at the shipped default - and charge
+        // this route about ten times per (key, frame) what its own A/Bs validated.
         final long indexOpenRows = Math.min(configuredIndexOpenRows, OPEN_SEGMENT_ARITHMETIC_INDEX_OPEN_ROWS);
+        final long indexSeekRows = Math.min(
+                LiveViewCheckpointKeyedScanCost.indexSeekRows(configuredIndexOpenRows),
+                OPEN_SEGMENT_ARITHMETIC_INDEX_OPEN_ROWS
+        );
         try {
             scanCost.of(reader);
             keyedScanCost.of(reader, executionContext);
@@ -4846,13 +4866,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
             final long keyedCostRows = LiveViewCheckpointKeyedScanCost.keyedScanCostRows(
-                    postingRows, keyedScanCost.getIndexOpens(), keyedScanKeys.size(), indexOpenRows);
+                    postingRows,
+                    keyedScanCost.getIndexOpens(),
+                    keyedScanCost.getIndexSeeks(),
+                    keyedScanKeys.size(),
+                    indexOpenRows,
+                    indexSeekRows
+            );
             final boolean rowCheaper = LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(
                     postingRows,
                     keyedScanCost.getIndexOpens(),
+                    keyedScanCost.getIndexSeeks(),
                     keyedScanKeys.size(),
                     wholeRangeRows,
-                    indexOpenRows
+                    indexOpenRows,
+                    indexSeekRows
             );
             final LiveViewCheckpointOpenSegmentCost elapsedCost = instance.getOpenSegmentRepairCost();
             final boolean elapsedCheaper = !coldHeadMiss && elapsedCost.shouldOverrideWholeRange(
@@ -4888,8 +4916,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", keys=").$(keyedScanKeys.size())
                     .$(", postingRows=").$(postingRows)
                     .$(", indexOpens=").$(keyedScanCost.getIndexOpens())
+                    .$(", indexSeeks=").$(keyedScanCost.getIndexSeeks())
                     .$(", keyedCostRows=").$(keyedCostRows)
                     .$(", indexOpenRows=").$(indexOpenRows)
+                    .$(", indexSeekRows=").$(indexSeekRows)
                     .$(", configuredIndexOpenRows=").$(configuredIndexOpenRows)
                     .$(", wholeRangeRows=").$(wholeRangeRows)
                     .$(", outputLowTs=").$ts(outputLowTs)
@@ -6177,11 +6207,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", changeMaxTs=").$(repairPlan.getChangeMaxTs())
                 .$(", highTsExclusive=").$(repairPlan.getHighTsExclusive())
                 .$(", resumeFromAnchor=").$(repairPlan.isResumeFromAnchor())
-                // Why this repair reads more than a localized rebuild would, as
-                // live_views().checkpoint_repair_last_denial reports it. Absent for a
-                // repair that read exactly its localized interval.
+                // Why this repair reads more than a localized rebuild would - what
+                // live_views().checkpoint_repair_last_denial goes on to report once the
+                // replay below lands. Absent for a repair that read exactly its
+                // localized interval.
                 .$(", denial=").$(LiveViewCheckpointRepairPlan.denialReasonName(
-                        instance.getCheckpointRepairLastDenialReason()))
+                        instance.getCheckpointRepairPlannedDenialReason()))
                 .$(", anchorCheckpointId=").$(repairPlan.getAnchorCheckpointId())
                 .$(", anchorMaxTs=").$(repairPlan.getAnchorMaxTs())
                 // The two estimates the disposition above was chosen on, so a repair
@@ -7780,6 +7811,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.bumpO3ResumeReplayRows(appendedRows);
             // Baseline scan-cost signal: base rows this resume replay pulled (>= emit).
             instance.bumpO3ReplayScanRows(o3ScanRows);
+            // And only now the disposition planning settled on, so live_views() never
+            // names an executor whose rows the counters above do not carry yet.
+            instance.publishCheckpointRepairOutcome();
             final long scanCommitApplyNanos = openSegmentRepairPhases.scanWindowWalAppendNanos
                     + openSegmentRepairPhases.commitNanos
                     + openSegmentRepairPhases.applyNanos;
@@ -9382,6 +9416,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         instance.bumpO3BoundaryReplayRows(appendedRows);
         // Baseline scan-cost signal: base rows this boundary rebuild pulled (>= emit).
         instance.bumpO3ReplayScanRows(o3ScanRows);
+        // And only now the disposition planning settled on, so live_views() never names
+        // an executor whose rows the counters above do not carry yet. A replay that
+        // parked returned above and publishes on the turn that finishes it.
+        instance.publishCheckpointRepairOutcome();
         // applyAheadGap = the seqTxns ApplyWal2TableJob raced past the O3 trigger
         // (effectiveSeqTxn - advanceTo); a wide gap is what forces the rebuild when no
         // sealed anchor sits below the ahead range's minimum in-view ts. scanLowTs /

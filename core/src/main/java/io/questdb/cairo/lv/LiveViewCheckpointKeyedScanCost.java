@@ -53,15 +53,24 @@ import org.jetbrains.annotations.NotNull;
  *     what the scan actually pulls off the columns;</li>
  *     <li><b>the merge</b> - {@code O(rows * log |Q|)} rather than {@code O(rows)},
  *     because every row leaves the heap through a sift;</li>
- *     <li><b>the setup</b> - one index open per key per page frame, and a partition carries
- *     as many frames as {@code FwdTableReaderPageFrameCursor} splits it into. A base
- *     partitioned by hour against a daily anchor segment is {@code 24 * F * |Q|} index opens
- *     before a row is read, where {@code F} is that split; this is the term that sinks a
- *     keyed scan over a sparse key domain.</li>
+ *     <li><b>the setup</b> - two counts, not one, because the scan does two different
+ *     things. It <b>opens</b> the index once per <b>partition</b>: {@code TableReader}
+ *     caches an index reader per (partition, column, direction) and hands the same one to
+ *     every key and every frame, so the count is neither {@code |Q|} nor {@code F} times
+ *     that - a base partitioned by hour against a daily anchor segment is 24 opens. Inside
+ *     a partition it then <b>seeks</b> that already-open reader once per {@code (key,
+ *     frame)} pair, which is what {@code HeapRowCursorFactory} rebuilds, for
+ *     {@code 24 * F * |Q|} seeks; a seek is a pooled cursor and a block-chain walk rather
+ *     than two file opens and two mmaps, and is charged a sixth of the configured open
+ *     price - a policy divisor, not the ratio the two measure at. Together they are the
+ *     term that sinks a keyed scan over a sparse key domain.</li>
  * </ul>
  * The setup term is expressed in row-equivalents through
  * {@link io.questdb.cairo.CairoConfiguration#getLiveViewCheckpointRepairKeyedScanIndexOpenRows()},
- * because the two halves have to be comparable and only one of them is rows.
+ * because the two halves have to be comparable and only one of them is rows. The seek price
+ * derives from that one knob through {@link #INDEX_SEEKS_PER_INDEX_OPEN} rather than
+ * carrying a knob of its own, so the knob moves both halves together - it prices the setup
+ * term, and is not a number to calibrate against a measured index open.
  *
  * <h2>What it rounds, and in which direction</h2>
  * A key's postings are counted per <b>partition</b>, whole, for every partition the
@@ -94,11 +103,28 @@ import org.jetbrains.annotations.NotNull;
  */
 public final class LiveViewCheckpointKeyedScanCost {
     /**
+     * The divisor that derives the per-{@code (key, frame)} seek price from the configured
+     * index-open price, so the seek needs no knob of its own. A policy number, not the ratio
+     * an open and a seek measure at.
+     * <p>
+     * An open is two file opens, two mmaps and a header verification; a seek pops a pooled
+     * cursor off the already-open reader and positions it. Measured against a bare
+     * sequential scan of the same fixture, an open is about 4,000 base rows and a warm seek
+     * 33 to 44 - nearer 90:1 than 6:1, and on an already-pooled reader the open is free
+     * while the seek is not. Six is picked against the seek rather than the open: at the
+     * shipped 256-row open price it derives a seek of 42, the top of that band, and the seek
+     * is the half that carries {@code |Q| * F}. So the configured price is what six seeks
+     * are worth, and setting it to a machine's real open cost would over-charge every seek
+     * by the same factor.
+     */
+    public static final int INDEX_SEEKS_PER_INDEX_OPEN = 6;
+    /**
      * The keys could not be priced at all: the interval's partitions carry no index for
      * the column, or the reader refused one. The caller reads the whole range.
      */
     public static final long UNPRICEABLE = Numbers.LONG_NULL;
     private long indexOpens;
+    private long indexSeeks;
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
     private long postingRows;
@@ -125,6 +151,7 @@ public final class LiveViewCheckpointKeyedScanCost {
             long budgetRows
     ) {
         indexOpens = 0;
+        indexSeeks = 0;
         postingRows = 0;
         if (highTsInclusive < lowTs || symbolKeys.size() == 0 || reader.size() == 0) {
             return 0;
@@ -171,14 +198,19 @@ public final class LiveViewCheckpointKeyedScanCost {
                 // an index this reader cannot open. None is an error here: the repair reads
                 // the whole range, exactly as it did before this estimate existed.
                 indexOpens = 0;
+                indexSeeks = 0;
                 postingRows = 0;
                 return UNPRICEABLE;
             }
-            // The scan rebuilds every key's row cursor once per page frame, not once per
-            // partition, so the setup term is charged per frame the partition splits into.
-            final long partitionFrames = countPartitionFrames(partitionRows);
+            // One open for the whole partition, whatever |Q| and F are: TableReader caches
+            // the index reader per (partition, column, direction) and hands the same one to
+            // every key of every frame. What repeats per (key, frame) is the seek that
+            // HeapRowCursorFactory rebuilds, and it is charged below at its own, far lower
+            // price.
+            indexOpens++;
+            final long partitionSeeks = countPartitionFrames(partitionRows);
             for (int k = 0, n = symbolKeys.size(); k < n; k++) {
-                indexOpens += partitionFrames;
+                indexSeeks += partitionSeeks;
                 rows += countPostings(indexReader, symbolKeys.getQuick(k), partitionRows, budgetRows - rows);
                 if (rows >= budgetRows) {
                     // The verdict is settled. Report what is known and stop paying for an
@@ -193,13 +225,24 @@ public final class LiveViewCheckpointKeyedScanCost {
     }
 
     /**
-     * @return how many index opens {@link #estimateKeyedScanRows} counted - one per key per
-     * <b>page frame</b> of every partition it visited, which is what
-     * {@code HeapRowCursorFactory} rebuilds: {@code PageFrameRecordCursorImpl.hasNext} asks
-     * it for a cursor once per frame, and it builds one per key each time
+     * @return how many index opens {@link #estimateKeyedScanRows} counted - one per
+     * <b>partition</b> it visited, independent of the key count and of the frame split,
+     * because {@code TableReader.getIndexReader} caches its reader per (partition, column,
+     * direction) and every key of every frame is handed the same one
      */
     public long getIndexOpens() {
         return indexOpens;
+    }
+
+    /**
+     * @return how many index seeks {@link #estimateKeyedScanRows} counted - one per key per
+     * <b>page frame</b> of every partition it visited, which is what
+     * {@code HeapRowCursorFactory} rebuilds: {@code PageFrameRecordCursorImpl.hasNext} asks
+     * it for a cursor once per frame, and it builds one per key each time, off the index
+     * reader the partition already opened
+     */
+    public long getIndexSeeks() {
+        return indexSeeks;
     }
 
     /**
@@ -210,9 +253,22 @@ public final class LiveViewCheckpointKeyedScanCost {
     }
 
     /**
+     * What one per-{@code (key, frame)} index seek is charged, in base rows: the configured
+     * open price divided by {@link #INDEX_SEEKS_PER_INDEX_OPEN}.
+     * <p>
+     * Never zero for a non-zero open price - a seek that costs nothing would let an
+     * arbitrarily wide key domain price as free - and zero for a zero one, because a
+     * configured zero disables the setup term outright and the seek must not smuggle it
+     * back in.
+     */
+    public static long indexSeekRows(long indexOpenRows) {
+        return indexOpenRows <= 0 ? 0 : Math.max(1, indexOpenRows / INDEX_SEEKS_PER_INDEX_OPEN);
+    }
+
+    /**
      * Whether a keyed scan of {@code keyCount} keys yielding {@code postingRows} rows,
-     * behind {@code indexOpens} index opens, reads less than a whole-range scan of
-     * {@code wholeRangeRows}.
+     * behind {@code indexOpens} index opens and {@code indexSeeks} index seeks, reads less
+     * than a whole-range scan of {@code wholeRangeRows}.
      * <p>
      * A tie keeps the whole-range scan: it needs no key domain, no index and no merge, and
      * this estimate rounds the keyed side down in exactly one place - the budget - so a tie
@@ -221,32 +277,44 @@ public final class LiveViewCheckpointKeyedScanCost {
     public static boolean isKeyedScanCheaper(
             long postingRows,
             long indexOpens,
+            long indexSeeks,
             int keyCount,
             long wholeRangeRows,
-            long indexOpenRows
+            long indexOpenRows,
+            long indexSeekRows
     ) {
         if (postingRows == UNPRICEABLE || keyCount < 1) {
             return false;
         }
-        return keyedScanCostRows(postingRows, indexOpens, keyCount, indexOpenRows) < wholeRangeRows;
+        return keyedScanCostRows(postingRows, indexOpens, indexSeeks, keyCount, indexOpenRows, indexSeekRows)
+                < wholeRangeRows;
     }
 
     /**
      * The keyed scan's price in whole-range row equivalents: its posting rows, each carrying
-     * the heap sift the merge costs, plus the per-key-per-frame setup.
+     * the heap sift the merge costs, plus the per-partition index opens and the
+     * per-key-per-frame index seeks the setup costs.
      * <p>
      * Saturating rather than overflowing: an unpriceably wide key domain has to read as
      * expensive, and a wrapped long would read as free.
      */
-    public static long keyedScanCostRows(long postingRows, long indexOpens, int keyCount, long indexOpenRows) {
+    public static long keyedScanCostRows(
+            long postingRows,
+            long indexOpens,
+            long indexSeeks,
+            int keyCount,
+            long indexOpenRows,
+            long indexSeekRows
+    ) {
         // One sift per level of the heap the merge builds, and a single-key scan builds
         // none: ceil(log2(keyCount)) on top of the row itself.
         final long sift = 1L + (keyCount <= 1 ? 0 : 32 - Integer.numberOfLeadingZeros(keyCount - 1));
         final long merged = postingRows > Long.MAX_VALUE / sift ? Long.MAX_VALUE : postingRows * sift;
-        final long setup = indexOpens > Long.MAX_VALUE / Math.max(1, indexOpenRows)
-                ? Long.MAX_VALUE
-                : indexOpens * indexOpenRows;
-        return Long.MAX_VALUE - merged < setup ? Long.MAX_VALUE : merged + setup;
+        final long setup = saturatingSum(
+                saturatingProduct(indexOpens, indexOpenRows),
+                saturatingProduct(indexSeeks, indexSeekRows)
+        );
+        return saturatingSum(merged, setup);
     }
 
     /**
@@ -305,5 +373,23 @@ public final class LiveViewCheckpointKeyedScanCost {
             }
             return rows;
         }
+    }
+
+    /**
+     * {@code count * rows}, saturating instead of wrapping, and zero where either side is
+     * non-positive - a configured price of zero disables its term rather than pinning it.
+     */
+    private static long saturatingProduct(long count, long rows) {
+        if (count <= 0 || rows <= 0) {
+            return 0;
+        }
+        return count > Long.MAX_VALUE / rows ? Long.MAX_VALUE : count * rows;
+    }
+
+    /**
+     * {@code a + b}, saturating instead of wrapping, for two non-negative terms.
+     */
+    private static long saturatingSum(long a, long b) {
+        return Long.MAX_VALUE - a < b ? Long.MAX_VALUE : a + b;
     }
 }

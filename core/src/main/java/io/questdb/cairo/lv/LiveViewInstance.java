@@ -105,6 +105,23 @@ public class LiveViewInstance implements QuietCloseable {
             Numbers.LONG_NULL, 0L, Numbers.LONG_NULL, 0L, 0L, 0L, Numbers.LONG_NULL, 0L
     };
     private static final long[] EMPTY_HEAD_CHECKPOINT = {Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL};
+
+    /**
+     * @return the {@code LiveViewCheckpointRepairPlan.DENIAL_*} half of a packed repair
+     * outcome word. See {@link #checkpointRepairOutcome}
+     */
+    public static int repairDenialReasonOf(long outcome) {
+        return (int) outcome;
+    }
+
+    /**
+     * @return the {@code LiveViewCheckpointRepairPlan.DISPOSITION_*} half of a packed
+     * repair outcome word. See {@link #checkpointRepairOutcome}
+     */
+    public static int repairDispositionOf(long outcome) {
+        return (int) (outcome >>> 32);
+    }
+
     private final LiveViewDefinition definition;
     private final long lifecycleIdentity;
     // Whether this view's own table carries dedup keys - (designated timestamp, projected
@@ -294,15 +311,38 @@ public class LiveViewInstance implements QuietCloseable {
     // In-memory only - they reset on restart, like the o3_* counters.
     private volatile long checkpointRepairFailures;
     private volatile long checkpointRepairNewBytes;
+    // Assertion-only bookkeeping that pins the publication order checkpointRepairOutcome
+    // below depends on: how many times an o3_* repair counter has been bumped, and the
+    // value that counter carried when the last publishCheckpointRepairOutcome() ran. Both
+    // move only from inside an assert expression - armCheckpointRepairPublish() and
+    // hasCheckpointRepairPublishArming() - so under -da neither is ever written and the
+    // class behaves exactly as it would without them. Volatile for the same reason
+    // checkpointRepairPlannedOutcome is: successive repairs of one view can land on
+    // different refresh workers, and a stale read here would fail an assertion that
+    // guards nothing the reader can see. Nothing outside an assert reads them.
+    private volatile long checkpointRepairO3BumpEpoch;
+    private volatile long checkpointRepairO3BumpEpochAtPublish;
     // What this view's last out-of-order repair actually did: the
     // LiveViewCheckpointRepairPlan DISPOSITION_* code in the high 32 bits and the
     // DENIAL_* code naming why it read more than a localized rebuild would in the low
     // 32. Packed into one volatile long so the catalogue never pairs one repair's
     // disposition with another's reason. Zero (no disposition, nothing denied) until
-    // the view runs its first repair. Bumped only on the refresh worker at planning
-    // time; volatile for the catalogue thread. In-memory only - it resets on restart,
-    // like the counters above.
+    // the view runs its first repair. In-memory only - it resets on restart, like the
+    // counters above.
+    // The refresh worker writes it through publishCheckpointRepairOutcome() at replay
+    // completion, after the o3_* row counters have been bumped, and never at planning
+    // time: the counters are what the replay cost, so a disposition published ahead of
+    // them would name an executor whose rows no counter carries yet. That pairing is
+    // what an operator reads the two columns together for, and a parked repair holds
+    // planning and completion whole refresh turns apart.
     private volatile long checkpointRepairOutcome;
+    // The outcome the current repair's planning settled on, waiting for that repair's
+    // replay to finish and hand it to checkpointRepairOutcome above. Same packing.
+    // Written and read only by the refresh worker holding this view's refresh latch, but
+    // volatile all the same: successive repairs of one view can land on different
+    // workers, and a plain long is neither guaranteed visible across them nor guaranteed
+    // to be read whole.
+    private volatile long checkpointRepairPlannedOutcome;
     private volatile long checkpointRepairResumes;
     private volatile long checkpointRepairRootsVersioned;
     // Seals this view has refused because the rows it emitted and the rows its
@@ -794,6 +834,8 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void bumpO3BoundaryReplayRows(long n) {
         o3BoundaryReplayRows += n;
+        // Assertion-only, and never evaluated under -da. See armCheckpointRepairPublish().
+        assert armCheckpointRepairPublish();
     }
 
     /**
@@ -815,6 +857,8 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void bumpO3ReplayScanRows(long n) {
         o3ReplayScanRows += n;
+        // Assertion-only, and never evaluated under -da. See armCheckpointRepairPublish().
+        assert armCheckpointRepairPublish();
     }
 
     /**
@@ -891,6 +935,8 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void bumpO3ResumeReplayRows(long n) {
         o3ResumeReplayRows += n;
+        // Assertion-only, and never evaluated under -da. See armCheckpointRepairPublish().
+        assert armCheckpointRepairPublish();
     }
 
     /**
@@ -1195,7 +1241,7 @@ public class LiveViewInstance implements QuietCloseable {
      * separates the two. See {@link #checkpointRepairOutcome}
      */
     public int getCheckpointRepairLastDenialReason() {
-        return (int) checkpointRepairOutcome;
+        return repairDenialReasonOf(checkpointRepairOutcome);
     }
 
     /**
@@ -1204,11 +1250,33 @@ public class LiveViewInstance implements QuietCloseable {
      * {@link #checkpointRepairOutcome}
      */
     public int getCheckpointRepairLastDisposition() {
-        return (int) (checkpointRepairOutcome >>> 32);
+        return repairDispositionOf(checkpointRepairOutcome);
+    }
+
+    /**
+     * @return the whole packed outcome word of the view's last completed out-of-order
+     * repair, to be split with {@link #repairDispositionOf(long)} and
+     * {@link #repairDenialReasonOf(long)}. One read gives a caller that needs both
+     * halves - the {@code live_views()} scan does - a disposition and a denial from the
+     * same repair, which two separate getter calls cannot promise.
+     * See {@link #checkpointRepairOutcome}
+     */
+    public long getCheckpointRepairLastOutcome() {
+        return checkpointRepairOutcome;
     }
 
     public long getCheckpointRepairNewBytes() {
         return checkpointRepairNewBytes;
+    }
+
+    /**
+     * @return the {@code LiveViewCheckpointRepairPlan.DENIAL_*} code the repair currently
+     * in flight settled on at planning time, which the catalogue does not report until
+     * that repair finishes. Refresh worker only. See
+     * {@link #checkpointRepairPlannedOutcome}
+     */
+    public int getCheckpointRepairPlannedDenialReason() {
+        return repairDenialReasonOf(checkpointRepairPlannedOutcome);
     }
 
     public long getCheckpointRepairResumes() {
@@ -1905,6 +1973,29 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Hands the outcome {@link #recordCheckpointRepairOutcome(int, int)} settled at
+     * planning time to the catalogue. The refresh worker calls it once per repair, at
+     * replay completion and <b>after</b> the {@code o3_*} row counters that repair moved,
+     * so a reader of {@code live_views()} that sees the new disposition sees the rows it
+     * cost too. A repair that never completes - it parked and its candidate was
+     * discarded, or it threw - publishes nothing and leaves the previous repair's outcome
+     * standing, which is what "the view's last repair" means.
+     * <p>
+     * The assertion pins that "after" against a later refactor: both call sites bump their
+     * counters in the same straight-line block that publishes, so every publish is dominated
+     * by a bump and the guard cannot fire on a repair that yields, parks, unwinds, throws or
+     * is discarded - none of those reach this method at all. It arms on the bump having
+     * happened rather than on what it carried, so a repair that legitimately moved zero rows
+     * still passes. Moving a publish above its counters is what fails it.
+     * See {@link #checkpointRepairOutcome}.
+     */
+    public void publishCheckpointRepairOutcome() {
+        assert hasCheckpointRepairPublishArming()
+                : "publish the repair disposition after the o3_* counters that repair moved";
+        checkpointRepairOutcome = checkpointRepairPlannedOutcome;
+    }
+
+    /**
      * Publishes what the last lifecycle reconciliation's purge sweep found while
      * walking the pinned generation's segment catalogue.
      */
@@ -1931,14 +2022,16 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Publishes what one out-of-order repair decided: the executor it selected and the
+     * Records what one out-of-order repair decided: the executor it selected and the
      * {@code LiveViewCheckpointRepairPlan.DENIAL_*} code naming why it reads more than a
      * localized rebuild would. The refresh worker calls it once per planned repair, so a
-     * suspended repair that continues in a later turn keeps the outcome its planning
-     * turn published. See {@link #checkpointRepairOutcome}.
+     * suspended repair that continues in a later turn keeps what its planning turn
+     * decided. The catalogue reports none of it until
+     * {@link #publishCheckpointRepairOutcome()} hands it over at replay completion.
+     * See {@link #checkpointRepairPlannedOutcome}.
      */
     public void recordCheckpointRepairOutcome(int disposition, int denialReason) {
-        checkpointRepairOutcome = ((long) disposition << 32) | (denialReason & 0xffff_ffffL);
+        checkpointRepairPlannedOutcome = ((long) disposition << 32) | (denialReason & 0xffff_ffffL);
     }
 
     /**
@@ -2673,6 +2766,18 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Records that one {@code o3_*} repair counter moved, arming the next
+     * {@link #publishCheckpointRepairOutcome()}. Always returns {@code true}, so the
+     * {@code assert} statements that call it never fail; they exist only so that a
+     * {@code -da} run never evaluates the call and production pays nothing for the
+     * bookkeeping. See {@link #checkpointRepairO3BumpEpoch}.
+     */
+    private boolean armCheckpointRepairPublish() {
+        checkpointRepairO3BumpEpoch++;
+        return true;
+    }
+
+    /**
      * Spins briefly, then sleeps, until the refresh latch is acquired. The caller
      * owns the latch on return and must release it.
      * <p>
@@ -2745,6 +2850,20 @@ public class LiveViewInstance implements QuietCloseable {
         // teardown as well as the base-schema recompile, whose rebuild can fail.
         headCheckpointRootId = Numbers.LONG_NULL;
         headCheckpointRootWindowFactory = null;
+    }
+
+    /**
+     * Whether an {@code o3_*} repair counter has moved since the last
+     * {@link #publishCheckpointRepairOutcome()}, disarming as it reports so a second publish
+     * with no counter between the two reads as unarmed. Called only from an {@code assert},
+     * so a {@code -da} run never evaluates it. See {@link #checkpointRepairO3BumpEpoch}.
+     */
+    private boolean hasCheckpointRepairPublishArming() {
+        if (checkpointRepairO3BumpEpoch == checkpointRepairO3BumpEpochAtPublish) {
+            return false;
+        }
+        checkpointRepairO3BumpEpochAtPublish = checkpointRepairO3BumpEpoch;
+        return true;
     }
 
     /**

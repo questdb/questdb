@@ -31,11 +31,11 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.lv.LiveViewSegmentRepairEnvelope;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewSegmentRepairEnvelope;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -153,7 +153,13 @@ import io.questdb.std.ObjList;
  *     a repair; the denial stays NULL for a repair that read exactly its localized
  *     interval. So a view reporting a {@code rows} plan beside a
  *     {@code boundary rebuild} / {@code dedup} pair is one whose SQL admits a bound
- *     that its base denies at every refresh.</li>
+ *     that its base denies at every refresh. Both arrive with the {@code o3_*} rows the
+ *     repair they name replayed, never ahead of them, so the route and its cost are
+ *     always readable together; a repair still in flight - a localized one can park
+ *     across refresh turns - reports the previous repair's pair, and
+ *     {@code checkpoint_repair_in_progress} flags that staleness only once the new
+ *     repair has parked: suspension is the one in-flight state this view publishes, so
+ *     a repair that finishes inside its turn never raises the flag.</li>
  *     <li>Scoped repair of closed anchor segments - {@code checkpoint_segment_repair_gate}
  *     and {@code checkpoint_keyed_scan_gate}. Both describe the view's SQL rather
  *     than any repair. The first reads {@code available} when a correction landing in a
@@ -386,17 +392,25 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
             private static class LiveViewsRecord implements Record {
                 private long[] checkpointRepair;
+                private long checkpointRepairOutcome;
                 private long[] checkpointTimeline;
                 private LiveViewDefinition definition;
                 private CairoEngine engine;
                 private LiveViewInstance instance;
+                private long o3BoundaryReplayRows;
+                private long o3ReplayScanRows;
+                private long o3ResumeReplayRows;
 
                 public void clear() {
                     checkpointRepair = null;
+                    checkpointRepairOutcome = 0;
                     checkpointTimeline = null;
                     definition = null;
                     engine = null;
                     instance = null;
+                    o3BoundaryReplayRows = 0;
+                    o3ReplayScanRows = 0;
+                    o3ResumeReplayRows = 0;
                 }
 
                 @Override
@@ -593,7 +607,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // Base rows the O3 replay paths scanned (>= the emit counters
                         // above; a WHERE filter makes scan exceed emit). In-memory
                         // counter, resets on restart.
-                        case COLUMN_O3_REPLAY_SCAN_ROWS -> instance.getO3ReplayScanRows();
+                        case COLUMN_O3_REPLAY_SCAN_ROWS -> o3ReplayScanRows;
                         // Executions of the two keyed open-segment O3 paths. The
                         // resume restores a root below the correction; the cold
                         // replay starts from the active anchor segment's origin
@@ -658,12 +672,12 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // "the win": each replay stays bounded to the tail above the
                         // logical boundary it resumed from rather than recomputing the
                         // whole view. In-memory counter, resets on restart.
-                        case COLUMN_O3_RESUME_REPLAY_ROWS -> instance.getO3ResumeReplayRows();
+                        case COLUMN_O3_RESUME_REPLAY_ROWS -> o3ResumeReplayRows;
                         // Rows re-emitted by boundary-rebuild O3 replays - the residual
                         // O(view age) fallback taken when the timeline holds no boundary
                         // below the late row. In-memory counter, resets on restart.
                         // Disjoint from o3_resume_replay_rows.
-                        case COLUMN_O3_BOUNDARY_REPLAY_ROWS -> instance.getO3BoundaryReplayRows();
+                        case COLUMN_O3_BOUNDARY_REPLAY_ROWS -> o3BoundaryReplayRows;
                         // Every numeric column the metadata declares has an arm above.
                         // A column added without one reads as NULL rather than as 0,
                         // which for the TIMESTAMP columns would render 1970-01-01.
@@ -702,11 +716,11 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // stays NULL for a repair that read exactly its localized
                         // interval.
                         case COLUMN_CHECKPOINT_REPAIR_LAST_DISPOSITION -> LiveViewCheckpointRepairPlan.dispositionName(
-                                instance.getCheckpointRepairLastDisposition(),
-                                instance.getCheckpointRepairLastDenialReason()
+                                LiveViewInstance.repairDispositionOf(checkpointRepairOutcome),
+                                LiveViewInstance.repairDenialReasonOf(checkpointRepairOutcome)
                         );
                         case COLUMN_CHECKPOINT_REPAIR_LAST_DENIAL -> LiveViewCheckpointRepairPlan.denialReasonName(
-                                instance.getCheckpointRepairLastDenialReason()
+                                LiveViewInstance.repairDenialReasonOf(checkpointRepairOutcome)
                         );
                         // Whether the view's SQL admits deferring a correction that lands
                         // in a closed anchor segment, and whether such a repair's replay
@@ -743,6 +757,22 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     // totals, which is what the column comments promise it cannot.
                     this.checkpointRepair = instance.getCheckpointRepair();
                     this.checkpointTimeline = instance.getCheckpointTimeline();
+                    // The last repair's outcome and the rows it replayed, in that order
+                    // and no other. The refresh worker bumps the o3_* counters and only
+                    // then publishes the outcome word, so an outcome read here was
+                    // published after the counters read below - and this row's
+                    // disposition therefore names a repair whose rows those counters
+                    // carry. Reading the counters first would let a projection that
+                    // lists them before the disposition pair one repair's route with
+                    // the previous repair's cost. The writer half of this pairing is
+                    // asserted in LiveViewInstance.publishCheckpointRepairOutcome(); this
+                    // read half is load-bearing but unasserted - a single-threaded observer
+                    // cannot tell the two orders apart, so reversing the four lines below
+                    // leaves every test green.
+                    this.checkpointRepairOutcome = instance.getCheckpointRepairLastOutcome();
+                    this.o3ResumeReplayRows = instance.getO3ResumeReplayRows();
+                    this.o3BoundaryReplayRows = instance.getO3BoundaryReplayRows();
+                    this.o3ReplayScanRows = instance.getO3ReplayScanRows();
                 }
 
                 /**

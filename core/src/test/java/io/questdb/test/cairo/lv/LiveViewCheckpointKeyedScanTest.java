@@ -65,7 +65,7 @@ import org.junit.Test;
  */
 public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
     // Ceiling range the mid-build OOM sweep walks, and the step it advances by. A whole keyed
-    // open over the fixture below allocates around 37 KiB of tracked native memory, so the
+    // open over the fixture below allocates around 14.4 KiB of tracked native memory, so the
     // range crosses the transition from "every point faults" to "the open completes" with room
     // to spare; the sweep's own assertions fail loudly if an allocation-path change moves it
     // past the end. The step stays below one block buffer's 32-byte floor, so it cannot walk
@@ -241,36 +241,98 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAnUnpriceableColumnLeavesBothSetupCountsAtZero() throws Exception {
+        // The estimate abandons a column it cannot get an index reader for and reports
+        // UNPRICEABLE, which the caller reads as "take the whole range". Both halves of the
+        // setup term have to come back to zero on that path: getIndexOpens() and
+        // getIndexSeeks() are public, and a count left over from the partitions walked
+        // before the throw would price the next question with the last one's arithmetic.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL NOCACHE, "
+                    + "amount DOUBLE) TIMESTAMP(created_at) PARTITION BY DAY WAL");
+            execute("INSERT INTO tx SELECT "
+                    + "timestamp_sequence('2026-01-02T00:00:00.000000Z', 86_400_000), "
+                    + "('acct-' || (x % 8))::symbol, "
+                    + "x::double "
+                    + "FROM long_sequence(2_000)");
+            drainWalQueue();
+
+            final IntList keys = new IntList();
+            final LiveViewCheckpointKeyedScanCost cost = new LiveViewCheckpointKeyedScanCost();
+            try (TableReader reader = engine.getReader(engine.getTableTokenIfExists("tx"))) {
+                keys.add(reader.getSymbolMapReader(1).keyOf("acct-3"));
+                cost.of(reader, sqlExecutionContext);
+                Assert.assertEquals(
+                        "an unindexed column names no postings to follow",
+                        LiveViewCheckpointKeyedScanCost.UNPRICEABLE,
+                        cost.estimateKeyedScanRows(
+                                ts("2026-01-02T00:00:00.000000Z"),
+                                ts("2026-01-03T23:59:59.999999Z"),
+                                1,
+                                keys,
+                                Long.MAX_VALUE
+                        )
+                );
+                Assert.assertEquals(0, cost.getIndexOpens());
+                Assert.assertEquals(0, cost.getIndexSeeks());
+                Assert.assertEquals(0, cost.getPostingRows());
+            }
+        });
+    }
+
+    @Test
     public void testHotKeyPricingPrefersTheWholeSegment() throws Exception {
         // The case the cost model exists for. Pricing off affectedKeys * averageRowsPerKey
         // would call one key of four a quarter of the segment; the posting lists say this
         // key holds most of it, and the merge and setup terms put it over the top.
-        Assert.assertFalse(LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(900, 4, 1, 1_000, 256));
-        // A sparse domain the index opens dominate: 40 rows behind 200 index opens is
-        // 51,240 row-equivalents against a 1,000-row segment.
-        Assert.assertFalse(LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(40, 200, 20, 1_000, 256));
-        // And the shape it is there to admit: a few keys, few rows, few opens.
-        Assert.assertTrue(LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(40, 2, 2, 10_000, 256));
+        Assert.assertFalse(LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(900, 1, 4, 1, 1_000, 256, 42));
+        // A sparse domain the setup dominates: 40 rows behind ten partition opens and 200
+        // per-key-per-frame seeks is 11,200 row-equivalents against a 1,000-row segment.
+        Assert.assertFalse(LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(40, 10, 200, 20, 1_000, 256, 42));
+        // And the shape it is there to admit: a few keys, few rows, one partition.
+        Assert.assertTrue(LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(40, 1, 2, 2, 10_000, 256, 42));
         // An unpriceable estimate reads as expensive rather than as free.
         Assert.assertFalse(LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(
-                LiveViewCheckpointKeyedScanCost.UNPRICEABLE, 0, 1, Long.MAX_VALUE, 256));
-        // Neither term may wrap: a saturated count has to stay the most expensive answer.
+                LiveViewCheckpointKeyedScanCost.UNPRICEABLE, 0, 0, 1, Long.MAX_VALUE, 256, 42));
+        // No term may wrap: a saturated count has to stay the most expensive answer.
         Assert.assertEquals(
                 Long.MAX_VALUE,
-                LiveViewCheckpointKeyedScanCost.keyedScanCostRows(Long.MAX_VALUE, Long.MAX_VALUE, 4096, 256)
+                LiveViewCheckpointKeyedScanCost.keyedScanCostRows(
+                        Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE, 4096, 256, 42)
         );
         // One key costs one sift per row and nothing more, so the merge term never charges a
-        // single-key scan for a heap it does not build.
-        Assert.assertEquals(100 + 2 * 256, LiveViewCheckpointKeyedScanCost.keyedScanCostRows(100, 2, 1, 256));
+        // single-key scan for a heap it does not build - and the two setup counts are priced
+        // apart, an open at the configured price and a seek at a sixth of it.
+        Assert.assertEquals(
+                100 + 256 + 2 * 42,
+                LiveViewCheckpointKeyedScanCost.keyedScanCostRows(100, 1, 2, 1, 256, 42)
+        );
+        // A seek is a pooled cursor off an open reader, not a second open. The measured pair
+        // is ~15us against ~124-165ns, nearer 90:1 than 6:1, and the divisor deliberately
+        // does not carry that ratio over: it is a policy choice that prices the seek off the
+        // one configured knob rather than off a second knob. What the measurement does fix is
+        // the derived seek's magnitude at the shipped default - a sixth of 256 is 42 base
+        // rows, the top of the measured 33-44 warm-seek band - which is what the second
+        // assertion below pins.
+        Assert.assertEquals(6, LiveViewCheckpointKeyedScanCost.INDEX_SEEKS_PER_INDEX_OPEN);
+        Assert.assertEquals(42, LiveViewCheckpointKeyedScanCost.indexSeekRows(256));
+        // A configured zero disables the whole setup term; the derived seek must not smuggle
+        // it back in, and a price too small to divide must not round away to free.
+        Assert.assertEquals(0, LiveViewCheckpointKeyedScanCost.indexSeekRows(0));
+        Assert.assertEquals(0, LiveViewCheckpointKeyedScanCost.keyedScanCostRows(100, 8, 64, 1, 0, 0) - 100);
+        Assert.assertEquals(1, LiveViewCheckpointKeyedScanCost.indexSeekRows(1));
+        Assert.assertEquals(1, LiveViewCheckpointKeyedScanCost.indexSeekRows(5));
     }
 
     @Test
-    public void testTheEstimateChargesOneIndexOpenPerKeyPerPageFrame() throws Exception {
-        // The setup term prices what HeapRowCursorFactory rebuilds, and it rebuilds one
-        // index-backed row cursor per key for every page frame - not once per partition. A
-        // partition wider than the frame limit is where the two part company, and the gap
-        // is what decides the route: counted per partition the sparse key prices below the
-        // whole range, counted per frame it does not.
+    public void testTheEstimateChargesOneIndexOpenPerPartitionAndOneSeekPerKeyPerPageFrame() throws Exception {
+        // The setup term is two counts because the scan does two things. TableReader caches
+        // one index reader per (partition, column, direction) and hands it to every key of
+        // every page frame, so an open is per partition and is independent of both. What
+        // HeapRowCursorFactory rebuilds per (key, frame) is a seek of that already-open
+        // reader - a pooled cursor and a block-chain walk, not two file opens and two mmaps.
+        // A partition wider than the frame limit is where the two counts part company, and
+        // pricing the seek as though it were an open is what wrongly declined the route.
         assertMemoryLeak(() -> {
             // Narrower than the configured default, which no partition this fixture can
             // afford to write would reach. changePageFrameSizes rather than a property: the
@@ -278,7 +340,7 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
             // which is before a test body runs.
             sqlExecutionContext.changePageFrameSizes(100, 100);
             try {
-                runTheEstimateChargesOneIndexOpenPerKeyPerPageFrame();
+                runTheEstimateChargesOneIndexOpenPerPartitionAndOneSeekPerKeyPerPageFrame();
             } finally {
                 sqlExecutionContext.restoreToDefaultPageFrameSizes();
             }
@@ -363,10 +425,13 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 cost.of(reader, sqlExecutionContext);
                 Assert.assertEquals(16, cost.estimateKeyedScanRows(lowTs, highTs, 1, keys, Long.MAX_VALUE));
                 Assert.assertEquals(16, cost.getPostingRows());
-                // Two keys across eight partitions, each of them four rows and so a single
-                // page frame, which is what HeapRowCursorFactory rebuilds a row cursor per
-                // key for and what the setup term is charged for.
-                Assert.assertEquals(16, cost.getIndexOpens());
+                // Eight hourly partitions, so eight index opens - two keys and one frame
+                // each share the reader TableReader caches per partition.
+                Assert.assertEquals(8, cost.getIndexOpens());
+                // And two keys across those eight partitions, each of them four rows and so
+                // a single page frame, which is what HeapRowCursorFactory rebuilds a row
+                // cursor per key for and what the seek half of the setup term is charged for.
+                Assert.assertEquals(16, cost.getIndexSeeks());
             }
         });
     }
@@ -432,6 +497,52 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testTheKeyedRouteFollowsTheSharedQueryWorkerCount() throws Exception {
+        // The blind spot every other repair-route case shares: they all drive a job at
+        // sharedQueryWorkerCount = 1. The count reaches the estimate only through
+        // calculatePageFrameRowLimit, which divides a partition's rows by the worker count and
+        // then clamps the result into [pageFrameMinRows, pageFrameMaxRows] - so on a fixture
+        // whose partitions hold tens of rows the 1_000-row floor pins the split at one frame and
+        // raising the knob asserts nothing at all. That is why counting the setup term per
+        // partition rather than per page frame went unnoticed.
+        //
+        // This case seeds one anchor day 4_000 rows deep, four times the floor, so the same
+        // partition really is one page frame at one worker and four at four. Everything else is
+        // held equal and pinned by assertion: the same 501 posting rows, the same 4_001-row
+        // whole-range read, one key, one priced segment. The only input that moves is the worker
+        // count, and the route the repair prices has to move with it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 16);
+        // Pinned rather than inherited, because the fixture's row count is sized against them:
+        // 4_000 rows over four workers is exactly the floor, so the split is 4 there and 1 at one
+        // worker. Left to the harness default, a later change to it would retune this case
+        // silently.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1_000);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
+        // Only the SEEK half of the setup term follows the frame split - the open half is one
+        // per partition either way - so the knob has to be set high enough that the seek alone
+        // spans the whole-range read. At 2_400 rows an open the derived seek is 400, and the day
+        // is one partition: 501 + 2_400 + 1 * 400 = 3_301 is below the 4_001-row whole-range
+        // read, while 501 + 2_400 + 4 * 400 = 4_501 is above it. A knob low enough that the seek
+        // term cannot span 4_001 on its own would leave the worker count unable to move the
+        // verdict and the case asserting nothing.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 2_400);
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(
+                    "at one worker the day is a single page frame, so one index seek on top of the"
+                            + " partition's open prices the keyed read below the whole-range one",
+                    1,
+                    driveWideSegmentRepair(1, 1)
+            );
+            Assert.assertEquals(
+                    "at four workers the same day splits four ways, and four index seeks on top of"
+                            + " the same single open outprice the whole-range read",
+                    0,
+                    driveWideSegmentRepair(4, 4)
+            );
+        });
+    }
+
+    @Test
     public void testTheSharedKeyProjectorNamesTheIndexedSymbolColumn() throws Exception {
         // The identity every function on the view shares, and the one thing a keyed repair
         // needs off it that the two sinks do not carry: which base column the index is on.
@@ -490,20 +601,24 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
     }
 
     private void assertViewMatchesRecompute() throws Exception {
+        assertViewMatchesRecompute("tx", "lv");
+    }
+
+    private void assertViewMatchesRecompute(String baseName, String viewName) throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
         final String recompute = "select created_at, account_id, "
                 + "sum(amount) over (partition by account_id, bucket order by created_at "
                 + "rows between unbounded preceding and current row) as cumulative_sum "
-                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx)";
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from " + baseName + ")";
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
                 "(" + recompute + ") order by 2, 1",
-                "(lv) order by 2, 1",
+                "(" + viewName + ") order by 2, 1",
                 LOG,
                 true
         );
-        assertNoRefreshFaults("lv");
+        assertNoRefreshFaults(viewName);
     }
 
     private void commit(String values, LiveViewRefreshJob job) throws Exception {
@@ -585,6 +700,101 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
         Assert.assertEquals(3_200, drainKeyedScan(executionContext, lowTs, highTs, keys));
     }
 
+    /**
+     * How many page frames the executor really crosses over {@code tableName} at
+     * {@code sharedQueryWorkerCount}, taken off the same forward page frame cursor a keyed scan
+     * opens - not off a second copy of the formula the estimate uses, which would share any bug
+     * with it.
+     */
+    private long countPageFrames(String tableName, int sharedQueryWorkerCount) throws Exception {
+        long frames = 0;
+        try (
+                SqlExecutionContextImpl executionContext = TestUtils.createSqlExecutionCtx(engine, sharedQueryWorkerCount);
+                RecordCursorFactory factory = select(tableName, executionContext);
+                PageFrameCursor cursor = pageFrameScanOf(factory).getPageFrameCursor(
+                        executionContext,
+                        PartitionFrameCursorFactory.ORDER_ASC
+                )
+        ) {
+            while (cursor.next() != null) {
+                frames++;
+            }
+        }
+        return frames;
+    }
+
+    /**
+     * Seeds one anchor day 4_000 rows deep over eight accounts, closes it with a row of the next
+     * day, corrects one account inside it and drives the whole repair at
+     * {@code sharedQueryWorkerCount}.
+     * <p>
+     * Everything the keyed price is made of except the frame split is asserted here, so the
+     * caller's verdict can only have moved with the split: 501 posting rows for the corrected
+     * account, 4_001 whole-range rows for the day, exactly one segment priced and none unpriced.
+     *
+     * @return how many closed segments the repair priced the keyed route cheaper for
+     */
+    private long driveWideSegmentRepair(int sharedQueryWorkerCount, int expectedPageFrames) throws Exception {
+        final String base = "tx_w" + sharedQueryWorkerCount;
+        final String view = "lv_w" + sharedQueryWorkerCount;
+        execute("CREATE TABLE " + base + " (created_at TIMESTAMP, account_id SYMBOL NOCACHE INDEX CAPACITY 8, "
+                + "amount DOUBLE) TIMESTAMP(created_at) PARTITION BY DAY WAL");
+        // 4_000 rows of eight accounts filling 2026-01-02 at an even 21.6-second stride, so the
+        // whole anchor day is one partition and every account holds exactly 500 of its rows.
+        execute("INSERT INTO " + base + " SELECT "
+                + "timestamp_sequence('2026-01-02T00:00:00.000000Z', 21_600_000), "
+                + "('acct-' || (x % 8))::symbol, "
+                + "x::double "
+                + "FROM long_sequence(4_000)");
+        drainWalQueue();
+        Assert.assertEquals(
+                "the shared query worker count is what splits this partition: at the pinned"
+                        + " 1_000-row frame floor a 4_000-row day carries one frame per worker",
+                expectedPageFrames,
+                countPageFrames(base, sharedQueryWorkerCount)
+        );
+        execute("CREATE LIVE VIEW " + view + " FLUSH EVERY 100ms START FROM BEGINNING AS "
+                + "SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum "
+                + "FROM " + base + " WINDOW w AS (PARTITION BY account_id ORDER BY created_at "
+                + "ANCHOR DAILY '00:00')");
+
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, sharedQueryWorkerCount)) {
+            driveSeedToCompletion(job, view);
+            driveRefreshToQuiescence(job);
+            // A row of the next day moves the frontier out of 2026-01-02, which closes it.
+            execute("INSERT INTO " + base + " VALUES ('2026-01-03T00:00:00.000000Z', 'acct-0', 1.0)");
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            Assert.assertEquals("an in-order day closes without a repair to price", 0, job.keyedScanPricedCountForTest());
+
+            // The correction: one late row of one account, inside the day that just closed. Its
+            // timestamp deliberately misses the seed's stride, so no two rows of the account share
+            // one and the recompute oracle's ordering stays total.
+            execute("INSERT INTO " + base + " VALUES ('2026-01-02T12:00:01.000000Z', 'acct-3', 1.0)");
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+
+            Assert.assertEquals(
+                    "the corrected closed day must be priced exactly once",
+                    1,
+                    job.keyedScanPricedCountForTest()
+            );
+            Assert.assertEquals(0, job.keyedScanUnpricedCountForTest());
+            Assert.assertEquals(
+                    "one account of eight across the day, plus the correction",
+                    501,
+                    job.keyedScanPostingRowsForTest()
+            );
+            Assert.assertEquals(
+                    "the whole day, plus the correction",
+                    4_001,
+                    job.keyedScanWholeRangeRowsForTest()
+            );
+            assertViewMatchesRecompute(base, view);
+            return job.keyedScanCheaperCountForTest();
+        }
+    }
+
     private void createView(String seedRows, boolean isKeyIndexed) throws Exception {
         execute("create table tx (created_at timestamp, account_id symbol nocache"
                 + (isKeyIndexed ? " index capacity 4" : "") + ", "
@@ -625,7 +835,7 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
      * one partition so the per-key-per-frame setup does not dominate the comparison at this
      * scale the way it does on a real hourly-partitioned base.
      */
-    private void runTheEstimateChargesOneIndexOpenPerKeyPerPageFrame() throws Exception {
+    private void runTheEstimateChargesOneIndexOpenPerPartitionAndOneSeekPerKeyPerPageFrame() throws Exception {
         execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL NOCACHE INDEX CAPACITY 8, "
                 + "amount DOUBLE) TIMESTAMP(created_at) PARTITION BY DAY WAL");
         // Two days of 1_000 rows over eight accounts, round-robin. Every partition is an
@@ -668,28 +878,48 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
         final IntList keys = new IntList();
         final long postingRows;
         final long indexOpens;
+        final long indexSeeks;
         final LiveViewCheckpointKeyedScanCost cost = new LiveViewCheckpointKeyedScanCost();
         try (TableReader reader = engine.getReader(engine.getTableTokenIfExists("tx"))) {
             keys.add(reader.getSymbolMapReader(1).keyOf("acct-3"));
             cost.of(reader, sqlExecutionContext);
             postingRows = cost.estimateKeyedScanRows(lowTs, highTs, 1, keys, Long.MAX_VALUE);
             indexOpens = cost.getIndexOpens();
+            indexSeeks = cost.getIndexSeeks();
         }
         Assert.assertEquals("one account of eight across two days", 250, postingRows);
         Assert.assertEquals(
-                "the setup term must charge one open per key per page frame",
-                realFrames * keys.size(),
+                "the setup term must charge one index open per partition, whatever the key"
+                        + " count and the frame split are",
+                2,
                 indexOpens
         );
-        // Which is what counting them is for: the default prices one open at 256 base rows,
-        // and against the 2_000-row whole-range scan the two counts pick different routes.
+        Assert.assertEquals(
+                "and one index seek per key per page frame, which is what the row cursor"
+                        + " rebuild really is",
+                realFrames * keys.size(),
+                indexSeeks
+        );
+        // Which is what counting them apart is for. The default prices an open at 256 base
+        // rows and a seek at a sixth of that, so this shape costs 250 + 2*256 + 20*42 =
+        // 1_602 against a 2_000-row whole-range scan and takes the keyed route. Charging
+        // every seek an open's price - the model this replaces - made it 250 + 20*256 =
+        // 5_370 and declined it.
+        Assert.assertEquals(
+                1_602,
+                LiveViewCheckpointKeyedScanCost.keyedScanCostRows(
+                        postingRows, indexOpens, indexSeeks, keys.size(), 256, 42)
+        );
         Assert.assertTrue(
-                "counted once per partition, the keyed route prices below the whole range",
-                LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(postingRows, 2, keys.size(), 2_000, 256)
+                "priced apart, the keyed route prices below the whole range",
+                LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(
+                        postingRows, indexOpens, indexSeeks, keys.size(), 2_000, 256, 42)
         );
         Assert.assertFalse(
-                "counted once per frame, the whole-range scan is the cheaper of the two",
-                LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(postingRows, indexOpens, keys.size(), 2_000, 256)
+                "charged an index open for every per-frame seek, the same shape reads as"
+                        + " more expensive than the whole range it replaces",
+                LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(
+                        postingRows, 0, indexSeeks, keys.size(), 2_000, 256, 256)
         );
     }
 

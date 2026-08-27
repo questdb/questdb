@@ -507,11 +507,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isLiveViewCheckpointAdaptiveCadenceEnabled() {
-        return true;
-    }
-
-    @Override
     public long getLiveViewCheckpointCompactionInterval() {
         return 0;
     }
@@ -527,8 +522,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getLiveViewCheckpointRepairReplayMaxRows() {
-        return 1_000_000L;
+    public long getLiveViewCheckpointRepairKeyedScanIndexOpenRows() {
+        return 256;
     }
 
     @Override
@@ -537,38 +532,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isLiveViewCheckpointRepairIsolatedRuntimeEnabled() {
-        return true;
-    }
-
-    @Override
-    public boolean isLiveViewCheckpointRepairPerSegmentEnabled() {
-        return true;
-    }
-
-    @Override
-    public boolean isLiveViewCheckpointRepairKeyedReplayEnabled() {
-        return true;
-    }
-
-    @Override
-    public boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled() {
-        return true;
-    }
-
-    @Override
-    public boolean isLiveViewCheckpointRepairSegmentYieldEnabled() {
-        return true;
-    }
-
-    @Override
-    public boolean isLiveViewCheckpointRepairSparsePublicationEnabled() {
-        return true;
-    }
-
-    @Override
-    public long getLiveViewCheckpointRepairKeyedScanIndexOpenRows() {
-        return 256;
+    public long getLiveViewCheckpointRepairReplayMaxRows() {
+        return 1_000_000L;
     }
 
     @Override
@@ -1727,6 +1692,41 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isIOURingEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointAdaptiveCadenceEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairIsolatedRuntimeEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairKeyedReplayEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairPerSegmentEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairSegmentYieldEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairSparsePublicationEnabled() {
         return true;
     }
 

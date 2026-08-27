@@ -490,11 +490,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean isLiveViewCheckpointAdaptiveCadenceEnabled() {
-        return getDelegate().isLiveViewCheckpointAdaptiveCadenceEnabled();
-    }
-
-    @Override
     public long getLiveViewCheckpointMaxDurationMicros() {
         return getDelegate().getLiveViewCheckpointMaxDurationMicros();
     }
@@ -505,48 +500,18 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewCheckpointRepairKeyedScanIndexOpenRows() {
+        return getDelegate().getLiveViewCheckpointRepairKeyedScanIndexOpenRows();
+    }
+
+    @Override
     public int getLiveViewCheckpointRepairMaxChainedBoundaries() {
         return getDelegate().getLiveViewCheckpointRepairMaxChainedBoundaries();
     }
 
     @Override
-    public boolean isLiveViewCheckpointRepairIsolatedRuntimeEnabled() {
-        return getDelegate().isLiveViewCheckpointRepairIsolatedRuntimeEnabled();
-    }
-
-    @Override
-    public boolean isLiveViewCheckpointRepairPerSegmentEnabled() {
-        return getDelegate().isLiveViewCheckpointRepairPerSegmentEnabled();
-    }
-
-    @Override
-    public boolean isLiveViewCheckpointRepairKeyedReplayEnabled() {
-        return getDelegate().isLiveViewCheckpointRepairKeyedReplayEnabled();
-    }
-
-    @Override
-    public boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled() {
-        return getDelegate().isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled();
-    }
-
-    @Override
-    public boolean isLiveViewCheckpointRepairSegmentYieldEnabled() {
-        return getDelegate().isLiveViewCheckpointRepairSegmentYieldEnabled();
-    }
-
-    @Override
-    public boolean isLiveViewCheckpointRepairSparsePublicationEnabled() {
-        return getDelegate().isLiveViewCheckpointRepairSparsePublicationEnabled();
-    }
-
-    @Override
     public long getLiveViewCheckpointRepairReplayMaxRows() {
         return getDelegate().getLiveViewCheckpointRepairReplayMaxRows();
-    }
-
-    @Override
-    public long getLiveViewCheckpointRepairKeyedScanIndexOpenRows() {
-        return getDelegate().getLiveViewCheckpointRepairKeyedScanIndexOpenRows();
     }
 
     @Override
@@ -1747,6 +1712,41 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return getDelegate().isIOURingEnabled();
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointAdaptiveCadenceEnabled() {
+        return getDelegate().isLiveViewCheckpointAdaptiveCadenceEnabled();
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairIsolatedRuntimeEnabled() {
+        return getDelegate().isLiveViewCheckpointRepairIsolatedRuntimeEnabled();
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairKeyedReplayEnabled() {
+        return getDelegate().isLiveViewCheckpointRepairKeyedReplayEnabled();
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled() {
+        return getDelegate().isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled();
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairPerSegmentEnabled() {
+        return getDelegate().isLiveViewCheckpointRepairPerSegmentEnabled();
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairSegmentYieldEnabled() {
+        return getDelegate().isLiveViewCheckpointRepairSegmentYieldEnabled();
+    }
+
+    @Override
+    public boolean isLiveViewCheckpointRepairSparsePublicationEnabled() {
+        return getDelegate().isLiveViewCheckpointRepairSparsePublicationEnabled();
     }
 
     @Override
