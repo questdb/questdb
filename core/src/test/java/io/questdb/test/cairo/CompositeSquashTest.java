@@ -296,10 +296,12 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * documented elsewhere in TableWriter, and strictly better than the earlier state where the txn
      * still referenced a deleted directory.
      */
-    @Ignore("SP1E residual, RE-VERIFIED 2026-08-26 and still exact: the tail-fragment directory"
-            + " [2023-01-01T010000-000001] is not reclaimed by the purge drain. Orphan dir, not"
-            + " corruption -- the fragment is detached and its rows are merged. Un-ignore when the"
-            + " drain reclaims tail fragments.")
+    // Was @Ignore'd as an SP1E residual: "the tail-fragment directory
+    // [2023-01-01T010000-000001] is not reclaimed by the purge drain ... Un-ignore when the drain
+    // reclaims tail fragments." The drain now does. The cause was processO3BlockComposite's
+    // per-block partitionRemoveCandidates.clear(), which discarded the squash's undrained purge
+    // candidate before housekeep() could act on it -- see the fix and its measurements in
+    // febf786d33, and CompositeConvertSplitDayTest#testMergedFragmentDirectoryIsReclaimed.
     @Test(timeout = 60_000)
     public void testTailFragmentDirectoryIsReclaimed() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
