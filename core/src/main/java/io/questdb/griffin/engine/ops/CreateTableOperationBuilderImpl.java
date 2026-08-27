@@ -511,6 +511,36 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
      * wrapping a bare column/constant) is what exempts the expression from this gate, per the
      * brief's "reject non-string-typed WITHOUT an explicit cast" framing.
      */
+    /**
+     * Every column an expression dimension references must EXIST, checked recursively.
+     * <p>
+     * Unlike a function's RESULT TYPE -- which cannot be known without compiling the expression, and
+     * is deliberately deferred (see {@link #assertStringCoercible}) -- whether a column exists is
+     * knowable here, from the declared column list.
+     * <p>
+     * Without this, {@code PARTITION BY DAY, (upper(nope)) AS venue} was ACCEPTED at CREATE and the
+     * table then suspended on its FIRST INSERT with "composite partitioning: failed to compile
+     * EXPRESSION dimension". A successful DDL handing back a table that bricks on the first write is
+     * the defect class this branch keeps closing -- the same shape FORMAT PARQUET had before its gate
+     * moved to CREATE time.
+     * <p>
+     * {@link #assertStringCoercible} only ever inspected the TOP node, so an unknown column was
+     * invisible to it the moment the expression wrapped it in anything at all.
+     */
+    private void assertColumnsExist(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.LITERAL && getColumnModel(node.token) == null) {
+            throw SqlException.invalidColumn(node.position, node.token);
+        }
+        assertColumnsExist(node.lhs);
+        assertColumnsExist(node.rhs);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            assertColumnsExist(node.args.getQuick(i));
+        }
+    }
+
     private void assertStringCoercible(ExpressionNode node) throws SqlException {
         if (node.type == ExpressionNode.LITERAL) {
             CreateTableColumnModel m = getColumnModel(node.token);
@@ -558,6 +588,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
      */
     private PartitionDimension resolveExpressionDimension(ExpressionNode node, CharSequence alias) throws SqlException {
         assertDeterministic(node);
+        assertColumnsExist(node);
         assertStringCoercible(node);
         StringSink exprTextSink = new StringSink();
         node.toSink(exprTextSink);
