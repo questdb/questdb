@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.ColumnPurgeOperator;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -138,6 +139,94 @@ public class CompositeColumnPurgeTest extends AbstractCompositeTwinTest {
             engine.releaseInactive();
             assertTwinEqual("");
         });
+    }
+
+    /**
+     * The other half of "harmless": what the purge DOES delete is the day-level phantom, and the table
+     * must keep working afterwards. One or two follow-up operations proved little, so this exercises a
+     * spread of them AFTER the phantom is gone -- writes into the purged day and a new day, a cell
+     * added by a new dimension value, squash, convert to parquet, and reads throughout.
+     * <p>
+     * Every step compares against the plain twin, so a divergence introduced by the missing phantom
+     * shows up as wrong DATA rather than as a size difference nobody would notice.
+     */
+    @Test(timeout = 120_000)
+    public void testTableKeepsWorkingAfterThePhantomIsPurged() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            insertIntoBoth("('2023-01-01T01:00:00.000000Z','E0',1.0),"
+                    + "('2023-01-01T02:00:00.000000Z','E1',2.0),"
+                    + "('2023-01-02T01:00:00.000000Z','E0',3.0)");
+            drainWalQueue();
+
+            execute("ALTER TABLE c ALTER COLUMN px TYPE FLOAT");
+            execute("ALTER TABLE p ALTER COLUMN px TYPE FLOAT");
+            drainWalQueue();
+            execute("VACUUM TABLE c");
+            execute("VACUUM TABLE p");
+            drainWalQueue();
+            engine.releaseInactive();
+            assertTwinEqual("");
+
+            // 1. append into the purged day, and into a brand-new day
+            insertIntoBoth("('2023-01-01T09:00:00.000000Z','E0',9.0),"
+                    + "('2023-01-03T01:00:00.000000Z','E1',10.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+            assertTwinEqual("");
+
+            // 2. an O3 write into the purged day
+            insertIntoBoth("('2023-01-01T01:30:00.000000Z','E1',11.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+            assertTwinEqual("");
+
+            // 3. a NEW dimension value, i.e. a cell the purged day never had
+            insertIntoBoth("('2023-01-01T10:00:00.000000Z','E2',12.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+            assertTwinEqual("");
+            assertTwinEqual(" WHERE exch = 'E2'");
+
+            // 4. squash, then 5. convert the purged day to parquet
+            execute("ALTER TABLE c SQUASH PARTITIONS");
+            execute("ALTER TABLE p SQUASH PARTITIONS");
+            drainWalQueue();
+            engine.releaseInactive();
+            assertTwinEqual("");
+
+            execute("ALTER TABLE c CONVERT PARTITION TO PARQUET LIST '2023-01-01'");
+            execute("ALTER TABLE p CONVERT PARTITION TO PARQUET LIST '2023-01-01'");
+            drainWalQueue();
+            engine.releaseInactive();
+            assertTwinEqual("");
+            assertTwinEqual(" WHERE exch = 'E0'");
+
+            // 6. and it still takes writes once parquet
+            insertIntoBoth("('2023-01-04T01:00:00.000000Z','E0',13.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+            assertTwinEqual("");
+        });
+    }
+
+    /**
+     * The DEPTH RULE the deletion guard enforces, tested directly. The guard itself cannot be observed
+     * firing through VACUUM -- ColumnPurgeOperator structurally cannot build a cell path -- so without
+     * this the rule would be untested machinery, and "it never fires" would be indistinguishable from
+     * "it is wrong".
+     * <p>
+     * Past the table directory: {@code /<day>/<file>} is two separators (allowed, this is every path
+     * the operator builds); {@code /<day>/<cell>/<file>} is three (refused, that is live cell data).
+     */
+    @Test
+    public void testDeletionGuardDepthRule() {
+        Assert.assertFalse("a table-root file must be deletable", ColumnPurgeOperator.exceedsDayDepth(1));
+        Assert.assertFalse("<day>/<file> is what this operator builds and must stay deletable",
+                ColumnPurgeOperator.exceedsDayDepth(2));
+        Assert.assertTrue("<day>/<cell>/<file> is live composite cell data and must be refused",
+                ColumnPurgeOperator.exceedsDayDepth(3));
+        Assert.assertTrue("anything deeper is refused too", ColumnPurgeOperator.exceedsDayDepth(4));
     }
 
     private java.util.List<String> relFiles(String table) throws IOException {
