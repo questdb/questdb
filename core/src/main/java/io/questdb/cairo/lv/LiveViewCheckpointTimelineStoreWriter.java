@@ -4342,7 +4342,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          * The replay hands each one back through {@link #capture} as it crosses
          * it, so the list is also the schedule the replay segments itself on.
          * Entries are copies: the reader's flyweight is only valid inside its
-         * own callback.
+         * own callback. They are pooled per capture, so they stay valid until
+         * this capture collects again - which no caller does.
          */
         public void collectBoundaries(
                 long lowTsInclusive,
@@ -4381,7 +4382,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
 
         private final class CollectBoundaryVisitor implements LiveViewCheckpointTimelineReader.Visitor {
+            // The entries handed to out, as a high-water pool rather than one allocation
+            // per boundary: a capture collects once, and a repair over the same view
+            // re-versions about as many boundaries each time. of() rewinds the pool, so
+            // what a previous collect handed out stays valid only until the next one -
+            // which is what the single collect per capture the callers make guarantees.
+            private final ObjList<LiveViewCheckpointTimelineEntry> pool = new ObjList<>();
             private ObjList<LiveViewCheckpointTimelineEntry> out;
+            private int poolCount;
 
             private void clearBindings() {
                 out = null;
@@ -4389,11 +4397,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
             private void of(ObjList<LiveViewCheckpointTimelineEntry> out) {
                 this.out = out;
+                this.poolCount = 0;
             }
 
             @Override
             public void onEntry(@NotNull LiveViewCheckpointTimelineEntry entry) {
-                out.add(new LiveViewCheckpointTimelineEntry().copyFrom(entry));
+                if (poolCount == pool.size()) {
+                    pool.add(new LiveViewCheckpointTimelineEntry());
+                }
+                out.add(pool.getQuick(poolCount++).copyFrom(entry));
             }
         }
 

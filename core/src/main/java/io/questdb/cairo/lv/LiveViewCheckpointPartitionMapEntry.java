@@ -112,17 +112,6 @@ public final class LiveViewCheckpointPartitionMapEntry {
         );
     }
 
-    static LiveViewCheckpointStatePageRef[] copyRefs(LiveViewCheckpointStatePageRef[] source) {
-        if (source.length == 0) {
-            return EMPTY_REFS;
-        }
-        final LiveViewCheckpointStatePageRef[] copy = new LiveViewCheckpointStatePageRef[source.length];
-        for (int i = 0; i < source.length; i++) {
-            copy[i] = copyRef(source[i]);
-        }
-        return copy;
-    }
-
     private byte[] copyBytes(byte[] source, IntObjHashMap<byte[]> buffers) {
         if (source.length == 0) {
             return EMPTY_BYTES;

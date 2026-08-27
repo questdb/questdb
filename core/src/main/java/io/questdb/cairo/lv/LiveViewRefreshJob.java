@@ -290,6 +290,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // per row.
     private final ObjList<LiveViewCheckpointTimelineEntry> emptyRepairBoundaries = new ObjList<>();
     private final FilteringRecordCursor filteringCursor = new FilteringRecordCursor();
+    // The per-column resolver list buildFlushSymbolResolvers() hands the flush, holding
+    // one overlay per SYMBOL output column and null elsewhere. Rebuilt in place on every
+    // flush rather than allocated: a flush runs on the FLUSH EVERY cadence, so a list per
+    // call would be steady-state garbage proportional to the output column count.
+    private final ObjList<LiveViewSymbolTable> flushSymbolResolvers = new ObjList<>();
+    // The overlays flushSymbolResolvers hands out, one per SYMBOL output column in column
+    // order, grown on demand and never cleared. They own nothing (ownsBase=false), so a
+    // flush unbinds rather than frees them and the next one rebinds through of().
+    private final ObjList<LiveViewSymbolTable> flushSymbolResolverPool = new ObjList<>();
     // Wall clock this worker has spent applying live-view WAL, in nanoseconds. The apply
     // is the half of a refresh that writes into live-view partitions already on disk, and
     // a repair whose replacement range reaches a closed partition rewrites the whole of
@@ -664,6 +673,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(rowsBounds);
         Misc.free(keyedReplay);
         Misc.free(transplantKeyMemory);
+        Misc.freeObjListIfCloseable(flushSymbolResolverPool);
+        flushSymbolResolverPool.clear();
+        flushSymbolResolvers.clear();
         // A repair this worker parked between turns can only be continued by this
         // worker, so a closing worker abandons it rather than leaving its pinned
         // reader, uncommitted replacement and staged segment for nobody.
@@ -3879,9 +3891,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             commitLiveViewBlock(instance, walWriter, advanceTo);
         } finally {
-            // The overlays reference symbolReader, now closed; drop them so a later
-            // flush of a non-SYMBOL view cannot reuse a stale resolver.
+            // The overlays reference symbolReader, now closed; unbind them so a later
+            // flush of a non-SYMBOL view cannot reuse a stale resolver. The pool keeps
+            // the instances themselves for the next flush to rebind.
             bufferRecord.setSymbolResolvers(null);
+            clearFlushSymbolResolvers();
         }
 
         instance.setLastProcessedSeqTxn(advanceTo);
@@ -3983,21 +3997,40 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     private ObjList<LiveViewSymbolTable> buildFlushSymbolResolvers(RecordMetadata outMetadata, TableReader symbolReader, LiveViewSymbolCache cache) {
         final int n = outMetadata.getColumnCount();
-        final ObjList<LiveViewSymbolTable> resolvers = new ObjList<>(n);
+        flushSymbolResolvers.clear();
+        int poolIndex = 0;
         for (int c = 0; c < n; c++) {
             if (ColumnType.tagOf(outMetadata.getColumnType(c)) == ColumnType.SYMBOL) {
+                LiveViewSymbolTable resolver = flushSymbolResolverPool.getQuiet(poolIndex);
+                if (resolver == null) {
+                    flushSymbolResolverPool.extendAndSet(poolIndex, resolver = new LiveViewSymbolTable());
+                }
+                poolIndex++;
                 // Writer-side resolver: the refresh worker builds this while flushing,
                 // not interning, so the live horizon is exact and the whole lead band
                 // is the correct bound (the flush re-serialises every lead id).
                 // leadContainsNull is false here: the flush path only turns stored lead
                 // ids back into strings and never calls containsNullValue().
-                resolvers.add(new LiveViewSymbolTable().of(
+                flushSymbolResolvers.add(resolver.of(
                         symbolReader.getSymbolTable(c), cache, c, cache.newSymbolMaxIdExclusive(c), false, false));
             } else {
-                resolvers.add(null);
+                flushSymbolResolvers.add(null);
             }
         }
-        return resolvers;
+        return flushSymbolResolvers;
+    }
+
+    /**
+     * Unbinds every pooled flush resolver and empties the list the flush was handed.
+     * The overlays borrow the flush's {@code symbolReader} (ownsBase=false), so close()
+     * only drops that reference - it frees nothing - and the pool keeps the instances
+     * for the next flush to rebind.
+     */
+    private void clearFlushSymbolResolvers() {
+        for (int i = 0, n = flushSymbolResolverPool.size(); i < n; i++) {
+            Misc.free(flushSymbolResolverPool.getQuick(i));
+        }
+        flushSymbolResolvers.clear();
     }
 
     /**

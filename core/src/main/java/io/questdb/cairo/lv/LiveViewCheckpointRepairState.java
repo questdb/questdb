@@ -222,7 +222,9 @@ public final class LiveViewCheckpointRepairState implements Closeable {
             if (findPtr == 0) {
                 return SweepResult.EMPTY;
             }
-            final StringSink name = new StringSink();
+            // Thread-local: the sweep fills and consumes the sink inside its own loop and
+            // nothing it calls reaches for the same sink, so it needs no instance of its own.
+            final StringSink name = Misc.getThreadLocalSink();
             try {
                 do {
                     final long namePtr = ff.findName(findPtr);

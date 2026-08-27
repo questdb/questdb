@@ -31,6 +31,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
@@ -466,7 +467,9 @@ public final class LiveViewCheckpointLifecycle {
             return;
         }
         final int dirLen = dir.size();
-        final StringSink name = new StringSink();
+        // Thread-local: the sweep fills and consumes the sink inside its own loop and
+        // nothing it calls reaches for the same sink, so it needs no instance of its own.
+        final StringSink name = Misc.getThreadLocalSink();
         final long findPtr = ff.findFirst(dir.$());
         if (findPtr == 0) {
             return;
@@ -524,7 +527,9 @@ public final class LiveViewCheckpointLifecycle {
         if (findPtr == 0) {
             return false;
         }
-        final StringSink name = new StringSink();
+        // Thread-local: the sweep fills and consumes the sink inside its own loop and
+        // nothing it calls reaches for the same sink, so it needs no instance of its own.
+        final StringSink name = Misc.getThreadLocalSink();
         try {
             do {
                 final long namePtr = ff.findName(findPtr);
@@ -637,7 +642,9 @@ public final class LiveViewCheckpointLifecycle {
             return;
         }
         final int dirLen = dir.size();
-        final StringSink name = new StringSink();
+        // Thread-local: the sweep fills and consumes the sink inside its own loop and
+        // nothing it calls reaches for the same sink, so it needs no instance of its own.
+        final StringSink name = Misc.getThreadLocalSink();
         final long findPtr = ff.findFirst(dir.$());
         if (findPtr == 0) {
             return;
@@ -678,7 +685,9 @@ public final class LiveViewCheckpointLifecycle {
             return;
         }
         final int dirLen = dir.size();
-        final StringSink name = new StringSink();
+        // Thread-local: the sweep fills and consumes the sink inside its own loop and
+        // nothing it calls reaches for the same sink, so it needs no instance of its own.
+        final StringSink name = Misc.getThreadLocalSink();
         final long findPtr = ff.findFirst(dir.$());
         if (findPtr == 0) {
             return;

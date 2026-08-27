@@ -299,21 +299,6 @@ final class LiveViewCheckpointPartitionMapNode {
         return lo;
     }
 
-    void putEntry(int index, LiveViewCheckpointPartitionMapEntry entry) {
-        assert leaf;
-        final int existing = index < count && LiveViewCheckpointMetadata.compareBytes(keys[index], entry.getKey()) == 0 ? index : -1;
-        if (existing < 0) {
-            ensureCapacity(count + 1);
-            shiftRight(index);
-            count++;
-        }
-        keys[index] = Arrays.copyOf(entry.getKey(), entry.getKey().length);
-        keyArenas[index] = null;
-        keyMutationIndexes[index] = -1;
-        scalarStates[index] = Arrays.copyOf(entry.getScalarState(), entry.getScalarState().length);
-        statePageRefs[index] = LiveViewCheckpointPartitionMapEntry.copyRefs(entry.statePageRefs());
-    }
-
     void putEntry(int index, LiveViewCheckpointMutationArena arena, int mutationIndex) {
         assert leaf;
         final int existing = index < count && compareMutationToKeyAt(arena, mutationIndex, index) == 0 ? index : -1;
