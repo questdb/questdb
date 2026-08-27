@@ -1270,7 +1270,7 @@ public class PostingIndexBenchmarkSuite {
         out.println("   Only 'index' is attributable to this branch.");
         out.printf("  %-16s %-10s %11s %11s %11s %9s %9s%n",
                 "query", "keys", "native", "pq-data", "pq-index", "data", "index");
-        for (String q : new String[]{"covering_where", "latest_on"}) {
+        for (String q : new String[]{"covering_where", "latest_on", "latest_on_indexed"}) {
             for (int i = 0; i < 3; i++) {
                 double[] nat = cell(cells, "sqlQuery", q, rungs[i], STORAGE_NATIVE);
                 double[] dat = cell(cells, "sqlQuery", q, rungs[i], STORAGE_PARQUET_DATA);
@@ -2115,7 +2115,7 @@ public class PostingIndexBenchmarkSuite {
         SqlCompilerImpl compiler;
         SqlExecutionContextImpl ctx;
         CairoEngine engine;
-        @Param({"covering_where", "latest_on"})
+        @Param({"covering_where", "latest_on", "latest_on_indexed"})
         String queryType;
         // Three cardinality rungs, not the full ladder. The question this arm
         // answers is "does converting to parquet hurt", and 16 / 2,000 / 200,000
@@ -2319,6 +2319,16 @@ public class PostingIndexBenchmarkSuite {
                 case "covering_sum" -> "SELECT sum(price) FROM bench WHERE sym = '" + key + "'";
                 case "covering_count" -> "SELECT count() FROM bench WHERE sym = '" + key + "'";
                 case "latest_on" -> "SELECT ts, sym, price FROM bench LATEST ON ts PARTITION BY sym";
+                // latest_on above has NO WHERE, so it compiles to a frame
+                // backward scan and never touches the index -- which is why the
+                // index column read as parity for it while an indexed LATEST ON
+                // was 2.9x SLOWER than using no index at all. Naming values is
+                // what routes it to "CoveringIndex op: latest on". Uses
+                // resolveNKeys so the list is real symbols; an IN list of
+                // values that do not exist returns nothing and times as a very
+                // fast empty result.
+                case "latest_on_indexed" -> "SELECT ts, sym, price FROM bench WHERE sym IN ("
+                        + tenKeys + ") LATEST ON ts PARTITION BY sym";
                 case "in_list" -> "SELECT price FROM bench WHERE sym IN (" + tenKeys + ")";
                 // Residual filter variants
                 case "residual_filter" -> "SELECT price FROM bench WHERE sym = '" + key + "' AND price > 500";

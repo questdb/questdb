@@ -91,6 +91,41 @@ is that the cost is per MAPPING -- a pooled TableReader maps once per
 partition-open and serves many queries, where these benchmarks open a reader
 every iteration and then make as few as 500 lookups.
 
+### Where the parquet form LOSES: indexed LATEST ON
+
+`LATEST ON` that names its symbol values compiles to
+`CoveringIndex op: latest on`, one backward `seekToLast()` per key. That shape --
+hundreds of very short cursors -- is the worst case for the parquet form,
+because its cost is per-cursor BIND and there is nothing to amortise it over.
+
+Measured on 400k rows, 16 keys, `WHERE sym IN (...) LATEST ON`, all three arms
+holding the SAME parquet DATA so only the index form differs:
+
+| index form on a parquet partition | us/query |
+| --- | --- |
+| native chain, hard-linked into the parquet partition | ~82 |
+| **no index at all (frame backward scan)** | **~94** |
+| parquet form | ~271 |
+
+So on this query the parquet form is 3.3x slower than the native-form index and
+2.9x slower than using NO index -- it actively hurts. Through SQL, at P400K:
+native 43,115 ops/s, parquet data + native index 17,228, parquet data + parquet
+index 4,971.
+
+This does not generalise. Scans bind once and walk millions of rows, which is
+why they are 1.45-1.61x FASTER at 200k and 1M keys, and covered `WHERE` measures
+at parity. It is specifically the many-short-cursors pattern that breaks.
+
+**This was invisible for most of the work.** The suite's `latest_on` shape has no
+`WHERE`, so it compiles to a frame backward scan and never touches the index at
+all -- the index column read as parity for it while the indexed form was 2.9x
+worse. `latest_on_indexed` was added to close that hole. A benchmark arm that
+cannot reach the code it claims to measure reports parity, which is
+indistinguishable from good news.
+
+Closing this means reducing per-cursor bind cost, not traversal cost -- the same
+per-mapping cost the high-cardinality point reads pay, seen from another angle.
+
 ### Mechanisms tried and rejected
 
 Recorded so they are not retried. Each was fully implemented and measured, not
