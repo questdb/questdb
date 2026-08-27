@@ -305,6 +305,15 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                 if (requiredCoverColumns == null || requiredCoverColumns.length == 0) {
                     final long dataOffset = rowIdDataOffset(rg);
                     if (dataOffset >= 0) {
+                        // No projection is built on this path, so last bind's
+                        // ordinals would otherwise survive into this one. The
+                        // CACHE has to go with them: a later covers-bearing
+                        // lookup on the same group takes the cache-hit path,
+                        // which skips coveringProjection and would then read
+                        // ordinals this cleared. They are one invariant, not two.
+                        clearCoverOrdinals();
+                        cachedRowGroup = -1;
+                        cachedCovers = null;
                         rowIdPtr = pidxAddr + dataOffset;
                         // The run ascends even though this cursor descends, so
                         // the window is a sub-range that can be found rather
@@ -337,6 +346,14 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                 }
                 final DirectIntList columns = coveringProjection(requiredCoverColumns, false);
                 rowGroupBuffers.reopen();
+                // Invalidate BEFORE the decode, not after it. A throw from
+                // decodeRowGroup can leave the buffers partially overwritten
+                // while cachedRowGroup still names the PREVIOUS group, and a
+                // later lookup for that group would then be served a corrupt
+                // buffer as a cache hit -- a silent wrong answer that outlives
+                // the failed query on a pooled cursor.
+                cachedRowGroup = -1;
+                cachedCovers = null;
                 if (rg == lastTouchedRowGroup && imReader.getRowGroupKeyCount(rg) >= WHOLE_GROUP_KEY_THRESHOLD) {
                     // Second consecutive key from a group with many keys: a
                     // scan. Decode it whole and keep it, so the rest come free.
@@ -355,8 +372,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                 decoder().decodeRowGroup(rowGroupBuffers, columns, rg, (int) rowLo, (int) rowHi);
                 onRowGroupDecoded(rowHi - rowLo);
                 // The buffer holds the key's run alone, so indices restart.
-                cachedRowGroup = -1;
-                cachedCovers = null;
+                // cachedRowGroup was already invalidated above.
                 lastTouchedRowGroup = rg;
                 groupRows = rowHi - rowLo;
                 // key_id is not in the projection: the decoded window is the

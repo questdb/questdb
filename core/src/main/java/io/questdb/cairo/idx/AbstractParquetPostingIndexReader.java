@@ -864,6 +864,24 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
          * another column's bytes, so this keys on the projection actually
          * built, not on what the index happens to cover.
          */
+        /**
+         * Marks every cover slot unavailable.
+         * <p>
+         * The direct-read path serves row ids straight from the mapping and
+         * never builds a projection, so without this it inherits the PREVIOUS
+         * bind's ordinals: {@link #isCoveredAvailable} would answer true for a
+         * slot this bind never projected, and {@code coveredAddress} would read
+         * a chunk pointer that belongs to another lookup. Production cannot
+         * reach it today -- a caller that can ask for a covered value always
+         * passes a non-empty cover set, which skips the direct path -- but the
+         * cursor should not depend on its callers for that.
+         */
+        protected void clearCoverOrdinals() {
+            if (coverChunkOrdinal != null) {
+                Arrays.fill(coverChunkOrdinal, -1);
+            }
+        }
+
         @Override
         public boolean isCoveredAvailable(int includeIdx) {
             return emittedRow >= 0

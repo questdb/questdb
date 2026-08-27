@@ -375,6 +375,15 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 if (requiredCoverColumns == null || requiredCoverColumns.length == 0) {
                     final long dataOffset = rowIdDataOffset(rg);
                     if (dataOffset >= 0) {
+                        // No projection is built on this path, so last bind's
+                        // ordinals would otherwise survive into this one. The
+                        // CACHE has to go with them: a later covers-bearing
+                        // lookup on the same group takes the cache-hit path,
+                        // which skips coveringProjection and would then read
+                        // ordinals this cleared. They are one invariant, not two.
+                        clearCoverOrdinals();
+                        cachedRowGroup = -1;
+                        cachedCovers = null;
                         decodedGroup = true;
                         directRowIds = true;
                         rowIdPtr = pidxAddr + dataOffset;
@@ -412,6 +421,12 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 }
                 final DirectIntList columns = coveringProjection(requiredCoverColumns, false);
                 rowGroupBuffers.reopen();
+                // Invalidate BEFORE the decode: a throw from decodeRowGroup can
+                // leave the buffers partly overwritten while cachedRowGroup
+                // still names the previous group, and a later lookup for that
+                // group would be served the corrupt buffer as a cache hit.
+                cachedRowGroup = -1;
+                cachedCovers = null;
                 // Amortising needs keys to amortise OVER. A group holding a
                 // handful of wide keys decodes just as many rows either way, so
                 // the whole-group read buys nothing and costs one large buffer:
