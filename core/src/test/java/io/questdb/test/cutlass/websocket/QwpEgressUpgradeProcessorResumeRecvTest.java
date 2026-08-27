@@ -24,26 +24,36 @@
 
 package io.questdb.test.cutlass.websocket;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.LocalValue;
+import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.log.Log;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PlainSocket;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.metrics.QueryTrace;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Tests that {@link QwpEgressUpgradeProcessor} emits a protocol-level CLOSE
@@ -55,6 +65,114 @@ public class QwpEgressUpgradeProcessorResumeRecvTest extends AbstractCairoTest {
 
     private static final int RECV_BUFFER_SIZE = 4096;
     private static final int SEND_BUFFER_SIZE = 4096;
+
+    @Before
+    public void enableQueryTracing() {
+        node1.getConfigurationOverrides().setProperty(PropertyKey.QUERY_TRACING_ENABLED, true);
+    }
+
+    @Test
+    public void testInitialStreamingPISRCountsUntilClose() throws Exception {
+        // A fake transport is permitted here solely to force PISR. The assertion is on
+        // QueryProgress's stable trace output, not on an assumed client response.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE qwp_socket_timer AS (SELECT x, x::TIMESTAMP ts FROM long_sequence(50_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            final ConcurrentQueue<QueryTrace> queue = engine.getMessageBus().getQueryTraceQueue();
+            drain(queue);
+
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            try (QwpEgressUpgradeProcessor processor = new QwpEgressUpgradeProcessor(engine, httpConfig, 1)) {
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        MockRawSocket rawSocket = new MockRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                        rawSocket.setThrowPeerSlow(true);
+                        String query = "SELECT * FROM qwp_socket_timer";
+                        try (TestableContext context = new TestableContext(
+                                httpConfig,
+                                new MockNetworkFacade(buildMaskedQueryFrame(query)),
+                                rawSocket,
+                                recvBuf,
+                                RECV_BUFFER_SIZE
+                        )) {
+                            QwpEgressProcessorState state = setupState(context);
+                            currentMicros = 1_000;
+                            try {
+                                processor.resumeRecv(context);
+                                Assert.fail("Expected PeerIsSlowToReadException");
+                            } catch (PeerIsSlowToReadException expected) {
+                                // The initial result send parked while state retained its live cursor.
+                            }
+                            Assert.assertTrue(state.isStreamingActive());
+
+                            currentMicros = 2_000;
+                            state.endStreaming();
+                            QueryTrace trace = new QueryTrace();
+                            Assert.assertTrue(queue.tryDequeue(trace));
+                            Assert.assertEquals(query, trace.queryText);
+                            Assert.assertEquals(1_000_000L, trace.waitNanos);
+                            Assert.assertEquals(1_000_000L, trace.executionNanos);
+                        }
+                    } finally {
+                        Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCreditResumeForwardsTimer() throws Exception {
+        // Transport fault injection proves that matching CREDIT resumes the retained
+        // cursor before streamResults re-parks it on PeerIsSlowToReadException.
+        assertMemoryLeak(() -> {
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            try (QwpEgressUpgradeProcessor processor = new QwpEgressUpgradeProcessor(engine, httpConfig, 1)) {
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        MockRawSocket rawSocket = new MockRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                        try (TestableContext context = new TestableContext(
+                                httpConfig,
+                                new MockNetworkFacade(buildMaskedCreditFrame(1, 1_000_000)),
+                                rawSocket,
+                                recvBuf,
+                                RECV_BUFFER_SIZE
+                        )) {
+                            rawSocket.setThrowPeerSlow(true);
+                            QwpEgressProcessorState state = setupState(context);
+                            TimerSpyRecordCursor cursor = new TimerSpyRecordCursor();
+                            state.beginStreaming(1, null, cursor, 0, 1, null);
+                            state.consumeStreamingCredit(1);
+                            state.markStreamingCreditSuspended();
+                            state.suspendStreamingTimer();
+
+                            try {
+                                processor.resumeRecv(context);
+                                Assert.fail("Expected PeerIsSlowToReadException");
+                            } catch (PeerIsSlowToReadException expected) {
+                                // Expected: streamResults re-parked after matching CREDIT resumed it.
+                            }
+
+                            Assert.assertEquals(1, cursor.resumeCalls);
+                            Assert.assertEquals(2, cursor.suspendCalls);
+                            Assert.assertTrue(state.isStreamingActive());
+                            state.endStreaming();
+                            Assert.assertTrue(cursor.isClosed);
+                        }
+                    } finally {
+                        Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
 
     @Test
     public void testFrameTooLargeForRecvBufferSendsCloseFrame() throws Exception {
@@ -103,6 +221,60 @@ public class QwpEgressUpgradeProcessorResumeRecvTest extends AbstractCairoTest {
         });
     }
 
+    private static byte[] buildMaskedCreditFrame(long requestId, long credit) {
+        byte[] payload = new byte[1 + Long.BYTES + 3];
+        int p = 0;
+        payload[p++] = QwpEgressMsgKind.CREDIT;
+        for (int i = 0; i < Long.BYTES; i++) {
+            payload[p++] = (byte) (requestId >>> (i * Byte.SIZE));
+        }
+        while ((credit & ~0x7fL) != 0) {
+            payload[p++] = (byte) ((credit & 0x7f) | 0x80);
+            credit >>>= 7;
+        }
+        payload[p++] = (byte) credit;
+        return maskBinaryFrame(payload, p);
+    }
+
+    private static byte[] buildMaskedQueryFrame(String query) {
+        byte[] sql = query.getBytes(StandardCharsets.UTF_8);
+        Assert.assertTrue(sql.length < 128);
+        byte[] payload = new byte[1 + Long.BYTES + 1 + sql.length + 2];
+        int p = 0;
+        payload[p++] = QwpEgressMsgKind.QUERY_REQUEST;
+        for (int i = 0; i < Long.BYTES; i++) {
+            payload[p++] = (byte) (1L >>> (i * Byte.SIZE));
+        }
+        payload[p++] = (byte) sql.length;
+        System.arraycopy(sql, 0, payload, p, sql.length);
+        p += sql.length;
+        payload[p++] = 0; // initial_credit
+        payload[p] = 0; // bind_count
+
+        return maskBinaryFrame(payload, payload.length);
+    }
+
+    private static byte[] maskBinaryFrame(byte[] payload, int length) {
+        Assert.assertTrue(length < 126);
+        byte[] frame = new byte[2 + 4 + length];
+        frame[0] = (byte) 0x82; // FIN + BINARY
+        frame[1] = (byte) (0x80 | length);
+        frame[2] = 1;
+        frame[3] = 2;
+        frame[4] = 3;
+        frame[5] = 4;
+        for (int i = 0; i < length; i++) {
+            frame[6 + i] = (byte) (payload[i] ^ frame[2 + i % 4]);
+        }
+        return frame;
+    }
+
+    private static void drain(ConcurrentQueue<QueryTrace> queue) {
+        QueryTrace trace = new QueryTrace();
+        while (queue.tryDequeue(trace)) {
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static LocalValue<QwpEgressProcessorState> getLV() throws Exception {
         Field lvField = QwpEgressUpgradeProcessor.class.getDeclaredField("LV");
@@ -116,6 +288,60 @@ public class QwpEgressUpgradeProcessorResumeRecvTest extends AbstractCairoTest {
         state.of(-1, AllowAllSecurityContext.INSTANCE);
         lv.set(context, state);
         return state;
+    }
+
+    private static class TimerSpyRecordCursor implements RecordCursor {
+        private boolean isClosed;
+        private int resumeCalls;
+        private int suspendCalls;
+
+        @Override
+        public void close() {
+            isClosed = true;
+        }
+
+        @Override
+        public Record getRecord() {
+            return null;
+        }
+
+        @Override
+        public Record getRecordB() {
+            return null;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return false;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+        }
+
+        @Override
+        public void resumeTimer() {
+            resumeCalls++;
+        }
+
+        @Override
+        public long size() {
+            return 0;
+        }
+
+        @Override
+        public void suspendTimer() {
+            suspendCalls++;
+        }
+
+        @Override
+        public void toTop() {
+        }
     }
 
     private static class MockNetworkFacade extends NetworkFacadeImpl {
@@ -150,6 +376,7 @@ public class QwpEgressUpgradeProcessorResumeRecvTest extends AbstractCairoTest {
         private final int bufferSize;
         int sendCallCount;
         int sentSize;
+        private boolean isThrowPeerSlow;
 
         MockRawSocket(long bufferAddress, int bufferSize) {
             this.bufferAddress = bufferAddress;
@@ -167,9 +394,16 @@ public class QwpEgressUpgradeProcessorResumeRecvTest extends AbstractCairoTest {
         }
 
         @Override
-        public void send(int size) {
+        public void send(int size) throws PeerIsSlowToReadException {
             sendCallCount++;
             sentSize = size;
+            if (isThrowPeerSlow) {
+                throw PeerIsSlowToReadException.INSTANCE;
+            }
+        }
+
+        void setThrowPeerSlow(boolean isThrowPeerSlow) {
+            this.isThrowPeerSlow = isThrowPeerSlow;
         }
     }
 
@@ -194,6 +428,11 @@ public class QwpEgressUpgradeProcessorResumeRecvTest extends AbstractCairoTest {
         @Override
         public HttpRawSocket getRawResponseSocket() {
             return rawSocket;
+        }
+
+        @Override
+        public SecurityContext getSecurityContext() {
+            return AllowAllSecurityContext.INSTANCE;
         }
 
         @Override

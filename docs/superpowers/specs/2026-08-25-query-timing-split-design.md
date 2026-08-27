@@ -129,6 +129,18 @@ Two distinct suspension kinds:
   Time between portal fetches is client think-time and counts as wait --
   that is the point: today it counts as execution.
 
+**QWP egress (`QwpEgressUpgradeProcessor` / `QwpEgressProcessorState`)**
+
+- The state forwards timer calls to its retained `RecordCursor` or
+  `PageFrameCursor`; one streaming query owns exactly one of them.
+- Credit exhaustion suspends before `streamResults()` returns. A matching
+  CREDIT resumes before re-entering `streamResults()`; a closed stream
+  relies on the cursor-close implicit resume.
+- Every streaming `PeerIsSlowToReadException` suspends before it parks.
+  `resumeSend()` resumes only after `resumeResponseSend()` has completed,
+  so a deferred flush that re-parks leaves the timer suspended. A resumed
+  loop that re-parks suspends again before propagating the exception.
+
 The streaming parquet-export path drives `PageFrameCursor` directly; its
 suspend/resume sites get the same two calls on the page frame cursor.
 
@@ -239,6 +251,11 @@ for zero-row queries.
   `_query_trace`; assert columns are added and rows land correctly.
 - `/exec` timings: `timings=true` response contains `wait`; existing keys
   unchanged.
+- QWP egress: the pinned `QwpQueryClient` with one-byte initial credit
+  holds batch callbacks long enough to prove a nonzero traced wait;
+  transport-fault coverage proves a deferred socket flush re-park does not
+  resume early, and state forwarding covers retained record and page-frame
+  cursors.
 
 No wire constants or wire formats change, so no pinned-client submodule
 test is required.

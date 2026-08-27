@@ -4,7 +4,7 @@
 
 **Goal:** Record accurate per-query timing in `_query_trace`: accumulated client/network wait (`wait_micros`) and time-to-first-row (`first_row_micros`) alongside the existing open-to-close wall time (`execution_micros`).
 
-**Architecture:** `RecordCursor`/`PageFrameCursor` gain default no-op `suspendTimer()`/`resumeTimer()` methods. Only `QueryProgress`'s wrapper cursors override them, accumulating wait time and stamping time-to-first-row. The HTTP `/exec`, HTTP `/exp` export, and PGWire layers call the two methods at their existing suspend/resume seams (socket backpressure everywhere, plus PGWire portal suspension). Results flow into two new `_query_trace` columns, the `fin` log line, and a new `wait` key in the `/exec` `timings` JSON.
+**Architecture:** `RecordCursor`/`PageFrameCursor` gain default no-op `suspendTimer()`/`resumeTimer()` methods. Only `QueryProgress`'s wrapper cursors override them, accumulating wait time and stamping time-to-first-row. The HTTP `/exec`, HTTP `/exp` export, PGWire, and QWP egress layers call the two methods at their existing suspend/resume seams (socket backpressure everywhere, plus PGWire portal suspension and QWP credit suspension). Results flow into two new `_query_trace` columns, the `fin` log line, and a new `wait` key in the `/exec` `timings` JSON.
 
 **Tech Stack:** Java 17 (core module), Maven, JUnit 4 with QuestDB's `AbstractCairoTest`/`BasePGTest`/`HttpQueryTestBuilder`/`AbstractBootstrapTest` infrastructure.
 
@@ -37,11 +37,16 @@
 | `core/src/main/java/io/questdb/cutlass/pgwire/PGPipelineEntry.java` | `suspendCursorTimer()`/`resumeCursorTimer()`, portal resume hook |
 | `core/src/main/java/io/questdb/cutlass/pgwire/PGConnectionContext.java` | Backpressure + portal-retention hooks |
 | `core/src/main/java/io/questdb/cutlass/http/processors/ExportQueryProcessor.java` (+ its state class) | Park/resume forwarding for `/exp` cursors |
+| `core/src/main/java/io/questdb/cutlass/qwp/server/egress/QwpEgressProcessorState.java` | Retained record/page-frame cursor timer forwarding for QWP egress |
+| `core/src/main/java/io/questdb/cutlass/qwp/server/egress/QwpEgressUpgradeProcessor.java` | Credit and socket-park timer hooks for QWP egress |
 | `core/src/test/java/io/questdb/test/griffin/engine/QueryProgressTimingTest.java` | New: accounting unit tests |
 | `core/src/test/java/io/questdb/test/metrics/QueryTracingTest.java` | Extend: columns, NULL semantics, migration |
 | `core/src/test/java/io/questdb/test/cutlass/pgwire/PGQueryTimingTest.java` | New: portal-suspension wait |
 | `core/src/test/java/io/questdb/test/cutlass/http/IODispatcherTest.java` (or the file holding the existing timings assertions) | Extend: `wait` key in timings JSON |
 | `core/src/test/java/io/questdb/test/cutlass/http/QueryTimingHttpTest.java` | New: end-to-end slow-client test for `/exec` and `/exp` |
+| `core/src/test/java/io/questdb/test/cutlass/qwp/QwpEgressCreditFlowTest.java` | Pinned-client CREDIT suspension trace assertion |
+| `core/src/test/java/io/questdb/test/cutlass/websocket/QwpEgressUpgradeProcessorResumeRecvTest.java` | Matching-CREDIT re-entry transport re-park coverage |
+| `core/src/test/java/io/questdb/test/cutlass/websocket/QwpEgressUpgradeProcessorResumeSendTest.java` | Deferred-flush ordering and page-frame forwarding coverage |
 
 ---
 
@@ -993,6 +998,31 @@ and asserts wait_micros lands between zero and execution_micros.
 The parquet export task's handed-off page-frame cursor is not yet
 timed after hand-off; the CSV path and all /exec queries are."
 ```
+
+---
+
+### Task 5a: QWP egress credit and socket hooks
+
+**Files:**
+- Modify: `core/src/main/java/io/questdb/cutlass/qwp/server/egress/QwpEgressProcessorState.java`
+- Modify: `core/src/main/java/io/questdb/cutlass/qwp/server/egress/QwpEgressUpgradeProcessor.java`
+- Modify: `core/src/test/java/io/questdb/test/cutlass/qwp/QwpEgressCreditFlowTest.java`
+- Modify: `core/src/test/java/io/questdb/test/cutlass/websocket/QwpEgressUpgradeProcessorResumeRecvTest.java`
+- Modify: `core/src/test/java/io/questdb/test/cutlass/websocket/QwpEgressUpgradeProcessorResumeSendTest.java`
+
+**Hook matrix:**
+- CREDIT exhaustion in `streamResults()` suspends the retained cursor; matching CREDIT resumes it before production resumes.
+- Initial streaming PISR, PISR after CREDIT re-entry, and PISR after `resumeSend()` re-entry suspend the retained cursor.
+- `resumeSend()` resumes only after `resumeResponseSend()` returns; a re-park during that flush leaves the cursor suspended.
+- `QwpEgressProcessorState` forwards to both retained cursor kinds. Closing a credit- or socket-suspended stream retains QueryProgress's implicit terminal resume.
+
+- [ ] **Step 1: Add deterministic regressions**
+
+Use the pinned `QwpQueryClient` with one-byte credit and delayed batch release to assert `_query_trace.wait_micros` is nonzero and no greater than wall time. Use the existing transport test context only to inject deferred-flush PISR, asserting no early resume and a resume after the flush succeeds. Cover page-frame forwarding directly through the retained state.
+
+- [ ] **Step 2: Implement and verify hooks**
+
+Add zero-GC forwarding methods on the state and call them only at the matrix seams. Run the QWP credit-flow, page-frame, resume-send, and timing suites sequentially; mutation coverage must fail when each credit/socket suspend/resume hook is removed or socket resume moves before the deferred flush.
 
 ---
 
