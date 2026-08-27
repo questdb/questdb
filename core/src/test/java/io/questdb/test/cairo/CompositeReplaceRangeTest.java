@@ -97,10 +97,9 @@ public class CompositeReplaceRangeTest extends AbstractCompositeTwinTest {
             replaceRangeOnBoth("2023-01-01T03:00:00.000000Z", "E0", 99.0,
                     "2023-01-01T02:00:00.000000Z", "2023-01-01T04:00:00.000000Z");
 
-            // WHEN IMPLEMENTED, replace these three lines with:
-            //     assertTwinEqual(""); assertTwinEqual(" WHERE exch = 'E0'");
-            //     assertTwinEqual(" WHERE exch = 'E1'");
-            assertCompositeRefusedAndStillReadable();
+            assertTwinEqual("");
+            assertTwinEqual(" WHERE exch = 'E0'");
+            assertTwinEqual(" WHERE exch = 'E1'");
         });
     }
 
@@ -116,8 +115,8 @@ public class CompositeReplaceRangeTest extends AbstractCompositeTwinTest {
             replaceRangeOnBoth("2023-01-01T12:00:00.000000Z", "E1", 77.0,
                     "2023-01-01T00:00:00.000000Z", "2023-01-02T23:59:59.999999Z");
 
-            // WHEN IMPLEMENTED: assertTwinEqual(""); assertTwinEqual(" WHERE exch = 'E1'");
-            assertCompositeRefusedAndStillReadable();
+            assertTwinEqual("");
+            assertTwinEqual(" WHERE exch = 'E1'");
         });
     }
 
@@ -134,8 +133,8 @@ public class CompositeReplaceRangeTest extends AbstractCompositeTwinTest {
             replaceRangeOnBoth(null, null, 0.0,
                     "2023-01-01T00:00:00.000000Z", "2023-01-01T23:59:59.999999Z");
 
-            // WHEN IMPLEMENTED: assertTwinEqual(""); assertTwinEqual(" WHERE exch = 'E0'");
-            assertCompositeRefusedAndStillReadable();
+            assertTwinEqual("");
+            assertTwinEqual(" WHERE exch = 'E0'");
         });
     }
 

@@ -112,6 +112,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntLongHashMap;
 import io.questdb.std.IntObjHashMap;
@@ -328,6 +329,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
     private final LongList partitionRemoveCandidates = new LongList();
+    private final IntList replaceDeleteCellKeys = new IntList();
+    private final IntHashSet replaceRowCellKeys = new IntHashSet();
     private final Path path;
     private final int pathRootSize;
     private final int pathSize;
@@ -11664,8 +11667,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     .$(", ts=").$ts(timestampDriver, partitionTimestamp)
                                     .I$();
 
-                            txWriter.removeAttachedPartitions(partitionTimestamp);
-                            columnVersionWriter.removePartition(partitionTimestamp);
+                            // cellKey, not the cellKey-0 short overloads. The purge candidate on the
+                            // next line has always carried the cellKey; these two removals did not, so
+                            // on a composite table a replace that empties a cell removed CELL 0's
+                            // records instead -- and asserted in TxWriter#removeAttachedPartitions when
+                            // cell 0 was not the one being emptied. The signature defect of this
+                            // branch: resolved by timestamp, applied per cell.
+                            txWriter.removeAttachedPartitions(partitionTimestamp, cellKey);
+                            columnVersionWriter.removePartition(partitionTimestamp, cellKey);
                             partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn, cellKey);
                         } else {
                             // Set partition size to 0 and process all 0 size partitions at the end of the method.
@@ -11782,7 +11791,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // We need to read the min timestamp from the next partition
                         long firstPartitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
                         long partitionSize = txWriter.getPartitionSize(0);
-                        setPathForNativePartition(path, timestampType, partitionBy, firstPartitionTimestamp, txWriter.getPartitionNameTxn(0));
+                        // Cell-aware: on a composite table attached index 0 is a CELL, so its
+                        // name-txn belongs to <day>/<cell>.<txn>, not to <day>.<txn>. Built with the
+                        // bare 5-arg overload this opened a day-level ts.d that does not exist and
+                        // suspended the table -- reachable only from a replace commit that removes a
+                        // partition, which is why nothing hit it before REPLACE was supported.
+                        setPathForNativePartition(path, timestampType, partitionBy, firstPartitionTimestamp,
+                                txWriter.getPartitionNameTxn(0), cellSegmentOrNull(txWriter.getPartitionCellKey(0)));
                         readPartitionMinMaxTimestamps(firstPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), txWriter.isPartitionParquet(0), -1, partitionSize);
                         txWriter.minTimestamp = attachMinTimestamp;
                     }
@@ -11791,7 +11806,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         int lastPartitionIndex = txWriter.getPartitionCount() - 1;
                         long lastPartitionTimestamp = txWriter.getPartitionTimestampByIndex(lastPartitionIndex);
                         long partitionSize = txWriter.getPartitionSize(lastPartitionIndex);
-                        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, lastPartitionTimestamp, txWriter.getPartitionNameTxn(lastPartitionIndex));
+                        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, lastPartitionTimestamp,
+                                txWriter.getPartitionNameTxn(lastPartitionIndex), cellSegmentOrNull(txWriter.getPartitionCellKey(lastPartitionIndex)));
                         readPartitionMinMaxTimestamps(lastPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), txWriter.isPartitionParquet(lastPartitionIndex), -1, partitionSize);
                         txWriter.maxTimestamp = attachMaxTimestamp;
                     }
@@ -13627,11 +13643,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // path" doc). Counted before the guards below so a REPLACE-mode throw still records that this
         // WAS a genuine attempt at the O3 path, not a fast-append.
         compositeO3MergeCommitCount.incrementAndGet();
-        if (isCommitReplaceMode()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support the REPLACE commit mode [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
+        // REPLACE-range mode is supported. Two things make it different from an ordinary commit, and
+        // both are handled in the loop below:
+        //   1. the loop must visit partitions the commit has NO rows for, because deleting [lo, hi)
+        //      there is the whole point of a replace;
+        //   2. within a visited partition every EXISTING CELL must be dispatched, not only the cells
+        //      the incoming rows name -- a cell with no replacement rows must still lose its rows in
+        //      the range, or a composite table keeps rows its plain twin dropped.
+        final long replacePartitionLo = isCommitReplaceMode() ? txWriter.getPartitionTimestampByTimestamp(o3TimestampMin) : Long.MIN_VALUE;
+        final long replacePartitionHi = isCommitReplaceMode() ? txWriter.getPartitionTimestampByTimestamp(o3TimestampMax) : Long.MIN_VALUE;
 
         o3ErrorCount.set(0);
         o3oomObserved = false;
@@ -13695,8 +13715,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             resizePartitionUpdateSink();
 
             int inflightPartitions = 0;
-            while (srcOoo < srcOooMax) {
+            if (isCommitReplaceMode()) {
+                // Start at the first partition of the replace range, not at the first row's partition:
+                // the range may open before any row this commit carries.
+                partitionTimestamp = replacePartitionLo;
+            }
+            while (srcOoo < srcOooMax || (isCommitReplaceMode() && partitionTimestamp <= replacePartitionHi)) {
                 pressureControl.updateInflightPartitions(++inflightPartitions);
+                // A partition inside the replace range that this commit has no rows for: nothing to
+                // insert, but every existing cell still has to have the range deleted.
+                if (isCommitReplaceMode() && (srcOoo >= srcOooMax
+                        || txWriter.getPartitionTimestampByTimestamp(getTimestampIndexValue(sortedTimestampsAddr, srcOoo)) != partitionTimestamp)) {
+                    try {
+                        latchCount += dispatchCompositeReplaceDeleteOnly(
+                                partitionTimestamp, o3TimestampMin, o3TimestampMax,
+                                replacePartitionLo, replacePartitionHi, null,
+                                maxTimestamp, sortedTimestampsAddr, o3Columns, cellSegmentSink
+                        );
+                    } catch (CairoException | CairoError e) {
+                        o3ErrorCount.incrementAndGet();
+                        o3oomObserved = false;
+                        throw e;
+                    }
+                    partitionTimestamp = nextDistinctPartitionTimestamp(partitionTimestamp);
+                    if (inflightPartitions % partitionParallelism == 0) {
+                        o3ConsumePartitionUpdates();
+                        o3DoneLatch.await(latchCount);
+                        inflightPartitions = 0;
+                    }
+                    continue;
+                }
                 try {
                     final long srcOooLo = srcOoo;
                     final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
@@ -13714,6 +13762,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     final boolean last = partitionTimestamp == lastPartitionTimestamp;
                     srcOoo = srcOooHi + 1;
+
+                    // REPLACE mode: every dispatch for this partition carries the RANGE bounds, so the
+                    // job deletes [lo, hi) rather than only where the rows land. Outside replace mode
+                    // these stay MIN_VALUE and the dispatch derives its bounds from the rows, as before.
+                    final long replaceTsLo = isCommitReplaceMode()
+                            ? ((partitionTimestamp == replacePartitionLo) ? o3TimestampMin : partitionTimestamp)
+                            : Long.MIN_VALUE;
+                    final long replaceTsHi = isCommitReplaceMode()
+                            ? ((partitionTimestamp == replacePartitionHi) ? o3TimestampMax : txWriter.getCurrentPartitionMaxTimestamp(partitionTimestamp))
+                            : Long.MIN_VALUE;
 
                     final long rangeLen = srcOooHi - srcOooLo + 1;
                     if (rangeLen <= 0) {
@@ -13777,12 +13835,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             );
                             latchCount += dispatchCompositeCellRange(
                                     rowCellKeys[0], partitionTimestamp, 0, rangeLenSingle - 1, rangeLenSingle,
-                                    maxTimestamp, singleScratch.tsIndexAddr, singleScratch.columns, cellSegmentSink
+                                    maxTimestamp, singleScratch.tsIndexAddr, singleScratch.columns, cellSegmentSink,
+                                    replaceTsLo, replaceTsHi
                             );
                         } else {
                             latchCount += dispatchCompositeCellRange(
                                     rowCellKeys[0], partitionTimestamp, srcOooLo, srcOooHi, srcOooMax,
-                                    maxTimestamp, sortedTimestampsAddr, o3Columns, cellSegmentSink
+                                    maxTimestamp, sortedTimestampsAddr, o3Columns, cellSegmentSink,
+                                    replaceTsLo, replaceTsHi
                             );
                         }
                     } else {
@@ -13857,11 +13917,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             pCount++;
                             latchCount += dispatchCompositeCellRange(
                                     groupCellKey, partitionTimestamp, 0, groupLen - 1, groupLen,
-                                    maxTimestamp, scratch.tsIndexAddr, scratch.columns, cellSegmentSink
+                                    maxTimestamp, scratch.tsIndexAddr, scratch.columns, cellSegmentSink,
+                                    replaceTsLo, replaceTsHi
                             );
 
                             groupStart = groupEnd + 1;
                         }
+                    }
+
+                    // REPLACE mode: the dispatches above covered the cells this commit has rows for.
+                    // Every OTHER existing cell of this partition still holds rows inside the range and
+                    // must lose them -- the composite-specific half of a replace.
+                    if (isCommitReplaceMode()) {
+                        replaceRowCellKeys.clear();
+                        for (int j = 0, jn = rangeLenInt; j < jn; j++) {
+                            replaceRowCellKeys.add(rowCellKeys[j]);
+                        }
+                        latchCount += dispatchCompositeReplaceDeleteOnly(
+                                partitionTimestamp, o3TimestampMin, o3TimestampMax,
+                                replacePartitionLo, replacePartitionHi, replaceRowCellKeys,
+                                maxTimestamp, sortedTimestampsAddr, o3Columns, cellSegmentSink
+                        );
+                        // NO advance here: the loop tail already advances, and doing it twice SKIPPED
+                        // a partition -- measured, day 2 of a two-day replace never had its range
+                        // deleted because this block moved to day 2 and the tail then moved past it.
                     }
                 } catch (CairoException | CairoError e) {
                     LOG.error().$((Sinkable) e).$();
@@ -13873,7 +13952,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3DoneLatch.await(latchCount);
                     inflightPartitions = 0;
                 }
-                partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
+                // Cell-aware advance: a composite day's CELLS are separate attached entries sharing
+                // one timestamp, so getNextExistingPartitionTimestamp returns the SAME day again and a
+                // replace traversal never leaves the first partition. Outside replace mode this value
+                // is overwritten at the top of the next iteration from the next row's timestamp, so
+                // the change is inert for ordinary commits.
+                partitionTimestamp = nextDistinctPartitionTimestamp(partitionTimestamp);
             } // end while(srcOoo < srcOooMax)
 
             partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
@@ -13951,6 +14035,115 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long sortedTimestampsAddrForCell,
             ReadOnlyObjList<? extends MemoryCR> oooColumnsForCell,
             StringSink cellSegmentSink
+    ) {
+        return dispatchCompositeCellRange(cellKey, partitionTimestamp, srcOooLo, srcOooHi, srcOooMax,
+                maxTimestamp, sortedTimestampsAddrForCell, oooColumnsForCell, cellSegmentSink, Long.MIN_VALUE, Long.MIN_VALUE);
+    }
+
+    /**
+     * The next attached partition timestamp strictly GREATER than {@code partitionTimestamp}, or
+     * {@code Long.MAX_VALUE} when there is none.
+     * <p>
+     * {@code TxWriter#getNextExistingPartitionTimestamp} cannot be used to walk a composite table:
+     * the day's CELLS are separate attached entries sharing one timestamp, so it returns the same day
+     * again and a loop advancing with it never leaves the first partition. Measured -- the
+     * replace-range traversal stopped after day 1 and left day 2's rows undeleted.
+     */
+    private long nextDistinctPartitionTimestamp(long partitionTimestamp) {
+        long best = Long.MAX_VALUE;
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            final long ts = txWriter.getPartitionTimestampByIndex(i);
+            if (ts > partitionTimestamp && ts < best) {
+                best = ts;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Dispatches the DELETE half of a REPLACE-range commit to every existing cell of one partition,
+     * optionally skipping cells that a row-bearing dispatch has already handled.
+     * <p>
+     * This is the composite-specific part of replace support. The plain writer has one partition to
+     * delete from; a composite table has one per CELL, and the incoming rows only name the cells they
+     * land in. Any other cell of the same partition still holds rows inside [lo, hi) and must lose
+     * them, otherwise the composite table keeps rows its plain twin dropped -- which is precisely what
+     * the twin assertions in CompositeReplaceRangeTest measure.
+     *
+     * @param skipCells cells already dispatched with rows this pass, or null to dispatch every cell
+     * @return the number of dispatched units, to be added to the caller's latch count
+     */
+    private int dispatchCompositeReplaceDeleteOnly(
+            long partitionTimestamp,
+            long o3TimestampMin,
+            long o3TimestampMax,
+            long replacePartitionLo,
+            long replacePartitionHi,
+            @Nullable IntHashSet skipCells,
+            long maxTimestamp,
+            long sortedTimestampsAddr,
+            ReadOnlyObjList<? extends MemoryCR> o3Columns,
+            StringSink cellSegmentSink
+    ) {
+        // Same bounds the plain path computes per partition: the range is clamped to this partition,
+        // opening at the commit's range low only in the FIRST partition and closing at its range high
+        // only in the LAST one.
+        final long o3TimestampLo = (partitionTimestamp == replacePartitionLo) ? o3TimestampMin : partitionTimestamp;
+        final long o3TimestampHi = (partitionTimestamp == replacePartitionHi)
+                ? o3TimestampMax
+                : txWriter.getCurrentPartitionMaxTimestamp(partitionTimestamp);
+
+        int dispatched = 0;
+        // Snapshot the cell keys first: dispatching mutates the attached-partition list.
+        replaceDeleteCellKeys.clear();
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) != partitionTimestamp) {
+                continue;
+            }
+            final int cellKey = txWriter.getPartitionCellKey(i);
+            if (skipCells != null && skipCells.contains(cellKey)) {
+                continue;
+            }
+            replaceDeleteCellKeys.add(cellKey);
+        }
+        for (int i = 0, n = replaceDeleteCellKeys.size(); i < n; i++) {
+            dispatched += dispatchCompositeCellRange(
+                    replaceDeleteCellKeys.getQuick(i),
+                    partitionTimestamp,
+                    // An EMPTY row range: hi = lo - 1, so srcOooBatchRowSize is 0 and nothing is
+                    // inserted. The delete range travels in replaceTsLo/replaceTsHi instead.
+                    0,
+                    -1,
+                    0,
+                    maxTimestamp,
+                    sortedTimestampsAddr,
+                    o3Columns,
+                    cellSegmentSink,
+                    o3TimestampLo,
+                    o3TimestampHi
+            );
+        }
+        return dispatched;
+    }
+
+    /**
+     * @param replaceTsLo in REPLACE-range mode, the low bound of the range this partition must have
+     *                    deleted; {@code Long.MIN_VALUE} outside replace mode, where the bounds are
+     *                    derived from the dispatched rows instead
+     * @param replaceTsHi the matching high bound
+     */
+    private int dispatchCompositeCellRange(
+            int cellKey,
+            long partitionTimestamp,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long maxTimestamp,
+            long sortedTimestampsAddrForCell,
+            ReadOnlyObjList<? extends MemoryCR> oooColumnsForCell,
+            StringSink cellSegmentSink,
+            long replaceTsLo,
+            long replaceTsHi
     ) {
         final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTimestamp, cellKey);
         // Composite writes never use the writer's active-tail transientRowCount (Fork (c): which
@@ -14087,8 +14280,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             Unsafe.putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
 
             final long dedupColSinkAddr = dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.allocateBlock() : 0;
-            final long o3TimestampLo = getTimestampIndexValue(sortedTimestampsAddrForCell, srcOooLo);
-            final long o3TimestampHi = getTimestampIndexValue(sortedTimestampsAddrForCell, srcOooHi);
+            // In REPLACE-range mode the bounds are the RANGE, not the extent of the dispatched rows:
+            // they tell O3PartitionJob what to delete, and a cell with no replacement rows carries an
+            // empty row range (srcOooLo > srcOooHi) with a non-empty delete range. Deriving them from
+            // the rows, as the insert path does, would delete only where rows happen to land.
+            final boolean replacing = replaceTsLo != Long.MIN_VALUE;
+            final long o3TimestampLo = replacing
+                    ? replaceTsLo
+                    : getTimestampIndexValue(sortedTimestampsAddrForCell, srcOooLo);
+            final long o3TimestampHi = replacing
+                    ? replaceTsHi
+                    : getTimestampIndexValue(sortedTimestampsAddrForCell, srcOooHi);
 
             //noinspection ConstantValue
             if (O3_FAIL_BETWEEN_PARTITION_COUNT_AND_DISPATCH) {
