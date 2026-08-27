@@ -891,6 +891,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
 
+            addColdDeltaIndex(columnIndex, indexType, indexValueBlockSize, coveringColumnIndices);
+
             columnMetadata.setIndexType(indexType);
             columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
@@ -2231,6 +2233,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // if a column is indexed, it is also of type SYMBOL
             throw CairoException.invalidMetadataRecoverable("column is not indexed", columnName);
         }
+        final byte droppedIndexType = columnMetadata.getIndexType();
+        final int droppedIndexValueBlockSize = columnMetadata.getIndexValueBlockCapacity();
+        final IntList droppedCoveringColumnIndices = columnMetadata.getCoveringColumnIndices();
         final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
 
         if (inTransaction()) {
@@ -2261,6 +2266,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnMetadata.setCoveringColumnIndices(null);
             rewriteAndSwapMetadata(metadata);
             clearTodoAndCommitMeta();
+
+            dropColdDeltaIndex(
+                    columnIndex,
+                    droppedIndexType,
+                    droppedIndexValueBlockSize,
+                    droppedCoveringColumnIndices
+            );
 
             // remove indexer - skip seal since the index is being dropped
             ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
@@ -4438,6 +4450,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } finally {
             Unsafe.free(auxBuf, auxSize, MemoryTag.NATIVE_TABLE_WRITER);
+        }
+    }
+
+    private void addColdDeltaIndex(
+            int columnIndex,
+            byte indexType,
+            int indexValueBlockSize,
+            IntList coveringColumnIndices
+    ) {
+        PartitionDeltaWriter deltaWriter = null;
+        for (int partitionIndex = 0, n = txWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
+            if (!txWriter.getPartitionHasDelta(partitionIndex)) {
+                continue;
+            }
+            if (deltaWriter == null) {
+                deltaWriter = getPartitionDeltaWriter();
+                if (deltaWriter == null) {
+                    return;
+                }
+            }
+            deltaWriter.addIndex(
+                    this,
+                    partitionIndex,
+                    columnIndex,
+                    indexType,
+                    indexValueBlockSize,
+                    coveringColumnIndices
+            );
         }
     }
 
@@ -7187,6 +7227,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void dropColdDeltaIndex(
+            int columnIndex,
+            byte indexType,
+            int indexValueBlockSize,
+            IntList coveringColumnIndices
+    ) {
+        PartitionDeltaWriter deltaWriter = null;
+        for (int partitionIndex = 0, n = txWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
+            if (!txWriter.getPartitionHasDelta(partitionIndex)) {
+                continue;
+            }
+            if (deltaWriter == null) {
+                deltaWriter = getPartitionDeltaWriter();
+                if (deltaWriter == null) {
+                    return;
+                }
+            }
+            deltaWriter.dropIndex(
+                    this,
+                    partitionIndex,
+                    columnIndex,
+                    indexType,
+                    indexValueBlockSize,
+                    coveringColumnIndices
+            );
+        }
+    }
+
     private long dropFuturePostingIndexChainEntriesBeforeLink(
             int srcDirLen,
             CharSequence columnName,
@@ -7670,6 +7738,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private long getO3RowCount0() {
         return (masterRef - o3MasterRef + 1) / 2;
+    }
+
+    private PartitionDeltaWriter getPartitionDeltaWriter() {
+        if (!partitionDeltaWriterInitialized) {
+            partitionDeltaWriter = configuration.newPartitionDeltaWriter();
+            partitionDeltaWriterInitialized = true;
+        }
+        return partitionDeltaWriter;
     }
 
     private long getPartitionTimestampOrMax(int partitionIndex) {
@@ -9428,11 +9504,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long srcOooLo,
             long srcOooHi
     ) {
-        if (!partitionDeltaWriterInitialized) {
-            partitionDeltaWriter = configuration.newPartitionDeltaWriter();
-            partitionDeltaWriterInitialized = true;
-        }
-        final PartitionDeltaWriter deltaWriter = partitionDeltaWriter;
+        final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
         if (deltaWriter == null) {
             LOG.critical()
                     .$("o3 ignoring write on delta-active partition, this build has no delta writer [table=").$(tableToken)

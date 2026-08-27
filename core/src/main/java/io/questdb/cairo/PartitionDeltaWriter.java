@@ -25,13 +25,34 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.std.IntList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.ReadOnlyObjList;
 
 public interface PartitionDeltaWriter extends QuietCloseable {
 
+    default void addIndex(
+            TableWriter writer,
+            int partitionIndex,
+            int columnIndex,
+            byte indexType,
+            int indexValueBlockSize,
+            IntList coveringColumnIndices
+    ) {
+    }
+
     @Override
     default void close() {
+    }
+
+    default void dropIndex(
+            TableWriter writer,
+            int partitionIndex,
+            int columnIndex,
+            byte indexType,
+            int indexValueBlockSize,
+            IntList coveringColumnIndices
+    ) {
     }
 
     void writeCommit(
