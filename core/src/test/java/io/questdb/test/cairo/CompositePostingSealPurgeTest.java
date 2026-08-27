@@ -65,23 +65,33 @@ import java.util.stream.Stream;
 public class CompositePostingSealPurgeTest extends AbstractCompositeTwinTest {
 
     /**
-     * PINS A CONFIRMED LEAK: superseded POSTING seals are never reclaimed on a composite table.
+     * Superseded POSTING seals must be reclaimed on a composite table. FIXED -- they used to leak.
      * <p>
      * Reaching {@link io.questdb.cairo.PostingSealPurgeOperator} needs a workload that SUPERSEDES a
      * seal. Sequential appends do not -- they reseal {@code .pv.0} in place (see the other test in this
      * class). O3 writes INTO an already-sealed day do: each rewrite leaves the previous seal behind and
      * queues a purge candidate.
      * <p>
-     * With the purge job then driven to exhaustion, the plain twin reclaims its superseded
-     * {@code sym.pv.0} and the composite table does not -- the operator builds
-     * {@code <day>/} with the bare 5-arg {@code setPathForNativePartition} while the real seals live at
-     * {@code <day>/<cell>.<nameTxn>/}. Same cell-blind-path family as the rest of this branch.
+     * Before the fix, with the purge job driven to exhaustion, the plain twin reclaimed its superseded
+     * {@code sym.pv.0} and the composite table did not:
+     * <pre>
+     *   plain     [2023-01-01.5/sym.pv.0, sym.pv.1]         ->  [2023-01-01.5/sym.pv.1]
+     *   composite [2023-01-01/E0.5/sym.pv.0, sym.pv.1, ...] ->  UNCHANGED
+     * </pre>
+     * {@code PostingSealPurgeOperator} addressed {@code <day>/} with the bare 5-arg
+     * {@code setPathForNativePartition} while the real seals live at {@code <day>/<cell>.<nameTxn>/}.
      * <p>
-     * <b>Not fixed here, and the reason is a scope decision.</b> The operator would need the cellKey,
-     * and {@code PostingSealPurgeJob#appendTask} persists its task fields as ROWS in a purge-log
-     * system table with a fixed column set. Adding a cellKey column is a system-table schema change
-     * plus a migration question for existing rows -- the same boundary reached by the cell-blind
-     * column-version purge in {@code CompositeColumnPurgeTest}. Both leaks share that one fix.
+     * <b>Why the fix needed no schema change.</b> The obvious route -- give the task a cellKey -- is
+     * blocked: {@code PostingSealPurgeJob#appendTask} persists its fields as ROWS in a purge-log system
+     * table with a fixed column set, so that would be a schema change plus a migration question. The
+     * operator instead ENUMERATES the cell directories under the day and runs the existing guarded
+     * delete sequence once per cell. A plain table still runs it exactly once, against the same path as
+     * before, so its behaviour is byte-identical -- which the 22 tests in {@code PostingSealPurgeTest},
+     * including the reuse-race cases, verify.
+     * <p>
+     * The cell-blind column-version purge pinned in {@code CompositeColumnPurgeTest} is the same family
+     * but is NOT fixed by this: it has no equivalent enumeration point, and its task record is
+     * persisted in {@code sys.column_versions_purge_log}.
      */
     @Test(timeout = 120_000)
     public void testO3IntoSealedDayReachesTheSealPurge() throws Exception {
@@ -151,10 +161,10 @@ public class CompositePostingSealPurgeTest extends AbstractCompositeTwinTest {
                     "the plain twin must still reclaim its superseded seal, else this comparison is "
                             + "measuring nothing. plain " + plainBeforePurge + " -> " + postingFiles("p"),
                     0, plainSupersededAfter);
-            Assert.assertTrue(
-                    "composite now reclaims superseded posting seals -- the leak is fixed, invert this "
-                            + "assertion. composite " + compositeBeforePurge + " -> " + postingFiles("c"),
-                    compositeSupersededAfter > 0);
+            Assert.assertEquals(
+                    "composite must reclaim superseded posting seals exactly as the plain twin does. "
+                            + "composite " + compositeBeforePurge + " -> " + postingFiles("c"),
+                    0, compositeSupersededAfter);
         });
     }
 
