@@ -345,6 +345,7 @@ public class LiveViewCheckpointReleaseShapesCompatTest extends AbstractLiveViewC
         ));
         return shapes;
     }
+
     /**
      * One released view and everything the cases assert about it.
      */
