@@ -207,13 +207,22 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * of the two, because a user who never types {@code SQUASH} still accumulates fragments and nothing
      * tells them.
      */
-    @Ignore("SP1E residual, RE-VERIFIED 2026-08-26 and still exact: under 6 O3 rounds the composite"
-            + " table keeps 6 split fragments where its plain twin keeps 3 (composite=[010000, 103000,"
-            + " 113000, 123000, 133000, 143000], plain=[103000.3, 123000.5, 143000.6]) -- composite"
-            + " squashes less aggressively because the automatic path is threshold-based and reaches"
-            + " the cell-scoped merge less often. Data parity holds (assertTwinEqual passes); this is"
-            + " steady-state fragment COUNT, a read-performance residual, not correctness. Un-ignore"
-            + " when composite matches the twin.")
+    @Ignore("SP1E residual, still exact: under 6 O3 rounds composite keeps 6 split fragments where its"
+            + " plain twin keeps 3 (composite=[010000, 103000, 113000, 123000, 133000, 143000],"
+            + " plain=[103000.3, 123000.5, 143000.6]). CAUSE CORRECTED 2026-08-27 -- the previous note"
+            + " here blamed squashing (\"composite squashes less aggressively ... reaches the cell-scoped"
+            + " merge less often\") and that is WRONG. Instrumented: squashSplitPartitionsComposite is"
+            + " invoked ZERO times for either table during this workload, because squashPartitionRange"
+            + " only squashes when (partitionIndexHi - partitionIndexLo) exceeds O3LastPartitionMaxSplits"
+            + " and it is 3..8 against a threshold of ~20. Neither table squashes at all. The real cause"
+            + " is SPLITTING: composite enters O3PartitionJob's split decision 6 times to the twin's 3,"
+            + " one per O3 round, because the split heuristic weighs prefixHi against the partition it is"
+            + " writing -- and on a composite table that partition is a CELL, holding a fraction of the"
+            + " day's rows. Data parity holds (assertTwinEqual passes); this is steady-state fragment"
+            + " COUNT, a read-performance residual, not correctness. A fix belongs in the split"
+            + " heuristic, NOT the squash path, and changing it affects plain tables too -- so it needs"
+            + " its own measurement of the read/write trade-off. Un-ignore when composite matches the"
+            + " twin.")
     @Test(timeout = 60_000)
     public void testAutomaticSquashDoesNotAccumulateFragments() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
