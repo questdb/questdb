@@ -52,10 +52,12 @@ import java.util.concurrent.atomic.AtomicReference;
  * <ul>
  *   <li><b>Recycle reconnect</b> (client-driven, see {@link QwpSymbolDictRecycleE2ETest}):
  *       once the producer-visible symbol dictionary reaches
- *       {@code symbol_dict_reset_threshold} distinct symbols, the sender tears
- *       down its engine, rolls its FSN epoch base, rebuilds a fresh dictionary
- *       and reconnects -- entirely on its own clock, driven by how many novel
- *       symbols the producer has handed it.</li>
+ *       {@code symbol_dict_reset_threshold} distinct symbols, or the producer
+ *       asks via {@code resetSymbolDictionary()} (this test does, every
+ *       {@link #RESET_EVERY_N_BATCHES} batches -- see that constant), the
+ *       sender tears down its engine, rolls its FSN epoch base, rebuilds a
+ *       fresh dictionary and reconnects -- entirely on its own clock, at its
+ *       own barrier.</li>
  *   <li><b>Ordinary reconnect</b> (server-driven, see
  *       {@link QwpIngressServerRestartFuzzTest}): an unplanned server bounce
  *       drops the wire; the sender's I/O loop reconnects with a delta
@@ -92,6 +94,13 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
     // QwpIngressServerRestartFuzzTest -- RestartableQwpServer does not
     // override these, so the actual buffers are this size.
     private static final int RECV_BUFFER_SIZE = 131_072;
+    // The client's anti-thrash re-arm floor (2x the dictionary size at the
+    // last swap) lets this bounded live set recycle organically only a
+    // handful of times; the producer requests the rest on this cadence so
+    // recycles stay dense across the whole bounce schedule. The swap itself
+    // still runs only at the client's own barrier (drained ring, no row in
+    // progress), so a request that lands mid-outage waits like an organic arm.
+    private static final int RESET_EVERY_N_BATCHES = 3;
     private static final int SEND_BUFFER_SIZE = 131_072;
     // Comfortably above the reset threshold -- as in QwpSymbolDictRecycleE2ETest,
     // this keeps most in-epoch growth on genuinely novel symbols. Total rows
@@ -132,23 +141,19 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
 
             Rnd rnd = TestUtils.generateRandom(LOG);
             // 15..30 server bounces, randomly paced -- large enough to
-            // interleave densely with the tens of recycles the threshold
-            // below is sized to produce, small enough to keep the run under
-            // a handful of seconds.
+            // interleave densely with the tens of recycles the reset cadence
+            // produces, small enough to keep the run under a handful of
+            // seconds.
             int restartTarget = 15 + rnd.nextInt(16);
             long tsBase = 1_700_000_000_000_000_000L;
             long tsStepNanos = 1_000L; // 1us per row, well under DAY partition
 
-            // reconnect_max_duration_millis is load-bearing beyond its own name:
-            // any reconnect_* knob set explicitly promotes initialConnectMode to
-            // SYNC (Sender.build()), which is what makes recycleForDictReset()'s
-            // step 7 ensureConnected() take the connectWithRetry(..., 120_000, ...)
-            // retry path instead of a single-shot buildAndConnect. Without it, a
-            // bounce landing exactly on a recycle's own step-7 reconnect throws
-            // once, step 8 latches recycleFailure, and the sender goes
-            // permanently terminal -- this knob is what lets the RECYCLE path (not
-            // just the ordinary I/O-loop reconnect) ride out the bouncer's
-            // downtime at all. Do not trim it.
+            // Any reconnect_* knob set explicitly promotes the INITIAL connect to
+            // SYNC (Sender.build()), so the first connect against the freshly
+            // started server is bounded here. A recycle's step-7 reconnect never
+            // runs on the producer thread: every post-initial ensureConnected()
+            // entry defers the socket connect to the I/O thread with unbounded
+            // retry, so no budget funds a bounce that lands on a recycle.
             String connect = "ws::addr=localhost:" + port + ";sf_dir=" + sfDir
                     + ";symbol_dict_reset_threshold=" + SYMBOL_DICT_RESET_THRESHOLD
                     + ";reconnect_max_duration_millis=120000"
@@ -191,12 +196,14 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                         });
                         long id = 0;
                         int batchesSinceDrain = 0;
+                        int batchesSinceReset = 0;
                         while (!stopProducer.get()) {
                             for (int i = 0; i < BATCH_SIZE; i++) {
                                 long currentId = id++;
                                 writeRow(sender, currentId, tsBase, tsStepNanos);
                             }
                             batchesSinceDrain++;
+                            batchesSinceReset++;
                             if (batchesSinceDrain >= TARGET_DRAIN_EVERY_N_BATCHES) {
                                 // Blocking wait for acks -- may straddle a bounce
                                 // mid-wait. See class javadoc. 30s covers a full
@@ -208,6 +215,10 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                                 batchesSinceDrain = 0;
                             } else {
                                 sender.flush();
+                            }
+                            if (batchesSinceReset >= RESET_EVERY_N_BATCHES) {
+                                sender.resetSymbolDictionary();
+                                batchesSinceReset = 0;
                             }
                             rowsProduced.set(id);
                             if (firstBatchAcked.getCount() > 0) {
@@ -226,7 +237,7 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                         }
                         // Captured right after the batch loop, before the implicit
                         // close() below runs. recycleForDictReset() is reachable
-                        // only from table(...) (QwpWebSocketSender.java:3010), so
+                        // only from table(...), so
                         // close() itself can never advance these counters further --
                         // this sample is already final. Durability is close()'s job,
                         // not this sample's: drainOnClose() throws on timeout, which

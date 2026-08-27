@@ -70,9 +70,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>
  * This test streams several hundred rows with a bounded, deterministic
  * {@code sym = "s" + (id % SYMBOL_CARDINALITY)} mapping across a threshold
- * low enough to cross it once organically; the client's C1 anti-thrash
- * re-arm floor (review r3) then keeps this bounded live set from
- * re-arming on its own, so a manual {@code resetSymbolDictionary()} call
+ * low enough to cross it once organically; the client's anti-thrash
+ * re-arm floor then keeps this bounded live set from re-arming on its
+ * own, so a manual {@code resetSymbolDictionary()} call
  * (which bypasses the floor by design) drives a second recycle. It then
  * proves:
  * <ul>
@@ -93,23 +93,22 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
 
     private static final int BATCH_SIZE = 30;
     private static final Log LOG = LogFactory.getLog(QwpSymbolDictRecycleE2ETest.class);
+    // Rows streamed through the bounded organic loop, well past
+    // SYMBOL_CARDINALITY, so the threshold is crossed once. The client's
+    // anti-thrash re-arm floor (resetFloorSymbols = 2x dictSizeAtSwap) then
+    // makes a second organic recycle impossible for this bounded live set --
+    // one recycle, then settle, is the intended behavior under the floor.
+    private static final int ORGANIC_ROWS = 900;
     // K in "sym = 's' + (id % K)". Comfortably above the reset threshold so
     // every epoch's dictionary keeps growing on genuinely novel symbols
     // rather than immediately recycling repeats.
     private static final int SYMBOL_CARDINALITY = 150;
     private static final int SYMBOL_DICT_RESET_THRESHOLD = 64;
     private static final String TABLE_NAME = "qwp_symbol_dict_recycle_e2e";
-    // Rows streamed through the bounded organic loop, well past
-    // SYMBOL_CARDINALITY, so the threshold is crossed once. The client's C1
-    // anti-thrash re-arm floor (resetFloorSymbols = 2x dictSizeAtSwap,
-    // review r3) then makes a second organic recycle impossible for this
-    // bounded live set -- one recycle, then settle, is the intended
-    // post-C1 behavior.
-    private static final int ORGANIC_ROWS = 900;
     // One extra batch, written after a manual Sender.resetSymbolDictionary()
-    // call (which bypasses the C1 floor by design), to drive the second
-    // recycle this test needs in order to prove FSN/epoch continuity across
-    // more than one recycle boundary.
+    // call (which bypasses the floor by design), to drive the second recycle
+    // this test needs in order to prove FSN/epoch continuity across more
+    // than one recycle boundary.
     private static final int TOTAL_ROWS = ORGANIC_ROWS + BATCH_SIZE;
 
     @Test
@@ -120,6 +119,13 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testRecycleAcrossThresholdInMemoryMode() throws Exception {
         runRecycleScenario(false);
+    }
+
+    private static void writeRow(QwpWebSocketSender sender, long id, long tsBase, long tsStepNanos) {
+        sender.table(TABLE_NAME)
+                .symbol("sym", "s" + (id % SYMBOL_CARDINALITY))
+                .longColumn("id", id)
+                .at(tsBase + id * tsStepNanos, ChronoUnit.NANOS);
     }
 
     /**
@@ -204,7 +210,7 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
             // happen only at this test's explicit flushAndGetSequence() calls. The
             // default WS auto_flush_interval (100ms) could otherwise fire an
             // intra-batch flush that arms the recycle early (a smaller
-            // dictSizeAtSwap lowers the C1 re-arm floor), letting the bounded
+            // dictSizeAtSwap lowers the re-arm floor), letting the bounded
             // SYMBOL_CARDINALITY set legally recycle a second time organically.
             // WebSocket rejects auto_flush_interval=off outright, so pin it to a
             // value well beyond this test's runtime instead of disabling it.
@@ -260,16 +266,16 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
 
                 Assert.assertEquals("a bounded live set of " + SYMBOL_CARDINALITY
                                 + " symbols must recycle exactly once and then settle "
-                                + "under the client's C1 anti-thrash re-arm floor",
+                                + "under the client's anti-thrash re-arm floor",
                         1, sender.getSymbolDictResetsPerformed());
 
-                // Sender.resetSymbolDictionary() bypasses the C1 re-arm floor by
-                // design (review r3, finding C1) -- mirrors the client's own
+                // Sender.resetSymbolDictionary() bypasses the re-arm floor by
+                // design -- mirrors the client's own
                 // SymbolDictRecycleHealingTest#testMetricsAfterTwoRecycles -- so
                 // drive the second recycle, and the multi-epoch continuity this
                 // test exists to prove, through it.
                 sender.resetSymbolDictionary();
-                Assert.assertTrue("manual reset request must bypass the C1 floor and arm immediately",
+                Assert.assertTrue("manual reset request must bypass the re-arm floor and arm immediately",
                         sender.isResetArmed());
                 for (int i = 0; i < BATCH_SIZE; i++) {
                     writeRow(sender, id, tsBase, tsStepNanos);
@@ -284,7 +290,7 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
                 // anchor below reflects the LAST epoch this run ever reached,
                 // not an intermediate one.
                 finalEpochBase = sender.getFsnEpochBaseForTest();
-                Assert.assertEquals("the organic recycle (C1-floor-limited to one) plus the "
+                Assert.assertEquals("the organic recycle (floor-limited to one) plus the "
                                 + "manual resetSymbolDictionary() recycle must together total "
                                 + "exactly 2, got symbolDictResetsPerformed=" + resetsPerformed,
                         2, resetsPerformed);
@@ -378,13 +384,6 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
                         snapshot.get(i) > snapshot.get(i - 1));
             }
         }, ingressConnections);
-    }
-
-    private static void writeRow(QwpWebSocketSender sender, long id, long tsBase, long tsStepNanos) {
-        sender.table(TABLE_NAME)
-                .symbol("sym", "s" + (id % SYMBOL_CARDINALITY))
-                .longColumn("id", id)
-                .at(tsBase + id * tsStepNanos, ChronoUnit.NANOS);
     }
 
     /**
