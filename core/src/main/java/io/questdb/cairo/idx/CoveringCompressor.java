@@ -136,7 +136,10 @@ public class CoveringCompressor {
             if (val > forMax) forMax = val;
         }
         int bw = bitsRequired(forBase, forMax);
-        if (forBase == Long.MAX_VALUE) {
+        // Unsafe.getByte() bounds every value far inside the Long.MAX_VALUE seed,
+        // so this site cannot collide; it tests the count only for uniformity with
+        // compressInts/compressLongs, where the collision is real.
+        if (count == 0) {
             forBase = 0;
         }
 
@@ -212,7 +215,11 @@ public class CoveringCompressor {
             forMax = Math.max(forMax, v);
         }
         int bw = bitsRequired(forBase, forMax);
-        if (forBase == Long.MAX_VALUE) {
+        // alpEncode() diverts every non-encodable value into the exception list and
+        // clamps the encoded magnitudes it does store, so no slot ever holds the
+        // Long.MAX_VALUE seed and this site cannot collide; it tests the count only
+        // for uniformity with compressInts/compressLongs, where the collision is real.
+        if (count == 0) {
             forBase = 0;
         }
 
@@ -305,7 +312,11 @@ public class CoveringCompressor {
             forMax = Math.max(forMax, v);
         }
         int bw = bitsRequired(forBase, forMax);
-        if (forBase == Long.MAX_VALUE) {
+        // alpEncodeFloat() diverts every non-encodable value into the exception list
+        // and each stored slot holds a clamped int, so no slot ever holds the
+        // Long.MAX_VALUE seed and this site cannot collide; it tests the count only
+        // for uniformity with compressInts/compressLongs, where the collision is real.
+        if (count == 0) {
             forBase = 0;
         }
 
@@ -357,7 +368,13 @@ public class CoveringCompressor {
             forMax = Math.max(forMax, val);
         }
         int bw = bitsRequired(forBase, forMax);
-        if (forBase == Integer.MAX_VALUE) {
+        // count == 0 is the only case that leaves forBase at its seed. Testing
+        // for the seed value instead also fires on a stride that is entirely
+        // Integer.MAX_VALUE: bitsRequired returns 0 for a zero span, so no
+        // packed payload follows and both readers hand this base straight back
+        // for every row of the block -- which used to surface as 0, or NULL for
+        // an IPv4 column.
+        if (count == 0) {
             forBase = 0;
         }
 
@@ -395,7 +412,9 @@ public class CoveringCompressor {
             forMax = Math.max(forMax, val);
         }
         int bw = bitsRequired(forBase, forMax);
-        if (forBase == Long.MAX_VALUE) {
+        // See compressInts: an all-Long.MAX_VALUE stride must keep its real
+        // base, and only count == 0 leaves forBase at its seed.
+        if (count == 0) {
             forBase = 0;
         }
 
@@ -448,7 +467,12 @@ public class CoveringCompressor {
         if (bw > 63) {
             return compressLongs(srcAddr, count, destAddr);
         }
-        if (resMin == Long.MAX_VALUE) {
+        // Unreachable, and kept only so the file carries one idiom: count <= 1
+        // already delegated to compressLongs, and residual[0] is val[0] minus
+        // firstValue, which reads the same slot, so resMin is always <= 0.
+        // Testing the sentinel here would be the compressInts collision again
+        // if that early return ever moved.
+        if (count == 0) {
             resMin = 0;
         }
 
@@ -482,7 +506,10 @@ public class CoveringCompressor {
             if (val > forMax) forMax = val;
         }
         int bw = bitsRequired(forBase, forMax);
-        if (forBase == Long.MAX_VALUE) {
+        // Unsafe.getShort() bounds every value far inside the Long.MAX_VALUE seed,
+        // so this site cannot collide; it tests the count only for uniformity with
+        // compressInts/compressLongs, where the collision is real.
+        if (count == 0) {
             forBase = 0;
         }
 

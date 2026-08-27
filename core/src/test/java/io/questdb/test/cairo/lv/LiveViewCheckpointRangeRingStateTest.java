@@ -401,10 +401,11 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
     @Test
     public void testLongValueRingRoundTripsRawBits() throws Exception {
         assertMemoryLeak(() -> {
-            final LiveViewCheckpointPartitionMapEntry root = new LiveViewCheckpointPartitionMapEntry();
             // A raw 64-bit value column must round-trip any bit pattern verbatim,
             // including LONG_NULL and a bit pattern that would be a NaN if read as a
             // double - proof the long ring never routes a value through a double.
+            // This payload spans the whole 64-bit range, so FoR cannot narrow it and
+            // the selection falls back to raw.
             final long[] payload = {
                     Long.MIN_VALUE, // LONG_NULL
                     0L,
@@ -413,45 +414,23 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                     0x7ff0_0000_0000_0001L, // a signaling-NaN bit pattern as a raw long
                     42L,
             };
-            try (Catalogue directory = new Catalogue()) {
-                try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
-                     LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
-                     Path dir = new Path()) {
-                    builder.ofEmpty(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG, 1);
-                    writer.of(checkpointsDir(dir), 7);
-                    for (int i = 0; i < payload.length; i++) {
-                        builder.append(writer, i * 1_000L, payload[i]);
-                    }
-                    builder.freeze(writer, KEY, 0L, 0, 0, 0, payload.length, root);
-                    directory.addSegment(7, writer.commit());
-                }
-                // The value pages self-identify as the long page kind. This payload
-                // spans the whole 64-bit range, so FoR cannot narrow it and the
-                // selection falls back to raw.
-                for (int i = 1; i < root.getStatePageCount(); i += 2) {
-                    Assert.assertEquals(
-                            LiveViewCheckpointRangeRingStateReader.LONG_VALUE_PAGE_KIND,
-                            root.getStatePageRef(i).getPageKind()
-                    );
-                    Assert.assertEquals(
-                            LiveViewCheckpointStateCodec.RAW_64,
-                            root.getStatePageRef(i).getCodec()
-                    );
-                }
-                try (LiveViewCheckpointRangeRingStateReader reader = new LiveViewCheckpointRangeRingStateReader(configuration);
-                     Path dir = new Path()) {
-                    reader.of(checkpointsDir(dir), directory.reader, root);
-                    Assert.assertEquals(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG, reader.getValueKind());
-                    Assert.assertEquals(payload.length, reader.getRowCount());
-                    final int[] index = {0};
-                    reader.forEachRow((timestamp, valueBits) -> {
-                        final int i = index[0]++;
-                        Assert.assertEquals(i * 1_000L, timestamp);
-                        Assert.assertEquals(payload[i], valueBits);
-                    });
-                    Assert.assertEquals(payload.length, index[0]);
-                }
-            }
+            assertLongValueRingRoundTrips(payload, 7, LiveViewCheckpointStateCodec.RAW_64);
+        });
+    }
+
+    @Test
+    public void testLongValueRingRoundTripsAnAllMaxValueStride() throws Exception {
+        assertMemoryLeak(() -> {
+            // Every row of the frame holds the same LONG payload, and that payload
+            // is the largest a LONG column can hold. The stride's minimum then
+            // equals the value the plain-FoR encoder seeds its scan with, which is
+            // the one input that used to make the block store a base of 0 and
+            // decode the whole page back as 0. The page still has to select the
+            // covering block - a 13-byte header against 8 bytes per raw row - and
+            // every row still has to read back as Long.MAX_VALUE.
+            final long[] payload = new long[64];
+            Arrays.fill(payload, Long.MAX_VALUE);
+            assertLongValueRingRoundTrips(payload, 11, LiveViewCheckpointStateCodec.COVERING_LONG);
         });
     }
 
@@ -877,6 +856,51 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
      * Asserts {@code entry} holds exactly the given per-page format-1 codec tags, in
      * page order, and that no page stores more bytes than the payload it decodes to.
      */
+    /**
+     * Seals a one-word LONG value ring holding {@code payload} into {@code segmentId}, asserts
+     * every value page self-identifies as the long page kind and landed under
+     * {@code expectedValueCodec}, then walks the ring back against {@code payload}.
+     * <p>
+     * {@link #assertRestored} cannot stand in for the walk: it neither asserts the restored
+     * value kind nor takes the payload as a {@code long[]}.
+     */
+    private static void assertLongValueRingRoundTrips(long[] payload, long segmentId, int expectedValueCodec) {
+        final LiveViewCheckpointPartitionMapEntry root = new LiveViewCheckpointPartitionMapEntry();
+        try (Catalogue directory = new Catalogue()) {
+            try (LiveViewCheckpointRangeRingStateBuilder builder = new LiveViewCheckpointRangeRingStateBuilder(configuration);
+                 LiveViewCheckpointDataSegmentWriter writer = new LiveViewCheckpointDataSegmentWriter(configuration);
+                 Path dir = new Path()) {
+                builder.ofEmpty(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG, 1);
+                writer.of(checkpointsDir(dir), segmentId);
+                for (int i = 0; i < payload.length; i++) {
+                    builder.append(writer, i * 1_000L, payload[i]);
+                }
+                builder.freeze(writer, KEY, 0L, 0, 0, 0, payload.length, root);
+                directory.addSegment(segmentId, writer.commit());
+            }
+            for (int i = 1; i < root.getStatePageCount(); i += 2) {
+                Assert.assertEquals(
+                        LiveViewCheckpointRangeRingStateReader.LONG_VALUE_PAGE_KIND,
+                        root.getStatePageRef(i).getPageKind()
+                );
+                Assert.assertEquals(expectedValueCodec, root.getStatePageRef(i).getCodec());
+            }
+            try (LiveViewCheckpointRangeRingStateReader reader = new LiveViewCheckpointRangeRingStateReader(configuration);
+                 Path dir = new Path()) {
+                reader.of(checkpointsDir(dir), directory.reader, root);
+                Assert.assertEquals(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG, reader.getValueKind());
+                Assert.assertEquals(payload.length, reader.getRowCount());
+                final int[] index = {0};
+                reader.forEachRow((timestamp, valueBits) -> {
+                    final int i = index[0]++;
+                    Assert.assertEquals(i * 1_000L, timestamp);
+                    Assert.assertEquals(payload[i], valueBits);
+                });
+                Assert.assertEquals(payload.length, index[0]);
+            }
+        }
+    }
+
     private static void assertPageCodecs(LiveViewCheckpointPartitionMapEntry entry, int... expectedCodecs) {
         Assert.assertEquals(expectedCodecs.length, entry.getStatePageCount());
         for (int i = 0; i < expectedCodecs.length; i++) {
