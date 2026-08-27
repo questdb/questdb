@@ -80,13 +80,16 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             int slaveValueTimestampIndex
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        Map joinKeyMapA = null;
+        Map joinKeyMapB = null;
+        boolean isCursorOwningMaps = false;
         try {
             this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
-            Map joinKeyMapA = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, false, false);
+            joinKeyMapA = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, false, false);
             // if toleranceInterval is not set, we do not need a second map for evacuation. since evacuations are only
             // executed when TOLERANCE_INTERVAL is set
-            Map joinKeyMapB = toleranceInterval != Numbers.LONG_NULL ? MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, false, false) : null;
+            joinKeyMapB = toleranceInterval != Numbers.LONG_NULL ? MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, false, false) : null;
             int slaveWrappedOverMaster = slaveColumnTypes.getColumnCount() - masterTableKeyColumns.getColumnCount();
             this.cursor = new AsOfJoinRecordCursor(
                     columnSplit,
@@ -102,11 +105,19 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                     slaveWrappedOverMaster,
                     columnIndex
             );
+            // From here on the cursor owns the maps and its close() frees them.
+            isCursorOwningMaps = true;
             this.columnIndex = columnIndex;
             this.toleranceInterval = toleranceInterval;
             this.slaveValueTimestampIndex = slaveValueTimestampIndex;
             this.mapEvacuationThreshold = configuration.getSqlAsOfJoinMapEvacuationThreshold();
         } catch (Throwable th) {
+            // If a map allocation or the cursor constructor throws before the cursor takes ownership,
+            // close() cannot reach the maps, so free them here.
+            if (!isCursorOwningMaps) {
+                Misc.free(joinKeyMapA);
+                Misc.free(joinKeyMapB);
+            }
             close();
             throw th;
         }
@@ -207,11 +218,14 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
         @Override
         public void close() {
+            // Free the maps regardless of isOpen. Map.close() is idempotent, so this costs nothing when
+            // of() never ran, and it keeps the factory leak-free no matter which openOnInit the maps use.
+            // The factory can be closed without ever handing out a cursor - EXPLAIN does exactly that.
+            joinKeyMapA.close();
+            if (joinKeyMapB != null) {
+                joinKeyMapB.close();
+            }
             if (isOpen) {
-                joinKeyMapA.close();
-                if (joinKeyMapB != null) {
-                    joinKeyMapB.close();
-                }
                 isOpen = false;
                 super.close();
             }

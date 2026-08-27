@@ -450,9 +450,9 @@ struct ConstantCacheYmm {
     ConstantCacheYmm() : count(0) {}
 
     // Find an integer constant and return its YMM register
-    bool findInt(int64_t value, asmjit::x86::Vec &out_reg) const {
+    bool findInt(int64_t value, data_type_t type, asmjit::x86::Vec &out_reg) const {
         for (size_t i = 0; i < count; ++i) {
-            if (!is_float[i] && int_values[i] == value) {
+            if (!is_float[i] && int_values[i] == value && int_types[i] == type) {
                 out_reg = ymm_regs[i];
                 return true;
             }
@@ -472,10 +472,11 @@ struct ConstantCacheYmm {
     }
 
     // Add an integer constant
-    void addInt(int64_t value, asmjit::x86::Vec reg) {
+    void addInt(int64_t value, data_type_t type, asmjit::x86::Vec reg) {
         if (count < MAX_CONSTANTS) {
             is_float[count] = false;
             int_values[count] = value;
+            int_types[count] = type;
             ymm_regs[count] = reg;
             count++;
         }
@@ -496,6 +497,7 @@ private:
     size_t count;
     bool is_float[MAX_CONSTANTS];
     int64_t int_values[MAX_CONSTANTS];
+    data_type_t int_types[MAX_CONSTANTS];
     double float_values[MAX_CONSTANTS];
     data_type_t float_types[MAX_CONSTANTS];
     asmjit::x86::Vec ymm_regs[MAX_CONSTANTS];
