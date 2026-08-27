@@ -238,31 +238,6 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
          * {@code value}, or {@code hi}. The run ascends, so this is a binary
          * search rather than a scan.
          */
-        private static long seekFirstAtLeast(long rowIdPtr, long lo, long hi, long value) {
-            while (lo < hi) {
-                final long mid = (lo + hi) >>> 1;
-                if (Unsafe.getUnsafe().getLong(rowIdPtr + (mid << 3)) < value) {
-                    lo = mid + 1;
-                } else {
-                    hi = mid;
-                }
-            }
-            return lo;
-        }
-
-        /** First index in {@code [lo, hi)} whose row id exceeds {@code value}, or {@code hi}. */
-        private static long seekFirstAbove(long rowIdPtr, long lo, long hi, long value) {
-            while (lo < hi) {
-                final long mid = (lo + hi) >>> 1;
-                if (Unsafe.getUnsafe().getLong(rowIdPtr + (mid << 3)) <= value) {
-                    lo = mid + 1;
-                } else {
-                    hi = mid;
-                }
-            }
-            return lo;
-        }
-
         @Override
         public boolean hasNext() {
             if (hasNext) {

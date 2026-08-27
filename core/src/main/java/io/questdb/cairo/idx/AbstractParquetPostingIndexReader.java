@@ -178,6 +178,40 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     }
 
     /**
+     * First index in {@code [lo, hi)} whose row id is at or above
+     * {@code value}, or {@code hi}.
+     * <p>
+     * A key's run is ascending whichever way a cursor walks it, so both
+     * directions narrow a window the same way. Shared here rather than copied
+     * into each cursor: the backward reader went without these for a while and
+     * decoded a row group per key as a result.
+     */
+    protected static long seekFirstAtLeast(long rowIdPtr, long lo, long hi, long value) {
+        while (lo < hi) {
+            final long mid = (lo + hi) >>> 1;
+            if (Unsafe.getUnsafe().getLong(rowIdPtr + (mid << 3)) < value) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo;
+    }
+
+    /** First index in {@code [lo, hi)} whose row id exceeds {@code value}, or {@code hi}. */
+    protected static long seekFirstAbove(long rowIdPtr, long lo, long hi, long value) {
+        while (lo < hi) {
+            final long mid = (lo + hi) >>> 1;
+            if (Unsafe.getUnsafe().getLong(rowIdPtr + (mid << 3)) <= value) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo;
+    }
+
+    /**
      * Offset of {@code row_id}'s values in {@code rowGroup}, or -1 when the
      * chunk is not a single uncompressed PLAIN page and so has to be decoded.
      */

@@ -33,11 +33,20 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
+import java.util.Arrays;
+
 /**
  * {@link IndexReader#DIR_BACKWARD} reader over a parquet-form covering index.
  * Serves a key's postings in descending {@code row_id} order.
  */
 public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexReader {
+    /**
+     * Amortising a whole-group decode needs keys to amortise OVER. Same bound
+     * and same reasoning as the forward reader: a group holding a handful of
+     * wide keys decodes just as many rows either way, so the whole-group read
+     * buys nothing and costs one large buffer.
+     */
+    private static final int WHOLE_GROUP_KEY_THRESHOLD = 8;
     /**
      * @see ParquetPostingIndexFwdReader
      */
@@ -145,6 +154,29 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
         private boolean pooled;
         private int[] requiredCoverColumns;
         private long rowInGroup;
+        // Lower bound of the countdown. Zero when a decode produced a buffer
+        // holding only the key's rows; rowLo when reading the group's row_id
+        // column in place, where the key's run sits at an offset.
+        private long rowFloor;
+        private int cachedRowGroup = -1;
+        private int[] cachedCovers;
+        private int lastTouchedRowGroup = -1;
+        // Set when the window was narrowed by seeking, so hasNext can skip the
+        // per-row bounds test.
+        private boolean windowNarrowed;
+
+        /**
+         * Releases the decoded row group. Mirrors the forward cursor: the cache
+         * handle MUST be cleared with the buffers it points at, or a later
+         * cache hit would read freed memory.
+         */
+        @Override
+        protected void freeResources() {
+            cachedRowGroup = -1;
+            cachedCovers = null;
+            lastTouchedRowGroup = -1;
+            super.freeResources();
+        }
 
         /**
          * @see ParquetPostingIndexFwdReader
@@ -155,7 +187,10 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             if (detached) {
                 freeResources();
             } else {
-                rowGroupBuffers.close();
+                // The decoded group is KEPT for a pooled cursor, matching the
+                // forward cursor. Closing the buffers here is what forced a
+                // fresh decode on every key even when the next key lived in the
+                // group just decoded -- a scan paid one decode PER KEY.
                 if (!pooled) {
                     pooled = true;
                     freeCursors.add(this);
@@ -163,6 +198,8 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             }
             decodedGroup = false;
             rowIdPtr = 0;
+            rowFloor = 0;
+            windowNarrowed = false;
             hasNext = false;
         }
 
@@ -178,10 +215,10 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     // what would drop it.
                     break;
                 }
-                while (rowInGroup > 0) {
+                while (rowInGroup > rowFloor) {
                     final long i = --rowInGroup;
                     final long rowId = Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
-                    if (rowId < minValue || rowId > maxValue) {
+                    if (!windowNarrowed && (rowId < minValue || rowId > maxValue)) {
                         continue;
                     }
                     setEmittedRow(i);
@@ -258,16 +295,78 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                 }
                 rowLo = Numbers.decodeLowInt(keyRange);
                 rowHi = Numbers.decodeHighInt(keyRange);
+                // Fastest path, and the forward reader has had it all along:
+                // when the caller wants no covered value and row_id's chunk is a
+                // single uncompressed PLAIN page, the values are just int64s in
+                // the mapping. Reading them in place skips the JNI crossing, the
+                // thrift page header and the buffer -- which is the whole cost of
+                // a backward point read once pruning has narrowed it. Without
+                // this the cursor decoded a row group PER KEY.
+                if (requiredCoverColumns == null || requiredCoverColumns.length == 0) {
+                    final long dataOffset = rowIdDataOffset(rg);
+                    if (dataOffset >= 0) {
+                        rowIdPtr = pidxAddr + dataOffset;
+                        // The run ascends even though this cursor descends, so
+                        // the window is a sub-range that can be found rather
+                        // than filtered for.
+                        rowFloor = seekFirstAtLeast(rowIdPtr, rowLo, rowHi, minValue);
+                        rowInGroup = seekFirstAbove(rowIdPtr, rowFloor, rowHi, maxValue);
+                        if (rowInGroup <= rowFloor) {
+                            // The window excludes this group's run entirely.
+                            rg--;
+                            continue;
+                        }
+                        windowNarrowed = true;
+                        decodedGroup = true;
+                        lastTouchedRowGroup = rg;
+                        return true;
+                    }
+                }
+                final boolean coversMatch = cachedCovers == requiredCoverColumns
+                        || Arrays.equals(cachedCovers, requiredCoverColumns);
+                if (cachedRowGroup == rg && coversMatch) {
+                    // Already in the buffer, whole. No decode at all.
+                    decodedGroup = true;
+                    windowNarrowed = false;
+                    rowIdPtr = rowGroupBuffers.getChunkDataPtr(0);
+                    // Whole-group indices, so the key's run sits at an offset.
+                    rowFloor = rowLo;
+                    rowInGroup = rowHi;
+                    lastTouchedRowGroup = rg;
+                    return true;
+                }
                 final DirectIntList columns = coveringProjection(requiredCoverColumns, false);
                 rowGroupBuffers.reopen();
+                if (rg == lastTouchedRowGroup && imReader.getRowGroupKeyCount(rg) >= WHOLE_GROUP_KEY_THRESHOLD) {
+                    // Second consecutive key from a group with many keys: a
+                    // scan. Decode it whole and keep it, so the rest come free.
+                    decoder().decodeRowGroup(rowGroupBuffers, columns, rg, 0, (int) groupRows);
+                    onRowGroupDecoded(groupRows);
+                    cachedRowGroup = rg;
+                    cachedCovers = requiredCoverColumns;
+                    rowIdPtr = rowGroupBuffers.getChunkDataPtr(0);
+                    rowFloor = rowLo;
+                    rowInGroup = rowHi;
+                    decodedGroup = true;
+                    windowNarrowed = false;
+                    lastTouchedRowGroup = rg;
+                    return true;
+                }
                 decoder().decodeRowGroup(rowGroupBuffers, columns, rg, (int) rowLo, (int) rowHi);
                 onRowGroupDecoded(rowHi - rowLo);
+                // The buffer holds the key's run alone, so indices restart.
+                cachedRowGroup = -1;
+                cachedCovers = null;
+                lastTouchedRowGroup = rg;
                 groupRows = rowHi - rowLo;
                 // key_id is not in the projection: the decoded window is the
                 // key's own run, so there is nothing to filter against.
                 decodedGroup = true;
+                windowNarrowed = false;
                 rowIdPtr = rowGroupBuffers.getChunkDataPtr(0);
                 // Walked from the end: rowInGroup is a countdown, not an index.
+                // The buffer holds only the key's rows, so the floor is zero.
+                rowFloor = 0;
                 rowInGroup = groupRows;
                 return true;
             }
@@ -284,6 +383,8 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             this.decodedGroup = false;
             this.rowIdPtr = 0;
             this.rowInGroup = 0;
+            this.rowFloor = 0;
+            this.windowNarrowed = false;
             this.groupRows = 0;
             setEmittedRow(-1);
             // @see ParquetPostingIndexFwdReader.FwdCursor#of -- same bound, but
