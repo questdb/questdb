@@ -117,15 +117,18 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         // passed in - the compiled filters, the filter, the bind variable functions and the base
         // factory - so build the rest into locals and release them here.
         //
-        // The per-worker filters have no owner until the atom takes them, and the atom belongs to the
-        // frame sequence from the moment the PageFrameSequence constructor is entered: that
-        // constructor closes the atom on its own failure path, and close() closes it afterwards.
-        // Nothing that can throw sits between the two calls, so isPerWorkerFiltersOwned covers the
-        // whole gap and every object below is closed exactly once on every path.
+        // The caller retains the per-worker filter list until this constructor returns. Once the atom
+        // takes the filters, its failure paths close them and null the list slots, so the caller can
+        // safely close any remaining entries. The atom belongs to the frame sequence from the moment
+        // the PageFrameSequence constructor is entered: that constructor closes the atom on its own
+        // failure path, and close() closes it afterwards. Nothing that can throw sits between the two
+        // calls, so isPerWorkerFiltersOwned covers the whole gap and every object below is closed
+        // exactly once on every path.
         MemoryCARW bindVarMemory = null;
         AsyncFilteredRecordCursor cursor = null;
         AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor = null;
         PageFrameSequence<AsyncJitFilterAtom> frameSequence = null;
+        final int maxNegativeLimit;
         boolean isPerWorkerFiltersOwned = true;
         try {
             cursor = new AsyncFilteredRecordCursor(configuration, filter, base.getScanDirection());
@@ -164,20 +167,17 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                     workerCount,
                     PageFrameReduceTask.TYPE_FILTER
             );
+            maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
         } catch (Throwable th) {
-            Misc.free(frameSequence);
+            Misc.free(frameSequence, th);
             if (isPerWorkerFiltersOwned) {
-                Misc.freeObjList(perWorkerFilters);
+                Misc.freeObjList(perWorkerFilters, th);
             }
-            Misc.free(bindVarMemory);
+            Misc.free(bindVarMemory, th);
             // The cursors are not open yet, and close() frees their records only once they are, so
             // release the records directly - the same call halfClose() makes on the open factory.
-            if (cursor != null) {
-                cursor.freeRecords();
-            }
-            if (negativeLimitCursor != null) {
-                negativeLimitCursor.freeRecords();
-            }
+            freeRecordsBestEffort(th, cursor);
+            freeRecordsBestEffort(th, negativeLimitCursor);
             throw th;
         }
         this.cursor = cursor;
@@ -186,7 +186,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.frameSequence = frameSequence;
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
-        this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
+        this.maxNegativeLimit = maxNegativeLimit;
         this.sharedQueryWorkerCount = workerCount;
     }
 
