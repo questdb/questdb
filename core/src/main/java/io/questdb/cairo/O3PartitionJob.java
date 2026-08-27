@@ -1461,12 +1461,30 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 oldPartitionTimestamp = partitionTimestamp;
                 boolean partitionSplit = false;
 
-                // Split partition if the prefix is large enough (relatively and absolutely)
+                // Split partition if the prefix is large enough (relatively and absolutely).
+                //
+                // The merged-row count is CLAMPED AT ZERO. An empty block is encoded hi = lo - 1, not
+                // hi = lo, so the raw sum can come out NEGATIVE -- and then "prefixHi > 2 * negative" is
+                // true for every prefix, including an empty one, which defeats the whole relative-size
+                // guard and splits on every O3 write regardless of size.
+                //
+                // Measured on a composite table, which hits the degenerate encoding on every write
+                // because it merges into a CELL rather than a whole day:
+                //     composite  prefixHi=0, threshold=0, rhs2x=-2  -> split, 6 of 6 rounds
+                //     plain      prefixHi=0, threshold=0, rhs2x=0   -> no split
+                //                prefixHi=1, threshold=0, rhs2x=0   -> split, 3 of 6 rounds
+                // i.e. the composite table accumulated one split fragment per O3 round where its plain
+                // twin accumulated one per two. Clamping restores the intended comparison for both:
+                // where the sum is already >= 0 -- every plain case measured -- this changes nothing.
+                final long o3MergedRowCount = Math.max(
+                        0L,
+                        mergeDataHi - mergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo
+                );
                 if (
                         prefixType == O3_BLOCK_DATA
                                 && (mergeType == O3_BLOCK_MERGE || mergeType == O3_BLOCK_O3)
                                 && prefixHi >= tableWriter.getPartitionO3SplitThreshold()
-                                && prefixHi > 2 * (mergeDataHi - mergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo)
+                                && prefixHi > 2 * o3MergedRowCount
                 ) {
                     // large prefix copy, better to split the partition
                     long maxSourceTimestamp = Unsafe.getLong(srcTimestampAddr + prefixHi * Long.BYTES);
@@ -1489,8 +1507,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             long shiftLeft = prefixHi - newPrefixHi;
                             long newMergeDataLo = mergeDataLo - shiftLeft;
                             // Check that splitting still makes sense
+                            // Same clamp as above -- this re-check uses the same expression with the
+                            // shifted merge-data low bound, so it underflows the same way.
                             if (newPrefixHi >= tableWriter.getPartitionO3SplitThreshold()
-                                    && newPrefixHi > 2 * (mergeDataHi - newMergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo)
+                                    && newPrefixHi > 2 * Math.max(
+                                    0L,
+                                    mergeDataHi - newMergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo)
                             ) {
                                 prefixHi = newPrefixHi;
                                 mergeDataLo = newMergeDataLo;

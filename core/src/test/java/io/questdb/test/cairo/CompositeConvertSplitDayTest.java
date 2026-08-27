@@ -162,24 +162,27 @@ public class CompositeConvertSplitDayTest extends AbstractCompositeTwinTest {
     }
 
     /**
-     * The composite table SPLITS where the plain table REWRITES -- measured, and the reason the twins'
-     * physical shapes cannot be compared directly.
+     * Both twins now SPLIT this day the same way -- which is the parity the split-heuristic fix was
+     * after.
      * <p>
-     * After the same O3 write into an already-written day, with the same split threshold:
+     * This test used to assert the OPPOSITE, and the reason it flipped is worth keeping. With the old
+     * one-row prefix in the seed, composite split and the plain twin merely rewrote:
      * <pre>
      *   c dayDirs = [2023-01-01, 2023-01-01T010000-000001]   parent + fragment
      *   p dayDirs = [2023-01-01.1]                            rewritten, no fragment
      * </pre>
-     * So the mixed parquet-parent/native-fragment day is not a shape a plain table reaches under these
-     * statements, and "match the plain twin's layout" is not an available oracle for it. What IS
-     * available, and what the fix follows, is the plain CONVERT's own behaviour: it force-squashes the
-     * day before converting.
+     * That asymmetry was an ARTIFACT, not a property of composite tables: the merged-row count
+     * underflowed negative, so composite's "prefixHi > 2 * merged" was vacuously true and it split on a
+     * prefix the plain table correctly declined to split. With the clamp in place
+     * ({@code O3PartitionJob#o3MergedRowCount}) and a seed that provides a genuine two-row prefix, both
+     * twins take the same decision.
      * <p>
-     * Pinned so that if composite ever stops splitting here -- or plain starts -- the change is noticed
-     * rather than silently making the other tests in this class vacuous.
+     * Kept as a pin on that parity: if the two ever diverge again, the other tests in this class -- all
+     * of which compare composite against the plain twin -- start measuring different physical shapes
+     * without saying so.
      */
     @Test(timeout = 60_000)
-    public void testCompositeSplitsWhereThePlainTwinRewrites() throws Exception {
+    public void testBothTwinsSplitTheDayAlike() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
         assertMemoryLeak(() -> {
             createTwins();
@@ -190,10 +193,10 @@ public class CompositeConvertSplitDayTest extends AbstractCompositeTwinTest {
                     "composite is expected to split this day; if it no longer does, the split-day tests "
                             + "in this class are vacuous. c dirs=" + dayDirs("c"),
                     fragmentDirs("c").isEmpty());
-            Assert.assertTrue(
-                    "the plain twin is expected NOT to split this day -- it rewrites it. If it now does "
-                            + "split, the twins' shapes became comparable and these tests should be "
-                            + "restated against the plain layout. p dirs=" + dayDirs("p"),
+            Assert.assertFalse(
+                    "the plain twin must split it too -- the two took the same decision once the split "
+                            + "heuristic stopped comparing against a negative merged-row count. p dirs="
+                            + dayDirs("p"),
                     fragmentDirs("p").isEmpty());
         });
     }
@@ -363,8 +366,15 @@ public class CompositeConvertSplitDayTest extends AbstractCompositeTwinTest {
         return out;
     }
 
+    /**
+     * The 02:00 row gives cell E0 a TWO-row prefix before {@link #forceSplit()}'s 10:00 write. The split
+     * heuristic requires the prefix to exceed twice the merged-row count, so with an empty merge that
+     * means 2+ rows. A one-row prefix used to split anyway, but only because the merged-row count
+     * underflowed NEGATIVE and made the comparison vacuous -- see O3PartitionJob#o3MergedRowCount.
+     */
     private void seedSplittableDay() throws SqlException {
         insertIntoBoth("('2023-01-01T01:00:00.000000Z','E0',1.0),"
+                + "('2023-01-01T02:00:00.000000Z','E0',1.5),"
                 + "('2023-01-01T20:00:00.000000Z','E0',2.0),"
                 + "('2023-01-01T21:00:00.000000Z','E1',3.0)");
         drainWalQueue();

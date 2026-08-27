@@ -207,22 +207,11 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * of the two, because a user who never types {@code SQUASH} still accumulates fragments and nothing
      * tells them.
      */
-    @Ignore("SP1E residual, still exact: under 6 O3 rounds composite keeps 6 split fragments where its"
-            + " plain twin keeps 3 (composite=[010000, 103000, 113000, 123000, 133000, 143000],"
-            + " plain=[103000.3, 123000.5, 143000.6]). CAUSE CORRECTED 2026-08-27 -- the previous note"
-            + " here blamed squashing (\"composite squashes less aggressively ... reaches the cell-scoped"
-            + " merge less often\") and that is WRONG. Instrumented: squashSplitPartitionsComposite is"
-            + " invoked ZERO times for either table during this workload, because squashPartitionRange"
-            + " only squashes when (partitionIndexHi - partitionIndexLo) exceeds O3LastPartitionMaxSplits"
-            + " and it is 3..8 against a threshold of ~20. Neither table squashes at all. The real cause"
-            + " is SPLITTING: composite enters O3PartitionJob's split decision 6 times to the twin's 3,"
-            + " one per O3 round, because the split heuristic weighs prefixHi against the partition it is"
-            + " writing -- and on a composite table that partition is a CELL, holding a fraction of the"
-            + " day's rows. Data parity holds (assertTwinEqual passes); this is steady-state fragment"
-            + " COUNT, a read-performance residual, not correctness. A fix belongs in the split"
-            + " heuristic, NOT the squash path, and changing it affects plain tables too -- so it needs"
-            + " its own measurement of the read/write trade-off. Un-ignore when composite matches the"
-            + " twin.")
+    // Was @Ignore'd as an SP1E residual: composite kept 6 split fragments to the plain twin's 3.
+    // FIXED -- the cause was NOT the squash path (the note here used to blame it; measured, the
+    // automatic squash never runs for either table at these partition counts). It was the split
+    // heuristic: the merged-row count underflowed NEGATIVE on composite, so "prefixHi > 2 * merged"
+    // was vacuously true and every O3 write split. See O3PartitionJob#o3MergedRowCount.
     @Test(timeout = 60_000)
     public void testAutomaticSquashDoesNotAccumulateFragments() throws Exception {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -622,7 +611,12 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
      * still leaves a plausible-looking single cell, whereas three make the loss unambiguous.
      */
     private void seedThreeCellDay() throws Exception {
+        // The 02:00 row gives cell E0 a TWO-row prefix before forceSplit()'s 10:00 write, which is what
+        // the split heuristic requires once the merged-row count is clamped at zero -- see
+        // seedSplittableDay's note and O3PartitionJob#o3MergedRowCount. Without it the day no longer
+        // splits and every test here fails its "a fragment exists" precondition.
         insertIntoBoth("('2023-01-01T01:00:00.000000Z','E0',1.0),"
+                + "('2023-01-01T02:00:00.000000Z','E0',1.5),"
                 + "('2023-01-01T20:00:00.000000Z','E0',2.0),"
                 + "('2023-01-01T21:00:00.000000Z','E1',3.0),"
                 + "('2023-01-01T22:00:00.000000Z','E2',5.0)");
@@ -630,8 +624,19 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
         engine.releaseInactive();
     }
 
+    /**
+     * A day that will genuinely split when {@link #forceSplit()} writes into it at 10:00.
+     * <p>
+     * Cell E0 needs at least TWO rows before that point. The split heuristic requires the prefix to
+     * exceed twice the merged-row count, and with an empty merge that means a prefix of 2+ rows
+     * (prefixHi is an index, so prefixHi >= 1). An earlier version seeded only 01:00 in E0, giving a
+     * one-row prefix -- and it still split, but only because the merged-row count underflowed NEGATIVE
+     * and made the comparison vacuously true. With that clamped (see O3PartitionJob's
+     * o3MergedRowCount), a one-row prefix correctly no longer splits, so the seed provides a real one.
+     */
     private void seedSplittableDay() throws Exception {
         insertIntoBoth("('2023-01-01T01:00:00.000000Z','E0',1.0),"
+                + "('2023-01-01T02:00:00.000000Z','E0',1.5),"
                 + "('2023-01-01T20:00:00.000000Z','E0',2.0),"
                 + "('2023-01-01T21:00:00.000000Z','E1',3.0)");
         drainWalQueue();
