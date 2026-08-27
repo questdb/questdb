@@ -28,12 +28,39 @@ import io.questdb.Metrics;
 
 public interface WorkerPoolConfiguration {
 
+    /**
+     * Number of idle loop passes credited back to a worker's back-off ticker each
+     * time one of its jobs reports having done work. The ticker decays by this
+     * amount rather than resetting to zero, so back-off depends on how OFTEN a
+     * worker finds work instead of on whether it ever does: it keeps climbing
+     * while work arrives less than once per {@code getBackoffCredit()} passes and
+     * stays pinned at zero for a worker that is genuinely busy.
+     * <p>
+     * The default keeps a worker busy on more than roughly 1.5% of its passes at
+     * full spin. Raising it makes back-off harder to reach; a value greater than
+     * or equal to {@link #getSleepThreshold()} reproduces the historical
+     * reset-to-zero behaviour.
+     */
+    default long getBackoffCredit() {
+        return 64;
+    }
+
     default Metrics getMetrics() {
         return Metrics.ENABLED;
     }
 
     default long getNapThreshold() {
         return 7000;
+    }
+
+    /**
+     * Milliseconds a worker sleeps on the nap rung, i.e. once its back-off ticker
+     * has passed {@link #getNapThreshold()} but not {@link #getSleepThreshold()}.
+     * Distinct from {@link #getSleepTimeout()}, which applies to the deeper sleep
+     * rung only.
+     */
+    default long getNapTimeout() {
+        return 1;
     }
 
     default String getPoolName() {

@@ -54,6 +54,7 @@ public class WorkerPool implements Closeable {
     // no-op default on caller-owned singletons and idempotent on recycled
     // clones, so the pool needs no blueprint-vs-clone bookkeeping to free them.
     private final ObjList<Job> assignedJobs = new ObjList<>();
+    private final long backoffCredit;
     @TestOnly
     private volatile Runnable beforeStartedSignalForTesting;
     @TestOnly
@@ -75,6 +76,7 @@ public class WorkerPool implements Closeable {
     // Jobs which key per-worker state by workerId at construction time.
     private final boolean legacy;
     private final Metrics metrics;
+    private final long napMs;
     private final long napThreshold;
     private final String poolName;
     private final int priority;
@@ -112,8 +114,10 @@ public class WorkerPool implements Closeable {
         this.poolName = configuration.getPoolName();
         this.yieldThreshold = configuration.getYieldThreshold();
         this.napThreshold = configuration.getNapThreshold();
+        this.napMs = configuration.getNapTimeout();
         this.sleepThreshold = configuration.getSleepThreshold();
         this.sleepMs = configuration.getSleepTimeout();
+        this.backoffCredit = configuration.getBackoffCredit();
         this.metrics = configuration.getMetrics();
         this.priority = configuration.workerPoolPriority();
 
@@ -393,8 +397,10 @@ public class WorkerPool implements Closeable {
                         haltOnError,
                         yieldThreshold,
                         napThreshold,
+                        napMs,
                         sleepThreshold,
                         sleepMs,
+                        backoffCredit,
                         metrics,
                         continuationQueue,
                         log
