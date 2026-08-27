@@ -121,7 +121,6 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             @Nullable Function joinFilter
     ) {
         super(metadata);
-        assert slaveFactory.supportsTimeFrameCursor();
         try {
             this.masterFactory = masterFactory;
             this.slaveFactory = slaveFactory;
@@ -132,6 +131,15 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             this.windowHi = windowHi;
             this.windowLoFunc = windowLoFunc;
             this.windowHiFunc = windowHiFunc;
+            // Adopted here, before the first statement that can throw: the cursor only clears this
+            // list (Mutable.clear(), not close()), so _close() is its sole release point and the
+            // generator has already nulled its own reference. GroupByFunctionsUpdaterFactory below
+            // can throw, and so can the assert.
+            this.groupByFunctions = groupByFunctions;
+            // Checked after the adopting assignments above, not at the top of the constructor: the
+            // generator transfers ownership of the filter and the window functions before it calls
+            // this, and the catch below frees the FIELDS, so an -ea failure any earlier leaks them.
+            assert slaveFactory.supportsTimeFrameCursor();
             this.loSign = loSign;
             this.hiSign = hiSign;
             this.loTimeUnit = loTimeUnit;
@@ -171,7 +179,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 );
             }
         } catch (Throwable th) {
-            close();
+            releaseAdoptedStateOnConstructorFailure();
             throw th;
         }
     }
@@ -299,7 +307,37 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         if (windowLoFunc != joinFilter && windowLoFunc != windowHiFunc) {
             failure = Misc.freeBestEffort(failure, windowLoFunc);
         }
+        // Last, defensively. The cursor's close() runs Misc.clearObjList(groupByFunctions), and
+        // clear() touches the very native buffers close() releases (StringDistinctAggGroupByFunction
+        // resets its sink capacity, which reallocs). Callers close the cursor before the factory and
+        // that close() is isOpen-guarded, so today the clear cannot follow the free -- ordering the
+        // free after the cursor keeps it that way if a caller ever closes the factory first.
+        failure = Misc.freeObjListBestEffort(failure, groupByFunctions);
         CairoException.rethrowCleanupFailure(failure);
+    }
+
+    /**
+     * Releases what THIS constructor adopted, and only that.
+     * <p>
+     * The base factories and the join metadata belong to {@code SqlCodeGenerator} until the
+     * constructor returns - the contract the async siblings already honour, and the one the
+     * generator's own catch implements (it frees master, slave and the join metadata itself).
+     * Calling {@link #close()} here instead released them a second time. That is a no-op for an
+     * {@link io.questdb.cairo.AbstractRecordCursorFactory}, whose {@code close()} is flag-guarded,
+     * but not for a factory implementing {@code RecordCursorFactory} directly: for instance
+     * {@code CoveringIndexRecordCursorFactory.close()} frees its partition-frame factory and its
+     * functions unguarded, so a master of that shape was double freed. {@link JoinRecordMetadata}
+     * is reference counted, so the second close drove its count below zero as well.
+     * <p>
+     * Nulling the three fields before {@code close()} keeps the release of the adopted handles -
+     * the join filter, the window bound functions, the group-by functions, the cursor and the map
+     * value - in one place.
+     */
+    private void releaseAdoptedStateOnConstructorFailure() {
+        masterFactory = null;
+        slaveFactory = null;
+        joinMetadata = null;
+        close();
     }
 
     private class WindowJoinRecordCursor implements NoRandomAccessRecordCursor {
