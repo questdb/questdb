@@ -921,6 +921,11 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                             """
             );
             bindVariableService.setStr("sv", "zz");
+            // 2020-06-01T00:00:00.000000Z and 2020-01-01T00:00:00.000000Z, for the guard conjuncts
+            // among the controls below.
+            bindVariableService.setTimestamp("tv", 1_590_969_600_000_000L);
+            bindVariableService.setTimestamp("tv2", 1_577_836_800_000_000L);
+            bindVariableService.setBoolean("flag", true);
 
             // IPv4, ordering between two quoted literals - the shape the fuzzer found. Every
             // operator, and both operand orders, so a fix that only moved '>=' cannot pass.
@@ -961,6 +966,17 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertColumnFreeComparisonDeclines("('zz' NOT IN ('yy', 'xx')) = (s = 'aa')", 7);
             // The same, with a STRING bind variable in place of the left constant.
             assertColumnFreeComparisonDeclines("(:sv = 'yy') = (s = 'aa')", 28);
+            // A bind variable types the comparison the predicate holds beside it, which is what
+            // separates the guard conjuncts among the controls below from this shape: the
+            // right-hand pair is two STRINGs to the Java filter and two TIMESTAMPs here, and
+            // '2020-01-02T00:00:00-05:00' sorts above '2020-01-02T00:00:00Z' as a string and below
+            // it as an instant. Neither comparison reads a column, so the count of comparisons is
+            // the only thing that tells the two apart.
+            assertColumnFreeComparisonDeclines(
+                    "((:tv2 > '2019-01-01') = ('2020-01-02T00:00:00-05:00' >= '2020-01-02T00:00:00Z'))"
+                            + " != (t2 > '2020-06-01')",
+                    18
+            );
             // UUID: one uuid, two hex spellings.
             assertColumnFreeComparisonDeclines(
                     "('11111111-1111-1111-1111-11111111111a' = '11111111-1111-1111-1111-11111111111A')"
@@ -1032,6 +1048,26 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertColumnComparisonCompiles("u = '11111111-1111-1111-1111-11111111111a'", 8);
             assertColumnComparisonCompiles("t2 >= '2020-06-01'", 18);
             assertColumnComparisonCompiles("d >= '2020-06-01'", 18);
+
+            // The parameter-only GUARD CONJUNCT - the shape a generated query appends beside the
+            // filter that does the work. It reads no column, so the verdict used to decline it, and
+            // AND is not a top-level operation: the guard is its own predicate, sitting beside the
+            // conjuncts that carry the columns, and visit() throws out of serialize(), so the
+            // WHOLE filter fell back to the Java one. The guard holds ONE comparison and types it
+            // from its own bind variable, which is where the Java filter types it from too, so
+            // there is nothing to diverge and it compiles again. Each assertion below pairs the
+            // guard with a non-numeric column conjunct, because a numeric one would have been
+            // exempt through isNumeric() either way.
+            assertColumnComparisonCompiles(":flag = true AND s = 'aa'", 7);
+            assertColumnComparisonCompiles(":tv > '2020-01-01' AND ip > '128.0.0.0'", 18);
+            assertColumnComparisonCompiles(":tv > :tv2 AND c < 'b'", 11);
+            assertColumnComparisonCompiles(":tv IN ('2020-06-01') AND u = '11111111-1111-1111-1111-11111111111a'", 8);
+            // NOT is a top-level operation, so it becomes the predicate root and everything under
+            // it belongs to that one predicate. One comparison is still one comparison.
+            assertColumnComparisonCompiles("NOT (:flag = false) AND d >= '2020-06-01'", 18);
+            // A guard that selects nothing takes the whole filter with it, on both engines. The
+            // count pins that the guard is actually evaluated rather than folded away.
+            assertJitCountQuery("SELECT count() FROM x WHERE :flag = false AND s = 'aa'", 0);
         });
     }
 
@@ -6170,6 +6206,89 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRepeatedColumnReadsReuseOneLoad() throws Exception {
+        // Every backend now reuses one load per column per loop body, so a predicate reading the
+        // same operand several times reads memory once. The CHAR and IPv4 ordering expansions are
+        // what make that common: they re-traverse each operand four and five times respectively,
+        // to build the unsigned ordering out of signed comparisons. The vectorized backend had no
+        // value cache at all, and the scalar ones added an i128 value through addXmm but looked it
+        // up through find(), which answers only for a general-purpose register, so a UUID column
+        // was cached and never found.
+        //
+        // Sharing one register is sound only while no backend helper writes into an operand
+        // register, and four sites did. impl/avx2.h's cmp_eq folded its per-qword result into lhs
+        // for the i128 arm and mul did the same with muleven for the i8 one; impl/x86.h's
+        // int128_cmp folded pcmpeqb, which is the two-operand SSE form, into lhs, and x86.h's
+        // flag-based short-circuit arm carried a second copy of that same sequence. None could
+        // show before, because every read allocated a register of its own. Once the reads share
+        // one, the first comparison rewrites the very register the second one has to read.
+        //
+        // The OR chain below is what reaches the short-circuit arm: it emits Or_Sc, so the
+        // equality never materialises a boolean and compares on flags instead. It is a separate
+        // call site from cmp_eq, so a fix in int128_cmp alone leaves it wrong - the shape returned
+        // only the rows matching the FIRST constant.
+        //
+        // The i128 arms are the reachable half, in both backends: a UUID column is 16 bytes, so
+        // Function::compile picks step = 256 / (16 * 8) = 2 and the filter runs an AVX2 loop, and
+        // the scalar loop runs it in forced-scalar mode and in the tail. BYTE arithmetic never
+        // reaches an AVX2 loop at all, since visit() forces the scalar backend for it.
+        //
+        // 35 rows: odd, and above the widest step here, so every lane in the fixture runs full
+        // vector iterations AND leaves a non-empty scalar tail. assertJitMatchesJavaInAllModes
+        // covers forced-scalar too, which is what pins the scalar half.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (u UUID, ip IPv4, c CHAR, k TIMESTAMP) TIMESTAMP(k) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO x SELECT
+                                (CASE WHEN x % 3 = 0 THEN '11111111-1111-1111-1111-11111111111a'
+                                      WHEN x % 3 = 1 THEN '22222222-2222-2222-2222-222222222222'
+                                      ELSE '33333333-3333-3333-3333-333333333333' END)::UUID,
+                                (CASE WHEN x % 3 = 0 THEN '10.0.0.1'
+                                      WHEN x % 3 = 1 THEN '200.0.0.1'
+                                      ELSE '128.0.0.0' END)::IPv4,
+                                (CASE WHEN x % 3 = 0 THEN 'a' WHEN x % 3 = 1 THEN 'm' ELSE 'z' END)::CHAR,
+                                timestamp_sequence(0, 1_000_000)
+                            FROM long_sequence(35)
+                            """
+            );
+            bindVariableService.setChar("lo", 'a');
+            bindVariableService.setChar("hi", 'z');
+
+            // Two i128 comparisons over ONE column. Whichever is serialized first clobbered the
+            // shared register, so the second compared the first one's result against a UUID. Both
+            // backends' cmp_ne routes through their cmp_eq, so it carries the same arm. Both
+            // conjunct orders, because PostOrderTreeTraversalAlgo descends node.rhs first and only
+            // the second comparison to run reads the damaged register.
+            assertJitMatchesJavaInAllModes("x WHERE u = '11111111-1111-1111-1111-11111111111a'"
+                    + " OR u = '33333333-3333-3333-3333-333333333333'");
+            assertJitMatchesJavaInAllModes("x WHERE u = '33333333-3333-3333-3333-333333333333'"
+                    + " OR u = '11111111-1111-1111-1111-11111111111a'");
+            assertJitMatchesJavaInAllModes("x WHERE u <> '22222222-2222-2222-2222-222222222222'"
+                    + " AND u <> '33333333-3333-3333-3333-333333333333'");
+            assertJitMatchesJavaInAllModes("x WHERE u = '22222222-2222-2222-2222-222222222222'"
+                    + " AND u <> '33333333-3333-3333-3333-333333333333'");
+            assertJitCountQuery("SELECT count() FROM x WHERE u = '11111111-1111-1111-1111-11111111111a'"
+                    + " OR u = '33333333-3333-3333-3333-333333333333'", 23);
+            assertJitCountQuery("SELECT count() FROM x WHERE u <> '22222222-2222-2222-2222-222222222222'"
+                    + " AND u <> '33333333-3333-3333-3333-333333333333'", 11);
+
+            // The expansions themselves, which is what the cache is for: an IPv4 range reads each
+            // operand five times per body and a CHAR one four times.
+            assertJitMatchesJavaInAllModes("x WHERE ip > '10.0.0.0' AND ip < '200.0.0.0'");
+            assertJitMatchesJavaInAllModes("x WHERE c > 'a' AND c < 'z'");
+            assertJitCountQuery("SELECT count() FROM x WHERE ip > '10.0.0.0' AND ip < '200.0.0.0'", 23);
+            assertJitCountQuery("SELECT count() FROM x WHERE c > 'a' AND c < 'z'", 12);
+
+            // Same shape with bind variables, which the cache holds under a numbering of their
+            // own: read_vars_mem broadcasts each of these four times per body without it. CHAR
+            // rather than IPv4 only because BindVariableService names no IPv4 setter.
+            assertJitMatchesJavaInAllModes("x WHERE c > :lo AND c < :hi");
+            assertJitCountQuery("SELECT count() FROM x WHERE c > :lo AND c < :hi", 12);
+        });
+    }
+
+    @Test
     public void testShortCircuitAndDeepChain() throws Exception {
         // Tests short-circuit AND with a deep chain of predicates
         final String query = "x where " +
@@ -8714,7 +8833,12 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     CursorPrinter.println(cursor, factory.getMetadata(), jitSink);
                 }
             }
-            TestUtils.assertEquals("JIT vs Java result mismatch for query: " + query, javaSink, jitSink);
+            TestUtils.assertEquals(
+                    (jitMode == SqlJitMode.JIT_MODE_FORCE_SCALAR ? "[scalar mode] " : "[vectorized mode] ")
+                            + "JIT vs Java result mismatch for query: " + query,
+                    javaSink,
+                    jitSink
+            );
         }
     }
 

@@ -523,6 +523,63 @@ private:
     data_type_t float_types[MAX_CONSTANTS];
     asmjit::x86::Vec ymm_regs[MAX_CONSTANTS];
 };
+
+// Cache for the values one vectorized loop body loads: a column vector read at the current
+// input_index, and a bind variable broadcast out of the vars block. questdb::avx2::read_mem and
+// read_vars_mem consult it, so a predicate that reads the same operand more than once emits one
+// load and reuses the register. CompiledFilterIRSerializer's CHAR and IPv4 ordering expansions are
+// what make that common - they re-traverse each operand four and five times respectively, to build
+// the unsigned ordering out of signed comparisons - and the scalar backends have carried the same
+// cache for their row loop all along. Only the AVX2 backend went without one.
+//
+// Scoped to ONE body, not to the whole loop: avx2_loop advances input_index between unrolled
+// bodies, so each body reads different rows. compiler.cpp clears the cache before every emit_code
+// call, exactly as the scalar loops clear ColumnValueCache before every row.
+//
+// Handing one virtual register to two consumers is safe only while no consumer writes into an
+// operand register. The VEX encoding is three-operand and every helper in impl/avx2.h allocates its
+// own destination; the two that used to fold a result into lhs - cmp_eq's i128 arm and mul's i8 arm
+// - were rewritten to do the same. Anything added there has to keep that property. The scalar
+// backend's int32_and is the cautionary tale: an in-place AND overwrote a column value that the
+// rest of the predicate still had to read, and "(aboolean and aboolean2) = aboolean" matched every
+// row.
+struct ValueCacheYmm {
+    static constexpr size_t MAX_VALUES = 8;
+
+    ValueCacheYmm() : count(0) {}
+
+    void add(int32_t idx, data_type_t type, bool is_var, asmjit::x86::Vec reg) {
+        if (count < MAX_VALUES) {
+            idxs[count] = idx;
+            types[count] = type;
+            is_vars[count] = is_var;
+            ymm_regs[count] = reg;
+            count++;
+        }
+    }
+
+    void clear() {
+        count = 0;
+    }
+
+    // A column index and a bind variable index share a numbering, so is_var keeps the two apart.
+    bool find(int32_t idx, data_type_t type, bool is_var, asmjit::x86::Vec &out_reg) const {
+        for (size_t i = 0; i < count; ++i) {
+            if (idxs[i] == idx && types[i] == type && is_vars[i] == is_var) {
+                out_reg = ymm_regs[i];
+                return true;
+            }
+        }
+        return false;
+    }
+
+private:
+    size_t count;
+    int32_t idxs[MAX_VALUES];
+    data_type_t types[MAX_VALUES];
+    bool is_vars[MAX_VALUES];
+    asmjit::x86::Vec ymm_regs[MAX_VALUES];
+};
 #endif // !__aarch64__
 
 #endif //QUESTDB_JIT_COMMON_H

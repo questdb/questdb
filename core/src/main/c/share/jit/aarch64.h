@@ -272,7 +272,11 @@ namespace questdb::aarch64 {
         // Check if value is already cached
         Gp cached_gp;
         Vec cached_vec;
-        if (type == data_type_t::f32 || type == data_type_t::f64) {
+        // i128 belongs with the floating-point types here, not in the else branch: read_mem
+        // stores it through addXmm below, and find() answers only for a general-purpose register,
+        // so an i128 column was cached and then never found. Every UUID and LONG128 read reloaded
+        // the column even where the predicate had already read it in the same row.
+        if (type == data_type_t::f32 || type == data_type_t::f64 || type == data_type_t::i128) {
             if (value_cache.findXmm(column_idx, type, cached_vec)) {
                 return {cached_vec, type, data_kind_t::kMemory};
             }

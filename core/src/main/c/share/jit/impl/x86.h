@@ -619,8 +619,18 @@ namespace questdb::x86 {
 
     inline void int128_cmp(Compiler &c, const Vec &lhs, const Vec &rhs) {
         Gp mask = c.new_gp16();
-        c.pcmpeqb(lhs, rhs);
-        c.pmovmskb(mask, lhs);
+        // pcmpeqb is the two-operand SSE form and writes its result into the first operand, so it
+        // needs a copy: read_mem hands the same register back for every later read of the same
+        // column in the same row through ColumnValueCache, and folding the comparison into lhs
+        // rewrites a value the rest of the predicate still has to read. The float and double
+        // comparisons in this file take their lhs_copy / rhs_copy for the same reason. Until the
+        // fix beside this one, an i128 column read never HIT that cache - x86::read_mem added it
+        // through addXmm and looked it up through find(), which only answers for a general-purpose
+        // register - so the clobber was unreachable rather than harmless.
+        Vec l = c.new_xmm("i128_cmp_lhs");
+        c.movdqu(l, lhs);
+        c.pcmpeqb(l, rhs);
+        c.pmovmskb(mask, l);
         c.cmp(mask, 0xffff);
     }
 

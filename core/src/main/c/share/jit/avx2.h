@@ -136,7 +136,15 @@ namespace questdb::avx2 {
     }
 
     jit_value_t
-    read_vars_mem(Compiler &c, data_type_t type, int32_t idx, const Gp &vars_ptr) {
+    read_vars_mem(Compiler &c, data_type_t type, int32_t idx, const Gp &vars_ptr, ValueCacheYmm &value_cache) {
+        // A bind variable is loop-invariant, so the broadcast is pure waste past the first one in a
+        // body. The cache does not hoist it out of the loop - that is a larger change - it only
+        // stops the CHAR and IPv4 ordering expansions re-broadcasting the same variable four or
+        // five times per body.
+        Vec cached;
+        if (value_cache.find(idx, type, true, cached)) {
+            return {cached, type, data_kind_t::kConst};
+        }
         auto value = x86::read_vars_mem(c, type, idx, vars_ptr);
         Mem mem = value.op().as<Mem>();
         Vec val = c.new_ymm();
@@ -172,6 +180,7 @@ namespace questdb::avx2 {
             default:
                 __builtin_unreachable();
         }
+        value_cache.add(idx, type, true, val);
         return {val, type, data_kind_t::kConst};
     }
 
@@ -316,7 +325,12 @@ namespace questdb::avx2 {
 
     jit_value_t
     read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &input_index, bool wide_lane,
-             const ColumnAddressCache &cache) {
+             const ColumnAddressCache &cache, ValueCacheYmm &value_cache) {
+        // The var-size header reads below stay uncached. They are the only shape a predicate reads
+        // at most once - serializeColumn admits a var-size column solely inside an IS [NOT] NULL
+        // check - so there is nothing to reuse, and each of them allocates several registers whose
+        // reuse would need its own clobber audit. Every operand the ordering expansions re-read is
+        // fixed-width and takes the path below.
         if (type == data_type_t::varchar_header) {
             return read_mem_varchar_header(c, column_idx, varsize_aux_ptr, input_index);
         }
@@ -336,7 +350,14 @@ namespace questdb::avx2 {
             return read_mem_varsize(c, header_size, column_idx, data_ptr, varsize_aux_ptr, input_index);
         }
 
-        // Simple case: a fixed-width column
+        // Simple case: a fixed-width column.
+        // wide_lane and input_index are fixed for the whole body, so (column_idx, type) identifies
+        // the loaded vector on its own.
+        Vec cached;
+        if (value_cache.find(column_idx, type, false, cached)) {
+            return {cached, type, data_kind_t::kMemory};
+        }
+
         // Use cached column address if available
         Gp column_address;
         if (cache.has(column_idx)) {
@@ -416,6 +437,7 @@ namespace questdb::avx2 {
             default:
                 __builtin_unreachable();
         }
+        value_cache.add(column_idx, type, false, row_data);
         return {row_data, type, data_kind_t::kMemory};
     }
 
@@ -986,7 +1008,8 @@ namespace questdb::avx2 {
     emit_code(Compiler &c, Arena &arena, const instruction_t *istream, size_t size, ArenaVector<jit_value_t> &values, bool ncheck, bool wide_lane,
               uint32_t lane_count,
               const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &vars_ptr, const Gp &input_index,
-              const ColumnAddressCache &addr_cache, const ConstantCacheYmm&const_cache) {
+              const ColumnAddressCache &addr_cache, const ConstantCacheYmm&const_cache,
+              ValueCacheYmm &value_cache) {
         for (size_t i = 0; i < size; ++i) {
             auto instr = istream[i];
             switch (instr.opcode) {
@@ -1003,13 +1026,13 @@ namespace questdb::avx2 {
                 case opcodes::Var: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(arena, read_vars_mem(c, type, idx, vars_ptr));
+                    values.append(arena, read_vars_mem(c, type, idx, vars_ptr, value_cache));
                 }
                     break;
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(arena, read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, wide_lane, addr_cache));
+                    values.append(arena, read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, wide_lane, addr_cache, value_cache));
                 }
                     break;
                 case opcodes::Imm:

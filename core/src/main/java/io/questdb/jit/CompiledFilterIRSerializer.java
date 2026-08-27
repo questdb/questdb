@@ -1289,6 +1289,32 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return false;
     }
 
+    /**
+     * Reports whether the subtree holds a comparison - or an {@code IN} pairing - other than
+     * {@code except}. Identity, not equality: the traversal has to skip that one node and count
+     * every other, including a structurally identical sibling.
+     */
+    private static boolean hasOtherComparison(ExpressionNode node, ExpressionNode except) {
+        if (node == null) {
+            return false;
+        }
+        if (node != except
+                && node.paramCount > 0
+                && ((node.paramCount == 2 && isComparisonToken(node.token))
+                || SqlKeywords.isInKeyword(node.token))) {
+            return true;
+        }
+        if (hasOtherComparison(node.lhs, except) || hasOtherComparison(node.rhs, except)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasOtherComparison(node.args.getQuick(i), except)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isArithmeticOperation(ExpressionNode node) {
         final CharSequence token = node.token;
         if (node.paramCount < 2) {
@@ -5764,6 +5790,37 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // still UNDEFINED until the columns are VISITED - so record the node and judge
                     // it where the predicate is left.
                     columnFreeComparisonNode = findColumnFreeComparison(node);
+                    // Unless this predicate holds ONE comparison and it is that one. The verdict
+                    // exists because a constant takes its type from predicateContext.columnType,
+                    // which every operand of the WHOLE predicate contributes to, while the Java
+                    // filter types each comparison from its OWN operands. Where the predicate holds
+                    // a single comparison those two are the same set: the type comes from that
+                    // comparison's operands and from nothing else, so both engines type it the same
+                    // way and there is nothing to diverge.
+                    //
+                    // What that readmits is the parameter-only guard conjunct - `:flag = true`,
+                    // `:from < :to`, `:tv > '2020-01-01'` - which carries no column and takes its
+                    // type from the bind variable, exactly where the Java filter takes it from.
+                    // AND and OR are not top-level operations, so such a conjunct is its own
+                    // predicate, and it sits beside the conjuncts that do the work: a decline in it
+                    // costs the WHOLE filter its compiled form, co-conjuncts included, because
+                    // visit() throws out of serialize(). isNumeric() already exempts the numeric
+                    // spelling of the same shape (`:i > 5`); this extends that to the types a bind
+                    // variable can carry into a predicate on its own.
+                    //
+                    // The SECOND comparison is what breaks it, which is why the count decides
+                    // rather than the presence of a column:
+                    // `(:tv > '2020-01-01') = ('2021-01-01' > '2020-06-01')` types the right-hand
+                    // pair from the left-hand bind variable, and two spellings of an instant order
+                    // differently as strings than as timestamps. A predicate that reaches a column
+                    // never gets here anyway - the column sits in a comparison of its own, beside
+                    // the column-free one - so this only ever fires for a predicate holding neither
+                    // a column nor a second comparison. NOT rides along: `NOT (:flag = true)` is
+                    // one comparison under a predicate root that is not itself one.
+                    if (columnFreeComparisonNode != null
+                            && !hasOtherComparison(node, columnFreeComparisonNode)) {
+                        columnFreeComparisonNode = null;
+                    }
                     // Pre-pass: remember whether any FLOAT / DOUBLE source is present anywhere in
                     // the predicate. See NarrowI64WidenDetector.
                     i64WidenConstants.clear();
