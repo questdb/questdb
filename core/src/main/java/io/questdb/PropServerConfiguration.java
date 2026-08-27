@@ -2376,7 +2376,28 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.partitionEncoderParquetRawArrayEncoding = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, true);
         int defaultCompressionLevel = partitionEncoderParquetCompressionCodec == ParquetCompression.COMPRESSION_ZSTD ? 9 : 0;
         this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, defaultCompressionLevel);
-        this.partitionEncoderParquetRowGroupSize = Math.max(4, getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000));
+        // A backward frame scan cannot reach the LAST row of a row group without
+        // decoding the whole group, so the row group size is a floor under every
+        // query that reads from the end of a partition -- LATEST ON being the
+        // common one. It is a genuine trade, not a free win: a SMALLER group
+        // lowers that floor, but a scan that cannot stop early then pays
+        // per-group overhead across more groups.
+        //
+        // LATEST ON vs a native partition, 400k rows, random symbols (the
+        // coupon-collector case, which is the pessimistic one for a backward
+        // scan):
+        //
+        //   rows/group     16 keys   200,000 keys   worst
+        //      262_144        3.7x          1.36x    3.7x   <- was the embedded default
+        //      100_000        2.7x          1.33x    2.7x   <- was the server default
+        //       50_000        1.8x          1.70x    1.8x   <- chosen
+        //       20_000        1.5x          2.45x    2.45x
+        //
+        // 50_000 minimises the WORST case rather than either end. 20_000 looks
+        // better until high cardinality, where it is the worst of the four.
+        // Full-scan throughput and on-disk size are flat across all of these
+        // (157.8 / 164.8 / 154.0 us, sizes within 0.1%), so this axis is free.
+        this.partitionEncoderParquetRowGroupSize = Math.max(4, getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 50_000));
         this.partitionEncoderParquetDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, Numbers.SIZE_1MB);
         this.partitionEncoderParquetMinCompressionRatio = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_MIN_COMPRESSION_RATIO, "1.2");
         this.partitionEncoderParquetO3RewriteUnusedMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 1024 * 1024 * 1024L);
