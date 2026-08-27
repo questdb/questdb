@@ -168,14 +168,43 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             // The dimension is silently DROPPED and the user gets a PLAIN table having asked for a
             // composite one -- the same silent-wrong-DDL class as the enterprise CREATE TABLE path,
             // which dropped getPartitionSpec() and created plain tables with no error anywhere.
-            // Refusing is mandatory until the spec can be resolved after the select's metadata is known.
-            if (partitionDimensionExprs.size() > 0) {
-                throw SqlException.$(
-                        partitionDimensionExprs.getQuick(0).position,
-                        "composite partitioning is not yet supported with CREATE TABLE AS SELECT"
-                );
+            //
+            // NOW SUPPORTED, by deferring only the part that actually needs the columns. The checks
+            // below need no column knowledge and run here, at build time, so a bad statement is
+            // refused before anything is created. Resolving each dimension to a COLUMN INDEX is what
+            // needs the select's metadata, so that is handed to the operation and done in
+            // validateAndUpdateMetadataFromSelect -- the same point at which covering-index INCLUDE
+            // columns are already resolved for a CTAS.
+            final int ctasDimCount = partitionDimensionExprs.size();
+            final int ctasClusterCount = clusterExprs.size();
+            if (ctasDimCount > 0 || ctasClusterCount > 0) {
+                if (getPartitionByFromExpr() == PartitionBy.NONE) {
+                    throw SqlException.$(
+                            ctasDimCount > 0 ? partitionDimensionExprs.getQuick(0).position : clusterExprs.getQuick(0).position,
+                            "composite partitioning requires time partitioning");
+                }
+                if (ctasDimCount > 0 && !walEnabled) {
+                    throw SqlException.$(partitionDimensionExprs.getQuick(0).position,
+                            "composite partitioning requires a WAL table");
+                }
+                if (ctasDimCount > 0 && tableFormat == TableUtils.TABLE_FORMAT_PARQUET) {
+                    throw SqlException.$(tableFormatPosition,
+                                    "composite partitioning does not yet support FORMAT PARQUET [table=")
+                            .put(tableNameExpr.token).put(']');
+                }
+                for (int i = 0; i < ctasDimCount; i++) {
+                    // An aliased `(expr) AS alias` dimension needs the builder's DDL-time safe-subset
+                    // walk (resolveExpressionDimension), which is not available once the builder has
+                    // been cleared and reused. Expression dimensions over a CTAS are their own piece
+                    // of work; refuse them here rather than resolve them differently from the plain
+                    // CREATE TABLE path.
+                    if (partitionDimensionAliases.getQuick(i) != null) {
+                        throw SqlException.$(partitionDimensionExprs.getQuick(i).position,
+                                "composite partitioning does not yet support an aliased expression dimension with CREATE TABLE AS SELECT");
+                    }
+                }
             }
-            return new CreateTableOperationImpl(
+            CreateTableOperationImpl ctasOp = new CreateTableOperationImpl(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
                     tableNameExpr.position,
@@ -201,6 +230,20 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     tableKind,
                     autoIncludeTs
             );
+            if (ctasDimCount > 0 || ctasClusterCount > 0) {
+                // Snapshot: this builder is pooled and cleared between compilations, so the operation
+                // must not hold a reference to its live lists.
+                final ObjList<ExpressionNode> dims = new ObjList<>(ctasDimCount);
+                for (int i = 0; i < ctasDimCount; i++) {
+                    dims.add(partitionDimensionExprs.getQuick(i));
+                }
+                final ObjList<ExpressionNode> clusters = new ObjList<>(ctasClusterCount);
+                for (int i = 0; i < ctasClusterCount; i++) {
+                    clusters.add(clusterExprs.getQuick(i));
+                }
+                ctasOp.setDeferredPartitionDimensions(dims, clusters, namingMode, getPartitionByFromExpr());
+            }
+            return ctasOp;
         }
 
         if (likeTableNameExpr != null) {

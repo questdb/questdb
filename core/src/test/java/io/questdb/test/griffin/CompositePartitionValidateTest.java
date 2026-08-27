@@ -122,16 +122,16 @@ public class CompositePartitionValidateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAsSelectRejectsCompositeDimensions() throws Exception {
-        // CREATE TABLE AS SELECT's columns aren't known until the select executes, so composite
-        // dimensions can't be resolved at build() time (no column-type/index info to drive the
-        // SYMBOL resolver); the AS-SELECT branch of build() rejects them outright rather than
-        // misreport columns as non-existent. This binding constraint previously had zero test
-        // coverage; behavior is already correct, so this is a regression guard, not a fix.
+    public void testAsSelectRequiresWalForCompositeDimensions() throws Exception {
+        // This used to assert "composite partitioning is not yet supported with CREATE TABLE AS
+        // SELECT". That blanket refusal is gone -- a CTAS now resolves its dimensions against the
+        // SELECT's metadata (see CompositeCtasTest). What is still refused, and is what this
+        // statement actually trips, is a composite table without WAL: the check runs at build() time
+        // because it needs no column knowledge, so it fires before anything is created.
         execute("create table src (ts timestamp, exchange symbol) timestamp(ts) partition by day wal");
         assertException(
                 "create table t as (select * from src) timestamp(ts) partition by day, exchange",
-                /*pos of exchange*/ 70, "composite partitioning is not yet supported with CREATE TABLE AS SELECT");
+                /*pos of exchange*/ 70, "composite partitioning requires a WAL table");
     }
 
     /**
