@@ -57,15 +57,24 @@ cost is not charged to the index form:
 | Query | vs native index |
 | --- | --- |
 | covered `WHERE` | 1.09x faster |
-| `count()`, `SELECT DISTINCT`, `LATEST ON`, `IN` list, wide table, O3 | parity |
+| `count()`, `SELECT DISTINCT`, `IN` list, wide table, O3 | parity |
+| `LATEST ON` **with no WHERE** | parity -- but see below: that shape never touches the index |
+| `LATEST ON` **naming values** | **2.9x SLOWER than using no index**; see "Where the parquet form LOSES" |
 | `sum()`, residual filter | parity |
 | `avg()` | 1.14x |
 | covered gather (`sidecarRead`) | parity; INT faster |
 
-**Index-level reads.** Parquet against native. **One benchmark per JVM**:
-benchmarks sharing a JVM contaminate each other badly here -- a 5,000-key scan
-reads 3.11x SLOWER measured alongside two others and 1.73x FASTER measured alone,
-three runs agreeing within 2%.
+**Index-level reads.** Parquet against native.
+
+> **Superseded.** The table below predates two changes: the suite now forks one
+> JVM per benchmark (it previously ran in-process, where benchmarks contaminate
+> each other -- a 5,000-key scan read 3.11x SLOWER alongside two others and 1.73x
+> FASTER alone), and the backward reader has since been given the forward
+> reader's fast paths. Current numbers, forked, 3 warmup + 5 measurement
+> iterations: point reads parity at 16 and 200k keys, 3.3x slower at 2k, 2.2x at
+> 1M; scans 1.45-1.61x FASTER at 200k and 1M; range reads 1.1x at 16 rising to
+> 4.4x at 1M. Both directions now agree cell for cell. Reproduce with the command
+> at the end of this section.
 
 | Rows / distinct keys | point read | scan | range |
 | --- | --- | --- | --- |
