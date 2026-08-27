@@ -153,8 +153,12 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                 }
             } finally {
                 // Free shared resources only after workers have finished
-                Misc.free(slaveFrameCursor);
+                slaveFrameCursor = Misc.free(slaveFrameCursor);
                 Misc.free(slaveTimeFrameState);
+                // The record caches symbol tables and array buffers; both async filter cursors free
+                // theirs the same way. close() ends in clear(), so the record stays reusable when
+                // the factory reopens this cursor.
+                Misc.free(masterRecord);
                 isOpen = false;
             }
         }
@@ -486,6 +490,9 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
         // Acquire after reopen() so a reopen breach leaves no slave cursor to free.
         this.slaveFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, slaveOrder);
+        // Bind group-by function args to the slave symbol tables before the lazy time-frame cache,
+        // so a parent projection over a SYMBOL aggregate can resolve its static symbol table now.
+        atom.initOwnerGroupByFunctions(executionContext, masterFrameSequence.getSymbolTableSource(), slaveFrameCursor);
         this.executionContext = executionContext;
         allFramesActive = true;
         isSlaveTimeFrameCacheBuilt = false;

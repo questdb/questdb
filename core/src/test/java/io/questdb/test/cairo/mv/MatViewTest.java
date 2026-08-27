@@ -2532,7 +2532,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
 
-            execute("insert into base_price select concat('sym', x), x, timestamp_sequence('2022-02-24', 1000000*60*60*2) from long_sequence(30);");
+            execute("insert into base_price select concat('sym', x), x, timestamp_sequence('2022-02-24', 1000000L*60*60*2) from long_sequence(30);");
 
             drainQueues();
 

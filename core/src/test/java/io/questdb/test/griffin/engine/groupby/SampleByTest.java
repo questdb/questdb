@@ -6128,7 +6128,7 @@ public class SampleByTest extends AbstractCairoTest {
                         rnd_decimal(16, 0, 0) dec64,
                         rnd_decimal(32, 0, 0) dec128,
                         rnd_decimal(64, 0, 0) dec256,
-                        timestamp_sequence(0, 2 * 24 * 3600 * 1_000_000) ts
+                        timestamp_sequence(0, 2 * 24 * 3600 * 1_000_000L) ts
                     from long_sequence(5)
                     ) timestamp(ts) partition by day
                     """);

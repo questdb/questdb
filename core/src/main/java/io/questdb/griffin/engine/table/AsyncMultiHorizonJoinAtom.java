@@ -187,12 +187,9 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
     ) throws SqlException {
         super.initGroupByFunctions(executionContext, masterSource, slaveSources);
 
-        // Initialize key functions (for expression keys) with combined symbol table source
+        // The owner key functions bind in initOwnerFunctions(), at getCursor() time; only their
+        // per-worker clones bind here.
         final MultiHorizonJoinSymbolTableSource horizonJoinSymbolTableSource = getSymbolTableSource();
-        if (ownerKeyFunctions != null) {
-            Function.init(ownerKeyFunctions, horizonJoinSymbolTableSource, executionContext, null);
-        }
-
         if (perWorkerKeyFunctions != null) {
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
@@ -208,6 +205,16 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }
+        }
+    }
+
+    @Override
+    public void initOwnerFunctions(SqlExecutionContext executionContext) throws SqlException {
+        super.initOwnerFunctions(executionContext);
+        // The expression key functions feed the parent projection the same way the aggregates do,
+        // so they bind at getCursor() time too.
+        if (ownerKeyFunctions != null) {
+            Function.init(ownerKeyFunctions, getSymbolTableSource(), executionContext, null);
         }
     }
 
