@@ -83,7 +83,7 @@ public class ToTimezoneIntervalFunctionFactoryTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("""
                             to_timezone
-
+                            
                             """);
         });
     }
