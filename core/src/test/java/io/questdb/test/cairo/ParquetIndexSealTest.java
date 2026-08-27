@@ -3443,7 +3443,7 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     private long persistedPurgeWindowUpperBound(long sealTxn) throws Exception {
         try (RecordCursorFactory factory = select(
                 "SELECT to_table_txn FROM \"" + configuration.getSystemTableNamePrefix()
-                        + "posting_seal_purge_log\" WHERE column_name = 'sym' AND seal_txn = " + sealTxn);
+                        + "posting_seal_purge_log_v2\" WHERE column_name = 'sym' AND seal_txn = " + sealTxn);
              RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             Assert.assertTrue("no purge log row for sealTxn=" + sealTxn, cursor.hasNext());
             final long bound = cursor.getRecord().getLong(0);

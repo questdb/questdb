@@ -12717,7 +12717,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             int expectedCount
     ) throws Exception {
         assertQuery("SELECT count() FROM \"" + configuration.getSystemTableNamePrefix()
-                + "posting_seal_purge_log\" WHERE table_name = '" + tableToken.getDirName()
+                + "posting_seal_purge_log_v2\" WHERE table_name = '" + tableToken.getDirName()
                 + "' AND table_id = " + tableToken.getTableId()
                 + " AND column_name = '" + indexColumnName
                 + "' AND seal_txn = " + sealTxn

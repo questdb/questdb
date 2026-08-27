@@ -187,6 +187,60 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAPreV2PurgeLogIsDrainedAndCleared() throws Exception {
+        // The v2 rename exists so a RELEASED build -- which reads
+        // sys.posting_seal_purge_log positionally and knows nothing about
+        // artifact_form -- can never find a parquet-form row and run it down the
+        // NATIVE unlink path. The cost of that rename is that rows a pre-v2
+        // build left behind would leak forever, so recovery drains the legacy
+        // table too, treating its rows as NATIVE (the only form such a build
+        // could produce) and clearing it afterwards.
+        //
+        // Without the clear the same rows are re-drained on every restart: their
+        // artifacts are already gone, each pass reports success, and nothing
+        // empties the table. That is what this asserts.
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String legacy = configuration.getSystemTableNamePrefix() + "posting_seal_purge_log";
+            TableToken tok = createPostingTable("ps_purge_legacy");
+            FilesFacade ff = configuration.getFilesFacade();
+
+            try (Path partitionPath = partitionPathFor(tok)) {
+                String col = "c_legacy";
+                long sealTxn = writeAndSeal(partitionPath, col);
+                LPSZ pv = PostingIndexUtils.valueFileName(partitionPath, col, COLUMN_NAME_TXN_NONE, sealTxn);
+                assertTrue(".pv must exist before the drain", ff.exists(pv));
+
+                // A pre-v2 log: same columns, NO artifact_form.
+                execute("CREATE TABLE \"" + legacy + "\" (" +
+                        "ts timestamp, table_name symbol, table_id int, column_name symbol, " +
+                        "posting_column_name_txn long, seal_txn long, partition_timestamp timestamp, " +
+                        "partition_name_txn long, partition_by int, from_table_txn long, " +
+                        "to_table_txn long, timestamp_type int, completed timestamp" +
+                        ") timestamp(ts) partition by MONTH BYPASS WAL");
+                execute("INSERT INTO \"" + legacy + "\" VALUES (" +
+                        "now(), '" + tok.getDirName() + "', " + tok.getTableId() + ", '" + col + "', " +
+                        COLUMN_NAME_TXN_NONE + ", " + sealTxn + ", 0, -1, " + PartitionBy.NONE + ", " +
+                        "1, 2, " + ColumnType.TIMESTAMP + ", null)");
+
+                // Starting the job runs recovery, which must drain the legacy log.
+                try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                    runPurgeJob(job, 3);
+                }
+                assertFalse("the legacy row must have been purged, not ignored", ff.exists(pv));
+                assertEquals(
+                        "the legacy log must be CLEARED after a successful drain, or the same rows"
+                                + " are re-drained on every restart",
+                        0,
+                        countRowsIn(legacy, "completed = null")
+                );
+            }
+        });
+    }
+
+    @Test
     public void testCompletedColumnWritten() throws Exception {
         assertMemoryLeak(() -> {
             if (configuration.disableColumnPurgeJob()) {
@@ -949,7 +1003,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                     null
             );
             String sql = "SELECT count(*) FROM \"" + configuration.getSystemTableNamePrefix()
-                    + "posting_seal_purge_log\" WHERE column_name = '" + columnFilter
+                    + "posting_seal_purge_log_v2\" WHERE column_name = '" + columnFilter
                     + "' AND completed IS NOT NULL";
             try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
                  RecordCursor cursor = factory.getCursor(ctx)) {
@@ -957,6 +1011,20 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 long actual = cursor.getRecord().getLong(0);
                 assertTrue("log table must have at least " + 1 + " completed row(s) for "
                         + columnFilter + ", got " + actual, actual >= 1);
+            }
+        }
+    }
+
+    /** Row count in an arbitrary log table, so the pre-v2 table can be checked too. */
+    private long countRowsIn(String tableName, String whereClause) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+             SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)) {
+            ctx.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
+            String sql = "SELECT count(*) FROM \"" + tableName + "\" WHERE " + whereClause;
+            try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
+                 RecordCursor cursor = factory.getCursor(ctx)) {
+                assertTrue("count query must return a row", cursor.hasNext());
+                return cursor.getRecord().getLong(0);
             }
         }
     }
@@ -970,7 +1038,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                     null
             );
             String sql = "SELECT count(*) FROM \"" + configuration.getSystemTableNamePrefix()
-                    + "posting_seal_purge_log\" WHERE " + whereClause;
+                    + "posting_seal_purge_log_v2\" WHERE " + whereClause;
             try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
                  RecordCursor cursor = factory.getCursor(ctx)) {
                 assertTrue("log query must return a row", cursor.hasNext());
