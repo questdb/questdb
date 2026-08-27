@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assume;
@@ -38,6 +39,9 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class TimestampBoundsTest extends AbstractCairoTest {
+    private static final String NANOS_OUT_OF_BOUNDS =
+            "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed";
+
     private final boolean walEnabled;
 
     public TimestampBoundsTest(boolean walEnabled) {
@@ -103,6 +107,116 @@ public class TimestampBoundsTest extends AbstractCairoTest {
                     .fails(26, "designated timestamp before 1970-01-01 is not allowed");
             assertQuery("INSERT INTO tango VALUES (" + Micros.YEAR_10000 + ")")
                     .fails(26, "designated timestamp beyond 9999-12-31 is not allowed");
+        });
+    }
+
+    @Test
+    public void testDesignatedNanosTimestampBoundsNonPartitioned() throws Exception {
+        Assume.assumeFalse(walEnabled);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP_NS) TIMESTAMP(ts)");
+            assertQuery("INSERT INTO tango VALUES (NULL)")
+                    .fails(26, "designated timestamp column cannot be NULL");
+            assertQuery("INSERT INTO tango VALUES (" + -1L + ")")
+                    .fails(26, NANOS_OUT_OF_BOUNDS);
+            assertQuery("INSERT INTO tango VALUES ('1969-12-31T23:59:59.900000000Z')")
+                    .fails(26, NANOS_OUT_OF_BOUNDS);
+            assertQuery("INSERT INTO tango VALUES (" + (CommonUtils.MAX_TIMESTAMP + 1) + ")")
+                    .fails(26, NANOS_OUT_OF_BOUNDS);
+            assertQuery("INSERT INTO tango VALUES (" + Long.MAX_VALUE + ")")
+                    .fails(26, NANOS_OUT_OF_BOUNDS);
+        });
+    }
+
+    @Test
+    public void testDesignatedNanosTimestampBoundsPartitioned() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY HOUR "
+                    + (walEnabled ? "" : "BYPASS ") + "WAL");
+            assertQuery("INSERT INTO tango VALUES (NULL)")
+                    .fails(26, "designated timestamp column cannot be NULL");
+            assertQuery("INSERT INTO tango VALUES (" + -1L + ")")
+                    .fails(26, NANOS_OUT_OF_BOUNDS);
+            assertQuery("INSERT INTO tango VALUES ('1969-12-31T23:59:59.900000000Z')")
+                    .fails(26, NANOS_OUT_OF_BOUNDS);
+            assertQuery("INSERT INTO tango VALUES (" + (CommonUtils.MAX_TIMESTAMP + 1) + ")")
+                    .fails(26, NANOS_OUT_OF_BOUNDS);
+            assertQuery("INSERT INTO tango VALUES (" + Long.MAX_VALUE + ")")
+                    .fails(26, NANOS_OUT_OF_BOUNDS);
+        });
+    }
+
+    @Test
+    public void testDesignatedNanosTimestampBoundsWithSwitchPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY HOUR "
+                    + (walEnabled ? "" : "BYPASS ") + "WAL");
+            execute("INSERT INTO tango VALUES (" + 1L + ")");
+            assertQuery("INSERT INTO tango VALUES (NULL)")
+                    .fails(26, "designated timestamp column cannot be NULL");
+            assertQuery("INSERT INTO tango VALUES (" + -1L + ")")
+                    .fails(26, NANOS_OUT_OF_BOUNDS);
+            assertQuery("INSERT INTO tango VALUES ('1969-12-31T23:59:59.900000000Z')")
+                    .fails(26, NANOS_OUT_OF_BOUNDS);
+            assertQuery("INSERT INTO tango VALUES (" + (CommonUtils.MAX_TIMESTAMP + 1) + ")")
+                    .fails(26, NANOS_OUT_OF_BOUNDS);
+            assertQuery("INSERT INTO tango VALUES (" + Long.MAX_VALUE + ")")
+                    .fails(26, NANOS_OUT_OF_BOUNDS);
+        });
+    }
+
+    /**
+     * The rejected row must not leave the writer distressed or the partition bookkeeping damaged:
+     * before the bound was enforced, a batch that ended past the ceiling threw
+     * {@code ArrayIndexOutOfBoundsException} out of {@code TxWriter} and killed the writer.
+     */
+    @Test
+    public void testDesignatedNanosTimestampOutOfBoundsKeepsTableUsable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY "
+                    + (walEnabled ? "" : "BYPASS ") + "WAL");
+            execute("INSERT INTO tango VALUES ('2024-01-01T00:00:00.000000000Z')");
+            assertQuery("INSERT INTO tango VALUES (" + (Long.MAX_VALUE - 1) + "), (" + Long.MAX_VALUE + ")")
+                    .fails(26, NANOS_OUT_OF_BOUNDS);
+            execute("INSERT INTO tango VALUES ('2024-01-02T00:00:00.000000000Z')");
+            drainWalQueue();
+            assertQuery("SELECT * FROM tango").timestamp("ts").expectSize().returns("""
+                    ts
+                    2024-01-01T00:00:00.000000000Z
+                    2024-01-02T00:00:00.000000000Z
+                    """);
+            assertQuery("SELECT count() FROM tango").noRandomAccess().expectSize().returns("""
+                    count
+                    2
+                    """);
+        });
+    }
+
+    /**
+     * The last legal nanosecond, one below the ceiling the error message names, must still be
+     * storable and readable back.
+     */
+    @Test
+    public void testDesignatedNanosTimestampUpperBoundIsInclusive() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY "
+                    + (walEnabled ? "" : "BYPASS ") + "WAL");
+            execute("INSERT INTO tango VALUES (" + CommonUtils.MAX_TIMESTAMP + ")");
+            drainWalQueue();
+            assertQuery("SELECT * FROM tango").timestamp("ts").expectSize().returns("""
+                    ts
+                    2261-12-31T23:59:59.999999999Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testNanosTimestampBoundsNotDesignated() throws Exception {
+        Assume.assumeFalse(walEnabled);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP_NS)");
+            execute("INSERT INTO tango VALUES (" + Long.MAX_VALUE + ")");
+            execute("INSERT INTO tango VALUES (" + -1L + ")");
         });
     }
 

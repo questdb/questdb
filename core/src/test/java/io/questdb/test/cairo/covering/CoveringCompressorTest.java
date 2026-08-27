@@ -48,6 +48,43 @@ public class CoveringCompressorTest extends AbstractCairoTest {
     private static final long GUARD_WORD = 0x5a5a5a5a5a5a5a5aL;
     private static final int RAW_BLOCK_FLAG = 0x80000000;
 
+    /**
+     * The worst-case block size must stay exact once the product passes 2^31. It used to be
+     * computed in {@code int} and wrapped negative, and both seal paths then read the negative as
+     * "nothing to allocate" and handed the encoder a null destination buffer.
+     */
+    @Test
+    public void testMaxCompressedSizeDoesNotOverflowInt() {
+        // DOUBLE is the widest worst case at ~20 bytes/value, so it crosses 2^31 first
+        Assert.assertEquals(
+                CoveringCompressor.DOUBLE_HEADER_SIZE + 200_000_000L * 8 + 200_000_000L * 12,
+                CoveringCompressor.maxCompressedSize(200_000_000, ColumnType.DOUBLE)
+        );
+        Assert.assertEquals(
+                CoveringCompressor.LONG_HEADER_SIZE + 300_000_000L * 8,
+                CoveringCompressor.maxCompressedSize(300_000_000, ColumnType.LONG)
+        );
+        Assert.assertEquals(
+                CoveringCompressor.LONG_LINEAR_PRED_HEADER_SIZE + 300_000_000L * 8,
+                CoveringCompressor.maxCompressedSize(300_000_000, ColumnType.TIMESTAMP)
+        );
+        Assert.assertEquals(
+                4 + 200_000_000L * 16,
+                CoveringCompressor.maxCompressedSize(200_000_000, ColumnType.UUID)
+        );
+        // INT_HEADER_SIZE is package-private, so assert the packed payload is at least covered
+        Assert.assertTrue(CoveringCompressor.maxCompressedSize(600_000_000, ColumnType.INT) > 600_000_000L * 4);
+        // ordinary block sizes are unchanged
+        Assert.assertEquals(
+                CoveringCompressor.DOUBLE_HEADER_SIZE + 1_000L * 8 + 1_000L * 12,
+                CoveringCompressor.maxCompressedSize(1_000, ColumnType.DOUBLE)
+        );
+        Assert.assertEquals(
+                CoveringCompressor.LONG_HEADER_SIZE + 1_000L * 8,
+                CoveringCompressor.maxCompressedSize(1_000, ColumnType.LONG)
+        );
+    }
+
     @Test
     public void testAllExceptionsBlock() throws Exception {
         // When ALL values are ALP exceptions (irrational numbers), fillValue=0,
@@ -942,7 +979,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                     1e-3f, 1e3f, 42.0f, 42.0f, 42.0f, Float.MIN_NORMAL
             };
             int count = input.length;
-            int destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.FLOAT);
+            long destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.FLOAT);
             long srcAddr = Unsafe.malloc((long) count * Float.BYTES, MemoryTag.NATIVE_DEFAULT);
             long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
             long encAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -1007,7 +1044,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
     @Test
     public void testEmptyBlockBwIsZero() throws Exception {
         assertMemoryLeak(() -> {
-            int destCap = CoveringCompressor.maxCompressedSize(1, ColumnType.LONG);
+            long destCap = CoveringCompressor.maxCompressedSize(1, ColumnType.LONG);
             long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
             try {
                 int sz = CoveringCompressor.compressLongs(0L, 0, destAddr);
@@ -1026,7 +1063,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         // from "the minimum happens to be MAX_VALUE" must leave the count == 0
         // header byte-for-byte identical: count 0, bit width 0, FoR base 0.
         assertMemoryLeak(() -> {
-            final int destCap = CoveringCompressor.maxCompressedSize(1, ColumnType.LONG);
+            final long destCap = CoveringCompressor.maxCompressedSize(1, ColumnType.LONG);
             final long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
             try {
                 // LONG: count(4) + bitWidth(1) + forBase(8)
@@ -1068,7 +1105,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             long[] input = {0L, Long.MIN_VALUE, Long.MAX_VALUE, 0L};
             int count = input.length;
-            int destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP);
+            long destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP);
             long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
             long workAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -1231,7 +1268,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         final long wsSize = Math.max(1, (long) count * Long.BYTES);
         final long payloadSize = count;
         final long outSize = guardedSize(payloadSize);
-        final int destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.BYTE);
+        final long destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.BYTE);
         final long srcAddr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
         final long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
         final long workspaceAddr = Unsafe.malloc(wsSize, MemoryTag.NATIVE_DEFAULT);
@@ -1301,7 +1338,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         final long excSize = Math.max(1, count);
         final long payloadSize = (long) count * Float.BYTES;
         final long outSize = guardedSize(payloadSize);
-        final int destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.FLOAT);
+        final long destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.FLOAT);
         final long srcAddr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
         final long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
         final long encodedAddr = Unsafe.malloc(wsSize, MemoryTag.NATIVE_DEFAULT);
@@ -1363,7 +1400,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         final long wsSize = Math.max(1, (long) count * Long.BYTES);
         final long payloadSize = (long) count * Integer.BYTES;
         final long outSize = guardedSize(payloadSize);
-        final int destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.INT);
+        final long destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.INT);
         final long srcAddr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
         final long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
         final long outAddr = Unsafe.malloc(outSize, MemoryTag.NATIVE_DEFAULT);
@@ -1426,7 +1463,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         final long wsSize = Math.max(1, (long) count * Long.BYTES);
         final long payloadSize = (long) count * Short.BYTES;
         final long outSize = guardedSize(payloadSize);
-        final int destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.SHORT);
+        final long destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.SHORT);
         final long srcAddr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
         final long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
         final long workspaceAddr = Unsafe.malloc(wsSize, MemoryTag.NATIVE_DEFAULT);
@@ -1583,7 +1620,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         final long encodedSize = Math.max(1, (long) count * Long.BYTES);
         final long exceptionSize = Math.max(1, count);
         final long guardedSize = (long) (count + GUARD_WORDS) * Long.BYTES;
-        final int destCapacity = CoveringCompressor.maxCompressedSize(count, ColumnType.DOUBLE);
+        final long destCapacity = CoveringCompressor.maxCompressedSize(count, ColumnType.DOUBLE);
         final long srcAddr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
         final long destAddr = Unsafe.malloc(destCapacity, MemoryTag.NATIVE_DEFAULT);
         final long encodedAddr = Unsafe.malloc(encodedSize, MemoryTag.NATIVE_DEFAULT);
@@ -1620,7 +1657,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         final int count = input.length;
         final long srcSize = Math.max(1, (long) count * Long.BYTES);
         final long guardedSize = (long) (count + GUARD_WORDS) * Long.BYTES;
-        final int destCapacity = CoveringCompressor.maxCompressedSize(
+        final long destCapacity = CoveringCompressor.maxCompressedSize(
                 count, linearPred ? ColumnType.TIMESTAMP : ColumnType.LONG);
         final long srcAddr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
         final long destAddr = Unsafe.malloc(destCapacity, MemoryTag.NATIVE_DEFAULT);

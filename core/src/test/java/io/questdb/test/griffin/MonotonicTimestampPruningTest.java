@@ -109,10 +109,11 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             execute("CREATE TABLE tn (price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY;");
             execute("INSERT INTO tn VALUES " +
                     "(1, '2024-06-15T12:00:00.000000000Z')," +
-                    "(2, '2262-04-11T10:00:00.000000000Z');");
-            // ts + 1 day overflows the nano domain for the 2262 row, so its shifted value wraps below
-            // the bound; the EXACT inverse must cap the open upper end at MAX - shift, not leave it open
-            assertQuery("SELECT * FROM tn WHERE ts + 86_400_000_000_000 >= '2024-01-01'")
+                    "(2, '2261-12-31T23:00:00.000000000Z');");
+            // ts + 200 days overflows the nano domain for the 2261 row (the storable ceiling leaves
+            // only ~101 days of headroom), so its shifted value wraps below the bound; the EXACT
+            // inverse must cap the open upper end at MAX - shift, not leave it open
+            assertQuery("SELECT * FROM tn WHERE ts + 17_280_000_000_000_000 >= '2024-01-01'")
                     .timestamp("ts")
                     .withPlanContaining("Interval forward scan on: tn")
                     .withPlanNotContaining("filter:")
@@ -563,7 +564,7 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             execute("CREATE TABLE tn (price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY;");
             execute("INSERT INTO tn VALUES " +
                     "(1, '2024-06-15T12:00:00.000000000Z')," +
-                    "(2, '2262-04-10T08:00:00.000000000Z');");
+                    "(2, '2261-12-31T08:00:00.000000000Z');");
             // a strict bound at the exact nano domain max matches nothing; the strictness +1 must not
             // wrap to the open-lower sentinel and turn the predicate into a full-range scan
             assertQuery("SELECT * FROM tn WHERE date_trunc('day', ts) > 9223372036854775807")
@@ -639,7 +640,7 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             execute("CREATE TABLE tn (price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY;");
             execute("INSERT INTO tn VALUES " +
                     "(1, '2024-06-15T12:00:00.000000000Z')," +
-                    "(2, '2262-04-10T08:00:00.000000000Z');");
+                    "(2, '2261-12-31T08:00:00.000000000Z');");
             // the round-up of a bound within one day of the nano domain max (~2262-04-11) overflows;
             // both rows satisfy the predicate, so a wrapped interval must not drop them
             assertQuery("SELECT * FROM tn WHERE date_trunc('day', ts) <= '2262-04-11'")
@@ -648,7 +649,7 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                     .returns("""
                             price\tts
                             1.0\t2024-06-15T12:00:00.000000000Z
-                            2.0\t2262-04-10T08:00:00.000000000Z
+                            2.0\t2261-12-31T08:00:00.000000000Z
                             """);
         });
     }
@@ -825,7 +826,7 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             execute("CREATE TABLE tn (price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY;");
             execute("INSERT INTO tn VALUES " +
                     "(1, '2024-06-15T12:00:00.000000000Z')," +
-                    "(2, '2262-04-11T10:00:00.000000000Z');");
+                    "(2, '2261-12-31T10:00:00.000000000Z');");
             // rounding the bound up to the next 10h bucket overflows the nano domain max (~2262-04-11);
             // the EXACT floor inverse must detect the wrap and keep a residual filter rather than prune
             // with a wrapped interval that drops both matching rows
@@ -835,7 +836,7 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                     .returns("""
                             price\tts
                             1.0\t2024-06-15T12:00:00.000000000Z
-                            2.0\t2262-04-11T10:00:00.000000000Z
+                            2.0\t2261-12-31T10:00:00.000000000Z
                             """);
         });
     }

@@ -1015,32 +1015,38 @@ public class CoveringCompressor {
     }
 
     /**
-     * Compute the maximum compressed size for a stride of values.
+     * Computes the maximum compressed size for a stride of values.
      * Used to pre-allocate the output buffer.
+     * <p>
+     * Returns a {@code long} because the worst case grows to ~20 bytes per value for DOUBLE, so
+     * a per-key block of ~107M values already exceeds {@code Integer.MAX_VALUE}. An {@code int}
+     * here wrapped negative and the caller then skipped its allocation, handing the encoder a null
+     * destination. Callers that must materialise the block still have to reject a size above
+     * {@code Integer.MAX_VALUE}: the block header stores its value count in 32 bits.
      */
-    public static int maxCompressedSize(int count, int columnType) {
+    public static long maxCompressedSize(int count, int columnType) {
         return switch (ColumnType.tagOf(columnType)) {
             case ColumnType.DOUBLE ->
                 // ALP header + packed data (worst case 64 bits) + all exceptions
-                    DOUBLE_HEADER_SIZE + BitpackUtils.packedDataSize(count, 64)
-                            + count * (4 + 8); // worst case: all exceptions (4B pos + 8B value)
+                    DOUBLE_HEADER_SIZE + packedDataSizeLong(count, 64)
+                            + (long) count * (4 + 8); // worst case: all exceptions (4B pos + 8B value)
             case ColumnType.FLOAT ->
                 // Float ALP header + packed data (worst case 32 bits) + all exceptions
-                    FLOAT_ALP_HEADER_SIZE + BitpackUtils.packedDataSize(count, 32)
-                            + count * (4 + 4); // worst case: all exceptions (4B pos + 4B value)
+                    FLOAT_ALP_HEADER_SIZE + packedDataSizeLong(count, 32)
+                            + (long) count * (4 + 4); // worst case: all exceptions (4B pos + 4B value)
             case ColumnType.LONG, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
-                    LONG_HEADER_SIZE + BitpackUtils.packedDataSize(count, 64);
+                    LONG_HEADER_SIZE + packedDataSizeLong(count, 64);
             case ColumnType.TIMESTAMP ->
                 // Linear-prediction header is larger than delta (29 vs 21 bytes)
-                    LONG_LINEAR_PRED_HEADER_SIZE + BitpackUtils.packedDataSize(count, 64);
+                    LONG_LINEAR_PRED_HEADER_SIZE + packedDataSizeLong(count, 64);
             case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
-                    INT_HEADER_SIZE + BitpackUtils.packedDataSize(count, 32);
+                    INT_HEADER_SIZE + packedDataSizeLong(count, 32);
             case ColumnType.CHAR, ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
-                    SHORT_HEADER_SIZE + BitpackUtils.packedDataSize(count, 16);
+                    SHORT_HEADER_SIZE + packedDataSizeLong(count, 16);
             case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
-                    BYTE_HEADER_SIZE + BitpackUtils.packedDataSize(count, 8);
+                    BYTE_HEADER_SIZE + packedDataSizeLong(count, 8);
             case ColumnType.LONG128, ColumnType.UUID, ColumnType.DECIMAL128, ColumnType.LONG256,
-                 ColumnType.DECIMAL256 -> 4 + count * ColumnType.sizeOf(columnType);
+                 ColumnType.DECIMAL256 -> 4 + (long) count * ColumnType.sizeOf(columnType);
             default -> throw new AssertionError("maxCompressedSize: unsupported column type " + columnType);
         };
     }
@@ -1200,6 +1206,14 @@ public class CoveringCompressor {
         }
         long span = max - min;
         return span == 0 ? 0 : 64 - Long.numberOfLeadingZeros(span);
+    }
+
+    /**
+     * {@link BitpackUtils#packedDataSize(int, int)} without the narrowing cast back to
+     * {@code int}, for {@link #maxCompressedSize(int, int)}.
+     */
+    private static long packedDataSizeLong(int valueCount, int bitWidth) {
+        return ((long) valueCount * bitWidth + 7) / 8;
     }
 
     /**
