@@ -231,7 +231,7 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
             List<Long> ackedFsns = Collections.synchronizedList(new ArrayList<>());
             long finalEpochBase;
             long preRecycleFsn;
-            long resetsPerformed;
+            long symbolDictEpoch;
             long tsBase = 1_700_000_000_000_000_000L;
             long tsStepNanos = 1_000L;
 
@@ -267,7 +267,7 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertEquals("a bounded live set of " + SYMBOL_CARDINALITY
                                 + " symbols must recycle exactly once and then settle "
                                 + "under the client's anti-thrash re-arm floor",
-                        1, sender.getSymbolDictResetsPerformed());
+                        1, sender.getSymbolDictEpoch());
 
                 // Sender.resetSymbolDictionary() bypasses the re-arm floor by
                 // design -- mirrors the client's own
@@ -285,15 +285,15 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertTrue("final batch ending at id=" + id + " must be acked within 10s",
                         sender.awaitAckedFsn(finalBatchFsn, 10_000));
 
-                resetsPerformed = sender.getSymbolDictResetsPerformed();
+                symbolDictEpoch = sender.getSymbolDictEpoch();
                 // Captured here (post-loop, pre-close) so the FSN-continuity
                 // anchor below reflects the LAST epoch this run ever reached,
                 // not an intermediate one.
-                finalEpochBase = sender.getFsnEpochBaseForTest();
+                finalEpochBase = sender.getFsnEpochBaseForTesting();
                 Assert.assertEquals("the organic recycle (floor-limited to one) plus the "
                                 + "manual resetSymbolDictionary() recycle must together total "
-                                + "exactly 2, got symbolDictResetsPerformed=" + resetsPerformed,
-                        2, resetsPerformed);
+                                + "exactly 2, got symbolDictEpoch=" + symbolDictEpoch,
+                        2, symbolDictEpoch);
                 Assert.assertTrue("epoch must have advanced at least twice past the initial "
                                 + "connection's epoch 0 (a single recycle would only reach epoch 1)",
                         sender.getSymbolDictEpoch() >= 2);
@@ -349,7 +349,7 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
             // regression that halves the recycle rate or reconnects twice per
             // recycle -- neither of which a bare ">= 2" could see.
             Assert.assertEquals("each recycle must produce exactly one new ingress connection",
-                    resetsPerformed + 1, ingressConnections.get());
+                    symbolDictEpoch + 1, ingressConnections.get());
 
             // FSN continuity: the progress handler must have observed a
             // strictly increasing external FSN stream straight through every
@@ -368,7 +368,7 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
             // above before close()) closes that gap: any delivery at or above
             // finalEpochBase is necessarily an ack from the final epoch, so
             // this only passes if callbacks survived every recycle boundary
-            // the run crossed (resetsPerformed of them, asserted == 2 above).
+            // the run crossed (symbolDictEpoch of them, asserted == 2 above).
             // A size-based lower bound on snapshot would NOT work as a
             // substitute or supplement here -- SenderProgressDispatcher is a
             // single-slot coalescing watermark mailbox, so the list length

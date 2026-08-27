@@ -116,12 +116,13 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
     private static final int TARGET_DRAIN_EVERY_N_BATCHES = 20;
 
     private int recvChunk;
+    private Rnd rnd;
     private int sendChunk;
 
     @Before
     public void setUp() {
         super.setUp();
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        rnd = TestUtils.generateRandom(LOG);
         // Independent recv / send fragmentation chunks (asymmetric, min=1),
         // same rationale as QwpIngressServerRestartFuzzTest: chunk=1 makes
         // every wire byte its own socket event, exposing park-resume bugs in
@@ -139,7 +140,6 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
             int port = RestartableQwpServer.pickFreePort();
             String sfDir = temp.newFolder("qwp-recycle-reconnect-fuzz").getAbsolutePath();
 
-            Rnd rnd = TestUtils.generateRandom(LOG);
             // 15..30 server bounces, randomly paced -- large enough to
             // interleave densely with the tens of recycles the reset cadence
             // produces, small enough to keep the run under a handful of
@@ -166,7 +166,6 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 AtomicReference<Throwable> producerError = new AtomicReference<>();
                 AtomicReference<Throwable> bouncerError = new AtomicReference<>();
                 AtomicLong rowsProduced = new AtomicLong();
-                AtomicLong resetsPerformedHolder = new AtomicLong();
                 AtomicLong symbolDictEpochHolder = new AtomicLong();
                 AtomicInteger restartsDone = new AtomicInteger();
                 AtomicInteger unplannedDisconnects = new AtomicInteger();
@@ -253,7 +252,6 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                         // recycle", not this sender's whole lifetime, and a
                         // single end-of-run sample of it would be meaningless
                         // noise across a run with dozens of recycles.
-                        resetsPerformedHolder.set(sender.getSymbolDictResetsPerformed());
                         symbolDictEpochHolder.set(sender.getSymbolDictEpoch());
                     } catch (Throwable t) {
                         producerError.set(t);
@@ -328,8 +326,8 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 // own error check below -- a producer that died mid-run must
                 // surface its real exception, not a low-recycle-count headline.
                 QwpWebSocketSender senderAtBounceEnd = senderRef.get();
-                long resetsAtBounceEnd = senderAtBounceEnd != null
-                        ? senderAtBounceEnd.getSymbolDictResetsPerformed() : 0L;
+                long epochAtBounceEnd = senderAtBounceEnd != null
+                        ? senderAtBounceEnd.getSymbolDictEpoch() : 0L;
 
                 // Grace window against a now-stable server before stopping the
                 // producer, same as QwpIngressServerRestartFuzzTest.
@@ -346,12 +344,11 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 }
 
                 Assert.assertTrue("expected the reset threshold to be crossed many times DURING the "
-                                + restartsDone.get() + " server restarts, but symbolDictResetsPerformed="
-                                + resetsAtBounceEnd + " when the bounce schedule finished",
-                        resetsAtBounceEnd >= 10);
+                                + restartsDone.get() + " server restarts, but symbolDictEpoch="
+                                + epochAtBounceEnd + " when the bounce schedule finished",
+                        epochAtBounceEnd >= 10);
 
                 long expected = rowsProduced.get();
-                long resetsPerformed = resetsPerformedHolder.get();
                 long symbolDictEpoch = symbolDictEpochHolder.get();
                 int restarts = restartsDone.get();
                 int unplanned = unplannedDisconnects.get();
@@ -361,7 +358,6 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 LOG.info().$("fuzz run complete: rowsProduced=").$(expected)
                         .$(", serverRestarts=").$(restarts)
                         .$(", unplannedDisconnects=").$(unplanned)
-                        .$(", symbolDictResetsPerformed=").$(resetsPerformed)
                         .$(", symbolDictEpoch=").$(symbolDictEpoch).$();
 
                 Assert.assertEquals("bouncer must have completed its full randomized restart schedule",
