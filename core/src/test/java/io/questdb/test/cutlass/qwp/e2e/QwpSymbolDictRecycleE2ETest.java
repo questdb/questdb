@@ -294,9 +294,6 @@ public class QwpSymbolDictRecycleE2ETest extends AbstractQwpWebSocketTest {
                                 + "manual resetSymbolDictionary() recycle must together total "
                                 + "exactly 2, got symbolDictEpoch=" + symbolDictEpoch,
                         2, symbolDictEpoch);
-                Assert.assertTrue("epoch must have advanced at least twice past the initial "
-                                + "connection's epoch 0 (a single recycle would only reach epoch 1)",
-                        sender.getSymbolDictEpoch() >= 2);
 
                 Assert.assertTrue("post-recycle awaitAckedFsn(preRecycleFsn) must return true, "
                                 + "proving fsnEpochBase rolled forward past the pre-recycle "
