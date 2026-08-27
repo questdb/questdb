@@ -171,6 +171,78 @@ public class CompositeCtasTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The DEFAULT layout is HIVE ({@code 2023-01-01/exch=E0}), not PLAIN -- see SqlParser's
+     * "LAYOUT HIVE|PLAIN (default HIVE)". Every other test in this class passes LAYOUT PLAIN, so
+     * without this one the layout a user actually gets by default would have no CTAS coverage at all.
+     */
+    @Test(timeout = 120_000)
+    public void testCtasWithTheDefaultHiveLayout() throws Exception {
+        assertMemoryLeak(() -> {
+            seedSource();
+
+            execute("CREATE TABLE c AS (SELECT * FROM src) TIMESTAMP(ts) PARTITION BY DAY, exch WAL");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            // MEASURED: HIVE names the CELL <column>=<value> and leaves the DAY directory alone.
+            // PartitionSpec's own comment says "ts=2023-01-01/exchange=NYSE/", implying the day is
+            // prefixed too -- it is not, and that comment is corrected in this commit.
+            final List<String> days = dirsMatching("c", "2023-01-01");
+            Assert.assertEquals("the day directory is NOT hive-prefixed. Found: " + allDirs("c"), 1, days.size());
+            final List<String> cells = cellDirs("c", "2023-01-01");
+            Assert.assertEquals("HIVE cells are named <column>=<value>. Found: " + cells, 2, cells.size());
+            for (String cell : cells) {
+                Assert.assertTrue("HIVE cell name must be exch=<value>, was: " + cell, cell.startsWith("exch="));
+            }
+
+            printSql("SELECT count() FROM c");
+            TestUtils.assertContains(sink, "count\n5\n");
+            assertSameRowsAsSource();
+        });
+    }
+
+    /**
+     * A TRANSFORM dimension, not a bare column reference. The deferred resolver hands the node
+     * straight to {@code PartitionTransform.resolve}, so this is the path that proves transforms
+     * survive the deferral -- {@code identity}, {@code hash} and {@code truncate} are the recognised
+     * shapes.
+     */
+    @Test(timeout = 120_000)
+    public void testCtasWithATransformDimension() throws Exception {
+        assertMemoryLeak(() -> {
+            seedSource();
+
+            execute("CREATE TABLE c AS (SELECT * FROM src) TIMESTAMP(ts) PARTITION BY DAY, hash(exch, 4) LAYOUT PLAIN WAL");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            Assert.assertFalse("a hash-bucket dimension must still produce cells. Found: " + allDirs("c"),
+                    cellDirs("c", "2023-01-01").isEmpty());
+            printSql("SELECT count() FROM c");
+            TestUtils.assertContains(sink, "count\n5\n");
+            assertSameRowsAsSource();
+        });
+    }
+
+    private List<String> allDirs(String table) throws IOException {
+        final List<String> out = new ArrayList<>();
+        try (Stream<Path> children = Files.list(tableDir(table))) {
+            children.filter(Files::isDirectory).map(p -> p.getFileName().toString()).sorted().forEach(out::add);
+        }
+        return out;
+    }
+
+    private List<String> dirsMatching(String table, String name) throws IOException {
+        final List<String> out = new ArrayList<>();
+        for (String d : allDirs(table)) {
+            if (d.equals(name)) {
+                out.add(d);
+            }
+        }
+        return out;
+    }
+
     private void assertSameRowsAsSource() throws SqlException {
         printSql("SELECT ts, exch, px FROM c ORDER BY ts");
         final String composite = sink.toString();

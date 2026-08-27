@@ -38,7 +38,10 @@ import io.questdb.std.ObjList;
  */
 public final class PartitionSpec implements Mutable {
 
-    public static final byte MODE_HIVE = 0;  // ts=2023-01-01/exchange=NYSE/
+    // The naming mode applies to the CELL directory only -- the day directory is the same either
+    // way. MEASURED 2026-08-27; the previous comment here read "ts=2023-01-01/exchange=NYSE/", which
+    // implies the day component is hive-prefixed too. It is not, and that reading cost real time.
+    public static final byte MODE_HIVE = 0;  // 2023-01-01/exchange=NYSE/
     public static final byte MODE_PLAIN = 1; // 2023-01-01/NYSE/
 
     /**
