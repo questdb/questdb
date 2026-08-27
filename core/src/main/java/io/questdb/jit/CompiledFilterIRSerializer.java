@@ -180,6 +180,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final DoubleList constantFloatFoldValues = new DoubleList();
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
+    // Scratch keys for discardBackfillNodesFrom(). LongObjHashMap offers no bulk removal, and
+    // removeAt() re-hashes the entries below the freed slot, so the walk collects every doomed
+    // offset before it removes any of them.
+    private final LongList backfillDiscardOffsets = new LongList();
     // List to collect predicates from AND chains for reordering
     private final ObjList<ExpressionNode> collectedPredicates = new ObjList<>();
     // Memoizes containsFloatExpression() for the current predicate. See arithExprTypeCache.
@@ -231,6 +235,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // int64_mul, which does not wrap where MulInt#getInt does. Compared by identity.
     private final ObjHashSet<ExpressionNode> narrowKeptConstants = new ObjHashSet<>();
     private final NarrowI64WidenDetector narrowI64WidenDetector = new NarrowI64WidenDetector();
+    // Rewind watermarks for the CHAR / IPv4 ordering expansions, kept as a stack: descend() pushes
+    // the append offset and the bind variable count it sees at an ordering node, and visit() pops
+    // them once that node is serialized. serializeCharOrdering() / serializeIPv4Ordering()
+    // re-traverse their operands several times, so they first discard the single naive emission the
+    // post-order visit already made for those operands - and that emission starts at the ORDERING
+    // NODE's own watermark, not at the predicate root's. Rewinding to the root's erased sibling IR
+    // that nothing re-emitted, and the root operator then popped an operand the backend never
+    // pushed: "(achar < 'x') = (achar > 'y')" aborted the JVM inside avx2::emit_bin_op. A stack
+    // rather than a single field keeps the two ordering nodes of that shape independent.
+    //
+    // orderingRewindNodes carries the node each watermark belongs to, and rewindOrderingOperands()
+    // declines JIT compilation unless the top of the stack is the node it was called for. That
+    // cross-check is what makes a mismatch between the push condition and serializeOperator's
+    // dispatch fail CLOSED: rewinding to a stale (or absent) watermark would hand the native
+    // compiler a truncated stream, and its value stack underflows rather than reporting an error.
+    private final IntList orderingRewindBindVarSizes = new IntList();
+    private final ObjList<ExpressionNode> orderingRewindNodes = new ObjList<>();
+    private final LongList orderingRewindOffsets = new LongList();
     private final PredicateContext predicateContext = new PredicateContext();
     // Memoizes requiresWideLaneArithmetic() for the current predicate. See arithExprTypeCache.
     private final ObjIntHashMap<ExpressionNode> requiresWideLaneArithCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
@@ -268,6 +290,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // settles at its end, so visit() accumulates the answer here and getExecHint() resolves it.
     private boolean hasPendingWidthChangingI64Constant;
     private boolean isWideLaneMode;
+    // The comparison findColumnFreeComparison found in the current predicate, or null. Recorded
+    // when the predicate is entered and judged when it is LEFT, because the verdict needs
+    // predicateContext.columnType and that is only settled once every column has been visited -
+    // PostOrderTreeTraversalAlgo descends node.rhs first, so a comparison written on the left of
+    // the predicate is descended before the column on its right has typed anything. See visit().
+    private ExpressionNode columnFreeComparisonNode;
     // The operand markIntCmpFloatOperand found on the INT side of a comparison against an F4
     // operand and could not sign-extend. descend() turns it into the SqlException that declines
     // JIT compilation for the whole filter. See markIntCmpFloatOperand.
@@ -286,9 +314,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         hasI64WidenArithConstant = false;
         hasPendingWidthChangingI64Constant = false;
         isWideLaneMode = false;
+        columnFreeComparisonNode = null;
         unwidenableIntCmpFloatNode = null;
         predicateContext.clear();
         backfillNodes.clear();
+        backfillDiscardOffsets.clear();
+        orderingRewindBindVarSizes.clear();
+        orderingRewindNodes.clear();
+        orderingRewindOffsets.clear();
         collectedPredicates.clear();
         // The memo caches below are keyed by ExpressionNode identity and live for a whole filter, so
         // this is their ONLY reset point - the node pool can hand the same objects to the next
@@ -445,6 +478,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 serializeConstantStub(node);
                 return false;
             }
+        }
+
+        // Record where this ordering node's own IR begins. serializeCharOrdering() /
+        // serializeIPv4Ordering() rewind to it before they re-traverse the operands. This sits
+        // AFTER every route above that returns false, so a node that is never visited never pushes
+        // a watermark and the stack stays paired with visit(). See orderingRewindOffsets.
+        if (isOrderingComparison(node)) {
+            orderingRewindNodes.add(node);
+            orderingRewindOffsets.add(memory.getAppendOffset());
+            orderingRewindBindVarSizes.add(bindVarFunctions.size());
         }
 
         return true;
@@ -852,7 +895,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // filters, and a throw mid-IN (JIT fallback) could otherwise leave it stale for the next one.
         hasEmittedWideLaneConversion = false;
         hasPendingWidthChangingI64Constant = false;
+        columnFreeComparisonNode = null;
         unwidenableIntCmpFloatNode = null;
+        // Same reason: a throw between an ordering node's descend() and its visit() takes the whole
+        // filter to the Java fallback and leaves its watermark on the stack.
+        orderingRewindBindVarSizes.clear();
+        orderingRewindNodes.clear();
+        orderingRewindOffsets.clear();
         isWideLaneMode = !forceScalar && isWideLaneEligible(node) && requiresWideLane(node);
         // Detect if scalar mode is guaranteed by checking for mixed column sizes.
         // Short-circuit optimizations (including IN() short-circuit) only work correctly
@@ -958,12 +1007,76 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         } else {
             serializeOperator(node, argCount, node.type);
             maybeEmitI64ArithRootWidening(node);
+            // Pairs with the push at the end of descend(). serializeCharOrdering() /
+            // serializeIPv4Ordering() only READ the top of the stack, so the pop belongs here,
+            // where it runs under the very same condition the push did.
+            if (isOrderingComparison(node)) {
+                orderingRewindNodes.setPos(orderingRewindNodes.size() - 1);
+                orderingRewindOffsets.setPos(orderingRewindOffsets.size() - 1);
+                orderingRewindBindVarSizes.setPos(orderingRewindBindVarSizes.size() - 1);
+            }
         }
 
         boolean predicateLeft = predicateContext.onNodeVisited(node);
 
         if (predicateLeft) {
             // We're out of a predicate
+
+            // A comparison - or an IN pairing - inside this predicate that reads NO column, under a
+            // predicate whose columns are not numeric. Every constant the serializer emits takes
+            // its type from predicateContext.columnType, which the columns of the WHOLE predicate
+            // set, and a STRING bind variable takes its symbol table from
+            // predicateContext.symbolColumnIndex the same way. That is sound only while the
+            // comparison itself reads one of those columns, because the Java filter types a
+            // comparison from its OWN operands - for a column-free one those are the literals'
+            // own types, and for a non-numeric predicate the two are different TYPES rather than
+            // two widths of one:
+            //   ('60.108.156.35' >= '249.79.14.15') = (ip > '128.0.0.0')
+            // orders two STRINGs in the Java filter ('6' > '2', so true) and two IPv4 addresses
+            // here (0x3C6C9C23 >= 0xF94F0E0F, so false), and the compiled filter answered with the
+            // COMPLEMENT of the Java row set. Both backends were wrong the same way, so parity
+            // between them never flagged it. SYMBOL reaches the same mis-typing through plain
+            // equality - two constants absent from the table both resolve to VALUE_NOT_FOUND, so
+            // they compare EQUAL - and so do UUID (one uuid, two hex spellings), TIMESTAMP and
+            // DATE (one instant, two spellings, or a zone offset that reverses the string order).
+            // CHAR happens to agree, because a one-character literal orders the same either way,
+            // but on the values rather than on the typing.
+            //
+            // A NUMERIC predicate is exempt: there the constant is a number to both engines and
+            // only its WIDTH is in question, which the whole i64WidenConstants /
+            // narrowKeptConstants machinery already settles for a column-free comparison as much as
+            // for any other - `((a * b) = -727_379_968) = (nl > 0)` over a LONG column, or
+            // `:bv > 16777216.0`, which an INT bind variable types on its own.
+            //
+            // So is a predicate that types NOTHING, which an AND / OR conjunct holding only
+            // constants is: isTopLevelOperation does not admit AND or OR, so each conjunct is its
+            // own predicate. There, an un-folded constant has no width to be emitted at and
+            // serializeConstant declines with "all constants expression" already; what survives is
+            // exactly the pure-constant ARITHMETIC subtree descend() folds to one immediate ahead
+            // of the observer, mirroring the fold the Java filter performs -
+            // `NOT ((2_097_152 * 2_097_152 * 2_097_152) = (65_536 * 32_768))`.
+            //
+            // `column op literal` is untouched - the shape the IPv4 and CHAR quoted-literal support
+            // exists for carries a column and keeps compiling, nested in another comparison as well
+            // as at the predicate root.
+            //
+            // Three families of shape lose JIT here that the mis-typing never made WRONG, because
+            // their operands answer the same under either typing. The CHAR pair above is one; the
+            // other two are a comparison of the reserved BOOLEAN keywords - `(true = false) = b0` -
+            // and a comparison the bind variable service types rather than the predicate, as in
+            // `(:tv > '2020-01-01') = (t2 > '2020-06-01')` or `(:tv > :tv2) = (t2 > '2020-06-01')`.
+            // Every operand of those is a LITERAL, so the comparison holds one constant value for
+            // the whole scan and no predicate that reaches a column pays for the decline. The
+            // verdict declines them rather than carving out the pairs that happen to agree: that
+            // agreement rests on the VALUES, and every type the ordering, symbol and bind variable
+            // paths gain would have to re-establish it.
+            if (columnFreeComparisonNode != null
+                    && predicateContext.columnType != ColumnType.UNDEFINED
+                    && !isNumeric(ColumnType.tagOf(predicateContext.columnType))) {
+                throw SqlException.position(columnFreeComparisonNode.position)
+                        .put("comparison without a column operand: ")
+                        .put(columnFreeComparisonNode.token);
+            }
 
             // Fail closed on a widening mark that never reached maybeEmitI64ArithRootWidening.
             // markIntCmpFloatOperand marks the subtree while descending the predicate, and every
@@ -1119,6 +1232,63 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return UNDEFINED_CODE;
     }
 
+    /**
+     * Returns the first comparison - or {@code IN} pairing - in the subtree that reads no column at
+     * all, or {@code null} when every one of them reads at least one. See {@link #visit} for what
+     * that decides and why.
+     */
+    private static ExpressionNode findColumnFreeComparison(ExpressionNode node) {
+        if (node == null) {
+            return null;
+        }
+        if (node.paramCount > 0
+                && ((node.paramCount == 2 && isComparisonToken(node.token))
+                || SqlKeywords.isInKeyword(node.token))
+                && !hasColumnOperand(node)) {
+            return node;
+        }
+        ExpressionNode found = findColumnFreeComparison(node.lhs);
+        if (found != null) {
+            return found;
+        }
+        found = findColumnFreeComparison(node.rhs);
+        if (found != null) {
+            return found;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            found = findColumnFreeComparison(node.args.getQuick(i));
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Reports whether the subtree reads a COLUMN. Constants and bind variables deliberately do not
+     * count: a constant takes its type from {@link PredicateContext#columnType} and a STRING bind
+     * variable takes its symbol table from {@link PredicateContext#symbolColumnIndex}, both of
+     * which the columns of the WHOLE predicate set, so neither is evidence about the node it sits
+     * under.
+     */
+    private static boolean hasColumnOperand(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            return true;
+        }
+        if (hasColumnOperand(node.lhs) || hasColumnOperand(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasColumnOperand(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isArithmeticOperation(ExpressionNode node) {
         final CharSequence token = node.token;
         if (node.paramCount < 2) {
@@ -1155,6 +1325,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                  ColumnType.DOUBLE, ColumnType.LONG128 -> true;
             default -> false;
         };
+    }
+
+    /**
+     * A binary {@code <}, {@code <=}, {@code >} or {@code >=} node, i.e. the only shape
+     * {@link #serializeOperator} can route into {@link #serializeCharOrdering} or
+     * {@link #serializeIPv4Ordering}. {@link #descend} and {@link #visit} push and pop the rewind
+     * watermark under this condition, so it has to admit exactly the nodes whose visit reaches
+     * those two branches - see {@link #orderingRewindOffsets}.
+     */
+    private static boolean isOrderingComparison(ExpressionNode node) {
+        if (node.paramCount != 2) {
+            return false;
+        }
+        final CharSequence token = node.token;
+        return Chars.equals(token, "<") || Chars.equals(token, "<=")
+                || Chars.equals(token, ">") || Chars.equals(token, ">=");
     }
 
     private static boolean isReservedConstantKeyword(CharSequence token) {
@@ -1779,6 +1965,29 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // the range has to raise PRIORITY_COUNT with it.
             assert priority >= 0 && priority < PRIORITY_COUNT;
             predicatePriorities.add(priority);
+        }
+    }
+
+    /**
+     * Drops every {@link #backfillNodes} entry a rewind to {@code offset} invalidates, keeping the
+     * ones below it. The map is keyed by the memory offset the stub occupies, so an entry at or
+     * above the rewind point names bytes the expansion is about to overwrite with something else -
+     * {@link #backfillNode} would then write a constant over an unrelated instruction. Entries
+     * below the rewind point belong to siblings the ordering node has no business discarding, which
+     * is what a blanket {@code clear()} got wrong: for {@code (achar < 'x') = true} it threw away
+     * the deferred {@code true} stub whose backfill is what declines JIT for the shape.
+     */
+    private void discardBackfillNodesFrom(long offset) {
+        backfillDiscardOffsets.clear();
+        final long[] offsets = backfillNodes.keys();
+        for (int i = 0, n = offsets.length; i < n; i++) {
+            // An empty slot holds the map's -1 no-entry key, which is below any append offset.
+            if (offsets[i] >= offset) {
+                backfillDiscardOffsets.add(offsets[i]);
+            }
+        }
+        for (int i = 0, n = backfillDiscardOffsets.size(); i < n; i++) {
+            backfillNodes.remove(backfillDiscardOffsets.getQuick(i));
         }
     }
 
@@ -3963,6 +4172,29 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
+    /**
+     * Discards the IR the post-order visit already emitted for {@code node}'s own operands, so that
+     * {@link #serializeCharOrdering} and {@link #serializeIPv4Ordering} can re-traverse them into
+     * their multi-term expansions. The watermark is the one {@link #descend} recorded for THIS
+     * node - see {@link #orderingRewindOffsets} for why the predicate root's does not do.
+     * <p>
+     * Declines JIT compilation when the top of the watermark stack is not this node. That cannot
+     * happen while the push in {@link #descend} and the pop in {@link #visit} agree with
+     * {@link #serializeOperator}'s dispatch, but the alternative to noticing is a rewind to a
+     * foreign offset, which reaches the native compiler as a stream whose value stack underflows -
+     * a JVM abort rather than an error. The Java filter is always correct, so decline instead.
+     */
+    private void rewindOrderingOperands(ExpressionNode node) throws SqlException {
+        if (orderingRewindNodes.size() == 0 || orderingRewindNodes.getLast() != node) {
+            throw SqlException.position(node.position)
+                    .put("no rewind watermark for ordering operator: ").put(node.token);
+        }
+        final long offset = orderingRewindOffsets.getLast();
+        memory.jumpTo(offset);
+        bindVarFunctions.setPos(orderingRewindBindVarSizes.getLast());
+        discardBackfillNodesFrom(offset);
+    }
+
     private void serializeBindVariable(final ExpressionNode node) throws SqlException {
         if (predicateContext.isActive()) {
             Function varFunction = getBindVariableFunction(node.position, node.token);
@@ -4531,9 +4763,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             right = swap;
         }
 
-        memory.jumpTo(predicateContext.memoryStartOffset);
-        bindVarFunctions.setPos(predicateContext.bindVarFunctionsStartSize);
-        backfillNodes.clear();
+        rewindOrderingOperands(node);
 
         // Neither operand may be CHAR_NULL (zero).
         serializeCharSignTest(left, NE);
@@ -4587,9 +4817,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             right = swap;
         }
 
-        memory.jumpTo(predicateContext.memoryStartOffset);
-        bindVarFunctions.setPos(predicateContext.bindVarFunctionsStartSize);
-        backfillNodes.clear();
+        rewindOrderingOperands(node);
 
         // Strict ordering excludes either-null rows.
         serializeIPv4ZeroTest(left, NE);
@@ -5512,8 +5740,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         private boolean currentInSerialization = false;
         private boolean handledShortCircuitExit = false; // true if predicate emitted its own AND_SC/OR_SC exit
         private ExpressionNode inOperationNode = null;
-        private int bindVarFunctionsStartSize;
-        private long memoryStartOffset;
         private ExpressionNode rootNode;
 
         @Override
@@ -5534,8 +5760,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // We entered a predicate.
                     reset();
                     rootNode = node;
-                    memoryStartOffset = memory.getAppendOffset();
-                    bindVarFunctionsStartSize = bindVarFunctions.size();
+                    // One walk per predicate. The verdict cannot be reached here - columnType is
+                    // still UNDEFINED until the columns are VISITED - so record the node and judge
+                    // it where the predicate is left.
+                    columnFreeComparisonNode = findColumnFreeComparison(node);
                     // Pre-pass: remember whether any FLOAT / DOUBLE source is present anywhere in
                     // the predicate. See NarrowI64WidenDetector.
                     i64WidenConstants.clear();
@@ -5658,8 +5886,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             currentInSerialization = false;
             handledShortCircuitExit = false;
             inOperationNode = null;
-            bindVarFunctionsStartSize = 0;
-            memoryStartOffset = 0;
             inIntervals.clear();
             // Note: shortCircuitMode is NOT reset here; it's managed by serializePredicates*Sc methods
         }

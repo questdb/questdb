@@ -496,19 +496,13 @@ namespace questdb::avx2 {
         return {neg(c, dt, lhs.vec(), null_check), dt, dk};
     }
 
-    jit_value_t bin_not(Compiler &c, const jit_value_t &lhs) {
-        auto dt = lhs.dtype();
-        auto dk = lhs.dkind();
-        return {mask_not(c, lhs.vec()), dt, dk};
-    }
-
     jit_value_t normalize_wide_mask(Compiler &c, const jit_value_t &value) {
         if (value.dtype() != data_type_t::i32) {
             return value;
         }
         Vec dst = c.new_ymm("wide_mask");
         c.vpmovsxdq(dst, value.vec().xmm());
-        return {dst, data_type_t::i64, value.dkind()};
+        return {dst, data_type_t::i64, value.dkind(), value.is_mask()};
     }
 
     // Declines the filter instead of emitting a widening that would be wrong for the loop it lands
@@ -530,6 +524,70 @@ namespace questdb::avx2 {
         return std::make_pair(lhs, rhs);
     }
 
+    // Respells a raw BOOLEAN lane - the byte 0 or 1 QuestDB stores and the serializer forwards
+    // untouched - as the all-ones / all-zeros mask every comparison result in this backend carries.
+    //
+    // The two spellings have to meet somewhere, because serializeColumn expands only the BOOLEAN
+    // column that IS the whole predicate into "column = true"; a BOOLEAN operand of a comparison,
+    // of AND / OR, or of NOT stays raw. vpcmpeqb against 0xFF then misses on every true row, and
+    // mask_not turns 0x01 into 0xFE, which the top-bit test in to_bits32 reads as true - so both
+    // directions select the wrong rows silently rather than declining.
+    //
+    // One vpcmpeqb against a constant-pool operand does the whole job, and only the pairings that
+    // actually mix the two spellings pay it: one instruction per YMM iteration, i.e. per 32 rows,
+    // on a shape that returns wrong rows without it, and nothing at all on every shape that
+    // compiles correctly today.
+    inline jit_value_t to_mask(Compiler &c, const jit_value_t &value) {
+        if (value.is_mask()) {
+            return value;
+        }
+        if (value.dtype() != data_type_t::i8) {
+            // Fail closed. Only a BOOLEAN operand is ever asked to carry a truth value and
+            // columnTypeCode() maps BOOLEAN onto I1 alone, so a wider raw operand here means the IR
+            // put something that is not a boolean where a boolean belongs. Hand the operand back so
+            // the value stack stays balanced; compileFunction() discards the function before
+            // anything it emitted can run and SqlCodeGenerator falls back to the Java filter.
+            decline_filter(c, "boolean operand is not a single byte");
+            return value;
+        }
+        Vec dst = c.new_ymm("bool_mask");
+        c.vpcmpeqb(dst, value.vec(), vec_bool_true(c));
+        return {dst, value.dtype(), value.dkind(), true};
+    }
+
+    // Puts both operands of a boolean operation into the same spelling before the operation runs.
+    // A pair that already agrees - which is every pair in every shape that compiles correctly
+    // today - comes back untouched and emits nothing.
+    inline std::pair<jit_value_t, jit_value_t>
+    harmonise_booleans(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
+        if (lhs.is_mask() == rhs.is_mask()) {
+            return std::make_pair(lhs, rhs);
+        }
+        if (lhs.is_mask()) {
+            return std::make_pair(lhs, to_mask(c, rhs));
+        }
+        return std::make_pair(to_mask(c, lhs), rhs);
+    }
+
+    // Fail closed for an ordering comparison over a comparison result. SQL resolves no ordering
+    // operator over BOOLEAN at all ("there is no matching operator `<` with the argument types:
+    // BOOLEAN < BOOLEAN"), so no filter reaches this today; should one ever arrive, a mask spells
+    // true as -1 and false as 0, which orders every truth value the wrong way round. Declining
+    // costs a JIT decline instead of a row set ordered on the sign of a mask.
+    inline void reject_mask_operands(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
+        if (lhs.is_mask() || rhs.is_mask()) {
+            decline_filter(c, "ordering comparison over a boolean expression");
+        }
+    }
+
+    jit_value_t bin_not(Compiler &c, const jit_value_t &lhs) {
+        // mask_not is a bitwise complement, so its operand has to be a mask: complementing a raw
+        // 0x01 gives 0xFE, which is neither spelling of a truth value and which every top-bit test
+        // downstream reads as true.
+        auto value = to_mask(c, lhs);
+        return {mask_not(c, value.vec()), value.dtype(), value.dkind(), true};
+    }
+
     jit_value_t sx_i64(Compiler &c, const jit_value_t &value, bool null_check) {
         if (value.dtype() != data_type_t::i32) {
             // Fail closed. The frontend emits SX_I64 only over a narrow-int leaf that
@@ -539,7 +597,7 @@ namespace questdb::avx2 {
             decline_filter(c, "sx_i64 expects an i32 operand");
             Vec zero = c.new_ymm("sx_i64_declined");
             c.vpxor(zero, zero, zero);
-            return {zero, data_type_t::i64, value.dkind()};
+            return {zero, data_type_t::i64, value.dkind(), value.is_mask()};
         }
 
         Vec extended = c.new_ymm("sx_i64");
@@ -551,63 +609,109 @@ namespace questdb::avx2 {
             c.vpmovsxdq(null_mask_i64, null_mask_i32.xmm());
             extended = select_bytes(c, null_mask_i64, extended, vec_long_null(c));
         }
-        return {extended, data_type_t::i64, value.dkind()};
+        // Carry the boolean spelling across. An i32 mask sign-extends to an i64 one - 0xFFFFFFFF
+        // becomes -1, 0 stays 0 - so the widened value still spells true as an all-ones lane, and
+        // dropping the flag here would make harmonise_booleans decline a pairing this handles
+        // correctly. The frontend emits SX_I64 only over a narrow-int leaf, where the flag is
+        // false; convert()'s i32-with-i64 arm is the caller that can hand it a mask.
+        return {extended, data_type_t::i64, value.dkind(), value.is_mask()};
     }
 
+    // AND and OR are bitwise, so they agree with themselves in either spelling - but only when both
+    // operands share one. A mask ORed with a raw boolean gives 0xFF for a true left lane and 0x01
+    // for a true right one, a value that is neither spelling and that the next comparison, and
+    // to_bits32's top-bit test, then read differently. harmonise_booleans settles that; when both
+    // operands are already raw - two BOOLEAN columns under a nested AND - it emits nothing and the
+    // result stays raw, which is exactly what the enclosing comparison expects of it.
+    //
+    // Both helpers rest on an invariant the frontend holds and neither of them states: every pair
+    // that reaches this backend already shares one lane width, so harmonise_booleans never meets
+    // operands of two different widths. Three independent facts hold that up.
+    // CompiledFilterIRSerializer.columnTypeCode maps BOOLEAN onto I1 and onto nothing else, and its
+    // TypesObserver observes columns, bind variables and constants alike, so a BOOLEAN beside any
+    // wider operand makes hasMixedSizes() true. getExecHint() answers EXEC_HINT_MIXED_SIZE_TYPE for
+    // that, and Function::compile (compiler.cpp:376-384) sends every hint but SINGLE_SIZE and
+    // WIDE_LANE to scalar_loop, so the mixed filter never reaches emit_code. isWideLaneEligible()
+    // admits only integer and floating-point comparison operands, which keeps BOOLEAN out of the
+    // one remaining vectorized hint.
+    //
+    // A frontend change that breaks any one of the three breaks this quietly rather than loudly.
+    // to_mask respells with a byte-wide vpcmpeqb, so a raw i8 boolean harmonised against an i32 or
+    // i64 mask hands mask_and / mask_or a byte-lane mask to fold into a dword- or qword-lane one;
+    // vpand and vpor are width-agnostic and emit happily, and to_bits32's per-lane top-bit test
+    // then reads a truth value assembled from the bytes of four or eight different rows. to_mask's
+    // fail-closed arm does not cover it: that arm fires on a raw operand that is not i8, not on a
+    // PAIR whose widths disagree. Whoever lets a BOOLEAN share a vectorized filter with a wider
+    // operand has to teach convert() or harmonise_booleans the width first.
     jit_value_t bin_and(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool wide_lane) {
         auto left = wide_lane ? normalize_wide_mask(c, lhs) : lhs;
         auto right = wide_lane ? normalize_wide_mask(c, rhs) : rhs;
-        auto dk = dst_kind(left, right);
-        return {mask_and(c, left.vec(), right.vec()), left.dtype(), dk};
+        auto operands = harmonise_booleans(c, left, right);
+        auto dk = dst_kind(operands.first, operands.second);
+        return {mask_and(c, operands.first.vec(), operands.second.vec()), operands.first.dtype(), dk,
+                operands.first.is_mask()};
     }
 
+    // Shares bin_and's reasoning above, the same-lane-width invariant included.
     jit_value_t bin_or(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool wide_lane) {
         auto left = wide_lane ? normalize_wide_mask(c, lhs) : lhs;
         auto right = wide_lane ? normalize_wide_mask(c, rhs) : rhs;
-        auto dk = dst_kind(left, right);
-        return {mask_or(c, left.vec(), right.vec()), left.dtype(), dk};
+        auto operands = harmonise_booleans(c, left, right);
+        auto dk = dst_kind(operands.first, operands.second);
+        return {mask_or(c, operands.first.vec(), operands.second.vec()), operands.first.dtype(), dk,
+                operands.first.is_mask()};
     }
 
+    // Equality is where the two spellings actually meet: "(a = b) = aboolean" puts a mask beside a
+    // raw BOOLEAN byte at the same i8 width, so convert() hands the pair straight through and
+    // vpcmpeqb compares 0xFF against 0x01 - false on every true row. harmonise_booleans respells
+    // whichever half is raw first.
     jit_value_t cmp_eq(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
-        auto dt = lhs.dtype();
-        auto dk = dst_kind(lhs, rhs);
+        auto operands = harmonise_booleans(c, lhs, rhs);
+        auto dt = operands.first.dtype();
+        auto dk = dst_kind(operands.first, operands.second);
         auto mt = mask_type(dt);
-        return {cmp_eq(c, dt, lhs.vec(), rhs.vec()), mt, dk};
+        return {cmp_eq(c, dt, operands.first.vec(), operands.second.vec()), mt, dk, true};
     }
 
     jit_value_t cmp_ne(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
-        auto dt = lhs.dtype();
-        auto dk = dst_kind(lhs, rhs);
+        auto operands = harmonise_booleans(c, lhs, rhs);
+        auto dt = operands.first.dtype();
+        auto dk = dst_kind(operands.first, operands.second);
         auto mt = mask_type(dt);
-        return {cmp_ne(c, dt, lhs.vec(), rhs.vec()), mt, dk};
+        return {cmp_ne(c, dt, operands.first.vec(), operands.second.vec()), mt, dk, true};
     }
 
     jit_value_t cmp_gt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        reject_mask_operands(c, lhs, rhs);
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
         auto mt = mask_type(dt);
-        return {cmp_gt(c, dt, lhs.vec(), rhs.vec(), null_check), mt, dk};
+        return {cmp_gt(c, dt, lhs.vec(), rhs.vec(), null_check), mt, dk, true};
     }
 
     jit_value_t cmp_ge(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        reject_mask_operands(c, lhs, rhs);
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
         auto mt = mask_type(dt);
-        return {cmp_ge(c, dt, lhs.vec(), rhs.vec(), null_check), mt, dk};
+        return {cmp_ge(c, dt, lhs.vec(), rhs.vec(), null_check), mt, dk, true};
     }
 
     jit_value_t cmp_lt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        reject_mask_operands(c, lhs, rhs);
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
         auto mt = mask_type(dt);
-        return {cmp_lt(c, dt, lhs.vec(), rhs.vec(), null_check), mt, dk};
+        return {cmp_lt(c, dt, lhs.vec(), rhs.vec(), null_check), mt, dk, true};
     }
 
     jit_value_t cmp_le(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        reject_mask_operands(c, lhs, rhs);
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
         auto mt = mask_type(dt);
-        return {cmp_le(c, dt, lhs.vec(), rhs.vec(), null_check), mt, dk};
+        return {cmp_le(c, dt, lhs.vec(), rhs.vec(), null_check), mt, dk, true};
     }
 
     jit_value_t add(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {

@@ -139,6 +139,18 @@ namespace questdb::avx2 {
         return c.new_const(ConstPoolScope::kLocal, &nulls, 32);
     }
 
+    // Thirty-two copies of the byte a BOOLEAN column holds for true. questdb::avx2::to_mask compares
+    // a raw boolean lane against this to spell it as a mask, which reads the byte exactly the way
+    // MemoryPARWImpl#getBool does - "byte == 1" - so the vectorized filter and the Java one call the
+    // same rows true.
+    inline Mem vec_bool_true(Compiler &c) {
+        int8_t trues[32];
+        for (int8_t &t: trues) {
+            t = 1;
+        }
+        return c.new_const(ConstPoolScope::kLocal, &trues, 32);
+    }
+
     inline Mem vec_sign_mask(Compiler &c, data_type_t type) {
         switch (type) {
             case data_type_t::i8: {

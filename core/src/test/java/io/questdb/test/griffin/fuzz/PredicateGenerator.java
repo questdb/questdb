@@ -54,6 +54,13 @@ import io.questdb.test.griffin.fuzz.types.SymbolType;
  * in the typed grammar produces it, because the constant is not of the
  * column's type, yet QuestDB accepts both -- a symbol resolves its key from
  * the literal's text, a char takes the code point.
+ * <p>
+ * A comparison can also stand as the operand of another comparison --
+ * {@code (a < b) = true}, {@code (a < b) = (c < d)}. The typed grammar reaches
+ * that shape no better: {@link ExpressionGenerator} carries no comparison node,
+ * so a BOOLEAN operand it builds is only ever a column, a constant or a cast.
+ * {@link #appendNestedComparisonPredicate} names the defect the shape stands
+ * for.
  */
 public final class PredicateGenerator {
     private static final String[] COMPARISON_OPS = {"=", "!=", "<", "<=", ">", ">="};
@@ -126,6 +133,40 @@ public final class PredicateGenerator {
         return column.getType() == SymbolType.INSTANCE || column.getType() == CharType.INSTANCE;
     }
 
+    /**
+     * Emits one BOOLEAN operand of the outer comparison in
+     * {@link #appendNestedComparisonPredicate}: either the bare {@code true} /
+     * {@code false} spelling, or whatever {@link ExpressionGenerator} makes of
+     * the BOOLEAN kind -- a boolean column, a boolean constant, or a cast.
+     * <p>
+     * The bare spelling stays out of the typed grammar's hands on purpose. A
+     * generated BOOLEAN constant is bindable, so the bind variant rewrites it to
+     * {@code :bN::BOOLEAN}; the unbound literal beside an ordering comparison is
+     * the operand the JIT serializer stubs and then declines on, and only this
+     * spelling puts it in front of that code path in both variants of the query.
+     */
+    private void appendBooleanOperand(StringSink sink, ExpressionGenerator exprGen, BindContext ctx) {
+        if (rnd.nextBoolean()) {
+            sink.put(rnd.nextBoolean() ? "true" : "false");
+            return;
+        }
+        exprGen.generateOfKind(ColumnKind.BOOLEAN).appendSql(sink, ctx);
+    }
+
+    /**
+     * Emits {@code <expr> <op> <expr>} with both operands drawn from
+     * {@code kind}, which keeps the comparison type-valid by construction.
+     * {@link ColumnKind#isOrderable()} decides whether the operator may be an
+     * ordering one or has to stay an equality.
+     */
+    private void appendComparison(StringSink sink, ExpressionGenerator exprGen, BindContext ctx, ColumnKind kind) {
+        String[] ops = kind.isOrderable() ? COMPARISON_OPS : EQUALITY_OPS;
+        String op = ops[rnd.nextInt(ops.length)];
+        exprGen.generateOfKind(kind).appendSql(sink, ctx);
+        sink.put(' ').put(op).put(' ');
+        exprGen.generateOfKind(kind).appendSql(sink, ctx);
+    }
+
     private void appendInPredicate(StringSink sink, ExpressionGenerator exprGen, BindContext ctx, ColumnKind kind) {
         exprGen.generateOfKind(kind).appendSql(sink, ctx);
         // NOT IN compiles down a different branch of the JIT filter serializer
@@ -158,9 +199,12 @@ public final class PredicateGenerator {
         ColumnKind kind = anchor.getType().getKind();
 
         int choice = rnd.nextInt(10);
-        // 0-1: IS NULL / IS NOT NULL; 2: IN / NOT IN; 3-4: unquoted number,
-        // when the anchor is a SYMBOL or a CHAR; 3-9: comparison or
-        // boolean-alone
+        // 0-1: IS NULL / IS NOT NULL; 2: IN / NOT IN, unless the anchor is an
+        // ARRAY; 3-4: unquoted number, but only when the anchor is a SYMBOL or a
+        // CHAR; 5: a comparison nested as the operand of a comparison, unless the
+        // anchor is an ARRAY; 6-9, plus every draw above whose guard turned it
+        // down: a plain comparison, a boolean-alone predicate when the anchor is
+        // BOOLEAN, or IS [NOT] NULL when it is an ARRAY.
         if (choice < 2) {
             exprGen.generateOfKind(kind).appendSql(sink, ctx);
             sink.put(rnd.nextBoolean() ? " IS NULL" : " IS NOT NULL");
@@ -172,6 +216,13 @@ public final class PredicateGenerator {
         }
         if ((choice == 3 || choice == 4) && acceptsUnquotedNumber(anchor)) {
             appendUnquotedNumberPredicate(sink, anchor, qualifier, ctx);
+            return;
+        }
+        if (choice == 5 && kind != ColumnKind.ARRAY) {
+            // A non-array anchor is all pickComparableKind needs to find a kind
+            // for each inner comparison, so the guard doubles as its
+            // precondition.
+            appendNestedComparisonPredicate(sink, columns, exprGen, ctx);
             return;
         }
 
@@ -189,11 +240,83 @@ public final class PredicateGenerator {
             return;
         }
 
-        String[] ops = kind.isOrderable() ? COMPARISON_OPS : EQUALITY_OPS;
-        String op = ops[rnd.nextInt(ops.length)];
-        exprGen.generateOfKind(kind).appendSql(sink, ctx);
+        appendComparison(sink, exprGen, ctx, kind);
+    }
+
+    /**
+     * Emits {@code (<expr> <op> <expr>)} -- one comparison in parentheses, ready
+     * to stand as a BOOLEAN operand. It draws its own kind instead of inheriting
+     * the leaf's anchor, so the two halves of a {@code (<cmp>) = (<cmp>)} pair
+     * ordering against equality, and CHAR against IPv4 against UUID against
+     * numeric, on their own.
+     */
+    private void appendNestedComparison(
+            StringSink sink,
+            ObjList<FuzzColumn> columns,
+            ExpressionGenerator exprGen,
+            BindContext ctx
+    ) {
+        sink.put('(');
+        appendComparison(sink, exprGen, ctx, pickComparableKind(columns));
+        sink.put(')');
+    }
+
+    /**
+     * Emits a comparison nested as the operand of another comparison:
+     * {@code (c_char < c_char2) = true}, {@code true != (c_ip <= c_ip2)},
+     * {@code (c_char < c_char2) = (c_uuid = c_uuid2)}.
+     * <p>
+     * {@code CompiledFilterIRSerializer} expands a CHAR or IPv4 ordering
+     * comparison by emitting its operands naively, rewinding the IR stream, then
+     * emitting the real expansion. It rewound to the offset the PREDICATE began
+     * at rather than the one the ordering node began at, so an ordering node
+     * with an already-emitted sibling ahead of it erased that sibling's IR and
+     * handed the native backend an operand stack one value short. Both the avx2
+     * and the x86 backend answer that with an out-of-bounds pop, which aborts the
+     * JVM instead of declining the filter (issues 7547, 7549).
+     * <p>
+     * {@code PostOrderTreeTraversalAlgo} descends the rhs first, so the nested
+     * comparison has to appear on BOTH sides: with it only ever on the right the
+     * predicate's start offset coincides with the ordering node's and the defect
+     * stays invisible. The outer operator comes from {@link #EQUALITY_OPS}
+     * because both its operands are BOOLEAN and QuestDB orders no booleans -- an
+     * ordering operator there would only burn queries on skips.
+     * <p>
+     * Nesting stops one level down. The inner comparison's operands come from
+     * {@link ExpressionGenerator}, which has no comparison node, so the shape is
+     * exactly one comparison deep whatever {@code maxDepth} is. The cap is
+     * deliberately separate from {@link #appendPredicate}'s depth budget: that
+     * budget counts NOT / AND / OR levels and is already spent by the time a leaf
+     * runs, and sharing it would make the shape's frequency swing with how deep
+     * the enclosing predicate happened to go.
+     */
+    private void appendNestedComparisonPredicate(
+            StringSink sink,
+            ObjList<FuzzColumn> columns,
+            ExpressionGenerator exprGen,
+            BindContext ctx
+    ) {
+        String op = EQUALITY_OPS[rnd.nextInt(EQUALITY_OPS.length)];
+        int shape = rnd.nextInt(4);
+        if (shape == 0) {
+            // The crashing order. The rhs is traversed first, so the nested
+            // comparison expands with its sibling's IR already in the stream.
+            appendNestedComparison(sink, columns, exprGen, ctx);
+            sink.put(' ').put(op).put(' ');
+            appendBooleanOperand(sink, exprGen, ctx);
+            return;
+        }
+        if (shape == 1) {
+            // The order that accidentally worked. It is the control: it tells a
+            // truncated IR stream apart from a merely wrong one.
+            appendBooleanOperand(sink, exprGen, ctx);
+            sink.put(' ').put(op).put(' ');
+            appendNestedComparison(sink, columns, exprGen, ctx);
+            return;
+        }
+        appendNestedComparison(sink, columns, exprGen, ctx);
         sink.put(' ').put(op).put(' ');
-        exprGen.generateOfKind(kind).appendSql(sink, ctx);
+        appendNestedComparison(sink, columns, exprGen, ctx);
     }
 
     private void appendPredicate(
@@ -243,5 +366,35 @@ public final class PredicateGenerator {
             sink.put(literal).put(' ').put(op).put(' ');
             column.appendSql(sink, ctx);
         }
+    }
+
+    /**
+     * Draws the {@link ColumnKind} of a column whose comparison the SQL compiler
+     * resolves, i.e. anything but {@link ColumnKind#ARRAY}. An array does have
+     * {@code =} -- {@code EqDoubleArrayFunctionFactory} registers
+     * {@code =(D[]D[])} and {@code FunctionFactoryCache} derives {@code !=} and
+     * {@code <>} from every {@code =} -- but it resolves only between two arrays
+     * of the SAME dimensionality, and QuestDB encodes dimensionality in the column
+     * type, so {@code DOUBLE[]} and {@code DOUBLE[][]} are distinct types.
+     * {@link #appendComparison} draws each operand independently and
+     * {@code DoubleArrayType.random} redraws the dimension count every time, so
+     * half the pairs would come out as {@code ARRAY[..] = ARRAY[[..]]}, which the
+     * compiler rejects; {@link ExpressionGenerator}'s cast arm can also hand back
+     * {@code (<numeric>)::DOUBLE[]}, which never compiles either. Both push
+     * QueryFuzzTest's per-shape accepted rate down for no coverage in return.
+     * A single draw picks the starting column and the scan walks forward from it,
+     * so the cost stays flat however many arrays the schema carries. The caller
+     * has already drawn a non-array anchor, so the scan always finds one.
+     */
+    private ColumnKind pickComparableKind(ObjList<FuzzColumn> columns) {
+        final int n = columns.size();
+        final int start = rnd.nextInt(n);
+        for (int i = 0; i < n; i++) {
+            final ColumnKind kind = columns.getQuick((start + i) % n).getType().getKind();
+            if (kind != ColumnKind.ARRAY) {
+                return kind;
+            }
+        }
+        throw new AssertionError("every column is an ARRAY; appendLeafPredicate drew a non-ARRAY anchor from the same list");
     }
 }

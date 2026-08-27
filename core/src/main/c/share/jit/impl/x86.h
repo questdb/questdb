@@ -38,16 +38,33 @@ namespace questdb::x86 {
         return r.as<Gp>();
     }
 
+    // Writes into a fresh register instead of over b1, the way int32_sub, int32_mul and every other
+    // binary helper in this file already do - and the way aarch64's int32_and does.
+    //
+    // AND and OR used to fold their result back into b1 and return it. b1 is a VIRTUAL register
+    // that its jit_value_t is not the only holder of: read_mem hands the same register back for
+    // every later read of the same column in the same row through ColumnValueCache, so overwriting
+    // it rewrote a value the rest of the predicate still had to read. "(aboolean and aboolean2) =
+    // aboolean" compiled to "cmp edx, edx" - the AND result against itself - and matched every row.
+    // avx2_loop finishes each frame with scalar_tail, so it took the vectorized filter down with it
+    // on the rows past the last full vector iteration.
+    //
+    // The extra MOV is a register-to-register copy the renamer handles without an execution slot,
+    // and asmjit's allocator drops it outright where b1 dies at the AND.
     inline Gp int32_and(Compiler &c, const Gp &b1, const Gp &b2) {
-        c.and_(b1, b2);
-        return b1;
+        Gp r = c.new_gp32();
+        c.mov(r, b1);
+        c.and_(r, b2);
+        return r.as<Gp>();
     }
 
     inline Gp int32_or(Compiler &c, const Gp &b1, const Gp &b2) {
         c.comment("int32_or_start");
-        c.or_(b1, b2);
+        Gp r = c.new_gp32();
+        c.mov(r, b1);
+        c.or_(r, b2);
         c.comment("int32_or_stop");
-        return b1;
+        return r.as<Gp>();
     }
 
     inline Gp int32_to_int64(Compiler &c, const Gp &rhs, bool check_null) {
@@ -338,11 +355,17 @@ namespace questdb::x86 {
         return r.as<Gp>();
     }
 
+    // new_const copies its third argument's worth of bytes out of the pointer it is given, so that
+    // size must track sizeof() of the local it reads from. These helpers used to pass 32 for a
+    // 16-byte local, which made asmjit read 16 bytes past the end of the stack object and deposit
+    // whatever the stack happened to hold into the constant pool. The consumers below (xorps,
+    // xorpd, and andpd in double_cmp_epsilon) are SSE, so they only ever read the low 16 bytes -
+    // the trailing garbage never reached the result, but the over-read was real and ASAN flags it.
     inline Vec float_neg(Compiler &c, const Vec &rhs) {
         Vec r =c.new_xmm_ss();
         c.movss(r, rhs);
         int32_t array[4] = {INT_NULL, 0, 0, 0};
-        Mem mem = c.new_const(ConstPoolScope::kLocal, &array, 32);
+        Mem mem = c.new_const(ConstPoolScope::kLocal, &array, 16);
         c.xorps(r, mem);
         return r;
     }
@@ -351,7 +374,7 @@ namespace questdb::x86 {
         Vec r =c.new_xmm_sd();
         c.movsd(r, rhs);
         int32_t array[4] = {0, INT_NULL, 0, 0};
-        Mem mem = c.new_const(ConstPoolScope::kLocal, &array, 32);
+        Mem mem = c.new_const(ConstPoolScope::kLocal, &array, 16);
         c.xorpd(r, mem);
         return r;
     }
@@ -814,7 +837,8 @@ namespace questdb::x86 {
     inline Gp double_cmp_epsilon(Compiler &c, const Vec &xmm0, const Vec &xmm1, double epsilon, bool eq) {
         c.comment("double_cmp_epsilon_start");
         int64_t nans[] = {0x7fffffffffffffff, 0x7fffffffffffffff}; // double NaN
-        Mem nans_memory = c.new_const(ConstPoolScope::kLocal, &nans, 32);
+        // 16, not 32: the size must match sizeof(nans). See the note above float_neg.
+        Mem nans_memory = c.new_const(ConstPoolScope::kLocal, &nans, 16);
         Mem d = c.new_double_const(ConstPoolScope::kLocal, epsilon);
         Mem inf_memory = c.new_int64_const(ConstPoolScope::kLocal, 0x7FF0000000000000LL);
         Label l_nan = c.new_label();

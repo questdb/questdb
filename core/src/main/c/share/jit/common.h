@@ -92,13 +92,30 @@ struct instruction_t {
     };
 };
 
+// Carries one value through a backend's value stack: the register or memory operand holding it,
+// the width its instructions run at, where it came from, and how it spells a truth value.
+//
+// The last of those exists because the SIMD backend spells one two ways. questdb::avx2::cmp_eq
+// emits vpcmpeqb / vpcmpeqd / ... , which write an all-ones lane for true and an all-zeros lane for
+// false; a BOOLEAN column, constant or bind variable arrives instead as the raw byte QuestDB
+// stores, 0 or 1. Neither dtype nor dkind can tell the two apart - mask_type() maps f32 and f64
+// onto their integer widths and returns every other type unchanged, so an i8 mask and a raw i8
+// boolean are both data_type_t::i8, and dkind answers where a value was READ from, not what it
+// means. Comparing the two spellings for equality misses on every true row, which is silently
+// wrong rows rather than a decline, so avx2.h asks this flag which spelling it holds and
+// harmonises the pair before the comparison runs.
+//
+// The scalar backends leave it false throughout and never read it: x86::cmp_eq and
+// aarch64::cmp_eq materialise 0 / 1 through SETcc and CSET, which is the same spelling a raw
+// BOOLEAN byte already carries, and their int32_not is an XOR / EOR with 1 rather than a bitwise
+// complement. Only the vectorized backend has two spellings to reconcile.
 struct jit_value_t {
 
     inline jit_value_t() noexcept
-            : op_(), type_(), kind_() {}
+            : op_(), type_(), kind_(), is_mask_(false) {}
 
-    inline jit_value_t(asmjit::Operand op, data_type_t type, data_kind_t kind) noexcept
-            : op_(op), type_(type), kind_(kind) {}
+    inline jit_value_t(asmjit::Operand op, data_type_t type, data_kind_t kind, bool is_mask = false) noexcept
+            : op_(op), type_(type), kind_(kind), is_mask_(is_mask) {}
 
     inline jit_value_t(const jit_value_t &other) noexcept = default;
 
@@ -116,12 +133,16 @@ struct jit_value_t {
 
     inline data_kind_t dkind() const noexcept { return kind_; }
 
+    // Reports whether this value spells true as an all-ones lane rather than as the byte 1.
+    inline bool is_mask() const noexcept { return is_mask_; }
+
     inline const asmjit::Operand &op() const noexcept { return op_; }
 
 private:
     asmjit::Operand op_;
     data_type_t type_;
     data_kind_t kind_;
+    bool is_mask_;
 };
 
 inline uint32_t type_shift(data_type_t type) {
