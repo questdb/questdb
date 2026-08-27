@@ -94,6 +94,30 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * </pre>
  */
 public class PostingIndexBenchmarkSuite {
+    /**
+     * Copied from core/pom.xml. Without these a forked SqlState or LimitState
+     * dies on IllegalAccessError: jdk.internal.vm.ContinuationScope, while the
+     * index arms fork fine -- a PARTIAL failure that reads as a successful run
+     * with fewer arms.
+     */
+    private static final String[] JVM_EXPORTS = {
+            "--enable-native-access=ALL-UNNAMED",
+            "--add-opens=java.base/java.lang=ALL-UNNAMED",
+            "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+            "--add-opens=java.base/java.nio=ALL-UNNAMED",
+            "--add-opens=java.base/java.time.zone=ALL-UNNAMED",
+            "--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED",
+    };
+
+    static {
+        // Runs in the FORKED jvm as well as this one. main()'s haltInstance()
+        // does not: JMH forks run ForkedMain, so from the moment execution
+        // became forked every measured JVM had QuestDB's log writer thread
+        // live, which the unforked setup had always halted. Quiet the log where
+        // the measurement actually happens.
+        LogFactory.haltInstance();
+    }
+
 
     private static final double CLOUD_US_PER_PAGE = 1_000;
     private static final long COL_TXN = COLUMN_NAME_TXN_NONE;
@@ -162,7 +186,11 @@ public class PostingIndexBenchmarkSuite {
                 }
             }
             if ("wal_o3".equals(filter) || "wal_o3_append".equals(filter) || "wal_o3_spill".equals(filter)) {
+                // Same exports as the branch below. This branch forked already,
+                // so it needed them just as much; the two only differ in
+                // iteration counts.
                 builder.forks(1)
+                        .jvmArgsAppend(JVM_EXPORTS)
                         .warmupIterations(1)
                         .measurementIterations(2);
             } else {
@@ -176,13 +204,7 @@ public class PostingIndexBenchmarkSuite {
                 // second per cell costs about a minute across the suite.
                 final int iters = Integer.getInteger("questdb.suite.bench.iterations", 3);
                 builder.forks(1)
-                        .jvmArgsAppend(
-                                "--enable-native-access=ALL-UNNAMED",
-                                "--add-opens=java.base/java.lang=ALL-UNNAMED",
-                                "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
-                                "--add-opens=java.base/java.nio=ALL-UNNAMED",
-                                "--add-opens=java.base/java.time.zone=ALL-UNNAMED",
-                                "--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED")
+                        .jvmArgsAppend(JVM_EXPORTS)
                         .warmupIterations(1)
                         .warmupTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
                         .measurementIterations(iters)
@@ -1101,8 +1123,11 @@ public class PostingIndexBenchmarkSuite {
 
     /**
      * The score of the one result whose key names {@code bench} and every one of
-     * {@code must}, or null when absent. Matching on substrings rather than
-     * rebuilding the key means adding a @Param does not silently empty a table:
+     * {@code must}, or null when absent. Matching whole {@code /}-delimited
+     * SEGMENTS, not substrings -- a substring test made "POSTING" also match
+     * "POSTING_PARQUET", so the native arm's lookup could return the parquet
+     * row. Matching segments rather than rebuilding the key means adding a
+     * @Param does not silently empty a table:
      * the key is params joined in declaration order, so a positional lookup
      * breaks the moment a new axis is inserted ahead of an existing one.
      *
@@ -1137,7 +1162,7 @@ public class PostingIndexBenchmarkSuite {
      * A ratio of {@code arm} to {@code base}, or {@code "~"} when the two error
      * intervals overlap.
      * <p>
-     * At two measurement iterations the intervals are wide. Printing a bare
+     * At three measurement iterations the intervals are still wide. Printing a bare
      * ratio would turn that noise into a reported regression, and detecting
      * regressions is the only reason this table exists.
      */

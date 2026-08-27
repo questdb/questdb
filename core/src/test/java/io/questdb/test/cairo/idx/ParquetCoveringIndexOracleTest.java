@@ -114,14 +114,24 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
                 for (int key = 0; key < keyCount; key++) {
                     for (long[] w : windows) {
                         for (int[] covers : coverSets) {
-                            assertSameSequence(
-                                    nativeReader, parquetReader, nativeCol, parquetCol,
-                                    key, w[0], w[1], covers, IndexReader.DIR_FORWARD
-                            );
-                            assertSameSequence(
-                                    nativeReader, parquetReader, nativeCol, parquetCol,
-                                    key, w[0], w[1], covers, IndexReader.DIR_BACKWARD
-                            );
+                            // TWICE, deliberately. The readers cache a decoded
+                            // row group and serve a second lookup from it, but
+                            // only when the covers match the cached ones. This
+                            // grid varies covers on every step, so a single pass
+                            // overwrites the cache every time and NEVER takes the
+                            // cache-hit path -- it went in untested. The repeat
+                            // asks the same question twice and demands the same
+                            // answer, which is exactly what a broken cache breaks.
+                            for (int rep = 0; rep < 2; rep++) {
+                                assertSameSequence(
+                                        nativeReader, parquetReader, nativeCol, parquetCol,
+                                        key, w[0], w[1], covers, IndexReader.DIR_FORWARD
+                                );
+                                assertSameSequence(
+                                        nativeReader, parquetReader, nativeCol, parquetCol,
+                                        key, w[0], w[1], covers, IndexReader.DIR_BACKWARD
+                                );
+                            }
                         }
                         assertSamePrimitives(
                                 (PostingIndexReader) nativeReader.getIndexReader(0, nativeCol, IndexReader.DIR_FORWARD),
@@ -722,7 +732,13 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
         // every row rather than coincidentally matching.
         execute("INSERT INTO " + table + " SELECT" +
                 " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
-                " 's' || (x % 7)," +
+                // 16, not 7: the readers' whole-group decode and cache-hit
+                // paths are gated on a row group holding at least
+                // WHOLE_GROUP_KEY_THRESHOLD (8) key ids. At 7 those two paths
+                // were unreachable, so the differential grid below could not
+                // see them -- the backward reader's absolute-index pairing in
+                // particular went in with no test entering it at all.
+                " 's' || (x % 16)," +
                 " x::DOUBLE," +
                 " x * 3" +
                 " FROM long_sequence(" + ROW_COUNT + ")");

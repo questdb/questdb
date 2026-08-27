@@ -63,7 +63,9 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
      * than randomised: the fuzzing surface here is the QUERY (key, window,
      * direction, covers), not the shape of the underlying table.
      */
-    private static final int SYM_CARDINALITY = 7;
+    // Above WHOLE_GROUP_KEY_THRESHOLD (8), so the readers' whole-group decode
+    // and cache-hit paths are reachable. At 7 they never were.
+    private static final int SYM_CARDINALITY = 16;
     /**
      * A key's run longer than {@code ParquetIndexSeal.TARGET_ROW_GROUP_ROWS}
      * (100k) is split across index row groups. At the default cardinality no

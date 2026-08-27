@@ -233,11 +233,6 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             hasNext = false;
         }
 
-        /**
-         * First index in {@code [lo, hi)} whose row id is at least
-         * {@code value}, or {@code hi}. The run ascends, so this is a binary
-         * search rather than a scan.
-         */
         @Override
         public boolean hasNext() {
             if (hasNext) {
