@@ -2585,6 +2585,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
     @Test
     public void testPolicyEncodingEscapesSeparatorInColumnNames() throws Exception {
+        Assume.assumeFalse("0x1E and 0x1F are not valid Windows filename characters", Os.isWindows());
         // A quoted identifier accepts every character a file name accepts, including the 0x1F that the
         // policy encoding uses to separate its fields and the 0x1E it escapes with. The encoding escapes
         // those two inside each field, so a column named with either survives the round-trip through
