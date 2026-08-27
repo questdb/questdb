@@ -306,6 +306,107 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAnAcceptedRowsArgumentIsReadOnceByTheComponentTheSkipStoppedOn() throws Exception {
+        // The pass-1 skip evaluates a component's argument to decide whether the row reaches the
+        // map at all, and the component the walk stops on is the one whose contributor would
+        // otherwise read the same column a second time for the same row. Counted rather than
+        // timed: the record below tallies every getDouble by column, so what a row costs the
+        // group is a number the test can assert instead of a clock reading.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (ts TIMESTAMP, k INT, x DOUBLE, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('2024-01-01T00:00:00.000000Z', 1, 1.0, 10.0)");
+            final String sql = "SELECT k, sum(x) OVER (PARTITION BY k) AS sx, "
+                    + "avg(y) OVER (PARTITION BY k) AS ay FROM s";
+            for (int light = 0; light < 2; light++) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                    assertFactoryKind(factory, light == 1);
+                    final CachedWindowMapGroups groups = groups(factory);
+                    assertBoundGroupCount(groups, 1);
+                    final WindowMapState state = groups.getStates().getQuick(0);
+                    Assert.assertTrue(state.isPass1SkipEnabled());
+                    final WindowAccumulatorPlan plan = state.getPlan();
+                    // Two components over two columns, which is the shape a single hoisted
+                    // value would get wrong: each component reads an argument of its own.
+                    Assert.assertEquals(2, plan.getComponentCount());
+                    // Which column belongs to which component is the plan's business, so the
+                    // test reads it off rather than assuming the SELECT list's order.
+                    final int firstColumn = plan.getComponent(0).getArgumentColumnIndex();
+                    final int secondColumn = plan.getComponent(1).getArgumentColumnIndex();
+                    Assert.assertNotEquals(firstColumn, secondColumn);
+                    final int columnCount = Math.max(firstColumn, secondColumn) + 1;
+                    final double[] columns = new double[columnCount];
+                    final int[] reads = new int[columnCount];
+                    final int[] key = new int[1];
+                    final Record record = new Record() {
+                        @Override
+                        public double getDouble(int col) {
+                            reads[col]++;
+                            return columns[col];
+                        }
+
+                        @Override
+                        public int getInt(int col) {
+                            return key[0];
+                        }
+                    };
+                    state.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
+                    state.reopen();
+                    try {
+                        // Dense, which is the population the doubled read cost. The walk stops
+                        // on the first component and hands its contributor the value it read,
+                        // so each column is read exactly once for the row.
+                        key[0] = 1;
+                        columns[firstColumn] = 1.0;
+                        columns[secondColumn] = 10.0;
+                        state.computeNext(record);
+                        Assert.assertEquals(1, reads[firstColumn]);
+                        Assert.assertEquals(1, reads[secondColumn]);
+                        Assert.assertEquals(1, state.getMapSize());
+
+                        // The first component refuses and the second accepts. The walk holds no
+                        // value for a component it passed over, so that one reads its own column
+                        // again - and the one the walk stopped on does not.
+                        reads[firstColumn] = 0;
+                        reads[secondColumn] = 0;
+                        columns[firstColumn] = Double.NaN;
+                        columns[secondColumn] = 20.0;
+                        state.computeNext(record);
+                        Assert.assertEquals(2, reads[firstColumn]);
+                        Assert.assertEquals(1, reads[secondColumn]);
+
+                        // The first component accepts and the second refuses: the second reads
+                        // its own column once, exactly as it does on a dense row.
+                        reads[firstColumn] = 0;
+                        reads[secondColumn] = 0;
+                        columns[firstColumn] = 3.0;
+                        columns[secondColumn] = Double.NaN;
+                        state.computeNext(record);
+                        Assert.assertEquals(1, reads[firstColumn]);
+                        Assert.assertEquals(1, reads[secondColumn]);
+
+                        // Every component refuses, over a key the map has never seen. The walk
+                        // reads both columns and the row reaches no contributor at all, which
+                        // the absent key is what proves.
+                        reads[firstColumn] = 0;
+                        reads[secondColumn] = 0;
+                        key[0] = 2;
+                        columns[firstColumn] = Double.POSITIVE_INFINITY;
+                        columns[secondColumn] = Double.NEGATIVE_INFINITY;
+                        state.computeNext(record);
+                        Assert.assertEquals(1, reads[firstColumn]);
+                        Assert.assertEquals(1, reads[secondColumn]);
+                        Assert.assertEquals(1, state.getMapSize());
+                    } finally {
+                        state.reset();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAnIdentityBufferThatCannotBeAllocatedGivesTheMapBack() throws Exception {
         // reopen() allocates the map's backing and then, for a skipping group, the identity
         // buffer - and only the second of those has an owner problem. The group is half-open
@@ -1174,6 +1275,81 @@ public class CachedWindowMapFusionTest extends AbstractCairoTest {
                     }
                 }
                 Assert.assertEquals(fused, WindowMapStateTest.render(orderedSumAndCount()));
+            }
+        });
+    }
+
+    @Test
+    public void testTheSkipsHoistedArgumentMovesNoAnswer() throws Exception {
+        // Every classification the hoist has to preserve, over a fixture built for it: dense
+        // rows, a NULL argument, both infinities, rows where the component that accepts is the
+        // first and rows where it is a later one, two partitions every row of which every
+        // component refuses, a NULL partition key, and a column absent from the older rows
+        // altogether. The reference is the same SELECT list with the fusion kill switch off,
+        // where every function keeps its own map and reads its own argument for itself - so a
+        // hoisted value reaching the wrong component, or a non-finite one reclassified on the
+        // way through, moves the fused rendering off the unfused one.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (ts TIMESTAMP, k SYMBOL, x DOUBLE, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO s VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 1.0, 10.0),
+                    ('2024-01-01T00:00:01.000000Z', 'a', null, 20.0),
+                    ('2024-01-01T00:00:02.000000Z', 'a', 3.0, null),
+                    ('2024-01-01T00:00:03.000000Z', 'a', null, null),
+                    ('2024-01-01T00:00:04.000000Z', 'b', 'Infinity'::double, null),
+                    ('2024-01-01T00:00:05.000000Z', 'b', null, '-Infinity'::double),
+                    ('2024-01-01T00:00:06.000000Z', null, 7.0, 70.0),
+                    ('2024-01-01T00:00:07.000000Z', 'c', null, null),
+                    ('2024-01-01T00:00:08.000000Z', 'a', 9.0, 90.0)""");
+            // z is absent from every row above, which is the column-top shape: the group's third
+            // component reads it as a NULL DOUBLE and refuses it exactly as it refuses a written
+            // NULL, on both sides of the comparison.
+            execute("ALTER TABLE s ADD COLUMN z DOUBLE");
+            execute("""
+                    INSERT INTO s VALUES
+                    ('2024-01-01T00:00:09.000000Z', 'a', 10.0, 100.0, 1000.0),
+                    ('2024-01-01T00:00:10.000000Z', 'b', null, null, null),
+                    ('2024-01-01T00:00:11.000000Z', 'd', 11.0, null, null)""");
+            final String sql = "SELECT k, "
+                    + "sum(x) OVER (PARTITION BY k) AS sx, "
+                    + "avg(y) OVER (PARTITION BY k) AS ay, "
+                    + "sum(z) OVER (PARTITION BY k) AS sz, "
+                    + "count(x) OVER (PARTITION BY k) AS cx FROM s";
+            for (int light = 0; light < 2; light++) {
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 0 ? "false" : "true");
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "true");
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)) {
+                    assertFactoryKind(factory, light == 1);
+                    final CachedWindowMapGroups groups = groups(factory);
+                    assertBoundGroupCount(groups, 1);
+                    final WindowMapState state = groups.getStates().getQuick(0);
+                    Assert.assertTrue(state.isPass1SkipEnabled());
+                    // Three components over three columns, and a fourth output derived off the
+                    // first one's counter - so the component a row is accepted on is not the
+                    // same one on every row.
+                    Assert.assertEquals(3, state.getPlan().getComponentCount());
+                    Assert.assertEquals(4, state.getPlan().getProjectionCount());
+                }
+                assertQuery(sql).expectSize().returns("""
+                        k\tsx\tay\tsz\tcx
+                        a\t23.0\t55.0\t1000.0\t4
+                        a\t23.0\t55.0\t1000.0\t4
+                        a\t23.0\t55.0\t1000.0\t4
+                        a\t23.0\t55.0\t1000.0\t4
+                        b\tnull\tnull\tnull\t0
+                        b\tnull\tnull\tnull\t0
+                        \t7.0\t70.0\tnull\t1
+                        c\tnull\tnull\tnull\t0
+                        a\t23.0\t55.0\t1000.0\t4
+                        a\t23.0\t55.0\t1000.0\t4
+                        b\tnull\tnull\tnull\t0
+                        d\t11.0\tnull\tnull\t1
+                        """);
+                final String fused = WindowMapStateTest.render(sql);
+                setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
+                Assert.assertEquals("light=" + light, fused, WindowMapStateTest.render(sql));
             }
         });
     }

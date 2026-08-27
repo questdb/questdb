@@ -237,6 +237,17 @@ public class LiveViewRegistry implements QuietCloseable {
      * {@link #registerView} and {@link #removeView}, so a concurrent
      * {@link #getViewsForBaseTable} reader never observes the two maps torn apart. The fan-out
      * list holds instances, not names, so it needs no update.
+     * <p>
+     * Both branches republish the {@link #allViews} snapshot after the re-key, even though the
+     * rename moves one instance between two keys and so leaves the snapshot's contents unchanged.
+     * The re-key is a {@code remove} followed by a {@code put}, and the gap between them is not
+     * covered by anything {@link #republishViews} respects: a concurrent registration or removal
+     * over a <em>different</em> base table takes a different fan-out lock, so its rebuild can run
+     * inside the gap and publish a list missing this instance. Without a republish here that list
+     * is the durable one, and the instance drops out of {@code live_views()}, out of
+     * {@link #getShardedViews}, and out of the {@link #clear()} free loop that closes instances at
+     * engine teardown. Republishing after the {@code put} makes this thread's rebuild the last one
+     * ordered on the monitor, which heals it.
      *
      * @return the renamed instance, or {@code null} when no view is registered under
      * {@code oldName}
@@ -253,10 +264,9 @@ public class LiveViewRegistry implements QuietCloseable {
             viewsByName.remove(oldName);
             instance.updateToken(updatedToken);
             viewsByName.put(updatedToken.getTableName(), instance);
+            republishViews();
             return instance;
         }
-        // The snapshot holds instances rather than names, and a rename moves the
-        // same instance from one key to another, so it needs no republication.
         final DepList list = viewsByBaseTable.computeIfAbsent(definition.getBaseTableName(), createDepList);
         list.lockForWrite();
         try {
@@ -267,14 +277,22 @@ public class LiveViewRegistry implements QuietCloseable {
         } finally {
             list.unlockAfterWrite();
         }
+        republishViews();
         return instance;
     }
 
     /**
-     * Rebuilds the whole-registry snapshot from the name map. Registration,
-     * removal and teardown call it; each publishes a new list rather than
+     * Rebuilds the whole-registry snapshot from the name map. Every {@code viewsByName} mutator
+     * calls it - registration, removal, rename and teardown; each publishes a new list rather than
      * mutating the one readers hold, so a scan already walking the previous
      * snapshot finishes over a stable view.
+     * <p>
+     * The monitor covers both the traversal and the {@code allViews} assignment, and every caller
+     * invokes it after its own map mutation. Together those two properties are what make the last
+     * rebuild ordered on the monitor observe every completed mutation, so a rebuild that a
+     * concurrent mutator ran against a half-applied map is always healed rather than left standing.
+     * Splitting the traversal out of the monitor, or calling this before the mutation it publishes,
+     * breaks that.
      */
     private synchronized void republishViews() {
         final ObjList<LiveViewInstance> rebuilt = new ObjList<>(viewsByName.size());

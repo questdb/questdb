@@ -4633,18 +4633,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Prices each closed segment's keyed scan against the whole-segment one it would
      * replace, and reports the pair.
      * <p>
-     * Nothing here decides anything. The read a repair takes is unchanged - every segment
-     * still replays whole - and this is the measurement the decision to build a keyed
-     * <b>publication</b> rests on, taken on the repairs a running view actually performs
-     * rather than on a model of them. It is the answer to "is the whole-segment read the
-     * binding cost of a repair", and it is per segment because that is the granularity a
-     * keyed replay would be chosen at.
+     * The verdict decides the read: {@code keyedScanCheaperSegments} is what
+     * {@code repairChangeSetSegments} hands each segment its key domain through, and a
+     * segment that arrives carrying one follows its keys through the base's posting index
+     * instead of reading the segment whole. A segment this declines - or cannot price -
+     * replays whole, which is what every segment did before this existed. The price is the
+     * <b>configured</b> {@code getLiveViewCheckpointRepairKeyedScanIndexOpenRows()} and its
+     * full safety margin; only the open segment's resume caps it lower.
      * <p>
-     * A keyed replay cannot be run off this yet, and not for want of a cursor. Its
-     * publication would be the problem: {@code REPLACE_RANGE} deletes the segment's range
-     * wholesale, so a replay emitting only the affected keys' rows would drop every
-     * unaffected key's stored row inside it. Keyed publication needs the live view to carry
-     * dedup keys, which is a schema change this stage deliberately does not make.
+     * It is per segment because that is the granularity a keyed replay is chosen at, and it
+     * is priced on the repairs a running view actually performs rather than on a model of
+     * them.
      * <p>
      * The whole-range side is priced through the same {@link LiveViewCheckpointScanCost}
      * the disposition comparison uses, against the same pinned reader, so the two numbers
@@ -4670,7 +4669,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         try {
             final SymbolMapReader symbols = reader.getSymbolMapReader(readerColumnIndex);
             scanCost.of(reader);
-            keyedScanCost.of(reader);
+            keyedScanCost.of(reader, executionContext);
             for (int i = 0; i < segmentCount; i++) {
                 final long segmentStart = segmentChangeSet.getSegmentStart(i);
                 final long segmentHighTsInclusive = segmentChangeSet.getSegmentEndExclusive(i) - 1;
@@ -4825,7 +4824,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long indexOpenRows = Math.min(configuredIndexOpenRows, OPEN_SEGMENT_ARITHMETIC_INDEX_OPEN_ROWS);
         try {
             scanCost.of(reader);
-            keyedScanCost.of(reader);
+            keyedScanCost.of(reader, executionContext);
             final long wholeRangeRows = scanCost.estimateScanRows(lowTsInclusive, highTsInclusive);
             if (!resolveScanKeys(
                     reader.getSymbolMapReader(readerColumnIndex),

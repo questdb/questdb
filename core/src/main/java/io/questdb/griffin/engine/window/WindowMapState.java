@@ -149,8 +149,9 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     /**
      * The contributors' arguments, one per component, in component order - borrowed exactly as
      * {@link #keyRecord}'s terms are, and null unless {@link #isPass1SkipEnabled()} holds. Read
-     * only to evaluate the components' shared contribution predicate ahead of the map work; the
-     * window functions own these and free them.
+     * to evaluate the components' shared contribution predicate ahead of the map work, and the
+     * one value that evaluation ends on is then handed to that component's contributor rather
+     * than read again; the window functions own these and free them.
      */
     private final ObjList<Function> contributorArguments;
     /**
@@ -337,13 +338,39 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      * inert on a refused row} skips the whole sequence for a row not one of them would absorb -
      * the key write, the lookup, the identity put and the contributor dispatch alike - because
      * every one of those would leave the value exactly as it found it. What the row costs then
-     * is one evaluation of the shared contribution predicate, which is what the unfused
-     * functions charge a refused row and less than the fused probe was charging it. Pass 2
-     * answers for the partitions this leaves out of the map: see {@link #projectPass2}.
+     * is one evaluation of the shared contribution predicate per component, which is what the
+     * unfused functions charge a refused row and less than the fused probe was charging it.
+     * Pass 2 answers for the partitions this leaves out of the map: see {@link #projectPass2}.
+     * <p>
+     * The predicate is {@link WindowAccumulatorDescriptor#CONTRIBUTION_FINITE_DOUBLE}'s, which
+     * every component of a skipping group carries, so one expression answers for all of them
+     * and the walk stops at the first component that would absorb the row. That component's
+     * argument then reaches its contributor as the value the walk already read, through
+     * {@link WindowFunction#accumulateWindowState(Record, MapValue, double)} - so an accepted
+     * row costs the skip nothing at all on a dense input, where the walk stops at the first
+     * component and the contributor it stopped on is handed what it would otherwise read a
+     * second time. The components the walk passed over, and the ones it never reached, read
+     * their own arguments exactly as they always did: their arguments are their own columns
+     * and the walk holds no value for them.
      */
     public void computeNext(Record record) {
-        if (isPass1SkipEnabled && isRowRefusedByEveryComponent(record)) {
-            return;
+        // The component whose argument the skip evaluated and found present, and the value it
+        // read. -1 for a group whose pass 1 skips nothing, which is what leaves every
+        // contributor on the plain call below.
+        int acceptingComponent = -1;
+        double acceptedArgument = Double.NaN;
+        if (isPass1SkipEnabled) {
+            for (int c = 0; c < componentCount; c++) {
+                final double argument = contributorArguments.getQuick(c).getDouble(record);
+                if (Numbers.isFinite(argument)) {
+                    acceptingComponent = c;
+                    acceptedArgument = argument;
+                    break;
+                }
+            }
+            if (acceptingComponent < 0) {
+                return;
+            }
         }
         final MapKey key = map.withKey();
         putKey(key, record);
@@ -354,7 +381,11 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
             }
         }
         for (int c = 0; c < componentCount; c++) {
-            plan.getContributor(c).accumulateWindowState(record, value);
+            if (c == acceptingComponent) {
+                plan.getContributor(c).accumulateWindowState(record, value, acceptedArgument);
+            } else {
+                plan.getContributor(c).accumulateWindowState(record, value);
+            }
         }
         if (!isTwoPass) {
             for (int p = 0; p < projectionCount; p++) {
@@ -582,24 +613,6 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
             Unsafe.free(identityValueAddress, identityValueSize, MemoryTag.NATIVE_DEFAULT);
             identityValueAddress = 0;
         }
-    }
-
-    /**
-     * Whether no component of the group would absorb this row, which is what lets pass 1 leave
-     * the row's key out of the map.
-     * <p>
-     * The predicate is {@link WindowAccumulatorDescriptor#CONTRIBUTION_FINITE_DOUBLE}'s, which
-     * every component of a skipping group carries, so one expression answers for all of them.
-     * The walk stops at the first component that would absorb the row, so the dense case pays
-     * for one argument evaluation and the row goes on to the ordinary sequence.
-     */
-    private boolean isRowRefusedByEveryComponent(Record record) {
-        for (int c = 0; c < componentCount; c++) {
-            if (Numbers.isFinite(contributorArguments.getQuick(c).getDouble(record))) {
-                return false;
-            }
-        }
-        return true;
     }
 
     /**

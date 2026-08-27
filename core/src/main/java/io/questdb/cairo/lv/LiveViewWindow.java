@@ -439,11 +439,13 @@ public class LiveViewWindow implements QuietCloseable {
      * {@code keySize + valueSize <= cairo.sql.unordered.map.max.entry.size}. That limit is
      * not one number: {@link io.questdb.cairo.DefaultCairoConfiguration} returns 16, which
      * embedded use and the benchmarks take, while {@code PropServerConfiguration} defaults
-     * the property to 32, and the fused shape sits in the gap between the two. Only an
-     * INT-keyed view is affected - it moves from {@code Unordered4Map} to
-     * {@code OrderedMap} at 16 and stays put at 32, while every wider key was already past
-     * both - so a claim about the {@link Map} implementation has to name the limit it holds
-     * for. See {@link #getAnchorMapImplementation()}.
+     * the property to 32. Which key the widening costs a fast map is a function of both:
+     * the window's own slots are 12 bytes and one {@code (sum, count)} component adds 16,
+     * so at 16 a 4-byte key moves from {@code Unordered4Map} to {@code OrderedMap} while
+     * at 32 it is an 8-byte key that moves, off {@code Unordered8Map}; a 4-byte key lands
+     * exactly on 32 there, and a second component takes it over too. So a claim about the
+     * {@link Map} implementation has to name both the limit and the plan it holds for. See
+     * {@link #getAnchorMapImplementation()}.
      */
     private static ColumnTypes fusedMapValueTypes(@NotNull LiveViewWindowStatePlan plan) {
         final ArrayColumnTypes types = new ArrayColumnTypes();

@@ -25,16 +25,22 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.lv.LiveViewCheckpointKeyProjector;
 import io.questdb.cairo.lv.LiveViewCheckpointKeyedScanCost;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
 
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -58,6 +64,15 @@ import org.junit.Test;
  * timestamps span several anchor days so closed segments exist at all.
  */
 public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
+    // Ceiling range the mid-build OOM sweep walks, and the step it advances by. A whole keyed
+    // open over the fixture below allocates around 37 KiB of tracked native memory, so the
+    // range crosses the transition from "every point faults" to "the open completes" with room
+    // to spare; the sweep's own assertions fail loudly if an allocation-path change moves it
+    // past the end. The step stays below one block buffer's 32-byte floor, so it cannot walk
+    // straight over the window between "one key's cursor allocated" and "the next key's
+    // failed" - the only window the strand lives in.
+    private static final int OOM_SWEEP_SLACK_MAX = 48 * 1024;
+    private static final int OOM_SWEEP_SLACK_STEP = 16;
 
     @Test
     public void testACorrectionInOneClosedSegmentPricesItsKeyedScan() throws Exception {
@@ -147,7 +162,7 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
 
                 final LiveViewCheckpointKeyedScanCost cost = new LiveViewCheckpointKeyedScanCost();
                 try (TableReader reader = engine.getReader(engine.getTableTokenIfExists("tx"))) {
-                    cost.of(reader);
+                    cost.of(reader, sqlExecutionContext);
                     final IntList keys = new IntList();
                     keys.add(reader.getSymbolMapReader(1).keyOf("acct-1"));
                     Assert.assertEquals(
@@ -250,6 +265,27 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testTheEstimateChargesOneIndexOpenPerKeyPerPageFrame() throws Exception {
+        // The setup term prices what HeapRowCursorFactory rebuilds, and it rebuilds one
+        // index-backed row cursor per key for every page frame - not once per partition. A
+        // partition wider than the frame limit is where the two part company, and the gap
+        // is what decides the route: counted per partition the sparse key prices below the
+        // whole range, counted per frame it does not.
+        assertMemoryLeak(() -> {
+            // Narrower than the configured default, which no partition this fixture can
+            // afford to write would reach. changePageFrameSizes rather than a property: the
+            // shared execution context caches the configured pair when it is constructed,
+            // which is before a test body runs.
+            sqlExecutionContext.changePageFrameSizes(100, 100);
+            try {
+                runTheEstimateChargesOneIndexOpenPerKeyPerPageFrame();
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
     public void testTheForwardIndexedCursorYieldsExactlyTheNamedKeysRows() throws Exception {
         // The cursor's own contract: the subsequence of the full forward scan whose key is
         // one of the named ones, in the same order, over the same inclusive bounds - and the
@@ -324,12 +360,73 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
             // neighbouring account's rows and still look plausible.
             final LiveViewCheckpointKeyedScanCost cost = new LiveViewCheckpointKeyedScanCost();
             try (TableReader reader = engine.getReader(engine.getTableTokenIfExists("tx"))) {
-                cost.of(reader);
+                cost.of(reader, sqlExecutionContext);
                 Assert.assertEquals(16, cost.estimateKeyedScanRows(lowTs, highTs, 1, keys, Long.MAX_VALUE));
                 Assert.assertEquals(16, cost.getPostingRows());
-                // Two keys across eight partitions, which is what HeapRowCursorFactory
-                // rebuilds per page frame and what the setup term is charged for.
+                // Two keys across eight partitions, each of them four rows and so a single
+                // page frame, which is what HeapRowCursorFactory rebuilds a row cursor per
+                // key for and what the setup term is charged for.
                 Assert.assertEquals(16, cost.getIndexOpens());
+            }
+        });
+    }
+
+    @Test
+    public void testTheForwardIndexedScanReleasesTheRowCursorsAMidBuildFailureStrands() throws Exception {
+        // HeapRowCursorFactory.getCursor() builds one index-backed row cursor per key into a
+        // list it hands to its HeapRowCursor only after the last one, and
+        // PageFrameRecordCursorImpl.hasNext() nulls its own rowCursor before it makes that
+        // call - so a build that throws part way through leaves the cursors it had already
+        // built reachable through the heap factory alone. A POSTING row cursor holds a
+        // native block buffer that only its own close() releases, and the index reader's
+        // close() reaches only the cursors that made it back into its free list, so nothing
+        // else ever reclaims one the heap stranded.
+        //
+        // The throw is a native out-of-memory, which a server arms in production from
+        // ram.usage.limit.* through Unsafe.setRssMemLimit (Bootstrap:232). This walks an RSS
+        // ceiling across the build's allocation points: a ceiling that lets an earlier key's
+        // cursor allocate and trips a later one's is what strands the earlier one, so the
+        // sweep has to cross the whole failing-to-succeeding transition rather than only
+        // fail at the bottom of the range. The enclosing assertMemoryLeak is what observes
+        // the strand.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL NOCACHE INDEX TYPE POSTING, "
+                    + "amount DOUBLE) TIMESTAMP(created_at) PARTITION BY DAY WAL");
+            // Two properties of the seed carry the case. The accounts land irregularly, so a
+            // key's row ids are not a constant stride and the reader decodes them through a
+            // block buffer rather than the constant-delta path that allocates nothing. And
+            // there are more keys than IndexReader.MAX_CACHED_FREE_CURSORS, so the reader's
+            // free list can never satisfy a whole frame's build: every open still creates
+            // fresh cursors, and a fresh cursor is the one that allocates. The cursors the
+            // build had already taken when the fault lands - popped from the pool or fresh -
+            // are what it strands, and each of them holds a buffer.
+            execute("INSERT INTO tx SELECT "
+                    + "timestamp_sequence('2026-01-02T00:00:00.000000Z', 15_000_000), "
+                    + "('acct-' || rnd_int(0, 199, 0))::symbol, "
+                    + "x::double "
+                    + "FROM long_sequence(3_200)");
+            drainWalQueue();
+
+            final IntList keys = new IntList();
+            try (TableReader reader = engine.getReader(engine.getTableTokenIfExists("tx"))) {
+                for (int account = 0; account < 200; account++) {
+                    final int key = reader.getSymbolMapReader(1).keyOf("acct-" + account);
+                    Assert.assertTrue("every seeded account must resolve to a table-local key", key >= 0);
+                    keys.add(key);
+                }
+            }
+
+            final long lowTs = ts("2026-01-02T00:00:00.000000Z");
+            final long highTs = ts("2026-01-02T23:59:59.999999Z");
+
+            // Single-threaded and parallel. The shared query worker count is one of the two
+            // inputs to the page frame width, so it decides how many times one open rebuilds
+            // the row cursors whose ownership this case is about.
+            try (SqlExecutionContextImpl executionContext = TestUtils.createSqlExecutionCtx(engine, 1)) {
+                sweepMidBuildFailures(executionContext, lowTs, highTs, keys);
+            }
+            try (SqlExecutionContextImpl executionContext = TestUtils.createSqlExecutionCtx(engine, 4)) {
+                sweepMidBuildFailures(executionContext, lowTs, highTs, keys);
             }
         });
     }
@@ -368,6 +465,20 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
         }
     }
 
+    private static PageFrameRecordCursorFactory pageFrameScanOf(RecordCursorFactory factory) {
+        // SqlCompiler wraps every compiled query in a QueryProgress factory for registry
+        // tracking; the scan underneath is what carries the substitution.
+        RecordCursorFactory scan = factory;
+        while (scan != null && !(scan instanceof PageFrameRecordCursorFactory)) {
+            scan = scan.getBaseFactory();
+        }
+        Assert.assertTrue(
+                "a plain full scan is what the substitution needs",
+                scan instanceof PageFrameRecordCursorFactory
+        );
+        return (PageFrameRecordCursorFactory) scan;
+    }
+
     private static int countLines(StringSink sink) {
         int lines = 0;
         for (int i = 0, n = sink.length(); i < n; i++) {
@@ -399,6 +510,79 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
         execute("insert into tx values " + values);
         drainWalQueue();
         driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * Opens the forward index-backed scan over {@code keys} the way a repair does, pulls
+     * every row and closes both the cursor and the factory, and returns the row count.
+     */
+    private int drainKeyedScan(SqlExecutionContextImpl executionContext, long lowTs, long highTs, IntList keys) throws Exception {
+        int rows = 0;
+        try (RecordCursorFactory factory = select("tx", executionContext)) {
+            try (RecordCursor cursor = pageFrameScanOf(factory).getCursorInTimestampRangeForwardIndexed(
+                    executionContext, lowTs, highTs, 1, keys)) {
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+            }
+        }
+        return rows;
+    }
+
+    /**
+     * Walks an RSS ceiling across one keyed open's allocation points, so that each point
+     * faults a different one of them, and asserts the sweep crossed the whole
+     * failing-to-succeeding transition rather than only failing at the bottom of the range.
+     * What each point leaves behind is the caller's {@code assertMemoryLeak} to judge.
+     */
+    private void sweepMidBuildFailures(SqlExecutionContextImpl executionContext, long lowTs, long highTs, IntList keys) throws Exception {
+        // Warm the reader and the compiler with the ceiling down, so the swept failure lands
+        // inside the keyed open rather than in first-touch table open.
+        Assert.assertEquals(3_200, drainKeyedScan(executionContext, lowTs, highTs, keys));
+
+        boolean hasRunUnderLimit = false;
+        int maxOomSlack = -1;
+        for (int slack = 0; slack <= OOM_SWEEP_SLACK_MAX; slack += OOM_SWEEP_SLACK_STEP) {
+            // A fresh factory per point. Reusing one would let a later successful open free,
+            // through getCursor()'s own leading drain, whatever an earlier faulted one
+            // stranded - which is exactly what would mask the leak.
+            try (RecordCursorFactory factory = select("tx", executionContext)) {
+                final PageFrameRecordCursorFactory scan = pageFrameScanOf(factory);
+                RecordCursor cursor = null;
+                // Arm immediately before the operation under test.
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
+                try {
+                    cursor = scan.getCursorInTimestampRangeForwardIndexed(
+                            executionContext, lowTs, highTs, 1, keys);
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                        // Pull every row; the heap rebuilds its row cursors per frame.
+                    }
+                    hasRunUnderLimit = true;
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
+                    maxOomSlack = slack;
+                } finally {
+                    // Disarm before the cursor and the factory close, so neither trips the
+                    // ceiling. The cursor cannot be a try-with-resources here: an extended
+                    // try-with-resources closes its resource before this finally runs, which
+                    // would hold the ceiling armed across close().
+                    Unsafe.setRssMemLimit(0);
+                    Misc.free(cursor);
+                }
+            }
+        }
+        // The two together bracket the build's allocation span. At slack 0 the ceiling equals
+        // current usage, so the open's first tracked allocation fails and an OOM alone only
+        // shows the open allocates at all; pairing it with an open that survived its ceiling
+        // is what shows the sweep crossed the transition the strand hides in.
+        Assert.assertTrue("the keyed open only failed at the zero-slack endpoint", maxOomSlack > 0);
+        Assert.assertTrue("the sweep never completed a keyed open under an armed ceiling, so it "
+                        + "stopped short of the transition the strand hides in; widen OOM_SWEEP_SLACK_MAX",
+                hasRunUnderLimit);
+
+        // Recovery: with the ceiling removed the same scan reads its rows cleanly.
+        Assert.assertEquals(3_200, drainKeyedScan(executionContext, lowTs, highTs, keys));
     }
 
     private void createView(String seedRows, boolean isKeyIndexed) throws Exception {
@@ -441,6 +625,74 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
      * one partition so the per-key-per-frame setup does not dominate the comparison at this
      * scale the way it does on a real hourly-partitioned base.
      */
+    private void runTheEstimateChargesOneIndexOpenPerKeyPerPageFrame() throws Exception {
+        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL NOCACHE INDEX CAPACITY 8, "
+                + "amount DOUBLE) TIMESTAMP(created_at) PARTITION BY DAY WAL");
+        // Two days of 1_000 rows over eight accounts, round-robin. Every partition is an
+        // exact multiple of the 100-row frame limit, so the split carries no trailing frame
+        // and the count is the same whatever the shared query worker count is.
+        execute("INSERT INTO tx SELECT "
+                + "timestamp_sequence('2026-01-02T00:00:00.000000Z', 86_400_000), "
+                + "('acct-' || (x % 8))::symbol, "
+                + "x::double "
+                + "FROM long_sequence(2_000)");
+        drainWalQueue();
+
+        final long lowTs = ts("2026-01-02T00:00:00.000000Z");
+        final long highTs = ts("2026-01-03T23:59:59.999999Z");
+
+        long realFrames = 0;
+        try (RecordCursorFactory factory = select("tx")) {
+            RecordCursorFactory scan = factory;
+            while (scan != null && !(scan instanceof PageFrameRecordCursorFactory)) {
+                scan = scan.getBaseFactory();
+            }
+            Assert.assertTrue(
+                    "a plain full scan is what the substitution needs",
+                    scan instanceof PageFrameRecordCursorFactory
+            );
+            // The frames the executor really crosses, taken off the same forward page frame
+            // cursor the keyed scan opens - not a second copy of the formula the estimate
+            // uses, which would share any bug with it.
+            try (PageFrameCursor frames = ((PageFrameRecordCursorFactory) scan).getPageFrameCursor(
+                    sqlExecutionContext,
+                    PartitionFrameCursorFactory.ORDER_ASC
+            )) {
+                while (frames.next() != null) {
+                    realFrames++;
+                }
+            }
+        }
+        Assert.assertEquals("two 1_000-row partitions at a 100-row frame limit", 20, realFrames);
+
+        final IntList keys = new IntList();
+        final long postingRows;
+        final long indexOpens;
+        final LiveViewCheckpointKeyedScanCost cost = new LiveViewCheckpointKeyedScanCost();
+        try (TableReader reader = engine.getReader(engine.getTableTokenIfExists("tx"))) {
+            keys.add(reader.getSymbolMapReader(1).keyOf("acct-3"));
+            cost.of(reader, sqlExecutionContext);
+            postingRows = cost.estimateKeyedScanRows(lowTs, highTs, 1, keys, Long.MAX_VALUE);
+            indexOpens = cost.getIndexOpens();
+        }
+        Assert.assertEquals("one account of eight across two days", 250, postingRows);
+        Assert.assertEquals(
+                "the setup term must charge one open per key per page frame",
+                realFrames * keys.size(),
+                indexOpens
+        );
+        // Which is what counting them is for: the default prices one open at 256 base rows,
+        // and against the 2_000-row whole-range scan the two counts pick different routes.
+        Assert.assertTrue(
+                "counted once per partition, the keyed route prices below the whole range",
+                LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(postingRows, 2, keys.size(), 2_000, 256)
+        );
+        Assert.assertFalse(
+                "counted once per frame, the whole-range scan is the cheaper of the two",
+                LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(postingRows, indexOpens, keys.size(), 2_000, 256)
+        );
+    }
+
     private String seedFourAccountsOverThreeDays() {
         final StringBuilder rows = new StringBuilder();
         for (int day = 2; day <= 4; day++) {

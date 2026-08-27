@@ -168,6 +168,36 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Absorbs one row into this function's accumulator, off an argument the caller has
+     * already evaluated for this row. Behaves exactly as
+     * {@link #accumulateWindowState(Record, MapValue)} and differs only in where the
+     * argument comes from.
+     * <p>
+     * The caller offers this form where it has evaluated the argument for its own reasons
+     * and would otherwise make the contributor read the same column a second time - see
+     * {@link WindowMapState#computeNext(Record)}, whose pass-1 skip evaluates
+     * {@code windowAccumulatorArgument()} to decide whether the row reaches the map at all.
+     * {@code argument} is exactly what {@code windowAccumulatorArgument().getDouble(record)}
+     * returned for this row, non-finite values included, so an implementation applies the
+     * same test to it that the two-argument form applies to its own read.
+     * <p>
+     * The default re-reads, which is always correct and is the right answer for a function
+     * whose own contribution test is not the DOUBLE one - overriding it there would be a
+     * second spelling of a predicate that can then disagree with the first. Overriding is
+     * worth it for a contributor whose two-argument body already begins
+     * {@code arg.getDouble(record)}, and such an implementation delegates the other way so
+     * that one body serves both.
+     *
+     * @param record   the current base row
+     * @param value    the partition's fused window-state value, already loaded and reset
+     *                 for the current bucket
+     * @param argument the value {@link #windowAccumulatorArgument()} returned for this row
+     */
+    default void accumulateWindowState(Record record, MapValue value, double argument) {
+        accumulateWindowState(record, value);
+    }
+
+    /**
      * Adopts the fused slots this output reads out of the group's map value, or clears
      * them when {@code projection} is null.
      * <p>

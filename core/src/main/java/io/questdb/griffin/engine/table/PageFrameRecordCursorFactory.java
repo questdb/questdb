@@ -64,6 +64,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     private int fwdIndexedColumnIndex = -1;
     private final int[] fwdIndexedCursorFactoriesIdx = new int[]{0};
     private final ObjList<SymbolIndexRowCursorFactory> fwdIndexedRowCursorFactories = new ObjList<>();
+    private HeapRowCursorFactory fwdIndexedHeapRowCursorFactory;
     private PageFrameRecordCursor fwdIndexedRecordCursor;
     private BwdTableReaderPageFrameCursor bwdPageFrameCursor;
     private PageFrameRecordCursor bwdRecordCursor;
@@ -400,6 +401,11 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             // One factory serves every repair of one view, and a view keys on one column,
             // so this rebuild is a first-call cost rather than a per-key one.
             fwdIndexedRecordCursor = Misc.free(fwdIndexedRecordCursor);
+            // The record cursor's close() above drains only the row cursors it still holds.
+            // Row cursors a getCursor() that threw mid-build left behind are reachable
+            // through the heap factory alone, so the rebind releases it rather than
+            // orphaning it, and does so before it clears the per-key factories it reads.
+            fwdIndexedHeapRowCursorFactory = Misc.free(fwdIndexedHeapRowCursorFactory);
             Misc.freeObjListAndClear(fwdIndexedRowCursorFactories);
             fwdIndexedColumnIndex = columnIndex;
         }
@@ -424,10 +430,15 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         }
         fwdIndexedCursorFactoriesIdx[0] = keyCount;
         if (fwdIndexedRecordCursor == null) {
+            // This class owns the heap factory the way it owns the backward path's
+            // SymbolIndexRowCursorFactory: the record cursor below only borrows it and
+            // frees its own row cursor, never the row cursor factory it was handed. The
+            // rebind above and _close() below are the two places that release it.
+            fwdIndexedHeapRowCursorFactory = new HeapRowCursorFactory(fwdIndexedRowCursorFactories, fwdIndexedCursorFactoriesIdx);
             fwdIndexedRecordCursor = new PageFrameRecordCursorImpl(
                     configuration,
                     getMetadata(),
-                    new HeapRowCursorFactory(fwdIndexedRowCursorFactories, fwdIndexedCursorFactoriesIdx),
+                    fwdIndexedHeapRowCursorFactory,
                     false,
                     filter
             );
@@ -617,6 +628,8 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         this.filter = null;
         final PageFrameRecordCursor fwdIndexedRecordCursor = this.fwdIndexedRecordCursor;
         this.fwdIndexedRecordCursor = null;
+        final HeapRowCursorFactory fwdIndexedHeapRowCursorFactory = this.fwdIndexedHeapRowCursorFactory;
+        this.fwdIndexedHeapRowCursorFactory = null;
         this.fwdIndexedColumnIndex = -1;
         final TablePageFrameCursor fwdPageFrameCursor = this.fwdPageFrameCursor;
         this.fwdPageFrameCursor = null;
@@ -638,8 +651,17 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeBestEffort(failure, fwdIndexedRecordCursor);
         // The heap row-cursor factory the cursor above holds owns the row cursors it built
-        // per frame, not the per-key factories it built them from. Those are this
-        // factory's, grown across repairs and reused, so they are freed here.
+        // per frame; the cursor borrows the factory and frees only its own row cursor. That
+        // row cursor reaches the built cursors through the list HeapRowCursor shares with the
+        // factory, but PageFrameRecordCursorImpl.hasNext() nulls it before it calls
+        // getCursor(), so a getCursor() that throws mid-build leaves the cursors it had
+        // already built reachable through the heap factory alone. Free it here, after the
+        // cursor, the way the backward path frees its own row cursor factory.
+        // Misc.freeObjListAndClear() clears the list it drains, so a second drain of the same
+        // list iterates nothing and the two closes cannot free a row cursor twice.
+        failure = Misc.freeBestEffort(failure, fwdIndexedHeapRowCursorFactory);
+        // The per-key factories the heap built those cursors from are this factory's too,
+        // grown across repairs and reused, so they are freed here.
         failure = Misc.freeObjListBestEffort(failure, fwdIndexedRowCursorFactories);
         // A constructor that fails before this class initializes its own fields still runs
         // close(), and leaves both of these null. Guard them so cleanup reaches the owners

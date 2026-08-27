@@ -11955,6 +11955,47 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAnchorResetsMaxLongAcrossDayBoundary() throws Exception {
+        // The LONG twin of testAnchorResetsMaxAcrossDayBoundary, over a different
+        // implementation: max(LONG) compiles to
+        // MaxLongWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction,
+        // which re-arms its extremum slot with Numbers.LONG_NULL where the DOUBLE class
+        // re-arms with Double.NaN.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, max(x) OVER w AS m FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // Day 1 max climbs 5 -> 50; day 2 starts fresh at 3 (lower than day 1's 50).
+            // The two day-2 expectations separate all three outcomes the reset can have:
+            // 3 is the re-anchored maximum, 50 would be day 1's maximum carried forward,
+            // and an empty column would be the LONG_NULL sentinel the reset wrote and
+            // nothing re-armed.
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 5, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 50, 'a'), " +
+                    "('2026-08-01T02:00:00.000000Z', 25, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 3, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 7, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
+                    "2026-08-01T00:00:00.000000Z\ta\t5\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t50\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t50\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t3\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t7\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAnchorResetsFirstValueAcrossDayBoundary() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -14234,6 +14275,94 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "2026-08-01T02:00:00.000000Z\ta\t5.0\n" +
                     "2026-08-02T00:00:00.000000Z\ta\t30.0\n" +
                     "2026-08-02T01:00:00.000000Z\ta\t7.0\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsMinLongAcrossDayBoundary() throws Exception {
+        // The LONG twin of testAnchorResetsMinAcrossDayBoundary. It is a different
+        // implementation, not a re-run of the same one: min(LONG) compiles to
+        // MinLongWindowFunctionFactory's LESS_THAN over
+        // MaxLongWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction,
+        // whose re-arm sentinel is Numbers.LONG_NULL where the DOUBLE class uses NaN.
+        // LONG_NULL is Long.MIN_VALUE, so it is also the one sentinel a bare
+        // `l < current` can never beat: a slot left on it stays on it, and the rest of
+        // the bucket reports NULL rather than a running minimum.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, min(x) OVER w AS m FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // Day 1 min falls 50 -> 5; day 2 starts fresh at 30 (higher than day 1's 5).
+            // The two day-2 expectations separate all three outcomes the reset can have:
+            // 30 is the re-anchored minimum, 5 would be day 1's minimum carried forward,
+            // and an empty column would be the LONG_NULL sentinel the reset wrote and
+            // nothing re-armed.
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 50, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 5, 'a'), " +
+                    "('2026-08-01T02:00:00.000000Z', 25, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 30, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 7, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
+                    "2026-08-01T00:00:00.000000Z\ta\t50\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t5\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t5\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t30\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t7\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsLongExtremaWithoutFusionAcrossDayBoundary() throws Exception {
+        // The same crossing on the other runtime. With the fusion kill switch off, the
+        // window declines the state plan, both calls keep their own private map, and the
+        // crossing runs MaxMinOverUnboundedPartitionRowsFrameFunction's
+        // resetPartition/computeNext pair instead of the group's accumulateWindowState.
+        // computeNext re-anchors on `max == Numbers.LONG_NULL ||`, and that disjunct
+        // carries min alone: resetPartition re-arms the slot with LONG_NULL, which is
+        // Long.MIN_VALUE, so max's `l > Long.MIN_VALUE` already holds for every non-null
+        // row while min's `l < Long.MIN_VALUE` holds for none of them.
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, max(x) OVER w AS mx, min(x) OVER w AS mn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // Day 2 is bracketed by day 1 on both sides - its max 30 is below day 1's 50
+            // and its min 30 is above day 1's 5 - so a carried-forward extremum fails on
+            // either column, and the non-null day-2 expectations fail again if a slot is
+            // left reading the LONG_NULL sentinel.
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 50, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 5, 'a'), " +
+                    "('2026-08-01T02:00:00.000000Z', 25, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 30, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 7, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, mx, mn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tmx\tmn\n" +
+                    "2026-08-01T00:00:00.000000Z\ta\t50\t50\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t50\t5\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t50\t5\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t30\t30\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t30\t7\n");
 
             execute("DROP LIVE VIEW lv");
         });

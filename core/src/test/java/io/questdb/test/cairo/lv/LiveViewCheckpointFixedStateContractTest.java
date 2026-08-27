@@ -225,7 +225,7 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
     @Test
     public void testUnboundedPartitionedAccumulatorsDeclareTheirWidth() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+            execute("create table base (ts timestamp, sym symbol, x double, n long) timestamp(ts) partition by day wal");
             // (sum, nonNullCount) for the two DOUBLE accumulators, one counter for count.
             assertDeclaredWidth("select ts, sym, sum(x) over (partition by sym order by ts "
                     + "rows between unbounded preceding and current row) s from base", SUM_STATE_BYTES);
@@ -251,6 +251,15 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
             assertDeclaredWidth("select ts, sym, min(x) over (partition by sym order by ts "
                     + "rows between unbounded preceding and current row) m from base", EXTREMUM_STATE_BYTES);
             assertDeclaredWidth("select ts, sym, max(ts) over (partition by sym order by ts "
+                    + "rows between unbounded preceding and current row) m from base", EXTREMUM_STATE_BYTES);
+            // A LONG extremum is a third implementation again - neither the DOUBLE class
+            // above nor the shared TIMESTAMP/DATE base, but
+            // MaxLongWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction,
+            // which min(LONG) reuses with the opposite comparator - so it declares its own
+            // width and needs its own case.
+            assertDeclaredWidth("select ts, sym, max(n) over (partition by sym order by ts "
+                    + "rows between unbounded preceding and current row) m from base", EXTREMUM_STATE_BYTES);
+            assertDeclaredWidth("select ts, sym, min(n) over (partition by sym order by ts "
                     + "rows between unbounded preceding and current row) m from base", EXTREMUM_STATE_BYTES);
             // The compensated total keeps its compensation term beside the fields a plain
             // sum keeps, so it is one word wider than one.

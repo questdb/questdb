@@ -371,9 +371,21 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void accumulateWindowState(Record record, MapValue value) {
-            final double d = arg.getDouble(record);
-            if (Numbers.isFinite(d)) {
-                value.putDouble(windowStateSumSlot, value.getDouble(windowStateSumSlot) + d);
+            accumulateWindowState(record, value, arg.getDouble(record));
+        }
+
+        /**
+         * The whole of the absorption, off an argument the caller may already hold. The group's
+         * pass-1 skip evaluates exactly this {@code arg} to decide whether the row reaches the
+         * map, so taking its answer here is what stops the row's argument being read twice -
+         * see {@link io.questdb.griffin.engine.window.WindowMapState#computeNext(Record)}. The
+         * test is unchanged, and applying it to a value the caller read is the same test as
+         * applying it to one this method reads.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value, double argument) {
+            if (Numbers.isFinite(argument)) {
+                value.putDouble(windowStateSumSlot, value.getDouble(windowStateSumSlot) + argument);
                 value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
             }
         }

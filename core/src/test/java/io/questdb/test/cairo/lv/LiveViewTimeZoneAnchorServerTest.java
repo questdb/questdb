@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -64,8 +65,13 @@ import java.sql.Statement;
  *     {@code incomplete dependency} - that denial was compile-time, so a single sighting of it
  *     at any pass is the gap reopening rather than a timing artefact.</li>
  * </ul>
- * The zone is a neutral DST-observing one; nothing here depends on which zone it is, only that
- * its rules carry transitions and so cannot be folded into fixed-stride arithmetic.
+ * The zone is a neutral DST-observing one, and the repair readings above depend only on its
+ * rules carrying transitions at all rather than on which zone it is.
+ * <p>
+ * {@link #testTheZoneAnchoredViewSurvivesBothDaylightSavingTransitions()} is the third reading
+ * and the one that does pin the zone: it drives base rows across both of Europe/Berlin's 2026
+ * transitions, so the view is built, corrected and repaired over a 23-hour civil day and a
+ * 25-hour one rather than over the fixed-width days every other case here uses.
  */
 public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
 
@@ -91,6 +97,110 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
     private static final int SETTLED_PASSES = 3;
     private static final String VIEW_PLAIN = "payments_view_plain";
     private static final String VIEW_ZONED = "payments_view_zoned";
+    // Europe/Berlin in 2026 puts the clocks forward at 2026-03-29T01:00Z and back at
+    // 2026-10-25T01:00Z, so the civil day starting 2026-03-28T23:00Z is 23 hours wide and the
+    // one starting 2026-10-24T22:00Z is 25. Every instant below is pinned to one of those two
+    // days or to the day either side of it - nothing reads the machine's clock, default zone
+    // or locale.
+    private static final ObjList<String> DST_INSTANTS = new ObjList<>();
+    // The account the two hand-computed traces below follow. The window partitions by
+    // account_id, so the corrections the trickle makes cannot move a single one of its values.
+    private static final String TRACE_ACCOUNT = "acct-1";
+    // The account every correction lands on, for the same reason. Its rows are the only ones
+    // the traces do not describe.
+    private static final int TRICKLE_ACCOUNT = ACCOUNT_COUNT;
+    // The minute the first correction lands on; each pass goes one minute deeper, so no pass
+    // rests on a root its own predecessor sealed.
+    private static final int TRICKLE_FIRST_MINUTE = 30;
+    // What the zone-anchored view holds for TRACE_ACCOUNT once the trickle has settled: the
+    // accumulator resets at Berlin local midnight - an hour before UTC midnight under CET, two
+    // under CEST - and does not reset at either transition instant. The 7 at 2026-03-29T21:30Z
+    // is the 23-hour day read end to end, and the 7 at 2026-10-25T22:30Z the 25-hour one.
+    private static final String ZONED_TRACE = """
+            2026-03-28T21:00:00.000000Z\t1
+            2026-03-28T22:30:00.000000Z\t2
+            2026-03-28T23:00:00.000000Z\t1
+            2026-03-28T23:30:00.000000Z\t2
+            2026-03-29T00:30:00.000000Z\t3
+            2026-03-29T00:59:00.000000Z\t4
+            2026-03-29T01:00:00.000000Z\t5
+            2026-03-29T12:00:00.000000Z\t6
+            2026-03-29T21:30:00.000000Z\t7
+            2026-03-29T22:00:00.000000Z\t1
+            2026-03-29T23:30:00.000000Z\t2
+            2026-03-30T01:00:00.000000Z\t3
+            2026-10-24T20:00:00.000000Z\t1
+            2026-10-24T21:30:00.000000Z\t2
+            2026-10-24T22:00:00.000000Z\t1
+            2026-10-24T23:30:00.000000Z\t2
+            2026-10-25T00:30:00.000000Z\t3
+            2026-10-25T00:59:00.000000Z\t4
+            2026-10-25T01:00:00.000000Z\t5
+            2026-10-25T12:00:00.000000Z\t6
+            2026-10-25T22:30:00.000000Z\t7
+            2026-10-25T23:00:00.000000Z\t1
+            2026-10-26T00:30:00.000000Z\t2
+            """;
+    // The same rows off the no-zone control, which is the anti-oracle: it resets on the UTC
+    // grid instead and so disagrees at 19 of the 23 rows. No UTC-grid computation can produce
+    // ZONED_TRACE, and no zone-grid one can produce this.
+    private static final String PLAIN_TRACE = """
+            2026-03-28T21:00:00.000000Z\t1
+            2026-03-28T22:30:00.000000Z\t2
+            2026-03-28T23:00:00.000000Z\t3
+            2026-03-28T23:30:00.000000Z\t4
+            2026-03-29T00:30:00.000000Z\t1
+            2026-03-29T00:59:00.000000Z\t2
+            2026-03-29T01:00:00.000000Z\t3
+            2026-03-29T12:00:00.000000Z\t4
+            2026-03-29T21:30:00.000000Z\t5
+            2026-03-29T22:00:00.000000Z\t6
+            2026-03-29T23:30:00.000000Z\t7
+            2026-03-30T01:00:00.000000Z\t1
+            2026-10-24T20:00:00.000000Z\t1
+            2026-10-24T21:30:00.000000Z\t2
+            2026-10-24T22:00:00.000000Z\t3
+            2026-10-24T23:30:00.000000Z\t4
+            2026-10-25T00:30:00.000000Z\t1
+            2026-10-25T00:59:00.000000Z\t2
+            2026-10-25T01:00:00.000000Z\t3
+            2026-10-25T12:00:00.000000Z\t4
+            2026-10-25T22:30:00.000000Z\t5
+            2026-10-25T23:00:00.000000Z\t6
+            2026-10-26T00:30:00.000000Z\t1
+            """;
+
+    static {
+        // The day below the spring-forward, the 23-hour day itself, and the day above it. The
+        // two rows at 23:00Z and 23:30Z are the head a UTC-grid segment start would drop, and
+        // the row at 2026-03-29T22:00Z the first of the next civil day - two hours before the
+        // UTC day it sits in ends.
+        DST_INSTANTS.add("2026-03-28T21:00:00.000000Z");
+        DST_INSTANTS.add("2026-03-28T22:30:00.000000Z");
+        DST_INSTANTS.add("2026-03-28T23:00:00.000000Z");
+        DST_INSTANTS.add("2026-03-28T23:30:00.000000Z");
+        DST_INSTANTS.add("2026-03-29T00:30:00.000000Z");
+        DST_INSTANTS.add("2026-03-29T00:59:00.000000Z");
+        DST_INSTANTS.add("2026-03-29T01:00:00.000000Z");
+        DST_INSTANTS.add("2026-03-29T12:00:00.000000Z");
+        DST_INSTANTS.add("2026-03-29T21:30:00.000000Z");
+        DST_INSTANTS.add("2026-03-29T22:00:00.000000Z");
+        DST_INSTANTS.add("2026-03-29T23:30:00.000000Z");
+        DST_INSTANTS.add("2026-03-30T01:00:00.000000Z");
+        // And the same three around the fall-back. 2026-10-25T22:30Z is the twenty-fifth hour
+        // of its civil day, which a fixed 24-hour stride would have handed to the next one.
+        DST_INSTANTS.add("2026-10-24T20:00:00.000000Z");
+        DST_INSTANTS.add("2026-10-24T21:30:00.000000Z");
+        DST_INSTANTS.add("2026-10-24T22:00:00.000000Z");
+        DST_INSTANTS.add("2026-10-24T23:30:00.000000Z");
+        DST_INSTANTS.add("2026-10-25T00:30:00.000000Z");
+        DST_INSTANTS.add("2026-10-25T00:59:00.000000Z");
+        DST_INSTANTS.add("2026-10-25T01:00:00.000000Z");
+        DST_INSTANTS.add("2026-10-25T12:00:00.000000Z");
+        DST_INSTANTS.add("2026-10-25T22:30:00.000000Z");
+        DST_INSTANTS.add("2026-10-25T23:00:00.000000Z");
+        DST_INSTANTS.add("2026-10-26T00:30:00.000000Z");
+    }
 
     @Before
     @Override
@@ -240,6 +350,98 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
         });
     }
 
+    /**
+     * The zone-anchored view driven end to end across both of Europe/Berlin's 2026 daylight
+     * saving transitions, which is the shape no other case here reaches: every fixture in this
+     * package that names a zone puts its rows in January, where a civil day is 24 hours wide
+     * and a UTC-grid computation and a zone-grid one agree row for row.
+     * <p>
+     * Two claims, and they answer different failures:
+     * <ul>
+     *     <li><b>The rows.</b> {@link #ZONED_TRACE} is hand-computed from the zone's own rules
+     *     and pins a 23-hour civil day and a 25-hour one read end to end; {@link #PLAIN_TRACE}
+     *     is the same account off the no-zone control and disagrees at 19 of its 23 rows, so
+     *     neither trace can be produced on the other's grid. {@code assertMatchesRecompute}
+     *     then holds the whole view - every account, corrections included - against a from-base
+     *     recompute over the same floor. A repair that bounded itself on the UTC grid rather
+     *     than the zone's would start above the head of a civil day and drop the state that
+     *     head carries, and the counts here are what catches it.</li>
+     *     <li><b>The route.</b> Correct rows alone do not prove the anchor did anything: the
+     *     conservative fallback - no plan, no segment bound, a rebuild from the view's own
+     *     boundary - produces exactly the same rows, only slower. So the preflight gate, the
+     *     settled disposition and the denial are read beside them, which is what separates a
+     *     localized repair over a transition day from a fallback that never consulted the zone
+     *     at all.</li>
+     * </ul>
+     */
+    @Test
+    public void testTheZoneAnchoredViewSurvivesBothDaylightSavingTransitions() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startServer()) {
+                Assert.assertTrue(
+                        "the server must be running the live view refresh pool this case reads",
+                        serverMain.getEngine().getConfiguration().isLiveViewRefreshEnabled()
+                );
+                try (Connection conn = getConnection("admin", "quest", PG_PORT)) {
+                    execute(conn, "CREATE TABLE " + BASE + " ("
+                            + "created_at TIMESTAMP, "
+                            + "account_id SYMBOL NOCACHE INDEX CAPACITY 4, "
+                            + "amount DOUBLE"
+                            + ") TIMESTAMP(created_at) PARTITION BY HOUR WAL");
+                    execute(conn, "INSERT INTO " + BASE + " VALUES " + accountRows(DST_INSTANTS.getQuick(0)));
+                    long baseRows = ACCOUNT_COUNT;
+                    awaitRowCount(conn, BASE, baseRows);
+
+                    execute(conn, createLiveView(VIEW_ZONED, ANCHOR_ZONE));
+                    execute(conn, createLiveView(VIEW_PLAIN, null));
+                    awaitRowCount(conn, VIEW_ZONED, baseRows);
+                    awaitRowCount(conn, VIEW_PLAIN, baseRows);
+                    assertGates(conn, VIEW_ZONED, "available", "available");
+                    assertGates(conn, VIEW_PLAIN, "available", "available");
+
+                    // One commit per instant, so the cadence seals roots between the rows a
+                    // civil day straddles rather than under the whole day at once.
+                    for (int i = 1, n = DST_INSTANTS.size(); i < n; i++) {
+                        execute(conn, "INSERT INTO " + BASE + " VALUES " + accountRows(DST_INSTANTS.getQuick(i)));
+                        baseRows += ACCOUNT_COUNT;
+                        awaitRowCount(conn, BASE, baseRows);
+                    }
+                    awaitRowCount(conn, VIEW_ZONED, baseRows);
+                    awaitRowCount(conn, VIEW_PLAIN, baseRows);
+
+                    // Corrections in the middle of one transition day at a time, one minute
+                    // deeper each pass. Midday is well above the day's own start and well below
+                    // its end, which is exactly where a segment bound taken off the UTC grid
+                    // rather than the zone's would place its floor an hour too high on the
+                    // spring-forward day and two hours too high on the fall-back one. The two
+                    // days run as separate phases so each repair localizes inside one of them
+                    // rather than inside an interval spanning both.
+                    final StringSink readings = new StringSink();
+                    baseRows = trickleUntilLocalized(conn, "2026-03-29T12:", baseRows, readings);
+                    baseRows = trickleUntilLocalized(conn, "2026-10-25T12:", baseRows, readings);
+
+                    // The rows, hand-computed off the zone's rules rather than off a second
+                    // copy of the server's arithmetic.
+                    Assert.assertEquals(
+                            "the zone-anchored view must reset on Berlin local midnight, readings:\n" + readings,
+                            ZONED_TRACE,
+                            trace(conn, VIEW_ZONED)
+                    );
+                    Assert.assertEquals(
+                            "the no-zone control must reset on UTC midnight, readings:\n" + readings,
+                            PLAIN_TRACE,
+                            trace(conn, VIEW_PLAIN)
+                    );
+
+                    // And every other account, corrections included, against a from-base
+                    // recompute over the same floor.
+                    assertMatchesRecompute(conn, VIEW_ZONED, ANCHOR_ZONE);
+                    assertMatchesRecompute(conn, VIEW_PLAIN, null);
+                }
+            }
+        });
+    }
+
     private static void assertGates(
             Connection conn,
             String view,
@@ -313,6 +515,30 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
         return rows.toString();
     }
 
+    /**
+     * One INSERT tuple list holding one row per account at {@code instant}, so a whole commit
+     * lands on a single point of the timeline and the traces count commits rather than rows.
+     */
+    private static String accountRows(String instant) {
+        final StringBuilder rows = new StringBuilder();
+        for (int account = 1; account <= ACCOUNT_COUNT; account++) {
+            if (rows.length() > 0) {
+                rows.append(", ");
+            }
+            rows.append("('").append(instant).append("', 'acct-").append(account).append("', 1.0)");
+        }
+        return rows.toString();
+    }
+
+    /**
+     * One correction of pass {@code pass} inside the hour {@code hourPrefix} names, on the
+     * account no trace follows.
+     */
+    private static String trickleRow(String hourPrefix, int pass) {
+        return "('" + hourPrefix + String.format("%02d", TRICKLE_FIRST_MINUTE - pass)
+                + ":00.000000Z', 'acct-" + TRICKLE_ACCOUNT + "', 1.0)";
+    }
+
     private static String row(int hour, int minute, int account) {
         return "('2026-01-05T" + String.format("%02d", hour) + ":" + String.format("%02d", minute)
                 + ":00.000000Z', 'acct-" + account + "', 1.0)";
@@ -320,6 +546,28 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
 
     private static int rowsPerHour() {
         return ACCOUNT_COUNT * ROWS_PER_ACCOUNT_PER_HOUR;
+    }
+
+    /**
+     * {@code TRACE_ACCOUNT}'s rows of {@code view}, one per line as
+     * {@code <timestamp>\t<cumulative_count>}. Reading the count rather than the sum keeps the
+     * expected values integers, and since every row carries an amount of one the two carry the
+     * same information.
+     */
+    private static String trace(Connection conn, String view) throws SQLException {
+        final StringSink sink = new StringSink();
+        try (
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT created_at::varchar, cumulative_count FROM " + view
+                                + " WHERE account_id = '" + TRACE_ACCOUNT + "' ORDER BY created_at"
+                )
+        ) {
+            while (rs.next()) {
+                sink.put(rs.getString(1)).put('\t').put(rs.getLong(2)).put('\n');
+            }
+        }
+        return sink.toString();
     }
 
     /**
@@ -358,6 +606,64 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
                 + "FROM " + BASE + " "
                 + "WINDOW w AS (PARTITION BY account_id ORDER BY created_at "
                 + "ANCHOR DAILY '" + ANCHOR_TIME + "'" + (anchorZone != null ? " '" + anchorZone + "'" : "") + ")";
+    }
+
+    /**
+     * Trickles corrections into the hour {@code hourPrefix} names until the zone-anchored
+     * view's repair settles on a localized rebuild, and returns the base row count that leaves.
+     * <p>
+     * Settling is the route half of this case's claim. A rebuild that reports
+     * {@code localized rebuild} with no denial read {@code [L, H)} off the anchor's own segment
+     * bounds - the ones the zone's transition table produced. Every other outcome here is the
+     * conservative path: a denial, and a read from the view's own {@code START FROM} boundary
+     * that would deliver the same rows without the segment arithmetic ever being consulted. The
+     * row assertions cannot tell those two apart, so this one has to.
+     */
+    private long trickleUntilLocalized(
+            Connection conn,
+            String hourPrefix,
+            long baseRows,
+            StringSink readings
+    ) throws Exception {
+        int settled = 0;
+        for (int pass = 1; pass <= TRICKLE_PASSES; pass++) {
+            execute(conn, "INSERT INTO " + BASE + " VALUES " + trickleRow(hourPrefix, pass));
+            baseRows++;
+            awaitRowCount(conn, BASE, baseRows);
+            awaitRowCount(conn, VIEW_ZONED, baseRows);
+            awaitRowCount(conn, VIEW_PLAIN, baseRows);
+
+            final Reading zoned = read(conn, VIEW_ZONED);
+            final Reading plain = read(conn, VIEW_PLAIN);
+            readings.put(hourPrefix).put(" pass ").put(pass)
+                    .put(": zoned=").put(zoned.toString())
+                    .put(" plain=").put(plain.toString()).put('\n');
+
+            // The denial that used to be reported on every repair of a zoned anchor, forever.
+            // It is a compile-time property of the anchor's shape, so one sighting at any pass
+            // is the gap rather than a slow ladder.
+            Assert.assertNotEquals(
+                    "the zone anchor's dependency must stay covered across a transition, readings:\n"
+                            + readings,
+                    "incomplete dependency",
+                    zoned.denial
+            );
+            Assert.assertEquals("active", zoned.status);
+            Assert.assertEquals("active", plain.status);
+
+            settled = "localized rebuild".equals(zoned.disposition) ? settled + 1 : 0;
+            if (settled == SETTLED_PASSES) {
+                break;
+            }
+        }
+        Assert.assertEquals(
+                "corrections at " + hourPrefix + " must settle on a localized rebuild - anything"
+                        + " else is the conservative path, which reads from the view's own boundary"
+                        + " and never consults the zone's segment bounds, readings:\n" + readings,
+                SETTLED_PASSES,
+                settled
+        );
+        return baseRows;
     }
 
     private Reading read(Connection conn, String view) throws SQLException {

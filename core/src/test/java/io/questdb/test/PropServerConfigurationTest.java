@@ -82,9 +82,12 @@ import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -907,6 +910,28 @@ public class PropServerConfigurationTest {
 
         CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
         Assert.assertEquals(64L * Numbers.SIZE_1MB, cairo.getSqlParquetCacheMemorySize());
+    }
+
+    @Test
+    public void testLiveViewConfigKeysAreDocumentedInDefaultConf() throws Exception {
+        // conf/server.conf is the only place an operator meets a key before setting it, and
+        // cairo.live.view.checkpoint.repair.sparse.publication.enabled is the one that cannot
+        // wait: CREATE reads it once and the view carries the resulting dedup keys - and the
+        // forward commits they stop coalescing - for its lifetime, so an operator who wants it
+        // off has to learn it exists before creating the view, not after.
+        // The guard covers cairo.live.view.* only. Other prefixes carry pre-existing
+        // undocumented keys, and documenting them is a separate piece of work.
+        final ObjList<String> lines = readShippedServerConfLines();
+        final ObjList<String> undocumented = new ObjList<>();
+        for (PropertyKey key : PropertyKey.values()) {
+            final String path = key.getPropertyPath();
+            if (path.startsWith("cairo.live.view.") && !isKeyDocumentedIn(lines, path)) {
+                undocumented.add(path);
+            }
+        }
+        if (undocumented.size() > 0) {
+            Assert.fail("live view keys missing from conf/server.conf: " + undocumented);
+        }
     }
 
     @Test
@@ -2711,6 +2736,45 @@ public class PropServerConfigurationTest {
                 )
         );
         return pathsThatCanBePinned;
+    }
+
+    /**
+     * Reports whether the template declares {@code key} as a key, commented out or not.
+     * Matches the whole text left of the first {@code =} so that a prose line naming a key
+     * in passing - "the same shape as cairo.live.view.enabled=false" - does not pass for a
+     * declaration, and so that one key does not answer for another that ends with its name.
+     */
+    private static boolean isKeyDocumentedIn(ObjList<String> lines, String key) {
+        for (int i = 0, n = lines.size(); i < n; i++) {
+            String line = lines.getQuick(i).trim();
+            while (line.startsWith("#")) {
+                line = line.substring(1).trim();
+            }
+            final int equalsIndex = line.indexOf('=');
+            if (equalsIndex > 0 && key.equals(line.substring(0, equalsIndex).trim())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Reads the server.conf template off the classpath - the same resource
+     * {@code Bootstrap.extractConfDir()} copies into a fresh root directory, so the guard
+     * reads what an operator actually receives rather than a source path.
+     */
+    private static ObjList<String> readShippedServerConfLines() throws IOException {
+        final ObjList<String> lines = new ObjList<>();
+        try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/io/questdb/site/conf/server.conf")) {
+            Assert.assertNotNull("conf/server.conf is not on the test classpath", is);
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    lines.add(line);
+                }
+            }
+        }
+        return lines;
     }
 
     private void assertInputWorkRootCantBeSetTo(Properties properties, String value) throws Exception {

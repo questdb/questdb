@@ -28,6 +28,8 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
@@ -51,9 +53,11 @@ import org.jetbrains.annotations.NotNull;
  *     what the scan actually pulls off the columns;</li>
  *     <li><b>the merge</b> - {@code O(rows * log |Q|)} rather than {@code O(rows)},
  *     because every row leaves the heap through a sift;</li>
- *     <li><b>the setup</b> - one index open per key per page frame. A base partitioned by
- *     hour against a daily anchor segment is {@code 24 * |Q|} index opens before a row is
- *     read, which is the term that sinks a keyed scan over a sparse key domain.</li>
+ *     <li><b>the setup</b> - one index open per key per page frame, and a partition carries
+ *     as many frames as {@code FwdTableReaderPageFrameCursor} splits it into. A base
+ *     partitioned by hour against a daily anchor segment is {@code 24 * F * |Q|} index opens
+ *     before a row is read, where {@code F} is that split; this is the term that sinks a
+ *     keyed scan over a sparse key domain.</li>
  * </ul>
  * The setup term is expressed in row-equivalents through
  * {@link io.questdb.cairo.CairoConfiguration#getLiveViewCheckpointRepairKeyedScanIndexOpenRows()},
@@ -66,6 +70,12 @@ import org.jetbrains.annotations.NotNull;
  * overestimates the keyed side and never the whole-range one, so the comparison errs
  * towards the whole-range scan, which is the safe direction: it is correct for every shape
  * and merely reads more.
+ * <p>
+ * The frame split behind the setup term rounds the same way, and for the same reason: it
+ * derives from each partition's whole row count rather than from the rows the interval
+ * leaves inside the two it ends in. It ignores the extra split a column top forces, which
+ * rounds the other way - a partition written before one of the scan's columns existed
+ * carries one more frame than the row limit alone accounts for.
  * <p>
  * The estimate opens every partition the interval touches, which is what the scan it prices
  * would map anyway. It has to: {@code TableReader} hands out a no-op index reader for a
@@ -89,8 +99,11 @@ public final class LiveViewCheckpointKeyedScanCost {
      */
     public static final long UNPRICEABLE = Numbers.LONG_NULL;
     private long indexOpens;
+    private int pageFrameMaxRows;
+    private int pageFrameMinRows;
     private long postingRows;
     private TableReader reader;
+    private int sharedQueryWorkerCount;
 
     /**
      * Estimates how many base rows a keyed scan of {@code symbolKeys} over the inclusive
@@ -161,8 +174,11 @@ public final class LiveViewCheckpointKeyedScanCost {
                 postingRows = 0;
                 return UNPRICEABLE;
             }
+            // The scan rebuilds every key's row cursor once per page frame, not once per
+            // partition, so the setup term is charged per frame the partition splits into.
+            final long partitionFrames = countPartitionFrames(partitionRows);
             for (int k = 0, n = symbolKeys.size(); k < n; k++) {
-                indexOpens++;
+                indexOpens += partitionFrames;
                 rows += countPostings(indexReader, symbolKeys.getQuick(k), partitionRows, budgetRows - rows);
                 if (rows >= budgetRows) {
                     // The verdict is settled. Report what is known and stop paying for an
@@ -178,8 +194,9 @@ public final class LiveViewCheckpointKeyedScanCost {
 
     /**
      * @return how many index opens {@link #estimateKeyedScanRows} counted - one per key per
-     * partition it visited, which is the shape {@code HeapRowCursorFactory} rebuilds per
-     * page frame
+     * <b>page frame</b> of every partition it visited, which is what
+     * {@code HeapRowCursorFactory} rebuilds: {@code PageFrameRecordCursorImpl.hasNext} asks
+     * it for a cursor once per frame, and it builds one per key each time
      */
     public long getIndexOpens() {
         return indexOpens;
@@ -236,9 +253,36 @@ public final class LiveViewCheckpointKeyedScanCost {
      * Binds the estimate to the snapshot one repair plans against, which is the same reader
      * {@link LiveViewCheckpointScanCost} prices the whole-range side against: two readers
      * at two {@code seqTxn}s would describe two different scans.
+     * <p>
+     * The context comes with it because the setup term is per page frame, and how many
+     * frames a partition splits into is the context's own: it carries the frame row bounds
+     * and the shared query worker count {@code FwdTableReaderPageFrameCursor} divides by.
+     * The estimate has to read them off the context the priced cursor will open under, not
+     * off the configuration, because a caller may narrow the pair for one query.
      */
-    public void of(@NotNull TableReader reader) {
+    public void of(@NotNull TableReader reader, @NotNull SqlExecutionContext executionContext) {
         this.reader = reader;
+        this.pageFrameMinRows = executionContext.getPageFrameMinRows();
+        this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
+        this.sharedQueryWorkerCount = executionContext.getSharedQueryWorkerCount();
+    }
+
+    /**
+     * Counts the page frames one whole partition splits into, which is how many times the
+     * scan rebuilds each key's index-backed row cursor inside it.
+     */
+    private long countPartitionFrames(long partitionRows) {
+        // Clamped the way calculatePageFrameRowLimit clamps its own worker count. A row
+        // bound of zero reaches it as a divisor, and PropServerConfiguration rejects one -
+        // but a hand-built CairoConfiguration is under no such rule.
+        final long rowsPerFrame = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(
+                0,
+                partitionRows,
+                Math.max(1, pageFrameMinRows),
+                Math.max(1, pageFrameMaxRows),
+                sharedQueryWorkerCount
+        );
+        return (partitionRows + rowsPerFrame - 1) / rowsPerFrame;
     }
 
     /**

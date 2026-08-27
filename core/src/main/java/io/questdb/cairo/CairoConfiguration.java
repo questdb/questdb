@@ -561,9 +561,11 @@ public interface CairoConfiguration {
      * A keyed scan substitutes one index-backed row cursor per affected key into every page
      * frame it crosses, and {@code HeapRowCursorFactory} rebuilds those cursors per frame -
      * so a base partitioned by hour against a daily anchor segment opens the index
-     * {@code 24 * |Q|} times before it reads a row. That term is what sinks a keyed scan
-     * over a sparse key domain, and it is not rows, so the comparison against the
-     * whole-range scan needs it expressed in them.
+     * {@code 24 * F * |Q|} times before it reads a row, where {@code F} is the number of
+     * frames {@link #getSqlPageFrameMinRows()} and the shared query worker count split one
+     * partition into. That term is what sinks a keyed scan over a sparse key domain, and it
+     * is not rows, so the comparison against the whole-range scan needs it expressed in
+     * them.
      * <p>
      * The default is deliberately conservative: overstating an index open only ever moves a
      * marginal segment onto the whole-range scan, which is correct for every shape and

@@ -464,7 +464,15 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
         // (sum, count) component. This is the tightest shipping shape there is - it
         // lands exactly on the limit - so it is the one a slot added to the window's
         // prefix would push onto OrderedMap first.
-        assertAnchorMapImplementation(true, 32, "Unordered4Map");
+        assertAnchorMapImplementation(true, 32, "int", "Unordered4Map");
+    }
+
+    @Test
+    public void testAFusedLongKeyedAnchorMapLeavesUnorderedAtTheServerEntryLimit() throws Exception {
+        // The same fused shape on an 8-byte key: 8 + 12 + 16 = 36 crosses the server's 32.
+        // The key width an anchored view pays the widening on is a function of the limit,
+        // so 32 costs an 8-byte key the fast map exactly as 16 costs a 4-byte one.
+        assertAnchorMapImplementation(true, 32, "long", "OrderedMap");
     }
 
     @Test
@@ -472,7 +480,15 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
         // The unfused shape at 16, the embedded default and the tighter of the two the
         // product ships, which the window's own value slots land exactly on. The test
         // harness defaults to 32, so the case sets it rather than inheriting it.
-        assertAnchorMapImplementation(false, 16, "Unordered4Map");
+        assertAnchorMapImplementation(false, 16, "int", "Unordered4Map");
+    }
+
+    @Test
+    public void testANarrowLongKeyedAnchorMapStaysUnorderedAtTheServerEntryLimit() throws Exception {
+        // The other end of the move above: unfused, the same view's 8 + 12 = 20 sits well
+        // inside 32, so the fused case lands on OrderedMap because of the widening and not
+        // because an 8-byte key was already past the limit.
+        assertAnchorMapImplementation(false, 32, "long", "Unordered8Map");
     }
 
     @Test
@@ -1119,7 +1135,8 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
 
     /**
      * Requires an anchored view's own partition map to land on {@code expected} at
-     * {@code maxEntrySize}.
+     * {@code maxEntrySize}, with {@code keyColumnType} as the PARTITION BY column's type
+     * and so as the map key's width.
      * <p>
      * {@code MapFactory} selects on the raw key-plus-value byte sum, so the window's own
      * value slots are what stands between an anchored view and the slower
@@ -1134,6 +1151,7 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
     private void assertAnchorMapImplementation(
             boolean isFused,
             int maxEntrySize,
+            String keyColumnType,
             String expected
     ) throws Exception {
         // Both settings are global and the harness only resets overrides between CLASSES,
@@ -1147,7 +1165,7 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
             setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
         }
         try {
-            assertAnchorMapImplementation0(isFused, maxEntrySize, expected);
+            assertAnchorMapImplementation0(isFused, maxEntrySize, keyColumnType, expected);
         } finally {
             setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, (String) null);
             setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, (String) null);
@@ -1157,10 +1175,11 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
     private void assertAnchorMapImplementation0(
             boolean isFused,
             int maxEntrySize,
+            String keyColumnType,
             String expected
     ) throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tx (created_at timestamp, acct int, amount double) "
+            execute("create table tx (created_at timestamp, acct " + keyColumnType + ", amount double) "
                     + "timestamp(created_at) partition by hour wal");
             execute("create live view lv flush every 100ms start from beginning as "
                     + "select created_at, acct, sum(amount) over w as cumulative_sum from tx "
