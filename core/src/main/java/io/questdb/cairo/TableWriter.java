@@ -843,6 +843,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
 
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.isPartitionDeltaActive(i) || txWriter.isPartitionRemotelyServed(i)) {
+                throw CairoException.invalidMetadataRecoverable(
+                        "cannot create index, table has a delta-active or remotely served partition",
+                        columnName
+                );
+            }
+        }
+
         commit();
 
         if (columnMetadata.isIndexed()) {
@@ -890,8 +899,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType);
         try {
             writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
-
-            addColdDeltaIndex(columnIndex, indexType, indexValueBlockSize, coveringColumnIndices);
 
             columnMetadata.setIndexType(indexType);
             columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
@@ -2258,7 +2265,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 dropIndexOperator = new DropIndexOperator(configuration, this, path, other, pathSize, getPurgingOperator());
             }
             dropIndexOperator.executeDropIndex(columnName, columnIndex); // upserts column version in partitions
-            // swap meta commit
+
+            dropColdDeltaIndex(
+                    columnIndex,
+                    droppedIndexType,
+                    droppedIndexValueBlockSize,
+                    droppedCoveringColumnIndices,
+                    getSeqTxn()
+            );
 
             // refresh metadata
             columnMetadata.setIndexType(IndexType.NONE);
@@ -2266,13 +2280,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnMetadata.setCoveringColumnIndices(null);
             rewriteAndSwapMetadata(metadata);
             clearTodoAndCommitMeta();
-
-            dropColdDeltaIndex(
-                    columnIndex,
-                    droppedIndexType,
-                    droppedIndexValueBlockSize,
-                    droppedCoveringColumnIndices
-            );
 
             // remove indexer - skip seal since the index is being dropped
             ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
@@ -4450,34 +4457,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } finally {
             Unsafe.free(auxBuf, auxSize, MemoryTag.NATIVE_TABLE_WRITER);
-        }
-    }
-
-    private void addColdDeltaIndex(
-            int columnIndex,
-            byte indexType,
-            int indexValueBlockSize,
-            IntList coveringColumnIndices
-    ) {
-        PartitionDeltaWriter deltaWriter = null;
-        for (int partitionIndex = 0, n = txWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
-            if (!txWriter.getPartitionHasDelta(partitionIndex)) {
-                continue;
-            }
-            if (deltaWriter == null) {
-                deltaWriter = getPartitionDeltaWriter();
-                if (deltaWriter == null) {
-                    return;
-                }
-            }
-            deltaWriter.addIndex(
-                    this,
-                    partitionIndex,
-                    columnIndex,
-                    indexType,
-                    indexValueBlockSize,
-                    coveringColumnIndices
-            );
         }
     }
 
@@ -7231,7 +7210,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int columnIndex,
             byte indexType,
             int indexValueBlockSize,
-            IntList coveringColumnIndices
+            IntList coveringColumnIndices,
+            long dropSeqTxn
     ) {
         PartitionDeltaWriter deltaWriter = null;
         for (int partitionIndex = 0, n = txWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
@@ -7250,7 +7230,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     columnIndex,
                     indexType,
                     indexValueBlockSize,
-                    coveringColumnIndices
+                    coveringColumnIndices,
+                    dropSeqTxn
             );
         }
     }

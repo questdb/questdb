@@ -281,6 +281,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         alterOp.authorize();
+        if (alterOp.getCommand() == AlterOperation.ADD_INDEX) {
+            validateIndexCreation(alterOp);
+        }
         if (alterOp.isStructural()) {
             return applyStructural(alterOp);
         } else {
@@ -2078,6 +2081,27 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
             }
             events.sync();
+        }
+    }
+
+    private void validateIndexCreation(AlterOperation alterOp) {
+        final MillisecondClock milliClock = configuration.getMillisecondClock();
+        final long spinLockTimeout = configuration.getSpinLockTimeout();
+        final Path txPath = Path.PATH2.get();
+        txPath.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME);
+        try (TxReader tableTxReader = new TxReader(ff)) {
+            // The partition unit does not affect a full attached-partition scan.
+            tableTxReader.ofRO(txPath.$(), metadata.getTimestampType(), PartitionBy.DAY);
+            TableUtils.safeReadTxn(tableTxReader, milliClock, spinLockTimeout);
+            for (int i = 0, n = tableTxReader.getPartitionCount(); i < n; i++) {
+                if (tableTxReader.isPartitionDeltaActive(i) || tableTxReader.isPartitionRemotelyServed(i)) {
+                    throw CairoException.critical(CairoException.METADATA_VALIDATION_RECOVERABLE)
+                            .position(alterOp.getTableNamePosition())
+                            .put("cannot create index, table has a delta-active or remotely served partition [table=")
+                            .put(tableToken.getTableName())
+                            .put(']');
+                }
+            }
         }
     }
 
