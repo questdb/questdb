@@ -16,6 +16,7 @@ use parquet2::bloom_filter::hash_byte;
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
+use parquet2::schema::Repetition;
 use parquet2::types;
 
 use super::encode_column_chunk;
@@ -334,9 +335,28 @@ pub fn binary_slices_to_page(
     let null_count = byte_slices.iter().filter(|entry| entry.is_none()).count();
     let mut buffer = vec![];
 
-    let deflevels_iter = byte_slices.iter().map(|entry| entry.is_some());
-    encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
-    let definition_levels_byte_length = buffer.len();
+    // Required means NO definition levels, which is not merely a size saving:
+    // plain_column_data_offset refuses any chunk whose max_def_level is non-zero,
+    // so a var-size column that always emits def levels can never be addressed
+    // directly in the mapping. Every var-size path here did exactly that, which
+    // put a packed blob payload permanently out of reach of the direct read.
+    //
+    // Required cannot express a null, so one would be silently dropped and shift
+    // every later value. Refuse instead of corrupting.
+    let required = primitive_type.field_info.repetition == Repetition::Required;
+    if required && null_count > 0 {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "a Required binary column cannot hold nulls [nulls={null_count}]"
+        ));
+    }
+    let definition_levels_byte_length = if required {
+        0
+    } else {
+        let deflevels_iter = byte_slices.iter().map(|entry| entry.is_some());
+        encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
+        buffer.len()
+    };
 
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
     match encoding {
@@ -378,7 +398,7 @@ pub fn binary_slices_to_page(
         primitive_type,
         options,
         encoding,
-        false,
+        required,
     )
     .map(Page::Data)
 }

@@ -5,8 +5,10 @@ use super::*;
 use crate::parquet::error::ParquetErrorReason;
 use crate::parquet::tests::ColumnTypeTagExt;
 use crate::parquet_write::file::WriteOptions;
+use crate::parquet_write::encoders::plain::varlen::binary_slices_to_page;
 use crate::parquet_write::schema::{
-    column_type_to_parquet_type, COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT,
+    column_type_to_parquet_type, column_type_to_parquet_type_with_repetition,
+    COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT,
 };
 use crate::parquet_write::tests::make_column_with_top;
 use parquet2::compression::CompressionOptions;
@@ -34,6 +36,17 @@ fn primitive_type_for(tag: ColumnTypeTag) -> PrimitiveType {
     let column_type = ColumnType::new(tag, 0);
     let parquet_type =
         column_type_to_parquet_type(0, "col", column_type, false, false).expect("type");
+    match parquet_type {
+        ParquetType::PrimitiveType(pt) => pt,
+        _ => panic!("expected primitive type for {:?}", tag),
+    }
+}
+
+fn required_primitive_type_for(tag: ColumnTypeTag) -> PrimitiveType {
+    let column_type = ColumnType::new(tag, 0);
+    let parquet_type =
+        column_type_to_parquet_type_with_repetition(0, "col", column_type, false, false, true)
+            .expect("type");
     match parquet_type {
         ParquetType::PrimitiveType(pt) => pt,
         _ => panic!("expected primitive type for {:?}", tag),
@@ -632,6 +645,53 @@ fn make_varchar_aux_null() -> [u8; 16] {
 // Parquet thrift Encoding enum bytes that the writer emits.
 const ENC_PLAIN: i32 = 0;
 const ENC_DELTA_LENGTH_BYTE_ARRAY: i32 = 6;
+
+/// The gate for arm B of the covering index.
+///
+/// `plain_column_data_offset` refuses any chunk whose `max_def_level` is
+/// non-zero, so a var-size column that always emits definition levels can never
+/// be addressed directly in the mapping -- and a packed row-id blob that has to
+/// be decoded to be read defeats the entire point of packing it. Every var-size
+/// path here emitted def levels unconditionally until this existed.
+#[test]
+fn binary_required_page_carries_no_definition_levels() {
+    let bytes = [b"abc".as_ref(), b"defgh".as_ref(), b"ij".as_ref()];
+    let (data_buf, offsets) = make_binary_aux(&bytes);
+    let pt = required_primitive_type_for(ColumnTypeTag::Binary);
+    let page = binary_to_page(
+        &offsets,
+        &data_buf,
+        0,
+        write_options(),
+        pt,
+        Encoding::Plain,
+        None,
+    )
+    .expect("encode");
+    let (num_values, num_nulls, def_levels_len, enc) = v2_header_with_def_levels(&page);
+    assert_eq!(num_values, 3);
+    assert_eq!(num_nulls, 0);
+    assert_eq!(enc, ENC_PLAIN);
+    assert_eq!(
+        def_levels_len, 0,
+        "a Required binary page must carry no definition levels, or the reader cannot address it"
+    );
+}
+
+/// Required has no way to encode a null, so one would be silently dropped and
+/// shift every later value -- a wrong-answer class. It must be refused loudly.
+#[test]
+fn binary_required_page_refuses_nulls() {
+    let slices: [Option<&[u8]>; 3] = [Some(b"abc".as_ref()), None, Some(b"ij".as_ref())];
+    let pt = required_primitive_type_for(ColumnTypeTag::Binary);
+    let err = binary_slices_to_page(&slices, write_options(), pt, Encoding::Plain, None)
+        .expect_err("a Required binary column must refuse a null");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("cannot hold nulls"),
+        "unexpected error message: {msg}"
+    );
+}
 
 #[test]
 fn binary_to_page_delta_round_trip() {
