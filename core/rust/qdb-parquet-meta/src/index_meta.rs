@@ -54,7 +54,7 @@ pub const IM_HEADER_SIZE: usize = 128;
 /// Size of the header's `RESERVED` area, which the writer zero-fills. A reader
 /// must **not** reject a non-zero value: the spec lets a later writer spend
 /// these bytes without a version bump, provided zero means "absent".
-pub const IM_HEADER_RESERVED_SIZE: usize = 44;
+pub const IM_HEADER_RESERVED_SIZE: usize = 40;
 /// Current `_im` format version. Versions 1 and 2 are not readable; see the
 /// spec's "Versioning" section.
 pub const IM_FORMAT_VERSION: u32 = 4;
@@ -96,7 +96,12 @@ const OFF_FIRST_COVER_COLUMN: usize = 76;
 /// section's size nor the last group's extent is derivable from the counts
 /// already in the header.
 const OFF_KEY_DIR_ENTRY_COUNT: usize = 80;
-const OFF_RESERVED: usize = 84;
+/// Parquet column holding the packed row-id blob under
+/// [`IM_PAYLOAD_ROW_PER_KEY`], stored as `column + 1` so that ZERO means
+/// ABSENT -- the convention the RESERVED area is spent under. Arm N writes 0
+/// here and is byte-identical to a file written before this field existed.
+const OFF_ROW_ID_BLOB_COLUMN: usize = 84;
+const OFF_RESERVED: usize = 88;
 
 /// Field offsets inside `_pm`'s 32-byte column descriptor, used to bound the
 /// name strings without materialising a descriptor before the layout has been
@@ -144,6 +149,7 @@ pub struct IndexMetaWriter {
     key_space_size: u32,
     key_id_column: i32,
     row_id_column: i32,
+    row_id_blob_column: i32,
     first_cover_column: u32,
     pidx_footer_offset: u64,
     pidx_footer_length: u32,
@@ -178,6 +184,8 @@ impl IndexMetaWriter {
             key_space_size,
             key_id_column,
             row_id_column,
+            // Absent unless a caller sets it; arm N never does.
+            row_id_blob_column: -1,
             first_cover_column,
             pidx_footer_offset: 0,
             pidx_footer_length: 0,
@@ -278,6 +286,14 @@ impl IndexMetaWriter {
     pub fn set_payload(&mut self, payload_kind: u32, key_space_size: u32) -> &mut Self {
         self.payload_kind = payload_kind;
         self.key_space_size = key_space_size;
+        self
+    }
+
+    /// Records which column carries the packed row-id blob under
+    /// [`IM_PAYLOAD_ROW_PER_KEY`]. `-1` leaves the field absent, which is what
+    /// arm N writes.
+    pub fn set_row_id_blob_column(&mut self, row_id_blob_column: i32) -> &mut Self {
+        self.row_id_blob_column = row_id_blob_column;
         self
     }
 
@@ -658,6 +674,14 @@ impl IndexMetaWriter {
             )
         })?;
         buf.extend_from_slice(&key_dir_entry_count.to_le_bytes());
+        // ROW_ID_BLOB_COLUMN, biased by one so zero reads as absent.
+        debug_assert_eq!(buf.len(), OFF_ROW_ID_BLOB_COLUMN);
+        let blob_column_biased = if self.row_id_blob_column < 0 {
+            0u32
+        } else {
+            (self.row_id_blob_column as u32) + 1
+        };
+        buf.extend_from_slice(&blob_column_biased.to_le_bytes());
         // RESERVED, zero-filled: the spec lets a later writer spend these bytes
         // without a version bump, provided zero means "absent".
         debug_assert_eq!(buf.len(), OFF_RESERVED);

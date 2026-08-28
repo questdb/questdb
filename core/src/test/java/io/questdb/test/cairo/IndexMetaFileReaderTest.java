@@ -171,6 +171,42 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
      * only ever exercised one of the two, which is how an alignment bug could
      * hide.
      */
+    /**
+     * ROW_ID_BLOB_COLUMN round-trips, and -- the part that matters -- an _im
+     * that never sets it reads back ABSENT rather than as column 0.
+     * <p>
+     * The field is spent out of the header's RESERVED area, which the format
+     * permits only on the condition that zero means absent. It is therefore
+     * stored biased by one. Without the bias every file written before the
+     * field existed would claim its row-id blob lived in column 0, which is
+     * `key_id` -- a wrong-answer class, silently.
+     */
+    @Test
+    public void testRowIdBlobColumnRoundTripsAndDefaultsToAbsent() throws Exception {
+        assertMemoryLeak(() -> {
+            withReader(IndexMetaFileReaderTest::buildAlignedSample, reader ->
+                    Assert.assertEquals(
+                            "an _im that never set the field must read back ABSENT, not column 0",
+                            -1,
+                            reader.getRowIdBlobColumn()
+                    ));
+            // Column 0 specifically: the value the unbiased bug would produce.
+            withReader(writerPtr -> {
+                buildAlignedSample(writerPtr);
+                IndexMetaFileWriter.setRowIdBlobColumn(writerPtr, 0);
+            }, reader -> Assert.assertEquals(0, reader.getRowIdBlobColumn()));
+            withReader(writerPtr -> {
+                buildAlignedSample(writerPtr);
+                IndexMetaFileWriter.setRowIdBlobColumn(writerPtr, 2);
+            }, reader -> Assert.assertEquals(2, reader.getRowIdBlobColumn()));
+            // An explicit -1 must stay absent, not wrap to a huge column index.
+            withReader(writerPtr -> {
+                buildAlignedSample(writerPtr);
+                IndexMetaFileWriter.setRowIdBlobColumn(writerPtr, -1);
+            }, reader -> Assert.assertEquals(-1, reader.getRowIdBlobColumn()));
+        });
+    }
+
     @Test
     public void testAbsoluteByteLayoutWithAlignedNameSection() throws Exception {
         assertMemoryLeak(() -> withAlignedSample(reader -> {

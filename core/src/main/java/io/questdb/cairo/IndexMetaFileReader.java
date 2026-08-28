@@ -193,6 +193,14 @@ public class IndexMetaFileReader implements QuietCloseable {
     // version 4: the per-group directories are variable length, so the
     // section's size is not derivable from the counts already in the header.
     private static final int OFF_KEY_DIR_ENTRY_COUNT = 80;
+    /**
+     * Parquet column carrying the packed row-id blob under payload kind 1,
+     * stored BIASED BY ONE so that zero reads as absent. Taken from the header's
+     * RESERVED area, which the format documents as spendable without a version
+     * bump on exactly that condition -- so a file written before this field
+     * existed reads back as absent rather than as column 0.
+     */
+    private static final int OFF_ROW_ID_BLOB_COLUMN = 84;
     private static final int OFF_KEY_SPACE_SIZE = 44;
     private static final int OFF_PAYLOAD_KIND = 28;
     private static final int OFF_PIDX_FOOTER_LENGTH = 72;
@@ -234,6 +242,7 @@ public class IndexMetaFileReader implements QuietCloseable {
     // a row group block may start at.
     private long namesStart;
     private int payloadKind;
+    private int rowIdBlobColumn = -1;
     private int pidxFooterLength;
     private long pidxFooterOffset;
     // The header's INDEX_SECTIONS_OFFSET, validated at bind time. It doubles as
@@ -760,6 +769,15 @@ public class IndexMetaFileReader implements QuietCloseable {
      */
     public int getPayloadKind() {
         return payloadKind;
+    }
+
+    /**
+     * Parquet column holding the packed row-id blob under payload kind 1, or
+     * {@code -1} when the file carries no such column -- which is every arm N
+     * file, and every file written before the field existed.
+     */
+    public int getRowIdBlobColumn() {
+        return rowIdBlobColumn;
     }
 
     /**
@@ -1335,6 +1353,8 @@ public class IndexMetaFileReader implements QuietCloseable {
         // chunk accessor. Validating them here, at open, is what keeps that
         // call safe, and the Rust reader validates them at the same point.
         final int payloadKind = Unsafe.getInt(addr + OFF_PAYLOAD_KIND);
+        // Biased by one on disk: 0 means the field was never written.
+        final int rowIdBlobColumnBiased = Unsafe.getInt(addr + OFF_ROW_ID_BLOB_COLUMN);
         if (payloadKind != IM_PAYLOAD_ROW_PER_POSTING && payloadKind != IM_PAYLOAD_ROW_PER_KEY) {
             throw CairoException.critical(0)
                     .put("unknown _im PAYLOAD_KIND [payloadKind=").put(payloadKind).put(']');
@@ -1426,6 +1446,7 @@ public class IndexMetaFileReader implements QuietCloseable {
 
         this.featureFlags = featureFlags;
         this.payloadKind = payloadKind;
+        this.rowIdBlobColumn = rowIdBlobColumnBiased == 0 ? -1 : rowIdBlobColumnBiased - 1;
         this.columnCount = columnCount;
         this.indexRowGroupCount = indexRowGroupCount;
         this.dataRowGroupCount = dataRowGroupCount;

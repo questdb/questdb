@@ -215,6 +215,15 @@ public class IndexMetaFileWriter {
     public static native void setPayload(long writerPtr, int payloadKind, int keySpaceSize) throws CairoException;
 
     /**
+     * Records which parquet column carries the packed row-id blob under
+     * {@link #PAYLOAD_ROW_PER_KEY}. Pass {@code -1} to leave it absent, which is
+     * what every arm N file does -- the field lives in the header's RESERVED
+     * area and is stored biased by one, so absent and "column 0" stay
+     * distinguishable and an older file reads back as absent.
+     */
+    public static native void setRowIdBlobColumn(long writerPtr, int rowIdBlobColumn) throws CairoException;
+
+    /**
      * Records where {@code <col>.pidx.<indexTxn>.parquet}'s own parquet footer
      * starts and how long it is. The index parquet's committed size follows as
      * {@code footerOffset + footerLength + 8}, which is what lets cold-storage

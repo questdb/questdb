@@ -783,6 +783,22 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_setPayload(
     })
 }
 
+/// Records which parquet column carries the packed row-id blob under payload
+/// kind 1. `-1` leaves it absent, which is what arm N writes.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_setRowIdBlobColumn(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: *mut IndexMetaWriter,
+    row_id_blob_column: jint,
+) {
+    ffi_guard(&mut env, "setRowIdBlobColumn", |env| {
+        check_not_null!(env, ptr, "IndexMetaFileWriter");
+        let writer = unsafe { &mut *ptr };
+        writer.set_row_id_blob_column(row_id_blob_column);
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
