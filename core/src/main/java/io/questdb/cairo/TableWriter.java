@@ -4905,6 +4905,227 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Cell-aware {@link #markPartitionParquetReady(long)}: flags ONE cell of a composite day as
+     * parquet-generated, having verified that cell's own {@code data.parquet} exists.
+     * <p>
+     * The storage-policy job produces one parquet file per cell, so readiness is a per-cell fact. The
+     * by-timestamp form is refused on a composite table precisely because it would answer for cellKey 0.
+     * <p>
+     * A plain table has no cells; the cellKey is ignored and the by-timestamp form runs unchanged, so
+     * callers do not have to branch.
+     */
+    public boolean markPartitionParquetReady(long partitionTimestamp, int cellKey) {
+        assert metadata.getTimestampIndex() > -1;
+        assert PartitionBy.isPartitioned(partitionBy);
+
+        if (!isRoutedComposite()) {
+            return markPartitionParquetReady(partitionTimestamp);
+        }
+
+        if (inTransaction()) {
+            assert !tableToken.isWal();
+            commit();
+        }
+
+        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        final int partitionIndex = findCompositePartitionIndex(partitionTimestamp, cellKey);
+        if (partitionIndex < 0) {
+            return false;
+        }
+        final int rawIndex = partitionIndex * txWriter.getLongsPerAttachedPartition();
+        if (txWriter.isPartitionParquetByRawIndex(rawIndex)) {
+            return true;
+        }
+
+        try {
+            final long cellNameTxn = txWriter.getPartitionNameTxnByRawIndex(rawIndex);
+            compositeDimSink.clear();
+            renderCellSegment(compositeDimSink, cellKey);
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, cellNameTxn, compositeDimSink);
+            path.concat(PARQUET_PARTITION_NAME);
+            if (!ff.exists(path.$())) {
+                return false;
+            }
+            if (txWriter.isPartitionParquetGenerated(partitionIndex)) {
+                return true;
+            }
+            if (txWriter.getNativePartitionSeqTxn(partitionIndex) <= 0 && tableToken.isWal()) {
+                txWriter.setPartitionSeqTxnByRawIndex(rawIndex, txWriter.getSeqTxn());
+            }
+            txWriter.setPartitionParquetGenerated(partitionIndex, true);
+            txWriter.bumpPartitionTableVersion();
+            commitTxWriter();
+            return true;
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
+    /**
+     * Cell-aware {@link #switchNativePartitionWithParquet(long, long)}: flips ONE cell of a composite
+     * day from native to parquet format.
+     * <p>
+     * Mirrors the plain implementation step for step, with every path built through the cell-aware
+     * overloads and every {@code _txn} access done by RAW INDEX rather than by timestamp.
+     * <p>
+     * <b>Deliberately does NOT force-squash</b>, unlike the plain path. On a composite table the squash
+     * has to happen before the parquet is encoded, or the file the job produced no longer matches the
+     * partition -- which is why {@code convertCompositePartitionNativeToParquet} squashes the day up
+     * front, and why the storage-policy pipeline squashes in its prepare step. Squashing here, after
+     * the encode, would silently invalidate the very file being switched to.
+     */
+    public int switchNativePartitionWithParquet(long partitionTimestamp, int cellKey, long parquetFileSize) {
+        assert metadata.getTimestampIndex() > -1;
+        assert PartitionBy.isPartitioned(partitionBy);
+
+        if (!isRoutedComposite()) {
+            return switchNativePartitionWithParquet(partitionTimestamp, parquetFileSize);
+        }
+
+        if (inTransaction()) {
+            assert !tableToken.isWal();
+            commit();
+        }
+
+        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
+            // active partition; conversion unsupported, same as the plain path
+            return SWITCH_SKIPPED;
+        }
+
+        final int partitionIndex = findCompositePartitionIndex(partitionTimestamp, cellKey);
+        if (partitionIndex < 0) {
+            throw CairoException.nonCritical()
+                    .put("cannot switch cell to parquet, cell does not exist [table=")
+                    .put(tableToken.getTableName())
+                    .put(", partitionTimestamp=").put(partitionTimestamp)
+                    .put(", cellKey=").put(cellKey).put(']');
+        }
+        final int rawIndex = partitionIndex * txWriter.getLongsPerAttachedPartition();
+
+        if (txWriter.isPartitionParquetByRawIndex(rawIndex)) {
+            return SWITCH_SKIPPED;
+        }
+        if (!txWriter.isPartitionParquetGenerated(partitionIndex)) {
+            return SWITCH_NO_PARQUET;
+        }
+
+        final long partitionNameTxn = txWriter.getPartitionNameTxnByRawIndex(rawIndex);
+        final long partitionSize = txWriter.getPartitionSizeByRawIndex(rawIndex);
+        compositeDimSink.clear();
+        renderCellSegment(compositeDimSink, cellKey);
+        final String cellSegment = compositeDimSink.toString();
+
+        int newPartitionDirLen = 0;
+        try {
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
+            final int partitionDirLen = path.size();
+            if (!ff.exists(path.$())) {
+                throw CairoException.nonCritical().put("cell directory does not exist [path=").put(path).put(']');
+            }
+            path.concat(PARQUET_PARTITION_NAME);
+            if (!ff.exists(path.$())) {
+                txWriter.setPartitionParquetGenerated(partitionIndex, false);
+                txWriter.bumpPartitionTableVersion();
+                commitTxWriter();
+                return SWITCH_NO_PARQUET;
+            }
+
+            // upgrade the cell's version
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn(), cellSegment);
+            createDirsOrFail(ff, other, configuration.getMkDirMode());
+            newPartitionDirLen = other.size();
+
+            setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn(), cellSegment);
+            LOG.info().$("switching native cell to parquet [path=").$substr(pathRootSize, path).I$();
+            if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not hard link parquet file [table=").put(tableToken.getTableName())
+                        .put(", from=").put(path).put(", to=").put(other).put(']');
+            }
+
+            setPathForParquetPartitionMetadata(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
+            setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn(), cellSegment);
+            if (ff.exists(path.$())) {
+                if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not hard link parquet metadata sidecar [table=").put(tableToken.getTableName())
+                            .put(", from=").put(path).put(", to=").put(other).put(']');
+                }
+            } else {
+                if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                    LOG.error().$("could not remove cell dir [path=").$(other).I$();
+                }
+                return SWITCH_NO_PARQUET;
+            }
+
+            linkPartitionIndexFiles(partitionTimestamp, cellKey, partitionNameTxn, partitionSize, partitionDirLen, newPartitionDirLen);
+
+            txWriter.updatePartitionSizeAndTxnByRawIndex(rawIndex, partitionSize);
+            txWriter.setPartitionParquetByRawIndex(rawIndex, parquetFileSize);
+            txWriter.bumpPartitionTableVersion();
+            commitTxWriter();
+        } catch (Throwable e) {
+            if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                LOG.error().$("could not remove cell dir [path=").$(other).I$();
+            }
+            throw e;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+
+        // Post-commit housekeeping; failures must not roll back the committed transaction.
+        try {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+            }
+            safeDeletePartitionDir(partitionTimestamp, partitionNameTxn, cellKey);
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        }
+
+        return SWITCH_OK;
+    }
+
+    /**
+     * Cell-aware counterpart of {@link #linkPartitionIndexFiles(long, long, int, int)}.
+     * <p>
+     * The by-timestamp original reads the row count, column top and column name-txn at cellKey 0 --
+     * {@code _cv} is keyed by (timestamp, cellKey, column), so on a multi-cell day it would apply cell
+     * 0's tops to another cell's index files. The row count is passed in because the caller has already
+     * resolved this cell's raw index.
+     */
+    private void linkPartitionIndexFiles(
+            long partitionTimestamp,
+            int cellKey,
+            long partitionNameTxn,
+            long partitionSize,
+            int partitionDirLen,
+            int newPartitionDirLen
+    ) {
+        final int columnCount = metadata.getColumnCount();
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !metadata.isIndexed(columnIndex)) {
+                continue;
+            }
+            final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, columnIndex);
+            if (columnTop == -1 || columnTop >= partitionSize) {
+                continue;
+            }
+            linkColumnIndexFiles(
+                    partitionDirLen,
+                    newPartitionDirLen,
+                    metadata.getColumnName(columnIndex),
+                    getColumnNameTxn(partitionTimestamp, cellKey, columnIndex),
+                    metadata.getColumnIndexType(columnIndex),
+                    partitionTimestamp,
+                    partitionNameTxn
+            );
+        }
+    }
+
+    /**
      * Refuses a STORAGE POLICY step on a routed composite table.
      * <p>
      * Storage policy's OSS-facing surface is four TableWriter entry points --
