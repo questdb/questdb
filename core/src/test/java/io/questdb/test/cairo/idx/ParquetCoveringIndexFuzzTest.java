@@ -89,8 +89,14 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
                 // the wide one puts a single key's run across several index row
                 // groups, which is the only way the group-skip and cross-group
                 // paths get compared against the native reader at all.
-                fuzzOneFixture(rnd, rnd.nextInt(40_000) + 20_000, SYM_CARDINALITY, "narrow");
-                final int wideGroups = fuzzOneFixture(rnd, WIDE_RUN_ROWS, WIDE_RUN_CARDINALITY, "wide");
+                fuzzOneFixture(rnd, rnd.nextInt(40_000) + 20_000, SYM_CARDINALITY, "narrow", false);
+                final int wideGroups = fuzzOneFixture(rnd, WIDE_RUN_ROWS, WIDE_RUN_CARDINALITY, "wide", false);
+                // Both regimes again under the packed payload arm. It is a
+                // different on-disk encoding of the same postings reached by a
+                // different reader path, so it earns its own draws rather than
+                // riding on the per-posting arm's.
+                fuzzOneFixture(rnd, rnd.nextInt(40_000) + 20_000, SYM_CARDINALITY, "narrow_packed", true);
+                fuzzOneFixture(rnd, WIDE_RUN_ROWS, WIDE_RUN_CARDINALITY, "wide_packed", true);
                 // Proof, not assumption, that the wide fixture crosses a group
                 // boundary. An earlier version compared _im SIZES, which does
                 // not establish this: the _im grows with the DATA row group
@@ -109,13 +115,20 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private int fuzzOneFixture(Rnd rnd, long rowCount, int cardinality, String label) throws Exception {
+    /**
+     * @param packed seal the parquet arm with the packed payload. Both arms are
+     *               then sealed WITHOUT covered columns, because the seal
+     *               declines the packed arm for a covering index, and the draws
+     *               below ask for no covered value.
+     */
+    private int fuzzOneFixture(Rnd rnd, long rowCount, int cardinality, String label, boolean packed) throws Exception {
         final String nativeArm = "native_arm_" + label;
         final String parquetArm = "parquet_arm_" + label;
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, packed);
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
-        createArm(nativeArm, rowCount, cardinality);
+        createArm(nativeArm, rowCount, cardinality, !packed);
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
-        createArm(parquetArm, rowCount, cardinality);
+        createArm(parquetArm, rowCount, cardinality, !packed);
 
         assertArmsAreSealedDifferently(nativeArm, parquetArm);
 
@@ -141,6 +154,12 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
                             "the native arm must NOT dispatch to the parquet reader",
                             nativeFwd instanceof AbstractParquetPostingIndexReader
                     );
+                    Assert.assertEquals(
+                            "the parquet arm's payload does not match what this fixture asked for,"
+                                    + " so the draws below exercise the wrong arm [label=" + label + ']',
+                            packed,
+                            ((AbstractParquetPostingIndexReader) parquetFwd).isPackedPayload()
+                    );
 
                     final int keyCount = nativeFwd.getKeyCount();
                     Assert.assertTrue("the fixture must have keys", keyCount > 1);
@@ -151,7 +170,10 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
                                 ? IndexReader.DIR_FORWARD : IndexReader.DIR_BACKWARD;
                         final long lo = rnd.nextLong(rowCount);
                         final long hi = lo + rnd.nextLong(rowCount - lo + 1);
-                        final int[] covers = switch (rnd.nextInt(3)) {
+                        // The packed arm covers nothing, so there is no cover
+                        // set to draw from -- asking for one would be asking for
+                        // a slot the index does not have.
+                        final int[] covers = packed ? null : switch (rnd.nextInt(3)) {
                             case 0 -> null;
                             case 1 -> new int[]{0};
                             default -> new int[]{0, 1};
@@ -166,7 +188,7 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private void createArm(String table, long rowCount, int cardinality) throws Exception {
+    private void createArm(String table, long rowCount, int cardinality, boolean covered) throws Exception {
         execute("CREATE TABLE " + table + " (" +
                 "ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG" +
                 ") TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -182,7 +204,8 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
         drainWalQueue();
         execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
         drainWalQueue();
-        execute("ALTER TABLE " + table + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+        execute("ALTER TABLE " + table + " ALTER COLUMN sym ADD INDEX TYPE POSTING"
+                + (covered ? " INCLUDE (price, qty)" : ""));
         drainWalQueue();
         engine.releaseInactive();
     }

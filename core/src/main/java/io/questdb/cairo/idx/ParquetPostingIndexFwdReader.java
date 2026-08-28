@@ -372,6 +372,43 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 // read straight from there. No JNI crossing, no thrift page
                 // header, no buffer -- which is the entire cost of a point read
                 // once pruning has narrowed it to a handful of rows.
+                if (packedPayload) {
+                    // A packed file has no row_id column to address or decode:
+                    // the group's ids live bit-packed inside one blob, and the
+                    // _im directory has already given this key's ordinals within
+                    // it. Widen just that run.
+                    //
+                    // Unconditional, not a fast path with a fallback. The seal
+                    // only writes this arm uncompressed, uncovered and PLAIN, so
+                    // the blob is addressable by construction; a file where it
+                    // is not carries row ids nothing here can read, and decoding
+                    // the BINARY column as though it held int64 row ids would be
+                    // a wrong answer rather than a slow one.
+                    if (packedDataAddr(rg) == 0) {
+                        throw CairoException.critical(0)
+                                .put("covering index packed payload is not addressable [rowGroup=").put(rg)
+                                .put(", column=").put(columnName).put(']');
+                    }
+                    clearCoverOrdinals();
+                    cachedRowGroup = -1;
+                    cachedCovers = null;
+                    decodedGroup = true;
+                    directRowIds = false;
+                    rowIdPtr = unpackRowIds(rg, (int) rowLo, (int) (rowHi - rowLo));
+                    // Ordinals are relative to the widened run now, not to the
+                    // group, so the window seek and the traversal bounds both
+                    // start at 0.
+                    rowInGroup = seekFirstAtLeast(rowIdPtr, 0, rowHi - rowLo, minValue);
+                    groupRows = seekFirstAbove(rowIdPtr, rowInGroup, rowHi - rowLo, maxValue);
+                    windowNarrowed = true;
+                    lastTouchedRowGroup = rg;
+                    if (rowInGroup >= groupRows) {
+                        rg++;
+                        decodedGroup = false;
+                        continue;
+                    }
+                    return true;
+                }
                 if (requiredCoverColumns == null || requiredCoverColumns.length == 0) {
                     final long dataOffset = rowIdDataOffset(rg);
                     if (dataOffset >= 0) {

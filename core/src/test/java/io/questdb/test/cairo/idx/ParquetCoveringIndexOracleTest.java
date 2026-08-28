@@ -417,11 +417,32 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
      */
     @Test
     public void testDistinctKeysInRangeMatchTheNativeReader() throws Exception {
+        assertDistinctKeysInRangeMatchTheNativeReader(false);
+    }
+
+    /**
+     * The same, under the packed payload arm.
+     * <p>
+     * Its own test rather than a dimension of the one above because it reaches
+     * DIFFERENT code: the straddling-group branch has no {@code key_id} per
+     * posting to walk and no {@code row_id} column to decode, so it answers from
+     * the key directory plus one widen per key instead. Nothing else in the
+     * suite enters that branch -- verified by making it throw, at which point
+     * the cursor and primitive tests carried on passing and only this one
+     * failed.
+     */
+    @Test
+    public void testDistinctKeysInRangeMatchTheNativeReaderWhenPacked() throws Exception {
+        assertDistinctKeysInRangeMatchTheNativeReader(true);
+    }
+
+    private void assertDistinctKeysInRangeMatchTheNativeReader(boolean packed) throws Exception {
         assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, packed);
             node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
-            createArm("native_distinct_arm");
+            createArm("native_distinct_arm", !packed);
             node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
-            createArm("parquet_distinct_arm");
+            createArm("parquet_distinct_arm", !packed);
 
             try (
                     TableReader nativeReader = engine.getReader(engine.verifyTableName("native_distinct_arm"));
@@ -434,6 +455,11 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
                 Assert.assertTrue(
                         "the parquet arm must actually dispatch to the parquet reader",
                         parquetIdx instanceof AbstractParquetPostingIndexReader
+                );
+                Assert.assertEquals(
+                        "the parquet arm's payload does not match what this fixture asked for",
+                        packed,
+                        ((AbstractParquetPostingIndexReader) parquetIdx).isPackedPayload()
                 );
 
                 final long[][] ranges = {
@@ -724,6 +750,10 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
     }
 
     private void createArm(String table) throws Exception {
+        createArm(table, true);
+    }
+
+    private void createArm(String table, boolean covered) throws Exception {
         execute("CREATE TABLE " + table + " (" +
                 "ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG" +
                 ") TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -745,9 +775,97 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
         drainWalQueue();
         execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
         drainWalQueue();
-        execute("ALTER TABLE " + table + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+        execute("ALTER TABLE " + table + " ALTER COLUMN sym ADD INDEX TYPE POSTING"
+                + (covered ? " INCLUDE (price, qty)" : ""));
         drainWalQueue();
         engine.releaseInactive();
+    }
+
+    /**
+     * The packed payload arm ({@code PAYLOAD_KIND 1}) against the same native
+     * oracle, over the same grid of keys, windows and both directions.
+     * <p>
+     * Uncovered on both sides, because the packed arm only seals for an index
+     * that covers nothing -- see the seal's fallback. That makes this a narrower
+     * grid than the covered test above, and it is the whole grid that applies.
+     * <p>
+     * The liveness assertion is not ceremony. The property is silently ignored
+     * whenever the seal declines the arm (covered columns, a compressing codec),
+     * and a test that merely set it would then compare arm N against arm N and
+     * pass having exercised nothing -- which is exactly how {@code latest_on}
+     * was measured for weeks without touching the index at all.
+     */
+    @Test
+    public void testThePackedPayloadReaderMatchesTheNativeOneEverywhere() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
+            createArm("native_arm", false);
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, true);
+            createArm("parquet_arm", false);
+
+            assertArmsAreSealedDifferently();
+
+            try (
+                    TableReader nativeReader = engine.getReader(engine.verifyTableName("native_arm"));
+                    TableReader parquetReader = engine.getReader(engine.verifyTableName("parquet_arm"))
+            ) {
+                final int nativeCol = nativeReader.getMetadata().getColumnIndex("sym");
+                final int parquetCol = parquetReader.getMetadata().getColumnIndex("sym");
+
+                final IndexReader nativeFwd = nativeReader.getIndexReader(0, nativeCol, IndexReader.DIR_FORWARD);
+                final IndexReader parquetFwd = parquetReader.getIndexReader(0, parquetCol, IndexReader.DIR_FORWARD);
+                Assert.assertTrue(
+                        "the parquet arm must actually dispatch to the parquet reader",
+                        parquetFwd instanceof AbstractParquetPostingIndexReader
+                );
+                Assert.assertFalse(
+                        "the native arm must NOT dispatch to the parquet reader",
+                        nativeFwd instanceof AbstractParquetPostingIndexReader
+                );
+                Assert.assertTrue(
+                        "the packed payload property did not take, so this compares the"
+                                + " per-posting arm against itself",
+                        ((AbstractParquetPostingIndexReader) parquetFwd).isPackedPayload()
+                );
+
+                final int keyCount = nativeFwd.getKeyCount();
+                Assert.assertTrue("the fixture must have keys", keyCount > 1);
+
+                final long half = ROW_COUNT / 2;
+                final long[][] windows = {
+                        {0, Long.MAX_VALUE},
+                        {0, 0},
+                        {0, half},
+                        {half, ROW_COUNT},
+                        {ROW_COUNT, Long.MAX_VALUE},
+                        {half, half - 1}, // empty
+                };
+
+                for (int key = 0; key < keyCount; key++) {
+                    for (long[] w : windows) {
+                        // Twice, for the same reason the covered grid repeats:
+                        // a second lookup on the same group must give the same
+                        // answer as the first.
+                        for (int rep = 0; rep < 2; rep++) {
+                            assertSameSequence(
+                                    nativeReader, parquetReader, nativeCol, parquetCol,
+                                    key, w[0], w[1], null, IndexReader.DIR_FORWARD
+                            );
+                            assertSameSequence(
+                                    nativeReader, parquetReader, nativeCol, parquetCol,
+                                    key, w[0], w[1], null, IndexReader.DIR_BACKWARD
+                            );
+                        }
+                        assertSamePrimitives(
+                                (PostingIndexReader) nativeReader.getIndexReader(0, nativeCol, IndexReader.DIR_FORWARD),
+                                (PostingIndexReader) parquetReader.getIndexReader(0, parquetCol, IndexReader.DIR_FORWARD),
+                                key, w[0], w[1]
+                        );
+                    }
+                }
+            }
+        });
     }
 
     private void drain(

@@ -249,7 +249,16 @@ public final class ParquetIndexSeal {
         // per-group blobs too -- buying nothing, since the covered gather is
         // already at parity -- and the covered case falls back to arm N instead.
         // PAYLOAD_KIND in the _im is what records which arm actually ran.
-        final boolean packedPayload = configuration.isPostingIndexParquetPackedPayload() && coverCount == 0;
+        //
+        // Also ignored under a compressing codec, and for a sharper reason than
+        // the covered case: a compressed chunk cannot be addressed in the
+        // mapping at all, so the blob could only be reached by decompressing the
+        // page holding it -- which is the cost the arm exists to remove, and
+        // would leave a file whose only reader has no fast path. Falling back is
+        // better than sealing something nothing can serve well.
+        final boolean packedPayload = configuration.isPostingIndexParquetPackedPayload()
+                && coverCount == 0
+                && configuration.getPostingIndexParquetCompressionCodec() == ParquetCompression.COMPRESSION_UNCOMPRESSED;
 
         final long keyIdsSize = rowCount * Integer.BYTES;
         final long rowIdsSize = rowCount * Long.BYTES;

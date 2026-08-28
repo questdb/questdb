@@ -295,6 +295,35 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                 }
                 rowLo = Numbers.decodeLowInt(keyRange);
                 rowHi = Numbers.decodeHighInt(keyRange);
+                if (packedPayload) {
+                    // Same shape as the forward reader's packed path, and
+                    // unconditional for the same reason: a packed file has no
+                    // row_id column to fall back to, so a blob that cannot be
+                    // addressed is a file this reader cannot serve rather than
+                    // one it should serve slowly.
+                    if (packedDataAddr(rg) == 0) {
+                        throw CairoException.critical(0)
+                                .put("covering index packed payload is not addressable [rowGroup=").put(rg)
+                                .put(", column=").put(columnName).put(']');
+                    }
+                    clearCoverOrdinals();
+                    cachedRowGroup = -1;
+                    cachedCovers = null;
+                    rowIdPtr = unpackRowIds(rg, (int) rowLo, (int) (rowHi - rowLo));
+                    // Ordinals are relative to the widened run, so both bounds
+                    // restart at 0. The run still ascends, so this descending
+                    // cursor walks it from the top exactly as before.
+                    rowFloor = seekFirstAtLeast(rowIdPtr, 0, rowHi - rowLo, minValue);
+                    rowInGroup = seekFirstAbove(rowIdPtr, rowFloor, rowHi - rowLo, maxValue);
+                    if (rowInGroup <= rowFloor) {
+                        rg--;
+                        continue;
+                    }
+                    windowNarrowed = true;
+                    decodedGroup = true;
+                    lastTouchedRowGroup = rg;
+                    return true;
+                }
                 // Fastest path, and the forward reader has had it all along:
                 // when the caller wants no covered value and row_id's chunk is a
                 // single uncompressed PLAIN page, the values are just int64s in

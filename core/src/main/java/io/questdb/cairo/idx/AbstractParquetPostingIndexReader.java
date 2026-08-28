@@ -111,6 +111,21 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      * later lookup skip.
      */
     private long[] rowIdDataOffsets;
+    /**
+     * Per row group under {@code PAYLOAD_KIND 1}: the address of the group's
+     * packed row-id values, the base subtracted from them and the bits each
+     * occupies. Resolved together, lazily and once, for the same reason
+     * {@link #rowIdDataOffsets} is: the answer is a property of the file.
+     * <p>
+     * {@code packedDataAddrs} holds 0 where the group's blob cannot be
+     * addressed directly and {@code Long.MIN_VALUE} where it has not been asked
+     * yet -- a live address is never either.
+     */
+    private long[] packedDataAddrs;
+    private long[] packedBases;
+    private int[] packedBitWidths;
+    /** True when the bound file stores a blob per row group rather than a row id per posting. */
+    protected boolean packedPayload;
     protected long columnTop;
     /**
      * Pruning instrumentation, and shared by every cursor this reader serves.
@@ -144,6 +159,9 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         // mapping it was built over.
         sourceDecoder.close();
         rowIdDataOffsets = null;
+        packedDataAddrs = null;
+        packedBases = null;
+        packedBitWidths = null;
         if (pidxAddr != 0) {
             ff.munmap(pidxAddr, pidxSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             pidxAddr = 0;
@@ -230,6 +248,64 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
             rowIdDataOffsets[rowGroup] = offset;
         }
         return offset;
+    }
+
+    /**
+     * Binds {@code rowGroup}'s packed row-id blob, returning the address of its
+     * packed values, or 0 when the blob cannot be addressed in the mapping and
+     * the group has to be decoded.
+     * <p>
+     * After a non-zero return {@link #packedBase(int)} and
+     * {@link #packedBitWidth(int)} answer for the same group. All three come
+     * out of the blob's own header rather than the {@code _im}, so a mismatched
+     * or corrupt {@code _im} cannot silently make the payload decode as
+     * different row ids.
+     */
+    protected long packedDataAddr(int rowGroup) {
+        if (packedDataAddrs == null) {
+            final int groups = Math.max(imReader.getIndexRowGroupCount(), 1);
+            packedDataAddrs = new long[groups];
+            packedBases = new long[groups];
+            packedBitWidths = new int[groups];
+            Arrays.fill(packedDataAddrs, Long.MIN_VALUE);
+        }
+        if (rowGroup < 0 || rowGroup >= packedDataAddrs.length) {
+            return 0;
+        }
+        long dataAddr = packedDataAddrs[rowGroup];
+        if (dataAddr == Long.MIN_VALUE) {
+            dataAddr = 0;
+            final long pageOffset = sourceDecoder.plainColumnDataOffset(rowGroup, imReader.getRowIdBlobColumn());
+            if (pageOffset >= 0) {
+                // The group holds exactly one parquet row, so its blob is the
+                // only value in the page: a PLAIN BYTE_ARRAY value is a 4-byte
+                // little-endian length then the bytes.
+                final long blob = pidxAddr + pageOffset + Integer.BYTES;
+                if (Unsafe.getUnsafe().getByte(blob) == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                    packedBases[rowGroup] = Unsafe.getUnsafe().getLong(blob + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
+                    packedBitWidths[rowGroup] = Unsafe.getUnsafe().getByte(blob + 1) & 0xFF;
+                    dataAddr = blob + PostingIndexUtils.PACKED_PAYLOAD_HEADER_SIZE;
+                }
+            }
+            packedDataAddrs[rowGroup] = dataAddr;
+        }
+        return dataAddr;
+    }
+
+    /**
+     * Value subtracted from {@code rowGroup}'s row ids before packing. Valid
+     * only after {@link #packedDataAddr(int)} has returned non-zero for it.
+     */
+    protected long packedBase(int rowGroup) {
+        return packedBases[rowGroup];
+    }
+
+    /**
+     * Bits each of {@code rowGroup}'s packed row ids occupies. Valid only after
+     * {@link #packedDataAddr(int)} has returned non-zero for it.
+     */
+    protected int packedBitWidth(int rowGroup) {
+        return packedBitWidths[rowGroup];
     }
 
     /**
@@ -322,6 +398,19 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         return imReader.getIndexRowGroupCount();
     }
 
+    /**
+     * Which payload arm the bound file carries.
+     * <p>
+     * A test that measures or compares the packed arm has to assert this rather
+     * than assume the property took: the seal silently declines the arm for a
+     * covering index or a compressing codec, and a test that only set the
+     * property would then be comparing the per-posting arm against itself.
+     */
+    @TestOnly
+    public boolean isPackedPayload() {
+        return packedPayload;
+    }
+
     @Override
     public int collectDistinctKeysInRange(DirectBitSet foundKeys, long rowLo, long rowHi) {
         final int groups = imReader.getIndexRowGroupCount();
@@ -359,6 +448,34 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                             continue;
                         }
                         if (k >= 0 && k < foundKeys.capacity() && !foundKeys.get(k)) {
+                            foundKeys.set(k);
+                            found++;
+                        }
+                    }
+                    continue;
+                }
+                if (packedPayload) {
+                    // The group straddles the window, so each key's own run has
+                    // to be consulted -- but there is no key_id per posting to
+                    // walk and no row_id column to decode. The directory names
+                    // the group's keys and bounds each one's run, and the blob
+                    // holds the ids, so this reaches the same answer from
+                    // metadata plus one widen per key.
+                    final int firstKey = imReader.getRowGroupFirstKey(rg);
+                    for (int i = 0, span = imReader.getRowGroupKeyCount(rg); i < span; i++) {
+                        final int k = firstKey + i;
+                        if (k < 0 || k >= foundKeys.capacity() || foundKeys.get(k)) {
+                            continue;
+                        }
+                        final long range = imReader.getKeyRowRangeInGroup(rg, k);
+                        if (range == IndexMetaFileReader.KEY_ABSENT) {
+                            // In the group's key span but holding no row of it.
+                            continue;
+                        }
+                        final int keyLo = Numbers.decodeLowInt(range);
+                        final int keyHi = Numbers.decodeHighInt(range);
+                        final long ptr = probe.unpackRowIds(rg, keyLo, keyHi - keyLo);
+                        if (keyHasPostingInRange(ptr, 0, keyHi - keyLo, rowLo, rowHi)) {
                             foundKeys.set(k);
                             found++;
                         }
@@ -551,6 +668,15 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
          * less to decompress, and decompression is what a lookup costs.
          */
         private long decodeRowIdRange(int rowGroup, long lo, long hi) {
+            if (packedPayload) {
+                // There is no row_id column to project: the ids are packed
+                // inside the group's blob and are widened straight out of it.
+                // Deliberately NOT counted through onRowGroupDecoded -- no
+                // parquet row group is decoded here, and the counters are what
+                // the pruning assertions read, so counting a decode that did
+                // not happen would make them assert the wrong thing.
+                return unpackRowIds(rowGroup, (int) lo, (int) (hi - lo));
+            }
             projection.clear();
             projection.add(imReader.getRowIdColumn());
             projection.add(ColumnType.LONG);
@@ -640,7 +766,58 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
          * buffers and its own projection.
          */
         protected CountingCursor keyProbe;
+        /**
+         * Where a packed group's row ids are widened back to int64 so the rest
+         * of the cursor can read them as it always has.
+         * <p>
+         * Widening a whole key run at bind, rather than one row at a time in
+         * {@code hasNext}, is deliberate. The per-row loop is the hot path and
+         * an earlier attempt to put a width branch in it regressed four
+         * benchmark cells; a batch widen keeps that loop untouched and is what
+         * {@link BitpackUtils#unpackValuesFrom}'s AVX2 path exists for. It is
+         * NOT a parquet decode -- no page header, no JNI decode context, no
+         * copy of the group's other columns -- and it never runs for a
+         * per-posting file.
+         */
+        private long unpackBuf;
+        private long unpackBufSize;
         private boolean decoderBound;
+
+        /**
+         * Widens {@code count} of {@code rowGroup}'s packed row ids, starting at
+         * ordinal {@code from}, and returns the address holding them as int64.
+         */
+        protected long unpackRowIds(int rowGroup, int from, int count) {
+            final long dataAddr = packedDataAddr(rowGroup);
+            if (dataAddr == 0) {
+                // The seal writes this arm only uncompressed, uncovered and
+                // PLAIN, so the blob is addressable by construction. A file
+                // where it is not carries row ids nothing here can read, and
+                // decoding the BINARY column as though it held int64 row ids
+                // would be a wrong answer rather than a slow one.
+                throw CairoException.critical(0)
+                        .put("covering index packed payload is not addressable [rowGroup=").put(rowGroup)
+                        .put(", column=").put(columnName).put(']');
+            }
+            final long needed = (long) count * Long.BYTES;
+            if (needed > unpackBufSize) {
+                // Groups are bounded by the seal's row target, so this settles
+                // after the first few binds rather than growing per lookup.
+                unpackBuf = unpackBuf == 0
+                        ? Unsafe.malloc(needed, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER)
+                        : Unsafe.realloc(unpackBuf, unpackBufSize, needed, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                unpackBufSize = needed;
+            }
+            BitpackUtils.unpackValuesFrom(
+                    dataAddr,
+                    from,
+                    count,
+                    packedBitWidth(rowGroup),
+                    packedBase(rowGroup),
+                    unpackBuf
+            );
+            return unpackBuf;
+        }
 
         protected CountingCursor probe() {
             if (keyProbe == null) {
@@ -689,6 +866,11 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
             Misc.free(decoder);
             Misc.free(rowGroupBuffers);
             Misc.free(projection);
+            if (unpackBuf != 0) {
+                Unsafe.free(unpackBuf, unpackBufSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                unpackBuf = 0;
+                unpackBufSize = 0;
+            }
             decoderBound = false;
         }
 
@@ -1188,14 +1370,22 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                         .put("could not read the covering index _im named by the partition metadata [file=")
                         .put(imFile).put(']').put(RECOVERY_HINT);
             }
-            if (imReader.getPayloadKind() != IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING) {
-                // Only arm N is written today. Decoding an arm B payload with
-                // arm N's reader is a wrong-answer class, not a crash, so it
-                // has to be refused rather than attempted.
+            this.packedPayload = imReader.getPayloadKind() == IndexMetaFileWriter.PAYLOAD_ROW_PER_KEY;
+            if (imReader.getPayloadKind() != IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING && !packedPayload) {
+                // Reading a payload kind with the wrong arm's reader is a
+                // wrong-answer class, not a crash, so an unknown one has to be
+                // refused rather than attempted.
                 throw CairoException.critical(0)
                         .put("unsupported covering index payload kind [payloadKind=").put(imReader.getPayloadKind())
-                        .put(", expected=").put(IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING)
                         .put(", file=").put(imFile).put(']').put(RECOVERY_HINT);
+            }
+            if (packedPayload && imReader.getRowIdBlobColumn() < 0) {
+                // The blob column is where every row id in the file lives, so a
+                // packed payload that does not name one carries no postings any
+                // reader could find.
+                throw CairoException.critical(0)
+                        .put("covering index packed payload names no blob column [file=")
+                        .put(imFile).put(']').put(RECOVERY_HINT);
             }
             if (imReader.getFileSize() != imFileSize) {
                 // The token records the _im size the seal committed. A file
