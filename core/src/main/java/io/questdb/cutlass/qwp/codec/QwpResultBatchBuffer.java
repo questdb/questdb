@@ -176,6 +176,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         final SymbolTable[] sts = symbolTablesArr;
         for (int ci = 0; ci < n; ci++) {
             final QwpColumnScratch scratch = scs[ci];
+            final QwpEgressColumnDef def = defsArr[ci];
             final byte wt = wts[ci];
             // Column-top check moved INSIDE each fixed-width case. For VARCHAR /
             // STRING / BINARY, {@code getPageAddress} returning 0 does NOT mean
@@ -193,7 +194,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
-                        scratch.appendColumnLong8WithSentinel(base + lo * 8L, rows);
+                        scratch.appendColumnLong8WithSentinel(base + lo * 8L, rows, def.isNotNull());
                     }
                     break;
                 }
@@ -202,7 +203,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
-                        scratch.appendColumnDouble8(base + lo * 8L, rows);
+                        scratch.appendColumnDouble8(base + lo * 8L, rows, def.isNotNull());
                     }
                     break;
                 }
@@ -211,7 +212,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
-                        scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.INT_NULL);
+                        scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.INT_NULL, def.isNotNull());
                     }
                     break;
                 }
@@ -221,7 +222,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
-                        scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.IPv4_NULL);
+                        scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.IPv4_NULL, def.isNotNull());
                     }
                     break;
                 }
@@ -230,7 +231,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
-                        scratch.appendColumnFloat4(base + lo * 4L, rows);
+                        scratch.appendColumnFloat4(base + lo * 4L, rows, def.isNotNull());
                     }
                     break;
                 }
@@ -816,33 +817,40 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 scratch.appendChar(record.getChar(ci));
                 break;
             case QwpConstants.TYPE_INT:
-                scratch.appendIntOrNull(record.getInt(ci));
+                if (def.isNotNull()) scratch.appendInt(record.getInt(ci));
+                else scratch.appendIntOrNull(record.getInt(ci));
                 break;
             case QwpConstants.TYPE_IPV4:
                 // QuestDB stores IPv4 NULL as the bit pattern 0 (Numbers.IPv4_NULL).
                 // The wire reader still cannot represent the literal address 0.0.0.0
                 // as non-null - that's a QuestDB-level limitation inherited by the
                 // wire format.
-                scratch.appendIPv4OrNull(record.getInt(ci));
+                if (def.isNotNull()) scratch.appendInt(record.getInt(ci));
+                else scratch.appendIPv4OrNull(record.getInt(ci));
                 break;
             case QwpConstants.TYPE_LONG:
-                scratch.appendLongOrNull(record.getLong(ci));
+                if (def.isNotNull()) scratch.appendLong(record.getLong(ci));
+                else scratch.appendLongOrNull(record.getLong(ci));
                 break;
             case QwpConstants.TYPE_DATE:
-                scratch.appendLongOrNull(record.getDate(ci));
+                if (def.isNotNull()) scratch.appendLong(record.getDate(ci));
+                else scratch.appendLongOrNull(record.getDate(ci));
                 break;
             case QwpConstants.TYPE_TIMESTAMP:
             case QwpConstants.TYPE_TIMESTAMP_NANOS:
-                scratch.appendLongOrNull(record.getTimestamp(ci));
+                if (def.isNotNull()) scratch.appendLong(record.getTimestamp(ci));
+                else scratch.appendLongOrNull(record.getTimestamp(ci));
                 break;
             case QwpConstants.TYPE_FLOAT:
                 // QuestDB FLOAT NULL == NaN. Spec sec 11.5 documents that NaN values
                 // (including a "legitimate" NaN such as 0/0) round-trip as NULL.
-                scratch.appendFloatOrNull(record.getFloat(ci));
+                if (def.isNotNull()) scratch.appendFloat(record.getFloat(ci));
+                else scratch.appendFloatOrNull(record.getFloat(ci));
                 break;
             case QwpConstants.TYPE_DOUBLE:
                 // Same NaN-as-NULL convention as FLOAT (spec sec 11.5).
-                scratch.appendDoubleOrNull(record.getDouble(ci));
+                if (def.isNotNull()) scratch.appendDouble(record.getDouble(ci));
+                else scratch.appendDoubleOrNull(record.getDouble(ci));
                 break;
             case QwpConstants.TYPE_VARCHAR: {
                 // Egress advertises TYPE_VARCHAR for both QuestDB STRING and VARCHAR source
@@ -913,13 +921,13 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             case QwpConstants.TYPE_UUID: {
                 long lo = record.getLong128Lo(ci);
                 long hi = record.getLong128Hi(ci);
-                if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) scratch.appendNull();
+                if (!def.isNotNull() && lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) scratch.appendNull();
                 else scratch.appendUuid(lo, hi);
                 break;
             }
             case QwpConstants.TYPE_LONG256: {
                 Long256 l256 = record.getLong256A(ci);
-                if (l256 == null || (l256.getLong0() == Numbers.LONG_NULL
+                if (l256 == null || (!def.isNotNull() && l256.getLong0() == Numbers.LONG_NULL
                         && l256.getLong1() == Numbers.LONG_NULL
                         && l256.getLong2() == Numbers.LONG_NULL
                         && l256.getLong3() == Numbers.LONG_NULL)) {
@@ -932,22 +940,23 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             case QwpConstants.TYPE_GEOHASH: {
                 int precBits = def.getPrecisionBits();
                 long bits = readGeoBits(record, ci, precBits);
-                if (bits == -1L) scratch.appendNull();
+                if (!def.isNotNull() && bits == -1L) scratch.appendNull();
                 else scratch.appendGeohash(bits, (precBits + 7) >>> 3);
                 break;
             }
             case QwpConstants.TYPE_DECIMAL64:
-                scratch.appendLongOrNull(record.getDecimal64(ci));
+                if (def.isNotNull()) scratch.appendLong(record.getDecimal64(ci));
+                else scratch.appendLongOrNull(record.getDecimal64(ci));
                 break;
             case QwpConstants.TYPE_DECIMAL128: {
                 record.getDecimal128(ci, scratch.decimal128Sink);
-                if (scratch.decimal128Sink.isNull()) scratch.appendNull();
+                if (!def.isNotNull() && scratch.decimal128Sink.isNull()) scratch.appendNull();
                 else scratch.appendDecimal128(scratch.decimal128Sink.getLow(), scratch.decimal128Sink.getHigh());
                 break;
             }
             case QwpConstants.TYPE_DECIMAL256: {
                 record.getDecimal256(ci, scratch.decimal256Sink);
-                if (scratch.decimal256Sink.isNull()) scratch.appendNull();
+                if (!def.isNotNull() && scratch.decimal256Sink.isNull()) scratch.appendNull();
                 else scratch.appendDecimal256(
                         scratch.decimal256Sink.getLl(),
                         scratch.decimal256Sink.getLh(),

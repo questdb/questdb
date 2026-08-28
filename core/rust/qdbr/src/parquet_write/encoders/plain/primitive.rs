@@ -21,7 +21,7 @@ use crate::parquet_write::encoders::numeric::{build_statistics, SimdEncodable, S
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::{Column, TimestampValues};
 use crate::parquet_write::util::{
-    build_plain_page, encode_primitive_def_levels, MaxMin, SimdMaxMin,
+    build_plain_page, encode_all_ones_def_levels, encode_primitive_def_levels, MaxMin, SimdMaxMin,
 };
 use crate::parquet_write::Nullable;
 
@@ -41,6 +41,29 @@ where
     T: SimdEncodable,
 {
     let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
+    let not_null_hint = columns
+        .iter()
+        .all(|column| column.not_null_hint && column.column_top == 0);
+    if not_null_hint {
+        return encode_column_chunk(
+            columns,
+            first_partition_start,
+            last_partition_end,
+            rows_per_page,
+            bloom_set,
+            |window, bloom| {
+                encode_simd_notnull::<T>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    window,
+                    options,
+                    primitive_type.clone(),
+                    bloom,
+                )
+            },
+        );
+    }
     encode_column_chunk(
         columns,
         first_partition_start,
@@ -59,6 +82,74 @@ where
             )
         },
     )
+}
+
+/// Encode an Optional column whose source is known to contain no nulls.
+/// Optional repetition is retained for compatibility with row groups that
+/// may have column tops, but in-band sentinels are emitted as values.
+fn encode_simd_notnull<T: SimdEncodable>(
+    columns: &[Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+    window: PageRowWindow,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page> {
+    if primitive_type.field_info.repetition != Repetition::Optional {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "not-null Optional encoder requires Optional repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
+    let num_rows = window.row_count;
+    let views: Vec<_> = unsafe {
+        page_chunk_views::<T>(columns, first_partition_start, last_partition_end, window)
+    }
+    .collect();
+    let mut values = Vec::with_capacity(num_rows);
+    for view in &views {
+        debug_assert_eq!(view.adjusted_column_top, 0);
+        values.extend_from_slice(view.slice);
+    }
+
+    let mut statistics = SimdMaxMin::new();
+    for &value in &values {
+        if options.write_statistics {
+            statistics.update(value);
+        }
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_native(value));
+        }
+    }
+
+    let mut buffer = Vec::new();
+    encode_all_ones_def_levels(&mut buffer, num_rows, options.version);
+    let definition_levels_byte_length = buffer.len();
+    buffer = T::encode_data_notnull(&values, Encoding::Plain, buffer)?;
+    let stats = if options.write_statistics {
+        Some(build_statistics(
+            Some(0),
+            statistics.to_minmax_stats(!values.is_empty()),
+            primitive_type.clone(),
+        ))
+    } else {
+        None
+    };
+    build_plain_page(
+        buffer,
+        num_rows,
+        0,
+        definition_levels_byte_length,
+        stats,
+        primitive_type,
+        options,
+        Encoding::Plain,
+        false,
+    )
+    .map(Page::Data)
 }
 
 /// Plain-encode a designated-timestamp column whose primary data is a
@@ -772,6 +863,7 @@ fn decimal_segments_to_page<T>(
 where
     T: Nullable + NativeType + Debug + 'static,
 {
+    let not_null_hint = columns.iter().all(|column| column.not_null_hint);
     if primitive_type.field_info.repetition != Repetition::Optional {
         return Err(fmt_err!(
             InvalidLayout,
@@ -796,7 +888,7 @@ where
             validity.push_null();
         }
         for &value in view.slice {
-            if value.is_null() {
+            if !not_null_hint && value.is_null() {
                 validity.push_null();
             } else {
                 validity.push_present();
@@ -818,7 +910,7 @@ where
     };
     for view in views_pass2 {
         for &value in view.slice {
-            if !value.is_null() {
+            if not_null_hint || !value.is_null() {
                 if options.write_statistics {
                     statistics.update(value);
                 }

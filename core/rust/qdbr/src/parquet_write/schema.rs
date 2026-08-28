@@ -566,6 +566,7 @@ pub fn to_parquet_schema(
             column_top: column.column_top,
             format,
             ascii,
+            id: Some(column.id),
             not_null: column.not_null_hint,
         });
     }

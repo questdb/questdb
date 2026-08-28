@@ -827,6 +827,7 @@ impl ParquetUpdater {
                 column_top: 0,
                 format,
                 ascii: None,
+                id: Some(col.id),
                 not_null: false,
             });
         }
@@ -4462,6 +4463,8 @@ mod tests {
                 format: None,
                 ascii: None,
                 not_null: false,
+
+                id: None,
             });
         qdb_meta
             .schema
@@ -4471,6 +4474,8 @@ mod tests {
                 format: None,
                 ascii: None,
                 not_null: false,
+
+                id: None,
             });
         let qdb_json = qdb_meta.serialize().expect("serialize qdb meta");
         let kv = parquet2::metadata::KeyValue {

@@ -261,7 +261,7 @@ public class AllowAllSecurityContext extends AbstractAllowAllSecurityContext {
     }
 
     @Override
-    public String getPrincipal() {
+    public CharSequence getPrincipal() {
         return Constants.USER_NAME;
     }
 

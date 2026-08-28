@@ -155,6 +155,7 @@ where
     T: Nullable + NativeType + Debug,
     T::Bytes: Eq + Hash,
 {
+    let not_null_hint = columns.iter().all(|column| column.not_null_hint);
     let num_partitions = columns.len();
     let total_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
     if total_rows == 0 {
@@ -182,7 +183,7 @@ where
         state.extend_optional_nulls(chunk.adjusted_column_top)?;
 
         for &value in slice {
-            if value.is_null() {
+            if !not_null_hint && value.is_null() {
                 state.push_optional_null()?;
             } else {
                 let key = upsert_dict_entry::<T, false>(

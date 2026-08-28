@@ -1794,12 +1794,12 @@ impl ParquetDecoder {
             let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
 
             // Get the column's format from the "questdb" key-value metadata stored in the file.
-            let (column_top, format, ascii) = self
+            let (column_top, format, ascii, id, not_null) = self
                 .qdb_meta
                 .as_ref()
                 .and_then(|m| m.schema.get(column_idx))
-                .map(|c| (c.column_top, c.format, c.ascii))
-                .unwrap_or((0, None, None));
+                .map(|c| (c.column_top, c.format, c.ascii, c.id, c.not_null))
+                .unwrap_or((0, None, None, None, false));
 
             if column_top >= row_group_hi as usize + accumulated_size {
                 column_chunk_bufs.reset();
@@ -1811,7 +1811,8 @@ impl ParquetDecoder {
                 column_top,
                 format,
                 ascii,
-                not_null: false,
+                id,
+                not_null,
             };
             match self.decode_column_chunk(
                 ctx,
@@ -1966,12 +1967,12 @@ impl ParquetDecoder {
             let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
 
             // Get the column's format from the "questdb" key-value metadata stored in the file.
-            let (column_top, format, ascii) = self
+            let (column_top, format, ascii, id, not_null) = self
                 .qdb_meta
                 .as_ref()
                 .and_then(|m| m.schema.get(column_idx))
-                .map(|c| (c.column_top, c.format, c.ascii))
-                .unwrap_or((0, None, None));
+                .map(|c| (c.column_top, c.format, c.ascii, c.id, c.not_null))
+                .unwrap_or((0, None, None, None, false));
 
             if column_top >= row_group_hi as usize + accumulated_size {
                 column_chunk_bufs.reset();
@@ -1983,7 +1984,8 @@ impl ParquetDecoder {
                 column_top,
                 format,
                 ascii,
-                not_null: false,
+                id,
+                not_null,
             };
 
             // Decode the column chunk with row filter
@@ -3945,6 +3947,7 @@ impl ParquetDecoder {
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
             not_null: false,
         };
         self.decode_column_chunk(

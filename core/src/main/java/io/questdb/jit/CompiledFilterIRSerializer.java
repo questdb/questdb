@@ -3978,6 +3978,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                         .put(ColumnType.nameOf(columnTypeTag));
             }
 
+            // Bind variables are nullable at execution time even when the
+            // referenced table columns are NOT NULL. Keep JIT null checks
+            // enabled so a NULL bind is not compared as its sentinel value.
+            allColumnsNotNull = false;
             bindVarFunctions.add(varFunction);
             int index = bindVarFunctions.size() - 1;
             putOperand(VAR, typeCode, index);
@@ -5479,6 +5483,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 columnTypeTag = ColumnType.SYMBOL;
             }
 
+            // Bind variables can be NULL at execution time; they must not
+            // participate in the all-columns-NOT-NULL fast path.
+            allColumnsNotNull = false;
             updateType(node.position, columnType == ColumnType.STRING ? ColumnType.SYMBOL : columnType);
             int code = columnTypeCode(columnTypeTag);
             localTypesObserver.observe(code);

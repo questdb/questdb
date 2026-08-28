@@ -62,7 +62,14 @@ public interface SecurityContext extends Mutable {
 
     void authorizeAlterTableAlterColumnCache(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    void authorizeAlterTableAlterColumnNotNull(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+    /**
+     * Authorizes adding or removing the NOT NULL constraint. By default this
+     * uses the existing column-type alteration privilege so implementations of
+     * the pre-NOT-NULL API remain source and binary compatible.
+     */
+    default void authorizeAlterTableAlterColumnNotNull(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+        authorizeAlterTableAlterColumnType(tableToken, columnNames);
+    }
 
     void authorizeAlterTableAlterColumnType(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 

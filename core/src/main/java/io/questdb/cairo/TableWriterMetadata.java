@@ -191,7 +191,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                     TableUtils.isSymbolCached(metaMem, i),
                     origWriterIndex
             );
-            colMeta.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(metaMem, i));
+            colMeta.setParquetEncodingConfig(hasParquetEncodingConfig ? TableUtils.getParquetEncodingConfig(metaMem, i) : 0);
             colMeta.setNotNullFlag(TableUtils.isColumnNotNull(metaMem, i));
             columnMetadata.add(colMeta);
             if (type > -1) {

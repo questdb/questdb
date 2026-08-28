@@ -459,38 +459,85 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 }
             }
 
-            if (memSize > offset + 8 + 4) {
-                long optionalSectionCheckSum = metaMem.getLong(offset);
-                offset += Long.BYTES;
-                if (optionalSectionCheckSum == checkSum) {
-                    long records = metaMem.getInt(offset);
-                    offset += Integer.BYTES;
-
-                    // Optional section about column order
-                    if (memSize - offset >= records * Integer.BYTES) {
+            // Optional sections are identified by their magic values. Do not
+            // advance past an unrecognised section: older sequencer metadata
+            // ends after the column list/order section, while newer metadata
+            // adds index, covering-index, and NOT NULL sections in that order.
+            if (memSize - offset >= Long.BYTES + Integer.BYTES) {
+                long sectionMagic = metaMem.getLong(offset);
+                if (sectionMagic == checkSum) {
+                    int records = metaMem.getInt(offset + Long.BYTES);
+                    long sectionEnd = offset + Long.BYTES + Integer.BYTES + (long) records * Integer.BYTES;
+                    if (records >= 0 && sectionEnd <= memSize) {
+                        offset = sectionEnd;
                         readColumnOrder.clear();
+                        long orderOffset = offset - (long) records * Integer.BYTES;
                         for (int i = 0; i < records; i++) {
-                            readColumnOrder.add(metaMem.getInt(offset));
-                            offset += Integer.BYTES;
+                            readColumnOrder.add(metaMem.getInt(orderOffset + (long) i * Integer.BYTES));
                         }
                     }
                 }
             }
 
-            // Read NOT NULL flags (optional section, backward compatible)
-            long notNullMagic = checkSum * 31 + NOT_NULL_SECTION_SEED;
-            if (memSize > offset + Long.BYTES + Integer.BYTES) {
-                long sectionMagic = metaMem.getLong(offset);
-                offset += Long.BYTES;
-                if (sectionMagic == notNullMagic) {
-                    int flagCount = metaMem.getInt(offset);
-                    offset += Integer.BYTES;
-                    if (memSize - offset >= flagCount * Byte.BYTES) {
-                        for (int i = 0; i < Math.min(flagCount, columnMetadata.size()); i++) {
-                            boolean isNotNull = metaMem.getBool(offset);
-                            offset += Byte.BYTES;
-                            columnMetadata.getQuick(i).setNotNullFlag(isNotNull);
+            // Read index types (optional section, backward compatible).
+            if (memSize - offset >= Long.BYTES + Integer.BYTES
+                    && metaMem.getLong(offset) == checkSum * 31 + SEQ_META_INDEX_TYPE_CHECKSUM_SALT) {
+                int indexCount = metaMem.getInt(offset + Long.BYTES);
+                long sectionEnd = offset + Long.BYTES + Integer.BYTES + (long) indexCount * Byte.BYTES;
+                if (indexCount >= 0 && indexCount <= columnMetadata.size() && sectionEnd <= memSize) {
+                    long indexOffset = offset + Long.BYTES + Integer.BYTES;
+                    for (int i = 0; i < indexCount; i++) {
+                        columnMetadata.getQuick(i).setIndexType(metaMem.getByte(indexOffset + i));
+                    }
+                    offset = sectionEnd;
+                }
+            }
+
+            // Read covering-column indices (optional section, backward compatible).
+            if (memSize - offset >= Long.BYTES + Integer.BYTES
+                    && metaMem.getLong(offset) == checkSum * 31 + SEQ_META_COVERING_COLUMN_CHECKSUM_SALT) {
+                int coveringColumnCount = metaMem.getInt(offset + Long.BYTES);
+                long sectionOffset = offset + Long.BYTES + Integer.BYTES;
+                long sectionEnd = sectionOffset;
+                boolean valid = coveringColumnCount >= 0;
+                for (int i = 0; valid && i < coveringColumnCount; i++) {
+                    if (sectionEnd + Integer.BYTES * 2L > memSize) {
+                        valid = false;
+                        break;
+                    }
+                    int columnIndex = metaMem.getInt(sectionEnd);
+                    int coverCount = metaMem.getInt(sectionEnd + Integer.BYTES);
+                    valid = columnIndex >= 0 && columnIndex < columnMetadata.size() && coverCount >= 0;
+                    sectionEnd += Integer.BYTES * 2L + (long) coverCount * Integer.BYTES;
+                    valid &= sectionEnd <= memSize;
+                }
+                if (valid) {
+                    long readOffset = sectionOffset;
+                    for (int i = 0; i < coveringColumnCount; i++) {
+                        int columnIndex = metaMem.getInt(readOffset);
+                        int coverCount = metaMem.getInt(readOffset + Integer.BYTES);
+                        readOffset += Integer.BYTES * 2L;
+                        IntList covering = new IntList(coverCount);
+                        for (int j = 0; j < coverCount; j++) {
+                            covering.add(metaMem.getInt(readOffset));
+                            readOffset += Integer.BYTES;
                         }
+                        columnMetadata.getQuick(columnIndex).setCoveringColumnIndices(covering);
+                    }
+                    offset = sectionEnd;
+                }
+            }
+
+            // Read NOT NULL flags (optional section, backward compatible).
+            long notNullMagic = checkSum * 31 + NOT_NULL_SECTION_SEED;
+            if (memSize - offset >= Long.BYTES + Integer.BYTES
+                    && metaMem.getLong(offset) == notNullMagic) {
+                int flagCount = metaMem.getInt(offset + Long.BYTES);
+                long sectionEnd = offset + Long.BYTES + Integer.BYTES + (long) flagCount * Byte.BYTES;
+                if (flagCount >= 0 && flagCount <= columnMetadata.size() && sectionEnd <= memSize) {
+                    long flagOffset = offset + Long.BYTES + Integer.BYTES;
+                    for (int i = 0; i < flagCount; i++) {
+                        columnMetadata.getQuick(i).setNotNullFlag(metaMem.getBool(flagOffset + i));
                     }
                 }
             }

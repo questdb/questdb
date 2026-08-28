@@ -360,7 +360,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         TableUtils.getSymbolCapacity(mem, writerIndex),
                         origWriterIndex
                 );
-                colMeta.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(mem, writerIndex));
+                colMeta.setParquetEncodingConfig(hasParquetEncodingConfig ? TableUtils.getParquetEncodingConfig(mem, writerIndex) : 0);
                 colMeta.setNotNullFlag(TableUtils.isColumnNotNull(mem, writerIndex));
                 columnMetadata.add(colMeta);
                 int denseIndex = columnMetadata.size() - 1;

@@ -1750,7 +1750,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // O3 source buffers (sorted data, sorted aux, merge index for the
         // timestamp), so there's nothing to free on this path.
         final PartitionDescriptor descriptor = ctx.getFreshPartitionDescriptor();
-        descriptor.clear();
+        descriptor.of(tableWriter.getTableToken().getTableName(), rowCount, timestampIndex);
 
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             int columnType = tableWriterMetadata.getColumnType(columnIndex);
@@ -1896,6 +1896,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
             }
         }
+
+        // Publish only after all columns have been added so Rust sees a complete row group.
+        partitionUpdater.addRowGroup(metadataPosition, descriptor);
     }
 
     /**

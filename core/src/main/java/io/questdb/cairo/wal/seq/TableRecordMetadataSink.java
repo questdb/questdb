@@ -44,6 +44,13 @@ public interface TableRecordMetadataSink extends Mutable {
             boolean isNotNull
     );
 
+    /**
+     * Supplies covering-index metadata when the source sequencer exposes it.
+     * Older sinks may ignore it; the default keeps the sink API compatible.
+     */
+    default void setColumnCovering(int columnIndex, @Transient IntList coveringColumnIndices) {
+    }
+
     default boolean requiresFullReadColumnOrder() {
         return false;
     }

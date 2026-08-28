@@ -247,6 +247,8 @@ mod tests {
                 format: None, // It should error because this is missing.
                 ascii: None,
                 not_null: false,
+
+                id: None,
             },
         );
 
@@ -287,6 +289,8 @@ mod tests {
                 format: None, // Missing format makes the page decode fail mid-chunk.
                 ascii: None,
                 id: None,
+
+                not_null: false,
             },
         );
 
@@ -342,6 +346,8 @@ mod tests {
                 format: None, // Missing format makes the page decode fail mid-chunk.
                 ascii: None,
                 id: None,
+
+                not_null: false,
             },
         );
 

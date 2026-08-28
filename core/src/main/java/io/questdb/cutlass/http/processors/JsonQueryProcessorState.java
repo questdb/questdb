@@ -54,6 +54,7 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
+import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -535,24 +536,34 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.putAscii('"');
     }
 
-    private static void putGeoHashStringByteValue(HttpChunkedResponse response, Record rec, int col, int bitFlags) {
-        byte l = rec.getGeoByte(col);
-        GeoHashes.append(l, bitFlags, response);
+    private static void putGeoHashStringValue(HttpChunkedResponse response, long value, int bitFlags, boolean notNull) {
+        if (value == GeoHashes.NULL && !notNull) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
+        if (bitFlags < 0) {
+            GeoHashes.appendCharsUnsafe(value, -bitFlags, response);
+        } else {
+            GeoHashes.appendBinaryStringUnsafe(value, bitFlags, response);
+        }
+        response.putAscii('"');
     }
 
-    private static void putGeoHashStringIntValue(HttpChunkedResponse response, Record rec, int col, int bitFlags) {
-        int l = rec.getGeoInt(col);
-        GeoHashes.append(l, bitFlags, response);
+    private static void putGeoHashStringByteValue(HttpChunkedResponse response, Record rec, int col, int bitFlags, boolean notNull) {
+        putGeoHashStringValue(response, rec.getGeoByte(col), bitFlags, notNull);
     }
 
-    private static void putGeoHashStringLongValue(HttpChunkedResponse response, Record rec, int col, int bitFlags) {
-        long l = rec.getGeoLong(col);
-        GeoHashes.append(l, bitFlags, response);
+    private static void putGeoHashStringIntValue(HttpChunkedResponse response, Record rec, int col, int bitFlags, boolean notNull) {
+        putGeoHashStringValue(response, rec.getGeoInt(col), bitFlags, notNull);
     }
 
-    private static void putGeoHashStringShortValue(HttpChunkedResponse response, Record rec, int col, int bitFlags) {
-        short l = rec.getGeoShort(col);
-        GeoHashes.append(l, bitFlags, response);
+    private static void putGeoHashStringLongValue(HttpChunkedResponse response, Record rec, int col, int bitFlags, boolean notNull) {
+        putGeoHashStringValue(response, rec.getGeoLong(col), bitFlags, notNull);
+    }
+
+    private static void putGeoHashStringShortValue(HttpChunkedResponse response, Record rec, int col, int bitFlags, boolean notNull) {
+        putGeoHashStringValue(response, rec.getGeoShort(col), bitFlags, notNull);
     }
 
     private static void putIPv4Value(HttpChunkedResponse response, Record rec, int col, boolean notNull) {
@@ -585,9 +596,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.putAscii('"').put(interval, intervalType).putAscii('"');
     }
 
-    private static void putLong256Value(HttpChunkedResponse response, Record rec, int col) {
+    private static void putLong256Value(HttpChunkedResponse response, Record rec, int col, boolean notNull) {
+        Long256 value = rec.getLong256A(col);
+        if (value == null) {
+            response.putAscii("null");
+            return;
+        }
         response.putAscii('"');
-        rec.getLong256(col, response);
+        Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), response, !notNull);
         response.putAscii('"');
     }
 
@@ -847,19 +863,19 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putBinValue(response);
                     break;
                 case ColumnType.LONG256:
-                    putLong256Value(response, record, columnIdx);
+                    putLong256Value(response, record, columnIdx, notNull);
                     break;
                 case ColumnType.GEOBYTE:
-                    putGeoHashStringByteValue(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1));
+                    putGeoHashStringByteValue(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1), notNull);
                     break;
                 case ColumnType.GEOSHORT:
-                    putGeoHashStringShortValue(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1));
+                    putGeoHashStringShortValue(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1), notNull);
                     break;
                 case ColumnType.GEOINT:
-                    putGeoHashStringIntValue(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1));
+                    putGeoHashStringIntValue(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1), notNull);
                     break;
                 case ColumnType.GEOLONG:
-                    putGeoHashStringLongValue(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1));
+                    putGeoHashStringLongValue(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1), notNull);
                     break;
                 case ColumnType.RECORD:
                     putRecValue(response);

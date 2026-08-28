@@ -1980,14 +1980,23 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.putNetworkShort(value);
     }
 
-    private void outColBinDate(PGResponseSink utf8Sink, Record record, int columnIndex, boolean notNull) {
+    private void outColBinDate(PGResponseSink utf8Sink, Record record, int columnIndex, boolean notNull) throws PGMessageProcessingException {
         final long longValue = record.getDate(columnIndex);
         if (notNull || longValue != Numbers.LONG_NULL) {
             utf8Sink.putNetworkInt(Long.BYTES);
             // PG epoch starts at 2000 rather than 1970
-            utf8Sink.putNetworkLong(longValue * 1000 - Numbers.JULIAN_EPOCH_OFFSET_USEC);
+            utf8Sink.putNetworkLong(toPgMicros(longValue, true));
         } else {
             utf8Sink.setNullValue();
+        }
+    }
+
+    private long toPgMicros(long value, boolean valueIsMillis) throws PGMessageProcessingException {
+        try {
+            long micros = valueIsMillis ? Math.multiplyExact(value, 1000L) : value;
+            return Math.subtractExact(micros, Numbers.JULIAN_EPOCH_OFFSET_USEC);
+        } catch (ArithmeticException e) {
+            throw kaput().put("timestamp is out of PostgreSQL range");
         }
     }
 
@@ -2283,14 +2292,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.putNetworkShort(value);
     }
 
-    private void outColBinTimestamp(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType, boolean notNull) {
+    private void outColBinTimestamp(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType, boolean notNull) throws PGMessageProcessingException {
         final long longValue = record.getTimestamp(columnIndex);
         if (!notNull && longValue == Numbers.LONG_NULL) {
             utf8Sink.setNullValue();
         } else {
             utf8Sink.putNetworkInt(Long.BYTES);
             // PG epoch starts at 2000 rather than 1970
-            utf8Sink.putNetworkLong(ColumnType.getTimestampDriver(columnType).toMicros(longValue) - Numbers.JULIAN_EPOCH_OFFSET_USEC);
+            utf8Sink.putNetworkLong(toPgMicros(ColumnType.getTimestampDriver(columnType).toMicros(longValue), false));
         }
     }
 

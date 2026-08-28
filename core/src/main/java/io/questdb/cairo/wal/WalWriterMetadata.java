@@ -50,6 +50,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.cairo.wal.WalUtils.writeSequencerMetadataOptionalSections;
 
 public class WalWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata, TableRecordMetadataSink {
+    private static final long NOT_NULL_SECTION_SEED = 0x4E4F544E554C4CL;
     private final FilesFacade ff;
     private final boolean fullSequencerMetadata;
     private final MemoryMARW metaMem;
@@ -107,14 +108,37 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             int symbolCapacity,
             boolean isNotNull
     ) {
-        addColumn0(
-                columnName,
-                columnType,
-                symbolCapacity,
-                symbolIsCached,
-                isDedupKey,
-                isNotNull
-        );
+        if (fullSequencerMetadata) {
+            addFullSequencerColumn(
+                    columnName,
+                    columnType,
+                    indexType,
+                    indexValueBlockCapacity,
+                    symbolTableStatic,
+                    writerIndex,
+                    isDedupKey,
+                    symbolIsCached,
+                    symbolCapacity,
+                    null,
+                    isNotNull
+            );
+        } else {
+            addColumn0(
+                    columnName,
+                    columnType,
+                    symbolCapacity,
+                    symbolIsCached,
+                    isDedupKey,
+                    isNotNull
+            );
+        }
+    }
+
+    @Override
+    public void setColumnCovering(int columnIndex, @Transient IntList coveringColumnIndices) {
+        if (fullSequencerMetadata && coveringColumnIndices != null) {
+            columnMetadata.getQuick(columnIndex).setCoveringColumnIndices(new IntList(coveringColumnIndices));
+        }
     }
 
     public void addColumn(
@@ -321,6 +345,11 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                 checkSum = checkSum * 31 + metadata.getColumnName(i).hashCode();
             }
             writeSequencerMetadataOptionalSections(metaMem, columnCount, checkSum, metadata, readColumnOrder);
+            metaMem.putLong(checkSum * 31 + NOT_NULL_SECTION_SEED);
+            metaMem.putInt(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                metaMem.putBool(metadata.getColumnMetadata(i).isNotNull());
+            }
         }
 
         // To avoid consistency issues with concurrent readers,
@@ -373,7 +402,8 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             boolean isDedupKey,
             boolean symbolCacheFlag,
             int symbolCapacity,
-            @Transient IntList coveringColumnIndices
+            @Transient IntList coveringColumnIndices,
+            boolean isNotNull
     ) {
         final String name = columnName.toString();
         if (columnType > 0) {
@@ -395,6 +425,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         if (coveringColumnIndices != null) {
             columnMetadata.setCoveringColumnIndices(new IntList(coveringColumnIndices));
         }
+        columnMetadata.setNotNullFlag(isNotNull);
         this.columnMetadata.add(columnMetadata);
         columnCount++;
     }

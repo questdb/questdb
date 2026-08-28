@@ -207,6 +207,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     model.getIndexType(),
                     model.getIndexValueBlockSize(),
                     model.isDedupKey(),
+                    hasCovering,
                     model.isNotNull(),
                     model.getParquetEncodingConfig()
             );
@@ -632,6 +633,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     colMeta.getIndexType(),
                     colMeta.getIndexValueBlockCapacity(),
                     colMeta.isDedupKeyFlag(),
+                    colMeta.isCovering(),
                     colMeta.isNotNull(),
                     colMeta.getParquetEncodingConfig()
             );
@@ -799,6 +801,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     indexType,
                     indexBlockCapacity,
                     isDedupKey,
+                    hasCovering,
                     isNotNull,
                     parquetEncodingConfig
             );
@@ -831,12 +834,14 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             byte indexType,
             int indexBlockCapacity,
             boolean dedupFlag,
+            boolean coveringFlag,
             boolean notNullFlag,
             int parquetEncodingConfig
     ) {
         int flags = (symbolCacheFlag ? COLUMN_FLAG_CACHED : 0)
                 | ((indexType & 0x07) << COLUMN_FLAG_INDEX_TYPE_SHIFT)
                 | (dedupFlag ? COLUMN_FLAG_DEDUP_KEY : 0)
+                | (coveringFlag ? COLUMN_FLAG_COVERING : 0)
                 | (notNullFlag ? COLUMN_FLAG_NOT_NULL : 0);
         columnBits.add(
                 Numbers.encodeLowHighInts(columnType, symbolCapacity),
