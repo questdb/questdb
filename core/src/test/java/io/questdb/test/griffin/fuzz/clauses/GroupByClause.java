@@ -50,6 +50,17 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  */
 public final class GroupByClause {
 
+    // The GROUP BY key-kind option list, biased towards the keys real workloads
+    // use. The null at index 5 is the identifier slot: pickGroupableKind
+    // fills it from ExpressionGenerator.pickIdentifierKind only when the index
+    // draw lands there, so the picker's column scans and its rnd draw cost
+    // nothing on the six draws in seven that discard it.
+    private static final ColumnKind[] GROUPABLE_KINDS = {
+            ColumnKind.STRING_LIKE, ColumnKind.NUMERIC, ColumnKind.TEMPORAL,
+            ColumnKind.BOOLEAN, ColumnKind.CHAR, null /* identifier */,
+            ColumnKind.DECIMAL
+    };
+
     private GroupByClause() {
     }
 
@@ -157,23 +168,23 @@ public final class GroupByClause {
      * A blind draw picks a kind the table has no column of most of the time,
      * and the generator fills such a slot with a literal constant -- and
      * {@code GROUP BY <constant>} buckets the whole table into one row.
+     * {@link #GROUPABLE_KINDS} carries a {@code null} in that slot and this
+     * method resolves it only when the index draw wins it, which keeps the draw
+     * distribution unchanged and spares the six calls in seven that discard the
+     * identifier both column scans and an {@code rnd} draw.
      * <p>
      * Public rather than private so that
      * {@code FilterShapeCoverageTest#testIdentifierKeySlotDrawFollowsTheTable}
      * drives THIS picker rather than re-deriving what it does. A pin that
      * called {@link ExpressionGenerator#pickIdentifierKind} on its own stayed
-     * green when the identifier option below went back to
+     * green when the identifier slot of {@link #GROUPABLE_KINDS} went back to
      * {@link ColumnKind#randomIdentifier} -- which orphans the table-aware
      * picker and restores the whole defect. That pin sits in the enclosing
      * package, so package-private access would not reach it.
      */
     public static ColumnKind pickGroupableKind(Rnd rnd, ExpressionGenerator exprGen) {
-        ColumnKind[] options = {
-                ColumnKind.STRING_LIKE, ColumnKind.NUMERIC, ColumnKind.TEMPORAL,
-                ColumnKind.BOOLEAN, ColumnKind.CHAR, exprGen.pickIdentifierKind(),
-                ColumnKind.DECIMAL
-        };
-        return options[rnd.nextInt(options.length)];
+        ColumnKind kind = GROUPABLE_KINDS[rnd.nextInt(GROUPABLE_KINDS.length)];
+        return kind != null ? kind : exprGen.pickIdentifierKind();
     }
 
     private static void appendOrderBy(StringSink sink, Rnd rnd, int numKeys) {

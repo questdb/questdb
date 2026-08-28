@@ -1264,39 +1264,22 @@ public class CoveringCompressorTest extends AbstractCairoTest {
 
     private static void assertBytesRoundTrip(byte[] input) {
         final int count = input.length;
-        final long srcSize = Math.max(1, count);
-        final long wsSize = Math.max(1, (long) count * Long.BYTES);
-        final long payloadSize = count;
-        final long outSize = guardedSize(payloadSize);
-        final long destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.BYTE);
-        final long srcAddr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
-        final long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
-        final long workspaceAddr = Unsafe.malloc(wsSize, MemoryTag.NATIVE_DEFAULT);
-        final long outAddr = Unsafe.malloc(outSize, MemoryTag.NATIVE_DEFAULT);
-        final long decodeWorkspaceAddr = Unsafe.malloc(wsSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < count; i++) {
-                Unsafe.putByte(srcAddr + i, input[i]);
-            }
-            final int storedLength = CoveringCompressor.compressBytes(srcAddr, count, destAddr, workspaceAddr);
-            Assert.assertTrue("compressed size must fit the destination",
-                    storedLength > 0 && storedLength <= destCap);
-            fillGuardWordsAfter(outAddr, payloadSize);
-            CoveringCompressor.decompressBytesToAddr(destAddr, outAddr, decodeWorkspaceAddr);
-            for (int i = 0; i < count; i++) {
-                Assert.assertEquals("bulk decode " + Arrays.toString(input) + " at " + i,
-                        input[i], Unsafe.getByte(outAddr + i));
-                Assert.assertEquals("point read " + Arrays.toString(input) + " at " + i,
-                        input[i], CoveringCompressor.readByteAt(destAddr, i));
-            }
-            assertGuardWordsAfter(outAddr, payloadSize, count);
-        } finally {
-            Unsafe.free(decodeWorkspaceAddr, wsSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(outAddr, outSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(workspaceAddr, wsSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(destAddr, destCap, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(srcAddr, srcSize, MemoryTag.NATIVE_DEFAULT);
-        }
+        withNarrowBlock(count, count, ColumnType.BYTE,
+                (srcAddr, destAddr, workspaceAddr) -> {
+                    for (int i = 0; i < count; i++) {
+                        Unsafe.putByte(srcAddr + i, input[i]);
+                    }
+                    return CoveringCompressor.compressBytes(srcAddr, count, destAddr, workspaceAddr);
+                },
+                (block, storedLength, outAddr, wsAddr) -> {
+                    CoveringCompressor.decompressBytesToAddr(block, outAddr, wsAddr);
+                    for (int i = 0; i < count; i++) {
+                        Assert.assertEquals("bulk decode " + Arrays.toString(input) + " at " + i,
+                                input[i], Unsafe.getByte(outAddr + i));
+                        Assert.assertEquals("point read " + Arrays.toString(input) + " at " + i,
+                                input[i], CoveringCompressor.readByteAt(block, i));
+                    }
+                });
     }
 
     /**
@@ -1333,45 +1316,24 @@ public class CoveringCompressorTest extends AbstractCairoTest {
 
     private static void assertFloatsRoundTrip(float[] input) {
         final int count = input.length;
-        final long srcSize = Math.max(1, (long) count * Float.BYTES);
-        final long wsSize = Math.max(1, (long) count * Long.BYTES);
-        final long excSize = Math.max(1, count);
-        final long payloadSize = (long) count * Float.BYTES;
-        final long outSize = guardedSize(payloadSize);
-        final long destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.FLOAT);
-        final long srcAddr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
-        final long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
-        final long encodedAddr = Unsafe.malloc(wsSize, MemoryTag.NATIVE_DEFAULT);
-        final long exceptionAddr = Unsafe.malloc(excSize, MemoryTag.NATIVE_DEFAULT);
-        final long outAddr = Unsafe.malloc(outSize, MemoryTag.NATIVE_DEFAULT);
-        final long decodeWorkspaceAddr = Unsafe.malloc(wsSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < count; i++) {
-                Unsafe.putFloat(srcAddr + (long) i * Float.BYTES, input[i]);
-            }
-            final int storedLength = CoveringCompressor.compressFloats(
-                    srcAddr, count, destAddr, encodedAddr, exceptionAddr);
-            Assert.assertTrue("compressed size must fit the destination",
-                    storedLength > 0 && storedLength <= destCap);
-            fillGuardWordsAfter(outAddr, payloadSize);
-            CoveringCompressor.decompressFloatsToAddr(destAddr, outAddr, decodeWorkspaceAddr);
-            for (int i = 0; i < count; i++) {
-                Assert.assertEquals("bulk decode " + Arrays.toString(input) + " at " + i,
-                        Float.floatToRawIntBits(input[i]),
-                        Float.floatToRawIntBits(Unsafe.getFloat(outAddr + (long) i * Float.BYTES)));
-                Assert.assertEquals("point read " + Arrays.toString(input) + " at " + i,
-                        Float.floatToRawIntBits(input[i]),
-                        Float.floatToRawIntBits(CoveringCompressor.readFloatAt(destAddr, i)));
-            }
-            assertGuardWordsAfter(outAddr, payloadSize, count);
-        } finally {
-            Unsafe.free(decodeWorkspaceAddr, wsSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(outAddr, outSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(exceptionAddr, excSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(encodedAddr, wsSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(destAddr, destCap, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(srcAddr, srcSize, MemoryTag.NATIVE_DEFAULT);
-        }
+        withNarrowBlock(count, (long) count * Float.BYTES, ColumnType.FLOAT,
+                (srcAddr, destAddr, workspaceAddr) -> {
+                    for (int i = 0; i < count; i++) {
+                        Unsafe.putFloat(srcAddr + (long) i * Float.BYTES, input[i]);
+                    }
+                    return compressFloats(srcAddr, count, destAddr, workspaceAddr);
+                },
+                (block, storedLength, outAddr, wsAddr) -> {
+                    CoveringCompressor.decompressFloatsToAddr(block, outAddr, wsAddr);
+                    for (int i = 0; i < count; i++) {
+                        Assert.assertEquals("bulk decode " + Arrays.toString(input) + " at " + i,
+                                Float.floatToRawIntBits(input[i]),
+                                Float.floatToRawIntBits(Unsafe.getFloat(outAddr + (long) i * Float.BYTES)));
+                        Assert.assertEquals("point read " + Arrays.toString(input) + " at " + i,
+                                Float.floatToRawIntBits(input[i]),
+                                Float.floatToRawIntBits(CoveringCompressor.readFloatAt(block, i)));
+                    }
+                });
     }
 
     private static void assertGuardWords(long addr, int count) {
@@ -1396,37 +1358,22 @@ public class CoveringCompressorTest extends AbstractCairoTest {
 
     private static void assertIntsRoundTrip(int[] input) {
         final int count = input.length;
-        final long srcSize = Math.max(1, (long) count * Integer.BYTES);
-        final long wsSize = Math.max(1, (long) count * Long.BYTES);
-        final long payloadSize = (long) count * Integer.BYTES;
-        final long outSize = guardedSize(payloadSize);
-        final long destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.INT);
-        final long srcAddr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
-        final long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
-        final long outAddr = Unsafe.malloc(outSize, MemoryTag.NATIVE_DEFAULT);
-        final long decodeWorkspaceAddr = Unsafe.malloc(wsSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < count; i++) {
-                Unsafe.putInt(srcAddr + (long) i * Integer.BYTES, input[i]);
-            }
-            final int storedLength = compressInts(srcAddr, count, destAddr);
-            Assert.assertTrue("compressed size must fit the destination",
-                    storedLength > 0 && storedLength <= destCap);
-            fillGuardWordsAfter(outAddr, payloadSize);
-            CoveringCompressor.decompressIntsToAddr(destAddr, outAddr, decodeWorkspaceAddr);
-            for (int i = 0; i < count; i++) {
-                Assert.assertEquals("bulk decode " + Arrays.toString(input) + " at " + i,
-                        input[i], Unsafe.getInt(outAddr + (long) i * Integer.BYTES));
-                Assert.assertEquals("point read " + Arrays.toString(input) + " at " + i,
-                        input[i], CoveringCompressor.readIntAt(destAddr, i));
-            }
-            assertGuardWordsAfter(outAddr, payloadSize, count);
-        } finally {
-            Unsafe.free(decodeWorkspaceAddr, wsSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(outAddr, outSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(destAddr, destCap, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(srcAddr, srcSize, MemoryTag.NATIVE_DEFAULT);
-        }
+        withNarrowBlock(count, (long) count * Integer.BYTES, ColumnType.INT,
+                (srcAddr, destAddr, workspaceAddr) -> {
+                    for (int i = 0; i < count; i++) {
+                        Unsafe.putInt(srcAddr + (long) i * Integer.BYTES, input[i]);
+                    }
+                    return CoveringCompressor.compressInts(srcAddr, count, destAddr, workspaceAddr);
+                },
+                (block, storedLength, outAddr, wsAddr) -> {
+                    CoveringCompressor.decompressIntsToAddr(block, outAddr, wsAddr);
+                    for (int i = 0; i < count; i++) {
+                        Assert.assertEquals("bulk decode " + Arrays.toString(input) + " at " + i,
+                                input[i], Unsafe.getInt(outAddr + (long) i * Integer.BYTES));
+                        Assert.assertEquals("point read " + Arrays.toString(input) + " at " + i,
+                                input[i], CoveringCompressor.readIntAt(block, i));
+                    }
+                });
     }
 
     /**
@@ -1459,39 +1406,22 @@ public class CoveringCompressorTest extends AbstractCairoTest {
 
     private static void assertShortsRoundTrip(short[] input) {
         final int count = input.length;
-        final long srcSize = Math.max(1, (long) count * Short.BYTES);
-        final long wsSize = Math.max(1, (long) count * Long.BYTES);
-        final long payloadSize = (long) count * Short.BYTES;
-        final long outSize = guardedSize(payloadSize);
-        final long destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.SHORT);
-        final long srcAddr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
-        final long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
-        final long workspaceAddr = Unsafe.malloc(wsSize, MemoryTag.NATIVE_DEFAULT);
-        final long outAddr = Unsafe.malloc(outSize, MemoryTag.NATIVE_DEFAULT);
-        final long decodeWorkspaceAddr = Unsafe.malloc(wsSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < count; i++) {
-                Unsafe.putShort(srcAddr + (long) i * Short.BYTES, input[i]);
-            }
-            final int storedLength = CoveringCompressor.compressShorts(srcAddr, count, destAddr, workspaceAddr);
-            Assert.assertTrue("compressed size must fit the destination",
-                    storedLength > 0 && storedLength <= destCap);
-            fillGuardWordsAfter(outAddr, payloadSize);
-            CoveringCompressor.decompressShortsToAddr(destAddr, outAddr, decodeWorkspaceAddr);
-            for (int i = 0; i < count; i++) {
-                Assert.assertEquals("bulk decode " + Arrays.toString(input) + " at " + i,
-                        input[i], Unsafe.getShort(outAddr + (long) i * Short.BYTES));
-                Assert.assertEquals("point read " + Arrays.toString(input) + " at " + i,
-                        input[i], CoveringCompressor.readShortAt(destAddr, i));
-            }
-            assertGuardWordsAfter(outAddr, payloadSize, count);
-        } finally {
-            Unsafe.free(decodeWorkspaceAddr, wsSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(outAddr, outSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(workspaceAddr, wsSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(destAddr, destCap, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(srcAddr, srcSize, MemoryTag.NATIVE_DEFAULT);
-        }
+        withNarrowBlock(count, (long) count * Short.BYTES, ColumnType.SHORT,
+                (srcAddr, destAddr, workspaceAddr) -> {
+                    for (int i = 0; i < count; i++) {
+                        Unsafe.putShort(srcAddr + (long) i * Short.BYTES, input[i]);
+                    }
+                    return CoveringCompressor.compressShorts(srcAddr, count, destAddr, workspaceAddr);
+                },
+                (block, storedLength, outAddr, wsAddr) -> {
+                    CoveringCompressor.decompressShortsToAddr(block, outAddr, wsAddr);
+                    for (int i = 0; i < count; i++) {
+                        Assert.assertEquals("bulk decode " + Arrays.toString(input) + " at " + i,
+                                input[i], Unsafe.getShort(outAddr + (long) i * Short.BYTES));
+                        Assert.assertEquals("point read " + Arrays.toString(input) + " at " + i,
+                                input[i], CoveringCompressor.readShortAt(block, i));
+                    }
+                });
     }
 
     private static void assertUntouched(long addr, int count) {
@@ -1519,6 +1449,21 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         } finally {
             Unsafe.free(excAddr, count, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(encAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /**
+     * Compresses {@code count} floats into {@code destAddr}. The wrapper owns the exception list the
+     * ALP float encoder needs and borrows {@code encodedAddr} -- {@code count * Long.BYTES} bytes --
+     * for the encoded stride, so a caller that already holds a workspace does not allocate a second.
+     */
+    private static int compressFloats(long srcAddr, int count, long destAddr, long encodedAddr) {
+        final long excSize = Math.max(1, count);
+        final long excAddr = Unsafe.malloc(excSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            return CoveringCompressor.compressFloats(srcAddr, count, destAddr, encodedAddr, excAddr);
+        } finally {
+            Unsafe.free(excAddr, excSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -1683,6 +1628,53 @@ public class CoveringCompressorTest extends AbstractCairoTest {
             Unsafe.free(destAddr, destCapacity, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(srcAddr, srcSize, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    /**
+     * Compresses a narrow-width block -- BYTE, SHORT, INT or FLOAT -- and runs {@code body} against
+     * it. {@code encode} writes {@code count} elements into the source buffer and compresses them
+     * into the destination; it may use {@code workspaceAddr}, {@code count * Long.BYTES} bytes of
+     * scratch, for whatever the encoder needs. {@code body} then receives the block, a decode target
+     * sized by {@link #guardedSize(long)} and a decode workspace of the same width. Sentinel words
+     * sit directly past the {@code payloadSize} bytes of that target, so a decode that overruns the
+     * payload trips {@link #assertGuardWordsAfter(long, long, int)}. The wide types have
+     * {@link #withDoubleBlock(double[], BlockTest)} and
+     * {@link #withLongBlock(long[], boolean, BlockTest)}, which guard in whole long words instead.
+     */
+    private static void withNarrowBlock(
+            int count,
+            long payloadSize,
+            int columnType,
+            BlockEncoder encode,
+            BlockTest body
+    ) {
+        final long srcSize = Math.max(1, payloadSize);
+        final long wsSize = Math.max(1, (long) count * Long.BYTES);
+        final long outSize = guardedSize(payloadSize);
+        final long destCap = CoveringCompressor.maxCompressedSize(count, columnType);
+        final long srcAddr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
+        final long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
+        final long workspaceAddr = Unsafe.malloc(wsSize, MemoryTag.NATIVE_DEFAULT);
+        final long outAddr = Unsafe.malloc(outSize, MemoryTag.NATIVE_DEFAULT);
+        final long decodeWorkspaceAddr = Unsafe.malloc(wsSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            final int storedLength = encode.encode(srcAddr, destAddr, workspaceAddr);
+            Assert.assertTrue("compressed size must fit the destination",
+                    storedLength > 0 && storedLength <= destCap);
+            fillGuardWordsAfter(outAddr, payloadSize);
+            body.run(destAddr, storedLength, outAddr, decodeWorkspaceAddr);
+            assertGuardWordsAfter(outAddr, payloadSize, count);
+        } finally {
+            Unsafe.free(decodeWorkspaceAddr, wsSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(outAddr, outSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(workspaceAddr, wsSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(destAddr, destCap, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(srcAddr, srcSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private interface BlockEncoder {
+        int encode(long srcAddr, long destAddr, long workspaceAddr);
     }
 
     private interface BlockTest {

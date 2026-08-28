@@ -155,6 +155,12 @@ public class LineProtocolException extends CairoException {
                 .put("long overflow, timestamp: ").put(timestamp);
     }
 
+    public static LineProtocolException unsupportedTimestampUnit(byte unit) {
+        return instance()
+                .put("unsupported timestamp unit: ").put(unit)
+                .put("; the value must be suffixed with 'n' (nanos), 't' (micros) or 'm' (millis)");
+    }
+
     public static LineProtocolException valueError(String tableNameUtf16, int colType, Utf8Sequence ilpValue, DirectUtf8Sequence columnName) {
         LineProtocolException instance = instance();
         instance

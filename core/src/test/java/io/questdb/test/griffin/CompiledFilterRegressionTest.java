@@ -54,6 +54,8 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -532,13 +534,17 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitMatchesJavaInAllModes("x WHERE '\u8000' < c");
             assertJitMatchesJavaInAllModes("x WHERE '\u8000' <= c");
 
-            assertJitMatchesJavaInAllModes("x WHERE c > '\uffff'");
+            // U+FFFF is the largest CHAR, so nothing sorts strictly above it in either operand
+            // order and those two legs answer no rows by construction. Their non-strict twins do
+            // return rows - the fixture carries 65_535::CHAR - which is what keeps the pair a
+            // boundary test rather than a pair of empty cursors.
+            assertJitMatchesJavaInAllModesOnEmptyResult("x WHERE c > '\uffff'");
             assertJitMatchesJavaInAllModes("x WHERE c >= '\uffff'");
             assertJitMatchesJavaInAllModes("x WHERE c < '\uffff'");
             assertJitMatchesJavaInAllModes("x WHERE c <= '\uffff'");
             assertJitMatchesJavaInAllModes("x WHERE '\uffff' > c");
             assertJitMatchesJavaInAllModes("x WHERE '\uffff' >= c");
-            assertJitMatchesJavaInAllModes("x WHERE '\uffff' < c");
+            assertJitMatchesJavaInAllModesOnEmptyResult("x WHERE '\uffff' < c");
             assertJitMatchesJavaInAllModes("x WHERE '\uffff' <= c");
 
             bindVariableService.setChar("highChar", '\uffff');
@@ -5817,9 +5823,12 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitMatchesJavaInAllModes("x WHERE ip >= ip2");
             assertJitMatchesJavaInAllModes("x WHERE ip < ip2");
             assertJitMatchesJavaInAllModes("x WHERE ip <= ip2");
-            assertJitMatchesJavaInAllModes("x WHERE ip > null");
+            // A STRICT comparison against IPv4 NULL is false for every row, so those two legs
+            // answer no rows by construction. The non-strict twins select the NULL rows themselves
+            // and still return rows, which is what pins the sentinel handling.
+            assertJitMatchesJavaInAllModesOnEmptyResult("x WHERE ip > null");
             assertJitMatchesJavaInAllModes("x WHERE ip >= null");
-            assertJitMatchesJavaInAllModes("x WHERE ip < null");
+            assertJitMatchesJavaInAllModesOnEmptyResult("x WHERE ip < null");
             assertJitMatchesJavaInAllModes("x WHERE ip <= null");
             assertJitMatchesJavaInAllModes("x WHERE null <= ip");
             for (String literal : new String[]{
@@ -5829,9 +5838,27 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     "'0.0.0.0'",
                     "'null'"
             }) {
+                // Which of these 40 combinations answers "no rows" FOLLOWS from the semantics
+                // under test, so derive it here rather than keep a list of the empty legs that
+                // nothing forces anyone to update. '0.0.0.0' IS the IPv4 NULL sentinel and 'null'
+                // parses to it, and a STRICT comparison against NULL is false for every row on
+                // either side. 255.255.255.255 is the largest value in the unsigned order the
+                // expansion repairs, so nothing sorts strictly above it - which is what
+                // "ip > max" and "max < ip" both ask. Every other combination returns rows, and a
+                // lowering that moved either fact reddens the matching assertion instead of
+                // quietly turning that leg vacuous.
+                final boolean isNullLiteral = "'0.0.0.0'".equals(literal) || "'null'".equals(literal);
+                final boolean isMaxLiteral = "'255.255.255.255'".equals(literal);
                 for (String operator : new String[]{"<", "<=", ">", ">="}) {
-                    assertJitMatchesJavaInAllModes("x WHERE ip " + operator + " " + literal);
-                    assertJitMatchesJavaInAllModes("x WHERE " + literal + " " + operator + " ip");
+                    final boolean isStrict = "<".equals(operator) || ">".equals(operator);
+                    assertJitMatchesJavaInAllModes(
+                            "x WHERE ip " + operator + " " + literal,
+                            isStrict && (isNullLiteral || (isMaxLiteral && ">".equals(operator)))
+                    );
+                    assertJitMatchesJavaInAllModes(
+                            "x WHERE " + literal + " " + operator + " ip",
+                            isStrict && (isNullLiteral || (isMaxLiteral && "<".equals(operator)))
+                    );
                 }
             }
 
@@ -8728,21 +8755,26 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     private void createIPv4TestTable() throws SqlException {
+        // ip spells its values as dotted quads because 128.0.0.0 is Integer.MIN_VALUE, which is
+        // also Numbers.INT_NULL: CastIntToIPv4FunctionFactory maps that to IPv4 NULL, so the
+        // -2_147_483_648::INT::IPv4 this column used to carry stored a NULL and the fixture never
+        // held the sign-boundary value the tests below name. ip2 keeps the numeric spelling; none
+        // of its values is INT_NULL.
         execute("CREATE TABLE x (ip IPv4, ip2 IPv4, k TIMESTAMP) TIMESTAMP(k)");
         execute(
                 """
                         INSERT INTO x
                         SELECT
                             (CASE x % 8
-                                WHEN 0 THEN 0
-                                WHEN 1 THEN 2_147_483_647
-                                WHEN 2 THEN -2_147_483_648
-                                WHEN 3 THEN -1
-                                WHEN 4 THEN 167_772_161
-                                WHEN 5 THEN -2_147_483_647
-                                WHEN 6 THEN 1
-                                ELSE 2_130_706_433
-                            END)::INT::IPv4,
+                                WHEN 0 THEN '0.0.0.0'
+                                WHEN 1 THEN '127.255.255.255'
+                                WHEN 2 THEN '128.0.0.0'
+                                WHEN 3 THEN '255.255.255.255'
+                                WHEN 4 THEN '10.0.0.1'
+                                WHEN 5 THEN '128.0.0.1'
+                                WHEN 6 THEN '0.0.0.1'
+                                ELSE '127.0.0.1'
+                            END)::IPv4,
                             (CASE x % 8
                                 WHEN 0 THEN 2_147_483_647
                                 WHEN 1 THEN 2_147_483_647
@@ -8768,9 +8800,10 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
      * {@link #assertJitMatchesJavaInAllModes(CharSequence)} already checks. Parity is an oracle
      * only for a defect that moves ONE path, and this shape family carries two defects that move
      * different ones, so a count both paths got wrong the same way would pass on parity alone. It
-     * also supplies the non-empty guard that helper does not carry: several of these predicates are
-     * tautologies or contradictions, and this states which, so a fixture that stops producing rows
-     * cannot turn the whole battery vacuous.
+     * also states WHICH of these predicates are contradictions: several are, and the parity helper
+     * only demands that the count be zero or non-zero as {@code expectedRows} says, so it is the
+     * exact count here that keeps a fixture which stops discriminating from turning the battery
+     * vacuous.
      * <p>
      * The serial arm runs the JAVA filter whatever the JIT mode says -
      * {@code SqlCodeGenerator#generateFilter} only reaches the JIT behind
@@ -8778,7 +8811,9 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
      * a fourth backend, and asserts that no compiled filter is in play there.
      */
     private void assertBooleanFilterInAllModes(String whereExpr, long expectedRows) throws SqlException {
-        assertJitMatchesJavaInAllModes("b WHERE " + whereExpr);
+        // expectedRows is this site's own declaration of the answer, so it also decides whether
+        // the predicate is one of the contradictions whose answer IS no rows.
+        assertJitMatchesJavaInAllModes("b WHERE " + whereExpr, expectedRows == 0);
 
         final String countQuery = "SELECT count() FROM b WHERE " + whereExpr;
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
@@ -8823,9 +8858,9 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
      * {@link #testColumnFreeComparisonDeclinesCompiledFilter()} and asserts that it still compiles
      * a filter, in both JIT modes and on both the row and the count path.
      * <p>
-     * {@code expectedRows} is the guard {@link #assertJitMatchesJavaInAllModes(CharSequence)} does
-     * not carry: parity between two engines that both return nothing is no oracle at all, so the
-     * absolute count states which proper non-empty subset of the 35-row fixture the shape selects.
+     * {@code expectedRows} sharpens the guard {@link #assertJitMatchesJavaInAllModes(CharSequence)}
+     * carries: that helper only demands the shape return SOME rows, so the absolute count is what
+     * states which proper non-empty subset of the 35-row fixture the shape selects.
      */
     private void assertColumnComparisonCompiles(String predicate, long expectedRows) throws SqlException {
         assertJitMatchesJavaInAllModes("x WHERE " + predicate);
@@ -8872,32 +8907,47 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Runs {@code query} with the Java filter, then in {@code JIT_MODE_FORCE_SCALAR}, then
+     * vectorized, and asserts all three select the same rows. It pins no absolute result: the
+     * shapes it serves run over fixtures whose full dump is too wide to spell out, so parity plus
+     * the non-empty guard is all it claims. A site that CAN name its rows says so through
+     * {@link #assertJitScalarAndVectorMatchJava(CharSequence, CharSequence)} instead.
+     * <p>
+     * It runs the sibling's walk by delegating to it rather than repeating it, and so inherits
+     * both of that walk's safety properties: the caller's JIT mode is restored on every exit, and
+     * a result that is empty in every mode fails instead of agreeing trivially.
+     */
     private void assertJitMatchesJavaInAllModes(CharSequence query) throws SqlException {
-        StringSink javaSink = new StringSink();
-        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        try (RecordCursorFactory factory = select(query)) {
-            Assert.assertFalse("JIT was enabled for query: " + query, factory.usesCompiledFilter());
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                CursorPrinter.println(cursor, factory.getMetadata(), javaSink);
-            }
-        }
+        assertJitMatchesJavaInAllModes(query, false);
+    }
 
-        for (int jitMode : new int[]{SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED}) {
-            StringSink jitSink = new StringSink();
-            sqlExecutionContext.setJitMode(jitMode);
-            try (RecordCursorFactory factory = select(query)) {
-                Assert.assertTrue("JIT was disabled for query: " + query, factory.usesCompiledFilter());
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    CursorPrinter.println(cursor, factory.getMetadata(), jitSink);
-                }
-            }
-            TestUtils.assertEquals(
-                    (jitMode == SqlJitMode.JIT_MODE_FORCE_SCALAR ? "[scalar mode] " : "[vectorized mode] ")
-                            + "JIT vs Java result mismatch for query: " + query,
-                    javaSink,
-                    jitSink
-            );
-        }
+    /**
+     * Companion to {@link #assertJitMatchesJavaInAllModes(CharSequence)} for the shapes whose
+     * CORRECT answer is no rows - a strict comparison against a NULL sentinel, or against the
+     * largest value the type's order admits. Those cannot pass the non-empty guard, and forcing
+     * them through it would mean redesigning the fixture rather than fixing anything, so this
+     * DECLARES the empty answer instead and PINS it: a fixture that silently starts matching, or a
+     * defect that starts adding rows, still has to redden a test.
+     * <p>
+     * Unlike {@link #assertJitScalarAndVectorMatchJavaOnEmptyResult(CharSequence, CharSequence)}
+     * it takes no expected string, so it does not pin the columns the cursor prints - the whole
+     * {@code InAllModes} family asserts parity and row count only.
+     */
+    private void assertJitMatchesJavaInAllModesOnEmptyResult(CharSequence query) throws SqlException {
+        assertJitMatchesJavaInAllModes(query, true);
+    }
+
+    /**
+     * The form for a caller that COMPUTES whether the answer is empty rather than knowing it at
+     * the call site - a loop over operand combinations, or a wrapper that already carries the
+     * expected row count. A site that knows the answer statically says so by NAME, through
+     * {@link #assertJitMatchesJavaInAllModes(CharSequence)} or
+     * {@link #assertJitMatchesJavaInAllModesOnEmptyResult(CharSequence)}, rather than by passing a
+     * boolean literal here.
+     */
+    private void assertJitMatchesJavaInAllModes(CharSequence query, boolean isEmptyRequired) throws SqlException {
+        assertJitScalarAndVectorMatchJava(query, null, isEmptyRequired);
     }
 
     /**
@@ -9131,7 +9181,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     // three engines agree on nothing at all, so the site would read as coverage while pinning
     // none. A site whose correct answer IS no rows says so through
     // assertJitScalarAndVectorMatchJavaOnEmptyResult.
-    private void assertJitScalarAndVectorMatchJava(CharSequence query, CharSequence expected) throws SqlException {
+    private void assertJitScalarAndVectorMatchJava(CharSequence query, @NotNull CharSequence expected) throws SqlException {
         assertJitScalarAndVectorMatchJava(query, expected, false);
     }
 
@@ -9147,13 +9197,25 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
      * {@code expected} stays mandatory and is still compared in full - it names the columns the
      * cursor prints, so a projection change fails here rather than passing on a shorter header.
      */
-    private void assertJitScalarAndVectorMatchJavaOnEmptyResult(CharSequence query, CharSequence expected) throws SqlException {
+    private void assertJitScalarAndVectorMatchJavaOnEmptyResult(CharSequence query, @NotNull CharSequence expected) throws SqlException {
         assertJitScalarAndVectorMatchJava(query, expected, true);
     }
 
+    /**
+     * The walk both families share: the Java oracle, the absolute-result and row-count checks over
+     * it, then the FORCE_SCALAR and vectorized runs compared against that oracle, with the
+     * caller's JIT mode restored on every exit.
+     * <p>
+     * {@code expected} stays MANDATORY on every entry point that exposes it -
+     * {@link #assertJitScalarAndVectorMatchJava(CharSequence, CharSequence)} and
+     * {@link #assertJitScalarAndVectorMatchJavaOnEmptyResult(CharSequence, CharSequence)} both
+     * declare it {@code @NotNull}. It is null only for the
+     * {@link #assertJitMatchesJavaInAllModes(CharSequence)} family, which claims parity and the
+     * row count and nothing about the projection.
+     */
     private void assertJitScalarAndVectorMatchJava(
             CharSequence query,
-            CharSequence expected,
+            @Nullable CharSequence expected,
             boolean isEmptyRequired
     ) throws SqlException {
         final int callerJitMode = sqlExecutionContext.getJitMode();
@@ -9166,7 +9228,9 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     CursorPrinter.println(cursor, factory.getMetadata(), javaSink);
                 }
             }
-            TestUtils.assertEquals("absolute result mismatch for query: " + query, expected, javaSink);
+            if (expected != null) {
+                TestUtils.assertEquals("absolute result mismatch for query: " + query, expected, javaSink);
+            }
             final int rows = countPrintedRows(javaSink);
             if (isEmptyRequired) {
                 Assert.assertEquals("query is expected to return no rows: " + query, 0, rows);

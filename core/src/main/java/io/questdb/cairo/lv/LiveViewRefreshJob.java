@@ -7701,15 +7701,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * read). The retry would re-drain and double-advance them; rebuild from the
      * applied base so it starts clean. Returns {@code null} on success/re-arm, else
      * the rebuild error.
+     * <p>
+     * The two states recover differently, and only one of them repairs anything: the ACTIVE
+     * branch recomputes the view and rewrites the durable output, while the SEEDING branch
+     * only re-arms the next sweep turn. {@link #handleRefreshFailure} charges the flush-retry
+     * budget for the re-arm precisely because it is a retry rather than a repair, so a seed
+     * fault that never clears invalidates instead of sweeping forever.
      */
     private Throwable rebuildWindowStateAfterMidDrainFailure(LiveViewInstance instance) {
         if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
             // Mid-seed: re-arm the sweep resume, which rebuilds from the surviving
             // timeline (or re-sweeps from 0 behind the skip-write floor). Idempotent.
             // Deliberately KEEP the pinned base snapshot (do not freeSeedBaseReader):
-            // the fault is transient (map/staging OOM, bad read), the snapshot is intact,
+            // a transient fault (map/staging OOM, bad read) leaves the snapshot intact,
             // and resuming the sealed data offset against the SAME snapshot stays sound. A
             // fresh snapshot would reintroduce the positional-resume hazard this fix closes.
+            // A fault that outlives the retry budget takes the view invalid, and the
+            // invalidation frees the snapshot with the rest of the runtime state.
             instance.resetSeedResumeAttempted();
             LOG.info().$("live view mid-seed refresh failure, sweep will resume [view=")
                     .$(instance.getDefinition().getViewName()).I$();
@@ -9308,26 +9316,44 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (windowStateDirty
                 && !wasMetadataDrift
                 && !(t instanceof CairoException dce && dce.isTableDoesNotExist())) {
+            // Which of the two recoveries below ran decides whether this cycle still owes the
+            // budget a failure. Read the state before the call, which only re-arms or replays and
+            // never flips it, so the decision and the recovery agree on the same view.
+            final boolean seeding = instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING;
             Throwable rebuildErr = rebuildWindowStateAfterMidDrainFailure(instance);
-            if (rebuildErr == null) {
+            if (rebuildErr == null && !seeding) {
+                // The ACTIVE recovery recomputed the window state from the applied base and
+                // rewrote the durable output to match, so this cycle produced the right answer by
+                // a slower route and already recorded a refresh success. Nothing left to charge.
                 return null;
             }
-            // The rebuild replay itself failed, so the runtime is still wiped or
-            // half-advanced. Carry the debt onto the instance: this turn's field is about
-            // to go out of scope and the next turn's entry would read a clean slate,
-            // which is what lets a drain start over durable output with cold accumulators.
-            instance.setWindowStateDirty(true);
-            // The rebuild replay itself failed; account for THAT error below.
-            t = rebuildErr;
-            if (t instanceof CairoException rebuildCancelled && rebuildCancelled.isCancellation()) {
-                // Re-test after the reassignment. The replay consults the same breaker, so
-                // a shutdown or a DROP that arrived mid-rebuild surfaces here rather than at
-                // the guard above - and counting it toward the flush-retry budget is exactly
-                // what that guard exists to prevent.
-                LOG.info().$("live view refresh cancelled during mid-drain rebuild [view=")
-                        .$(instance.getDefinition().getViewName()).I$();
-                return null;
+            if (rebuildErr != null) {
+                // The rebuild replay itself failed, so the runtime is still wiped or
+                // half-advanced. Carry the debt onto the instance: this turn's field is about
+                // to go out of scope and the next turn's entry would read a clean slate,
+                // which is what lets a drain start over durable output with cold accumulators.
+                instance.setWindowStateDirty(true);
+                // The rebuild replay itself failed; account for THAT error below.
+                t = rebuildErr;
+                if (t instanceof CairoException rebuildCancelled && rebuildCancelled.isCancellation()) {
+                    // Re-test after the reassignment. The replay consults the same breaker, so
+                    // a shutdown or a DROP that arrived mid-rebuild surfaces here rather than at
+                    // the guard above - and counting it toward the flush-retry budget is exactly
+                    // what that guard exists to prevent.
+                    LOG.info().$("live view refresh cancelled during mid-drain rebuild [view=")
+                            .$(instance.getDefinition().getViewName()).I$();
+                    return null;
+                }
             }
+            // A SEEDING view falls through to the budget below. Its recovery only re-arms the
+            // sweep resume: it recomputes nothing, commits nothing, and leaves the sweep facing
+            // the very row it faulted on, so it is a retry rather than a repair. Returning here
+            // would leave a permanent seed fault - a row the LV writer refuses, a base column that
+            // no longer reads, an always-throwing projection - re-faulting every cycle forever
+            // with neither budget armed: the view pinned at 'seeding' with no invalidation reason,
+            // and refreshInstance reporting work on every call so the worker never backs off. A
+            // transient fault keeps its retries, because the sweep turn that finally succeeds
+            // calls recordRefreshSuccess, which zeroes the streak the budget measures.
         }
         long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         instance.recordRefreshFailure(nowUs);
