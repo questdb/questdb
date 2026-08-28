@@ -534,6 +534,9 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_generateIndexMe
     row_id_column: jint,
     first_cover_column: jint,
     payload_kind: jint,
+    // Postings per row group, or null under a payload kind whose parquet row
+    // count already IS the posting count.
+    logical_row_counts_ptr: *const i64,
 ) -> *mut IndexMetaBuiltFile {
     ffi_guard(&mut env, "generateIndexMetadata", |env| {
         check_not_null!(env, writer_ptr, "StreamingParquetWriter");
@@ -648,6 +651,13 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_generateIndexMe
         // SAFETY: the pointer comes from `Box::into_raw` in
         // `createStreamingParquetWriter`; single-threaded JNI access guarantees
         // no aliasing, and generation only reads the finished writer.
+        // Null means "the parquet row count is already the posting count",
+        // which is every arm N file.
+        let logical_row_counts: Vec<i64> = if logical_row_counts_ptr.is_null() {
+            Vec::new()
+        } else {
+            unsafe { copy_unaligned(logical_row_counts_ptr, count as usize) }
+        };
         let writer = unsafe { &*writer_ptr };
         match writer.generate_index_metadata(
             &first_keys,
@@ -660,6 +670,7 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_generateIndexMe
             row_id_column,
             first_cover_column as u32,
             payload_kind as u32,
+            &logical_row_counts,
         ) {
             Ok(data) => Box::into_raw(Box::new(IndexMetaBuiltFile { data })),
             Err(mut err) => {
@@ -843,8 +854,8 @@ mod tests {
         assert_eq!(caught.unwrap(), 42);
     }
 
-    /// A guard on twelve of thirteen entry points is a guard on none of them:
-    /// the thirteenth is the one a corrupt file reaches. Reading the source is the
+    /// A guard on thirteen of fourteen entry points is a guard on none of them:
+    /// the fourteenth is the one a corrupt file reaches. Reading the source is the
     /// only way to assert the property over every entry point at once, and it
     /// costs nothing at runtime. The count is asserted too, so a new entry
     /// point has to come past this test.
@@ -871,6 +882,9 @@ mod tests {
             );
             checked += 1;
         }
-        assert_eq!(checked, 13, "entry point count changed");
+        // 14 since setRowIdBlobColumn was added for the covering index's
+        // packed-payload arm. The count is deliberately hard-coded: it is what
+        // forces a new entry point to come past this test.
+        assert_eq!(checked, 14, "entry point count changed");
     }
 }

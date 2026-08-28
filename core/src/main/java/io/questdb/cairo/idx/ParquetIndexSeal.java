@@ -826,7 +826,11 @@ public final class ParquetIndexSeal {
                     KEY_ID_COLUMN,
                     ROW_ID_COLUMN,
                     FIRST_COVER_COLUMN,
-                    IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING
+                    IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING,
+                    // Arm N: one parquet row per posting, so the footer's row
+                    // count already IS the posting count and there is nothing
+                    // to override.
+                    0
             );
 
             final long dataPtr = IndexMetaFileWriter.resultDataPtr(resultPtr);

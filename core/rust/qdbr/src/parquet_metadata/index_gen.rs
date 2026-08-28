@@ -98,8 +98,22 @@ pub fn generate_index_metadata<W: Write>(
     row_id_column: i32,
     first_cover_column: u32,
     payload_kind: u32,
+    logical_row_counts: &[i64],
 ) -> ParquetResult<Vec<u8>> {
     let row_groups = written.row_groups();
+    // Under a payload kind that stores a whole row group's postings as ONE
+    // parquet row, the parquet metadata's row count is 1 and says nothing about
+    // how many postings the group holds. The _im must record the POSTING count,
+    // because that is what a reader iterates. So the logical counts are an
+    // INPUT here rather than something read back off the footer.
+    if !logical_row_counts.is_empty() && logical_row_counts.len() != row_groups.len() {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "index metadata has {} logical row counts but {} row groups",
+            logical_row_counts.len(),
+            row_groups.len()
+        ));
+    }
     if !key_dirs.is_empty() && key_dirs.len() != row_groups.len() {
         return Err(fmt_err!(
             InvalidLayout,
@@ -175,7 +189,10 @@ pub fn generate_index_metadata<W: Write>(
         // `_im` has no bloom filter section -- its extra sections are the key
         // directory and the data row-group boundaries -- so no bitset is
         // resolved here.
-        let block = build_row_group_block(row_group, i, &NoBloomFilterSource)?;
+        let mut block = build_row_group_block(row_group, i, &NoBloomFilterSource)?;
+        if !logical_row_counts.is_empty() {
+            block.set_num_rows(logical_row_counts[i].max(0) as u64);
+        }
         let key_dir: &[u32] = key_dirs.get(i).map(|d| d.as_slice()).unwrap_or(&[]);
         writer.add_row_group(first_keys[i], row_id_mins[i], row_id_maxs[i], key_dir, block);
     }
@@ -393,6 +410,7 @@ mod tests {
             1,
             2,
             0,
+            &[],
         )
         .unwrap();
 
@@ -470,6 +488,7 @@ mod tests {
             1,
             2,
             0,
+            &[],
         )
         .unwrap_err();
 

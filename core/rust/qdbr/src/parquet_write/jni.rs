@@ -1138,6 +1138,7 @@ impl StreamingParquetWriter {
         row_id_column: i32,
         first_cover_column: u32,
         payload_kind: u32,
+        logical_row_counts: &[i64],
     ) -> ParquetResult<Vec<u8>> {
         crate::parquet_metadata::index_gen::generate_index_metadata(
             &self.chunked_writer,
@@ -1152,6 +1153,7 @@ impl StreamingParquetWriter {
             row_id_column,
             first_cover_column,
             payload_kind,
+            logical_row_counts,
         )
     }
 }

@@ -188,7 +188,16 @@ public class IndexMetaFileWriter {
             int keyIdColumn,
             int rowIdColumn,
             int firstCoverColumn,
-            int payloadKind
+            int payloadKind,
+            /*
+             * Postings per row group, or 0 when the parquet row count already IS
+             * the posting count -- which is every arm N file. Under a payload
+             * kind that stores a whole group's postings as ONE parquet row, the
+             * footer says 1 and the _im must still record what a reader
+             * iterates, so the logical counts cannot be read back and have to be
+             * supplied.
+             */
+            long logicalRowCountsPtr
     ) throws CairoException;
 
     public static native long resultDataLen(long resultPtr);
