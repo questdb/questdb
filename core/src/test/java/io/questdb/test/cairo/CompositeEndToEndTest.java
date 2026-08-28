@@ -587,7 +587,7 @@ public class CompositeEndToEndTest extends AbstractCairoTest {
      * {@code testCheckpointRestoreIndexNonPartitioned}) to actually reach the guarded code path.
      */
     @Test
-    public void testCheckpointRestoreRefusesRoutedCompositeTableWithIndex() throws Exception {
+    public void testCheckpointRestoreRoutedCompositeTableWithIndexRoundTrips() throws Exception {
         final String snapshotId = "00000000-0000-0000-0000-000000000000";
         final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
 
@@ -606,11 +606,14 @@ public class CompositeEndToEndTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
         try {
             engine.checkpointRecover();
-            Assert.fail("expected checkpoint restore of a routed composite table with an indexed column to be refused");
-        } catch (CairoException e) {
-            TestUtils.assertContains(
-                    e.getFlyweightMessage(),
-                    "composite partitioning does not yet support checkpoint/snapshot restore of an indexed column");
+            // NO LONGER REFUSED. The rebuild resolves each partition record's own CELL directory now
+            // (TableSnapshotRestore.CellSegmentResolver), so the restore completes and the data must
+            // round-trip. See CompositeCheckpointRestoreGapTest for the dedicated coverage, including
+            // the indexed read that exercises the rebuilt index.
+            sink.clear();
+            printSql("select ts, exch, px from c order by ts");
+            TestUtils.assertContains(sink, "2020-01-01T00:00:00.000000Z");
+            TestUtils.assertContains(sink, "2020-01-02T00:00:00.000000Z");
         } finally {
             engine.checkpointRelease();
             engine.releaseInactive();

@@ -63,6 +63,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -106,6 +107,7 @@ public class TableSnapshotRestore implements QuietCloseable {
     // removePartitionDirsNotAttached (C2: day-dir cleanup must ask "is this day live at all", not a
     // cellKey-0-only nameTxn match, once the table root holds bare day-dir CONTAINERS rather than real
     // leaf partitions) and by the residual column-index restore guard (both below).
+    private final CellSegmentResolver cellSegmentResolver = new CellSegmentResolver();
     private boolean isRoutedComposite;
     private MemoryCMARW memFile = Vm.getCMARWInstance();
     private Path partitionCleanPath;
@@ -157,6 +159,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         abortAndDrainParallelTasks();
         futures.clear();
         executor.shutdownNow();
+        cellSegmentResolver.close();
         tableMetadata = Misc.free(tableMetadata);
         txWriter = Misc.free(txWriter);
         columnVersionReader = Misc.free(columnVersionReader);
@@ -478,27 +481,14 @@ public class TableSnapshotRestore implements QuietCloseable {
             // processParquetPartition builds its target with the cell-less setPathForNativePartition, so
             // it would look for <day>.<txn>/data.parquet while the file lives at <day>/<cell>.<txn>/.
             // Refuse rather than restore a composite table's parquet cells through a cell-blind path.
-            if (isRoutedComposite) {
-                for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
-                    if (txWriter.isPartitionParquet(i)) {
-                        throw CairoException.critical(0)
-                                .put("composite partitioning does not yet support checkpoint/snapshot restore of a parquet partition [table=")
-                                .put(tablePath.trimTo(pathTableLen)).put(']');
-                    }
-                }
-            }
-
-            if (isRoutedComposite && rebuildPartitionColumnIndexes) {
-                for (int i = 0, n = tableMetadata.getColumnCount(); i < n; i++) {
-                    if (tableMetadata.isColumnIndexed(i)) {
-                        throw CairoException.critical(0)
-                                .put("composite partitioning does not yet support checkpoint/snapshot restore of an indexed column [table=")
-                                .put(tablePath.trimTo(pathTableLen))
-                                .put(", column=").put(tableMetadata.getColumnName(i))
-                                .put(']');
-                    }
-                }
-            }
+            // BOTH REFUSALS LIFTED. They existed because the per-partition restore steps resolved
+            // their directory with the bare, cell-blind 5-arg setPathForNativePartition -- the parquet
+            // step looked for <day>.<txn>/data.parquet while the file lives at <day>/<segment>.<txn>/.
+            // The path change alone was NOT enough: the steps are dispatched per attached-partition
+            // RECORD, and a record could not be mapped to its directory, because CONVERT stamps one
+            // name-txn across every cell of a day so the suffix cannot tell E0.5 from E1.5. Only the
+            // SEGMENT identifies it, and producing that needs the cell registry plus a reader per
+            // dimension -- which cellSegmentResolver now stands up directly from the restored files.
 
             if (columnVersionReader == null) {
                 columnVersionReader = new ColumnVersionReader();
@@ -506,6 +496,20 @@ public class TableSnapshotRestore implements QuietCloseable {
             tablePath.trimTo(pathTableLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
             columnVersionReader.ofRO(configuration.getFilesFacade(), tablePath.$());
             columnVersionReader.readUnsafe();
+
+            if (isRoutedComposite && (rebuildPartitionColumnIndexes || hasParquetPartition())) {
+                // Stand up the cell registry + a reader per dimension from the RESTORED files, so a
+                // partition record's cellKey can be turned into the segment that names its directory.
+                //
+                // Only when a cell path is actually needed -- the index rebuild or a parquet partition.
+                // A composite table with neither restores without touching per-cell paths at all, and
+                // opening these readers for it is pure risk: it is what surfaced the slot-base bug
+                // below, on tables that never needed the resolver.
+                //
+                // AFTER columnVersionReader is open -- an IDENTITY dimension's symbol map is named with
+                // its source column's name-txn, which comes from there.
+                cellSegmentResolver.of(tablePath.trimTo(pathTableLen), tableMetadata, txWriter, columnVersionReader);
+            }
 
             // Validate restored parquet partitions and ensure each has a _pm
             // sidecar that resolves a footer at the committed parquet size:
@@ -568,6 +572,9 @@ public class TableSnapshotRestore implements QuietCloseable {
             throw th;
         } finally {
             futures.clear();
+            // Per TABLE: the resolver holds a symbol reader per dimension plus the registry, all
+            // native-backed, and is re-opened for the next table.
+            cellSegmentResolver.close();
             tablePath.trimTo(pathTableLen);
         }
     }
@@ -585,6 +592,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         // would be a use-after-free, same as in close().
         abortAndDrainParallelTasks();
         futures.clear();
+        cellSegmentResolver.close();
         tableMetadata = Misc.free(tableMetadata);
         txWriter = Misc.free(txWriter);
         columnVersionReader = Misc.free(columnVersionReader);
@@ -906,7 +914,10 @@ public class TableSnapshotRestore implements QuietCloseable {
                             parquetFileSize,
                             partitionBy,
                             timestampType,
-                            doRebuild
+                            doRebuild,
+                            // -1 on a plain table: setPathForPartitionRecord then builds the day path
+                            // exactly as before.
+                            isRoutedComposite ? txWriter.getPartitionCellKey(i) : -1
                     );
                 } finally {
                     // POSTING seal() retains Path thread-locals; clear per partition.
@@ -1130,7 +1141,8 @@ public class TableSnapshotRestore implements QuietCloseable {
                             partitionRowCount,
                             columnTop,
                             partitionBy,
-                            timestampType
+                            timestampType,
+                            isRoutedComposite ? txWriter.getPartitionCellKey(partitionIndex) : -1
                     );
                 } finally {
                     // POSTING seal() retains Path thread-locals; clear per column.
@@ -1141,6 +1153,175 @@ public class TableSnapshotRestore implements QuietCloseable {
             path.close();
             Path.clearThreadLocals();
         }
+    }
+
+    /**
+     * Renders a composite cell's on-disk SEGMENT name from its cellKey, so a restore can map an
+     * attached-partition RECORD to the DIRECTORY it describes.
+     * <p>
+     * That mapping is what previously blocked cell-aware restore. Directories are named
+     * {@code <segment>.<nameTxn>} and CONVERT stamps one name-txn across every cell of a day, so the
+     * suffix cannot tell {@code E0.5} from {@code E1.5}; only the segment does. Producing it needs the
+     * cell registry plus a reader per dimension -- the interner stack {@link TableReader} builds at
+     * open -- which this stands up directly from the restored files instead.
+     * <p>
+     * Opened lazily and only for a routed composite table. Everything here is READ-ONLY and owned by
+     * this object, so {@link #close()} frees it; contrast {@code CompositeDictionaries#cellRegistry()}
+     * on a live reader, which is non-owning.
+     */
+    private class CellSegmentResolver implements QuietCloseable {
+        private final ObjList<SymbolMapReader> dimReaders = new ObjList<>();
+        private CellRegistry registry;
+        private SymbolMapReader registryReader;
+        private CompositeInternerLayout layout;
+        private int[] tuple;
+
+        @Override
+        public void close() {
+            registry = Misc.free(registry);
+            registryReader = Misc.freeIfCloseable(registryReader);
+            for (int i = 0, n = dimReaders.size(); i < n; i++) {
+                Misc.freeIfCloseable(dimReaders.getQuick(i));
+            }
+            dimReaders.clear();
+        }
+
+        /**
+         * @return false when the table is not a routed composite one, in which case nothing is opened
+         */
+        boolean of(Path tableDir, TableReaderMetadata metadata, TxReader txReader, ColumnVersionReader cvReader) {
+            close();
+            final PartitionSpec spec = metadata.getPartitionSpec();
+            final int dimCount = spec.getDimensionCount();
+            if (dimCount <= 0) {
+                return false;
+            }
+            layout = CompositeInternerLayout.of(spec);
+            tuple = new int[dimCount];
+
+            // Interner slots sit AFTER the real symbol columns: the registry is the LAST symbol
+            // column and the dedicated dicts immediately precede it. Same derivation
+            // rebuildCompositeInternerFiles uses; layout.registrySlot()/dedicatedDictSlot() are dense
+            // within the interner block, so they need this base added. Passing the raw slot tripped
+            // SymbolMapReaderImpl's "charSize > 0 || symbolCount == 0" assert on an EXPRESSION
+            // dimension -- a count read from the wrong column against an empty char file.
+            final int registrySlot = txReader.getSymbolColumnCount() - 1;
+            final int dedicatedBase = registrySlot - layout.dedicatedCount();
+            registryReader = new SymbolMapReaderImpl(
+                    configuration,
+                    tableDir,
+                    CompositeInternerLayout.REGISTRY_NAME,
+                    CompositeInternerLayout.REGISTRY_TXN,
+                    txReader.getSymbolValueCount(registrySlot)
+            );
+            registry = new CellRegistry(registryReader);
+
+            for (int i = 0; i < dimCount; i++) {
+                final PartitionDimension dim = spec.getDimension(i);
+                if (dim.getKind() == PartitionDimension.KIND_HASH) {
+                    // A bucket cannot be un-hashed and does not need to be: the ordinal IS the name.
+                    dimReaders.add(null);
+                } else if (layout.needsDedicatedDict(i)) {
+                    dimReaders.add(new SymbolMapReaderImpl(
+                            configuration,
+                            tableDir,
+                            layout.dictName(i),
+                            layout.dictColumnNameTxn(i),
+                            txReader.getSymbolValueCount(dedicatedBase + layout.dedicatedDictSlot(i))
+                    ));
+                } else {
+                    final int denseIndex = denseIndexOfDimensionSource(metadata, dim);
+                    dimReaders.add(new SymbolMapReaderImpl(
+                            configuration,
+                            tableDir,
+                            metadata.getColumnName(denseIndex),
+                            cvReader.getDefaultColumnNameTxn(metadata.getWriterIndex(denseIndex)),
+                            txReader.getSymbolValueCount(metadata.getDenseSymbolIndex(denseIndex))
+                    ));
+                }
+            }
+            return true;
+        }
+
+        /**
+         * Byte-identical to {@link TableReader#renderCellSegment}, which is what named the directory.
+         */
+        void render(CharSink<?> sink, TableReaderMetadata metadata, int cellKey) {
+            final PartitionSpec spec = metadata.getPartitionSpec();
+            registry.getTuple(cellKey, tuple);
+            final byte namingMode = spec.getNamingMode();
+            for (int i = 0, n = spec.getDimensionCount(); i < n; i++) {
+                if (i > 0) {
+                    sink.put('/');
+                }
+                final PartitionDimension dim = spec.getDimension(i);
+                if (namingMode == PartitionSpec.MODE_HIVE) {
+                    if (dim.getKind() == PartitionDimension.KIND_EXPRESSION) {
+                        sink.put(dim.getAlias()).put('=');
+                    } else {
+                        sink.put(metadata.getColumnName(denseIndexOfDimensionSource(metadata, dim))).put('=');
+                    }
+                }
+                if (dim.getKind() == PartitionDimension.KIND_HASH) {
+                    sink.put(tuple[i]);
+                } else {
+                    TableUtils.putCellSegmentPathSafe(sink, tuple[i], dimReaders.getQuick(i).valueOf(tuple[i]));
+                }
+            }
+        }
+    }
+
+    /**
+     * Positions {@code path} at the ON-DISK directory of one attached-partition record.
+     * <p>
+     * Plain: {@code <day>.<nameTxn>}. Composite: {@code <day>/<segment>.<nameTxn>}, where the segment
+     * comes from the record's own cellKey via {@link CellSegmentResolver} -- the day directory itself
+     * carries no name-txn and holds only zero-byte phantoms.
+     *
+     * @return the path length of the partition directory
+     */
+    private int setPathForPartitionRecord(
+            Path path,
+            String tablePathStr,
+            int pathTableLen,
+            int timestampType,
+            int partitionBy,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            int cellKey
+    ) {
+        path.of(tablePathStr).trimTo(pathTableLen);
+        if (cellKey < 0) {
+            TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            return path.size();
+        }
+        final StringSink segmentSink = new StringSink();
+        synchronized (cellSegmentResolver) {
+            cellSegmentResolver.render(segmentSink, tableMetadata, cellKey);
+        }
+        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp,
+                partitionNameTxn, segmentSink);
+        return path.size();
+    }
+
+    private boolean hasParquetPartition() {
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.isPartitionParquet(i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int denseIndexOfDimensionSource(TableReaderMetadata metadata, PartitionDimension dim) {
+        final int writerIndex = dim.getColumnIndex();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getWriterIndex(i) == writerIndex) {
+                return i;
+            }
+        }
+        throw CairoException.critical(0)
+                .put("composite dimension source column not found [writerIndex=").put(writerIndex).put(']');
     }
 
     private void rebuildBitmapIndexForNativePartitionColumn(
@@ -1156,14 +1337,12 @@ public class TableSnapshotRestore implements QuietCloseable {
             long partitionRowCount,
             long columnTop,
             int partitionBy,
-            int timestampType
+            int timestampType,
+            int cellKey
     ) {
-        // Reset the reused path to the table root.
-        path.of(tablePathStr).trimTo(pathTableLen);
-
-        // Set path to partition directory
-        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-        int partitionPathLen = path.size();
+        // The record's own directory: <day>.<txn> plain, <day>/<segment>.<txn> composite.
+        int partitionPathLen = setPathForPartitionRecord(path, tablePathStr, pathTableLen, timestampType,
+                partitionBy, partitionTimestamp, partitionNameTxn, cellKey);
 
         // Check if partition exists
         if (!ff.exists(path.$())) {
@@ -1251,14 +1430,13 @@ public class TableSnapshotRestore implements QuietCloseable {
             long parquetFileSize,
             int partitionBy,
             int timestampType,
-            boolean rebuildIndexes
+            boolean rebuildIndexes,
+            int cellKey
     ) {
-        // Reset the reused path to the table root.
-        path.of(tablePathStr).trimTo(pathTableLen);
-
-        // Set path to partition dir
-        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-        int partitionDirLen = path.size();
+        // The record's own directory -- a composite table's data.parquet lives at
+        // <day>/<segment>.<txn>/, not <day>.<txn>/.
+        int partitionDirLen = setPathForPartitionRecord(path, tablePathStr, pathTableLen, timestampType,
+                partitionBy, partitionTimestamp, partitionNameTxn, cellKey);
 
         // Validate data.parquet by size before touching _pm: regeneration reads
         // it at the committed size, so an undersized file must fail first. Runs
@@ -1309,10 +1487,10 @@ public class TableSnapshotRestore implements QuietCloseable {
                 // its footer state, skipping a redundant resolveFooter + CRC.
                 decoder.of(metaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
 
-                // Set path to native partition directory (where index files go)
-                path.trimTo(pathTableLen);
-                TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-                int partitionPathLen = path.size();
+                // Index files go in the partition directory resolved above -- the CELL directory on a
+                // composite table, so re-resolve it the same way rather than rebuilding a day path.
+                int partitionPathLen = setPathForPartitionRecord(path, tablePathStr, pathTableLen,
+                        timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellKey);
 
                 rebuildParquetPartitionIndexes(
                         ff,

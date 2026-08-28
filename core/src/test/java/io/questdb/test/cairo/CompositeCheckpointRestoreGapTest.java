@@ -109,20 +109,14 @@ public class CompositeCheckpointRestoreGapTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id-after");
             try {
                 engine.checkpointRecover();
-                org.junit.Assert.fail("restore of a composite table with an indexed column is expected to be"
-                        + " refused; if it now succeeds, replace this with the round-trip assertions kept"
-                        + " below");
-            } catch (Exception e) {
-                TestUtils.assertContains(e.getMessage(),
-                        "composite partitioning does not yet support checkpoint/snapshot restore of an indexed column");
+                TestUtils.assertEquals("full scan must round-trip", scanBefore,
+                        capture("SELECT ts, exch, sym, px FROM c ORDER BY ts"));
+                // The INDEXED read is what exercises the rebuilt index.
+                TestUtils.assertEquals("indexed read must round-trip", indexedBefore,
+                        capture("SELECT ts, sym FROM c WHERE sym = 'S0' ORDER BY ts"));
             } finally {
                 engine.checkpointRelease();
             }
-            // WHEN FIXED: assert the captured surfaces round-trip --
-            //   TestUtils.assertEquals(scanBefore, capture("SELECT ts, exch, sym, px FROM c ORDER BY ts"));
-            //   TestUtils.assertEquals(indexedBefore, capture("SELECT ts, sym FROM c WHERE sym = 'S0' ORDER BY ts"));
-            org.junit.Assert.assertNotNull(scanBefore);
-            org.junit.Assert.assertNotNull(indexedBefore);
         });
     }
 
@@ -155,20 +149,59 @@ public class CompositeCheckpointRestoreGapTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id-after");
             try {
                 engine.checkpointRecover();
-                org.junit.Assert.fail("restore of a composite table with a parquet partition is expected to"
-                        + " be refused; if it now succeeds, replace this with the round-trip assertions"
-                        + " kept below");
-            } catch (Exception e) {
-                TestUtils.assertContains(e.getMessage(),
-                        "composite partitioning does not yet support checkpoint/snapshot restore of a parquet partition");
+                TestUtils.assertEquals("full scan must round-trip", scanBefore,
+                        capture("SELECT ts, exch, px FROM c ORDER BY ts"));
+                // The PARQUET day specifically -- the partition whose path had to resolve per cell.
+                TestUtils.assertEquals("the parquet day must round-trip", day1Before,
+                        capture("SELECT ts, exch, px FROM c WHERE ts < '2023-01-02' ORDER BY ts"));
             } finally {
                 engine.checkpointRelease();
             }
-            // WHEN FIXED: assert the captured surfaces round-trip --
-            //   TestUtils.assertEquals(scanBefore, capture("SELECT ts, exch, px FROM c ORDER BY ts"));
-            //   TestUtils.assertEquals(day1Before, capture("... WHERE ts < '2023-01-02' ..."));
-            org.junit.Assert.assertNotNull(scanBefore);
-            org.junit.Assert.assertNotNull(day1Before);
+        });
+    }
+
+    /**
+     * An EXPRESSION dimension AND an indexed column, so the restore actually needs the resolver on the
+     * DEDICATED-DICT branch.
+     * <p>
+     * Without this the branch is untested: an IDENTITY dimension resolves through its source column's
+     * symbol map (the other branch), and a table with an expression dimension but no index or parquet
+     * never opens the resolver at all now that it is lazy. It is also the branch that was WRONG -- the
+     * dedicated dict's symbol count was read at the raw layout slot instead of
+     * {@code dedicatedBase + slot}, tripping SymbolMapReaderImpl's charSize assertion.
+     */
+    @Test(timeout = 120_000)
+    public void testRestoreCompositeWithExpressionDimensionAndIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, "true");
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id-before");
+
+            execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, sym SYMBOL INDEX, px DOUBLE) TIMESTAMP(ts) "
+                    + "PARTITION BY DAY, (upper(exch)) AS venue LAYOUT PLAIN WAL");
+            execute("INSERT INTO c VALUES ('2023-01-01T01:00:00.000000Z','e0','S0',1.0),"
+                    + "('2023-01-01T02:00:00.000000Z','E0','S1',2.0),"
+                    + "('2023-01-01T03:00:00.000000Z','e1','S0',3.0),"
+                    + "('2023-01-02T01:00:00.000000Z','e0','S1',4.0)");
+            drainWalQueue();
+
+            final String scanBefore = capture("SELECT ts, exch, sym, px FROM c ORDER BY ts");
+            final String indexedBefore = capture("SELECT ts, sym FROM c WHERE sym = 'S0' ORDER BY ts");
+
+            execute("CHECKPOINT CREATE");
+            execute("INSERT INTO c VALUES ('2023-01-03T01:00:00.000000Z','e9','S9',9.0)");
+            drainWalQueue();
+
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id-after");
+            try {
+                engine.checkpointRecover();
+                TestUtils.assertEquals("full scan must round-trip", scanBefore,
+                        capture("SELECT ts, exch, sym, px FROM c ORDER BY ts"));
+                TestUtils.assertEquals("indexed read must round-trip", indexedBefore,
+                        capture("SELECT ts, sym FROM c WHERE sym = 'S0' ORDER BY ts"));
+            } finally {
+                engine.checkpointRelease();
+            }
         });
     }
 
