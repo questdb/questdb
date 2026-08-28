@@ -357,8 +357,17 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     final long packedAddr = packedDataAddr(rg);
                     final int bitWidth = packedBitWidth(rg);
                     final long base = packedBase(rg);
-                    final long from = packedSeekFirstAtLeast(packedAddr, rowLo, rowHi, bitWidth, base, minValue);
-                    final long to = packedSeekFirstAbove(packedAddr, from, rowHi, bitWidth, base, maxValue);
+                    // See the forward reader: a window covering the whole
+                    // group needs no search.
+                    final long from;
+                    final long to;
+                    if (isWholeGroupInRange(rg, minValue, maxValue)) {
+                        from = rowLo;
+                        to = rowHi;
+                    } else {
+                        from = packedSeekFirstAtLeast(packedAddr, rowLo, rowHi, bitWidth, base, minValue);
+                        to = packedSeekFirstAbove(packedAddr, from, rowHi, bitWidth, base, maxValue);
+                    }
                     lastTouchedRowGroup = rg;
                     if (from >= to) {
                         rg--;
@@ -397,8 +406,13 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                         // The run ascends even though this cursor descends, so
                         // the window is a sub-range that can be found rather
                         // than filtered for.
-                        rowFloor = seekFirstAtLeast(rowIdPtr, rowLo, rowHi, minValue);
-                        rowInGroup = seekFirstAbove(rowIdPtr, rowFloor, rowHi, maxValue);
+                        if (isWholeGroupInRange(rg, minValue, maxValue)) {
+                            rowFloor = rowLo;
+                            rowInGroup = rowHi;
+                        } else {
+                            rowFloor = seekFirstAtLeast(rowIdPtr, rowLo, rowHi, minValue);
+                            rowInGroup = seekFirstAbove(rowIdPtr, rowFloor, rowHi, maxValue);
+                        }
                         if (rowInGroup <= rowFloor) {
                             // The window excludes this group's run entirely.
                             rg--;

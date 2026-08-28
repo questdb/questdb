@@ -441,8 +441,20 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     final long packedAddr = packedDataAddr(rg);
                     final int bitWidth = packedBitWidth(rg);
                     final long base = packedBase(rg);
-                    final long from = packedSeekFirstAtLeast(packedAddr, rowLo, rowHi, bitWidth, base, minValue);
-                    final long to = packedSeekFirstAbove(packedAddr, from, rowHi, bitWidth, base, maxValue);
+                    // A window that already contains the whole group needs no
+                    // search: every row of the key's run is inside it. The seeks
+                    // are two binary searches per key, and an unbounded scan --
+                    // getCursor(key, 0, MAX) -- was spending ~10% of its time in
+                    // them proving what the zone map already said.
+                    final long from;
+                    final long to;
+                    if (isWholeGroupInRange(rg, minValue, maxValue)) {
+                        from = rowLo;
+                        to = rowHi;
+                    } else {
+                        from = packedSeekFirstAtLeast(packedAddr, rowLo, rowHi, bitWidth, base, minValue);
+                        to = packedSeekFirstAbove(packedAddr, from, rowHi, bitWidth, base, maxValue);
+                    }
                     lastTouchedRowGroup = rg;
                     if (from >= to) {
                         // The window excludes this key's run entirely, and
@@ -482,8 +494,15 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                         // what made a windowed read cost the same as an
                         // unwindowed one, where the native chain seeks into its
                         // stride index and reads only what the window asks for.
-                        rowInGroup = seekFirstAtLeast(rowIdPtr, rowLo, rowHi, minValue);
-                        groupRows = seekFirstAbove(rowIdPtr, rowInGroup, rowHi, maxValue);
+                        if (isWholeGroupInRange(rg, minValue, maxValue)) {
+                            // See the packed path: no search needed when the
+                            // window already covers the group.
+                            rowInGroup = rowLo;
+                            groupRows = rowHi;
+                        } else {
+                            rowInGroup = seekFirstAtLeast(rowIdPtr, rowLo, rowHi, minValue);
+                            groupRows = seekFirstAbove(rowIdPtr, rowInGroup, rowHi, maxValue);
+                        }
                         windowNarrowed = true;
                         lastTouchedRowGroup = rg;
                         if (rowInGroup >= groupRows) {
