@@ -484,21 +484,21 @@ public final class ParquetIndexSeal {
      */
     private static int groupBitWidth(LongList groupRowIdMins, LongList groupRowIdMaxs, int group) {
         final int needed = BitpackUtils.bitsNeeded(groupRowIdMaxs.getQuick(group) - groupRowIdMins.getQuick(group));
-        // Rounded to a byte-aligned width, which COSTS bytes: a 2M-row
-        // partition needs 17 bits and is given 32. It buys decode speed, and
-        // measurably more than the bytes are worth. The AVX2 unpack has
-        // dedicated widen paths at 8, 16 and 32 that load and widen four values
-        // at a time; every other width falls to a per-value shift, and every
-        // scenario in the benchmark ladder happens to need 17.
+        // Natural width. Rounding up to 8/16/32/64 would let the AVX2 unpack use
+        // its dedicated widen paths, and that is worth real throughput -- but it
+        // costs a third of the file, and storage is the priority here.
         //
-        // Measured, forward, against the same native and per-posting controls
-        // in one run (ops/s, packed at 17 bits -> packed byte-aligned):
-        //   16-key point read     2,351 -> 3,107   (1.56x slower than native -> 1.19x)
-        //   16-key range read     3,354 -> 5,019   (2.09x -> 1.39x)
-        //   1M-key scan              29 ->    38   (parity -> 1.29x FASTER)
-        //   200k-key range        4,010 -> 3,674   (the one real loss, 2.27x -> 2.54x)
-        // Byte-aligning wins 10 of the 12 cells and is what removes the
-        // low-cardinality regression outright, so it is not optional.
+        // Measured both ways on the same fixtures, packed arm, controls stable:
+        //   S4 2M postings   aligned 7,829 KB (32 bits)   natural 5,143 KB (21 bits)
+        //   S7 scan          aligned 34.4 ops/s           natural 26.4 (-23%)
+        //   S7 point read    aligned 908 ops/s            natural 908 (unchanged)
+        // So the alignment bought high-cardinality SCANS and nothing else, and
+        // 34% of the index is a steep price for it.
+        //
+        // questdb.idx.packed.align=true restores the aligned widths.
+        if (!Boolean.getBoolean("questdb.idx.packed.align")) {
+            return needed;
+        }
         if (needed <= 8) {
             return 8;
         }
