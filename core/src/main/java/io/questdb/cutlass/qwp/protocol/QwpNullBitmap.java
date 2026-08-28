@@ -65,18 +65,18 @@ public final class QwpNullBitmap {
         // Count 8 bytes at a time
         long addr = address;
         for (int i = 0; i < fullLongs; i++) {
-            count += Long.bitCount(Unsafe.getUnsafe().getLong(addr));
+            count += Long.bitCount(Unsafe.getLong(addr));
             addr += 8;
         }
 
         // Count remaining full bytes
         for (int i = 0; i < tailBytes; i++) {
-            count += Integer.bitCount(Unsafe.getUnsafe().getByte(addr + i) & 0xFF);
+            count += Integer.bitCount(Unsafe.getByte(addr + i) & 0xFF);
         }
 
         // Count remaining bits in last partial byte
         if (remainingBits > 0) {
-            byte b = Unsafe.getUnsafe().getByte(address + fullBytes);
+            byte b = Unsafe.getByte(address + fullBytes);
             int mask = (1 << remainingBits) - 1;
             count += Integer.bitCount((b & mask) & 0xFF);
         }

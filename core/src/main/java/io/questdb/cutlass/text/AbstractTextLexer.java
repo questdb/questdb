@@ -267,7 +267,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
 
     private void growRollBufAndPut(byte c) {
         if (growRollBuf(lineRollBufSize + 1, true)) {
-            Unsafe.getUnsafe().putByte(lineRollBufCur++, c);
+            Unsafe.putByte(lineRollBufCur++, c);
         }
     }
 
@@ -302,7 +302,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         try {
             while (ptr < hi) {
                 if (!eol && !rollBufferUnusable && !useLineRollBuf && !delayedOutQuote && ptr < hi - 7) {
-                    long word = Unsafe.getUnsafe().getLong(ptr);
+                    long word = Unsafe.getLong(ptr);
                     long zeroBytesWord = SwarUtils.markZeroBytes(word ^ MASK_NEW_LINE)
                             | SwarUtils.markZeroBytes(word ^ MASK_CR)
                             | SwarUtils.markZeroBytes(word ^ MASK_QUOTE)
@@ -327,7 +327,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
                     }
                 }
 
-                final byte b = Unsafe.getUnsafe().getByte(ptr++);
+                final byte b = Unsafe.getByte(ptr++);
                 this.ascii &= b > 0;
 
                 if (checkState(ptr, b)) {
@@ -354,7 +354,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         if (lineRollBufCur - lineRollBufPtr == lineRollBufSize) {
             growRollBufAndPut(c);
         } else {
-            Unsafe.getUnsafe().putByte(lineRollBufCur++, c);
+            Unsafe.putByte(lineRollBufCur++, c);
         }
     }
 

@@ -66,8 +66,9 @@ public class ModeBooleanGroupByFunction extends BooleanFunction implements Unary
 
     @Override
     public boolean getBool(Record record) {
-        // summed 1s for true and -1s for false. if 0, tiebreak and say true
-        return record.getLong(0) >= 0;
+        // summed 1s for true and -1s for false. if 0, tiebreak and say true. Read this function's
+        // own accumulator slot (valueIndex); a preceding aggregate shifts it off slot 0.
+        return record.getLong(valueIndex) >= 0;
     }
 
     @Override
@@ -103,7 +104,11 @@ public class ModeBooleanGroupByFunction extends BooleanFunction implements Unary
 
     @Override
     public boolean isThreadSafe() {
-        return true;
+        // Unlike the other mode functions this one keeps no map, so it adds no per-instance state of
+        // its own - but it still reads the arg per row, so it must report the arg's thread-safety.
+        // Hard-coding true here shares a single instance across every parallel GROUP BY worker, which
+        // races whenever the arg is not thread-safe.
+        return UnaryFunction.super.isThreadSafe();
     }
 
     @Override
@@ -118,7 +123,7 @@ public class ModeBooleanGroupByFunction extends BooleanFunction implements Unary
 
     @Override
     public boolean supportsParallelism() {
-        return true;
+        return UnaryFunction.super.supportsParallelism();
     }
 
     @Override

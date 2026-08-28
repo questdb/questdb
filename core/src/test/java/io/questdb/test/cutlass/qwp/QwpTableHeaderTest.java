@@ -106,6 +106,24 @@ public class QwpTableHeaderTest {
     }
 
     @Test
+    public void testColumnCountWithSignBitSet() {
+        long columnCount = 0x8000000001000000L;
+        byte[] buf = encodeTableHeader("test", 0, columnCount);
+
+        long address = copyToDirectMemory(buf);
+        try {
+            QwpTableHeader header = new QwpTableHeader();
+            header.parse(address, buf.length);
+            Assert.fail("Expected exception for unsigned column count exceeding max");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.COLUMN_COUNT_EXCEEDED, e.getErrorCode());
+            Assert.assertTrue(e.getMessage().contains(Long.toUnsignedString(columnCount)));
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testParseMultipleTableHeaders() throws QwpParseException {
         // Create buffer with two consecutive table headers
         byte[] header1 = encodeTableHeader("table1", 100, 5);
@@ -310,6 +328,24 @@ public class QwpTableHeaderTest {
     }
 
     @Test
+    public void testRowCountWithSignBitSet() {
+        long rowCount = 0x8000000080000000L;
+        byte[] buf = encodeTableHeader("test", rowCount, 1);
+
+        long address = copyToDirectMemory(buf);
+        try {
+            QwpTableHeader header = new QwpTableHeader();
+            header.parse(address, buf.length);
+            Assert.fail("Expected exception for unsigned row count exceeding max");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.ROW_COUNT_EXCEEDED, e.getErrorCode());
+            Assert.assertTrue(e.getMessage().contains(Long.toUnsignedString(rowCount)));
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testRowCountZero() throws QwpParseException {
         byte[] buf = encodeTableHeader("test", 0, 5);
 
@@ -454,12 +490,12 @@ public class QwpTableHeaderTest {
     private static long copyToDirectMemory(byte[] buf, int length) {
         long address = Unsafe.malloc(length, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < length; i++) {
-            Unsafe.getUnsafe().putByte(address + i, buf[i]);
+            Unsafe.putByte(address + i, buf[i]);
         }
         return address;
     }
 
-    private byte[] encodeTableHeader(String tableName, long rowCount, int columnCount) {
+    private byte[] encodeTableHeader(String tableName, long rowCount, long columnCount) {
         byte[] nameBytes = tableName.getBytes(StandardCharsets.UTF_8);
         int size = QwpVarint.encodedLength(nameBytes.length) +
                 nameBytes.length +

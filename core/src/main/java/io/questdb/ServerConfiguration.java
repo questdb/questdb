@@ -59,6 +59,8 @@ public interface ServerConfiguration {
 
     CairoConfiguration getCairoConfiguration();
 
+    WorkerPoolConfiguration getExportPoolConfiguration();
+
     FactoryProvider getFactoryProvider();
 
     HttpServerConfiguration getHttpMinServerConfiguration();
@@ -69,9 +71,9 @@ public interface ServerConfiguration {
 
     LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
 
-    WorkerPoolConfiguration getMatViewRefreshPoolConfiguration();
+    WorkerPoolConfiguration getLiveViewRefreshPoolConfiguration();
 
-    WorkerPoolConfiguration getExportPoolConfiguration();
+    WorkerPoolConfiguration getMatViewRefreshPoolConfiguration();
 
     MemoryConfiguration getMemoryConfiguration();
 

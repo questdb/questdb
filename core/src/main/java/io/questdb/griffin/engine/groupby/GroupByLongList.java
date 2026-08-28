@@ -50,6 +50,10 @@ public class GroupByLongList {
     private GroupByAllocator allocator;
     private long ptr;
 
+    public GroupByLongList(int initialCapacity) {
+        this(initialCapacity, 0L);
+    }
+
     public GroupByLongList(int initialCapacity, long noEntryValue) {
         this.initialCapacity = Math.max(initialCapacity, MIN_INITIAL_CAPACITY);
         this.noEntryValue = noEntryValue;
@@ -91,11 +95,7 @@ public class GroupByLongList {
     }
 
     public int capacity() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr) : 0;
-    }
-
-    public long dataPtr() {
-        return ptr + HEADER_SIZE;
+        return ptr != 0 ? Unsafe.getInt(ptr) : 0;
     }
 
     public void checkCapacity(int capacity) {
@@ -103,22 +103,21 @@ public class GroupByLongList {
             throw new IllegalArgumentException("Negative capacity. Integer overflow may be?");
         }
 
-        int l = capacity();
-        if (capacity > l) {
-            int newCapacity = Math.max(l << 1, capacity);
-            final int oldSize = size();
-            final int oldCapacity = capacity();
-
-            long oldPtr = ptr;
-            ptr = allocator.malloc(8L * newCapacity + HEADER_SIZE);
-            zero(ptr, newCapacity);
-            Unsafe.getUnsafe().putInt(ptr, newCapacity);
-            Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, oldSize);
-
-            Vect.memcpy(ptr + HEADER_SIZE, oldPtr + HEADER_SIZE, oldSize * 8L);
-
-            allocator.free(oldPtr, HEADER_SIZE + 8L * oldCapacity);
+        final int oldCapacity = capacity();
+        if (capacity > oldCapacity) {
+            final int newCapacity = Math.max(oldCapacity << 1, capacity);
+            ptr = allocator.realloc(
+                    ptr,
+                    8L * oldCapacity + HEADER_SIZE,
+                    8L * newCapacity + HEADER_SIZE
+            );
+            fillNoEntryValue(ptr + HEADER_SIZE + 8L * oldCapacity, newCapacity - oldCapacity);
+            Unsafe.putInt(ptr, newCapacity);
         }
+    }
+
+    public long dataPtr() {
+        return ptr + HEADER_SIZE;
     }
 
     public long get(long index) {
@@ -135,7 +134,7 @@ public class GroupByLongList {
     public GroupByLongList of(long ptr) {
         if (ptr == 0) {
             this.ptr = allocator.malloc(HEADER_SIZE + 8L * initialCapacity);
-            zero(this.ptr, initialCapacity);
+            fillNoEntryValue(this.ptr + HEADER_SIZE, initialCapacity);
             setCapacity(initialCapacity);
             setSize(0);
         } else {
@@ -244,7 +243,7 @@ public class GroupByLongList {
     }
 
     public int size() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_OFFSET) : 0;
+        return ptr != 0 ? Unsafe.getInt(ptr + SIZE_OFFSET) : 0;
     }
 
     public void sort() {
@@ -256,6 +255,16 @@ public class GroupByLongList {
 
     public void sortAsUnsigned() {
         Vect.sortULongAscInPlace(ptr() + HEADER_SIZE, size());
+    }
+
+    private void fillNoEntryValue(long address, int count) {
+        if (noEntryValue == 0) {
+            Vect.memset(address, 8L * count, 0);
+        } else {
+            for (long p = address, lim = address + 8L * count; p < lim; p += 8L) {
+                Unsafe.putLong(p, noEntryValue);
+            }
+        }
     }
 
     /**
@@ -315,15 +324,15 @@ public class GroupByLongList {
     }
 
     private void setCapacity(int newCapacity) {
-        Unsafe.getUnsafe().putInt(ptr, newCapacity);
+        Unsafe.putInt(ptr, newCapacity);
     }
 
     private void setSize(int newSize) {
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, newSize);
+        Unsafe.putInt(ptr + SIZE_OFFSET, newSize);
     }
 
     private void setValueAt(long index, long value) {
-        Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE + 8L * index, value);
+        Unsafe.putLong(ptr + HEADER_SIZE + 8L * index, value);
     }
 
     private void sort(int left, int right, boolean leftmost) {
@@ -546,17 +555,6 @@ public class GroupByLongList {
     }
 
     private long valueAt(long index) {
-        return Unsafe.getUnsafe().getLong(ptr + HEADER_SIZE + 8L * index);
-    }
-
-    private void zero(long ptr, int cap) {
-        if (noEntryValue == 0) {
-            // Vectorized fast path for zero default value.
-            Vect.memset(ptr + HEADER_SIZE, 8L * cap, 0);
-        } else {
-            for (long p = ptr + HEADER_SIZE, lim = ptr + HEADER_SIZE + 8L * cap; p < lim; p += 8L) {
-                Unsafe.getUnsafe().putLong(p, noEntryValue);
-            }
-        }
+        return Unsafe.getLong(ptr + HEADER_SIZE + 8L * index);
     }
 }

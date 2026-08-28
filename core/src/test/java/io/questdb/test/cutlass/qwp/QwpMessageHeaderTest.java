@@ -157,7 +157,7 @@ public class QwpMessageHeaderTest {
         try {
             byte[] header = createValidHeader(1, FLAG_GORILLA, 10, 5000);
             for (int i = 0; i < header.length; i++) {
-                Unsafe.getUnsafe().putByte(addr + i, header[i]);
+                Unsafe.putByte(addr + i, header[i]);
             }
 
             QwpMessageHeader h = new QwpMessageHeader();
@@ -230,10 +230,10 @@ public class QwpMessageHeaderTest {
     public void testReadMagicFromDirectMemory() {
         long addr = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(addr, (byte) 'Q');
-            Unsafe.getUnsafe().putByte(addr + 1, (byte) 'W');
-            Unsafe.getUnsafe().putByte(addr + 2, (byte) 'P');
-            Unsafe.getUnsafe().putByte(addr + 3, (byte) '1');
+            Unsafe.putByte(addr, (byte) 'Q');
+            Unsafe.putByte(addr + 1, (byte) 'W');
+            Unsafe.putByte(addr + 2, (byte) 'P');
+            Unsafe.putByte(addr + 3, (byte) '1');
 
             int magic = QwpMessageHeader.readMagic(addr);
             Assert.assertEquals(MAGIC_MESSAGE, magic);
@@ -299,7 +299,7 @@ public class QwpMessageHeaderTest {
             Assert.assertEquals(QwpParseException.ErrorCode.UNSUPPORTED_VERSION, e.getErrorCode());
         }
 
-        // Version above MAX_SUPPORTED_VERSION
+        // Version 255 (not the single supported version)
         byte[] header255 = createValidHeader(255, 0, 1, 100);
         try {
             h.parse(header255, 0, header255.length);

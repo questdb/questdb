@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
@@ -54,10 +55,10 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
     private final int joinType;
     private final RecordSink masterSink;
     private final RecordSink slaveKeySink;
-    private final SymbolTranslatingRecord symbolTranslatingRecord;
     private AbstractHashOuterJoinRecordCursor cursor;
     private Map joinKeyMap;
     private RecordChain slaveChain;
+    private SymbolTranslatingRecord symbolTranslatingRecord;
 
     public HashOuterJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -79,7 +80,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
         try {
             this.masterSink = masterSink;
             this.slaveKeySink = slaveKeySink;
-            this.joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
+            this.joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes, false, false);
             this.slaveChain = new RecordChain(
                     slaveFactory.getMetadata(),
                     slaveChainSink,
@@ -150,6 +151,9 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() reopens the join map under the bound per-query tracker before it can throw;
+            // close() frees it (and the slave chain) under that tracker and resets isOpen for reuse.
+            Misc.free(cursor);
             throw e;
         }
     }
@@ -177,13 +181,20 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
-        Misc.free(joinKeyMap);
-        Misc.free(slaveChain);
-        Misc.free(symbolTranslatingRecord);
+        final AbstractHashOuterJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Map joinKeyMap = this.joinKeyMap;
+        this.joinKeyMap = null;
+        final RecordChain slaveChain = this.slaveChain;
+        this.slaveChain = null;
+        final SymbolTranslatingRecord symbolTranslatingRecord = this.symbolTranslatingRecord;
+        this.symbolTranslatingRecord = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, joinKeyMap);
+        failure = Misc.freeBestEffort(failure, slaveChain);
+        failure = Misc.freeBestEffort(failure, symbolTranslatingRecord);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class HashFullOuterJoinFilteredRecordCursor extends AbstractHashOuterJoinRecordCursor {
@@ -199,7 +210,6 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
         ) {
             super(columnSplit, joinKeyMap, slaveChain);
             record = new FullOuterJoinRecord(columnSplit, masterNullRecord, slaveNullRecord);
-            isOpen = true;
         }
 
         @Override
@@ -295,7 +305,6 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
         ) {
             super(columnSplit, joinKeyMap, slaveChain);
             record = new OuterJoinRecord(columnSplit, nullRecord);
-            isOpen = true;
         }
 
         @Override
@@ -365,7 +374,6 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
         ) {
             super(columnSplit, joinKeyMap, slaveChain);
             record = new RightOuterJoinRecord(columnSplit, nullRecord);
-            isOpen = true;
         }
 
         @Override

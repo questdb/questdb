@@ -37,10 +37,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x DOUBLE)");
             execute("INSERT INTO test VALUES (null), (null), (null)");
-            assertSql(
-                    "approx_percentile\nnull\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95]) FROM test"
-            );
+            assertQuery("SELECT approx_percentile(x, ARRAY[0.5, 0.95]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("approx_percentile\nnull\n");
         });
     }
 
@@ -48,10 +47,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     public void testAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT 5.0 x FROM long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n[5.0,5.0,5.0]\n",
-                    "SELECT approx_percentile(x, ARRAY[0.25, 0.5, 0.75]) FROM test"
-            );
+            assertQuery("SELECT approx_percentile(x, ARRAY[0.25, 0.5, 0.75]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("approx_percentile\n[5.0,5.0,5.0]\n");
         });
     }
 
@@ -59,10 +57,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     public void testBasicMultiPercentile() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) x FROM long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n[51.9375,103.9375]\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 1.0]) FROM test"
-            );
+            assertQuery("SELECT approx_percentile(x, ARRAY[0.5, 1.0]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("approx_percentile\n[51.9375,103.9375]\n");
         });
     }
 
@@ -70,10 +67,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     public void testEmptyArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) x FROM long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n[]\n",
-                    "SELECT approx_percentile(x, ARRAY[]) FROM test"
-            );
+            assertQuery("SELECT approx_percentile(x, ARRAY[]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("approx_percentile\n[]\n");
         });
     }
 
@@ -81,10 +77,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     public void testEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x DOUBLE)");
-            assertSql(
-                    "approx_percentile\nnull\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95]) FROM test"
-            );
+            assertQuery("SELECT approx_percentile(x, ARRAY[0.5, 0.95]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("approx_percentile\nnull\n");
         });
     }
 
@@ -102,10 +97,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
                     A\t[3.0625,5.1875]
                     B\t[30.5,51.5]
                     """;
-            assertSql(
-                    result,
-                    "SELECT category, approx_percentile(value, ARRAY[0.5, 1.0]) FROM test ORDER BY category"
-            );
+            assertQuery("SELECT category, approx_percentile(value, ARRAY[0.5, 1.0]) FROM test ORDER BY category")
+                    .noLeakCheck()
+                    .returnsOnce(result);
         });
     }
 
@@ -114,10 +108,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x::double AS val FROM long_sequence(10))");
             try {
-                assertSql(
-                        "",
-                        "SELECT approx_percentile(val, ARRAY[0.5, 1.5]::DOUBLE[]) FROM test"
-                );
+                assertQuery("SELECT approx_percentile(val, ARRAY[0.5, 1.5]::DOUBLE[]) FROM test")
+                        .noLeakCheck()
+                        .returnsOnce("");
                 Assert.fail("Expected CairoException for invalid percentile");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid percentile");
@@ -130,10 +123,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x::double AS val FROM long_sequence(10))");
             try {
-                assertSql(
-                        "",
-                        "SELECT approx_percentile(val, ARRAY[0.5, -1.5]::DOUBLE[]) FROM test"
-                );
+                assertQuery("SELECT approx_percentile(val, ARRAY[0.5, -1.5]::DOUBLE[]) FROM test")
+                        .noLeakCheck()
+                        .returnsOnce("");
                 Assert.fail("Expected CairoException for invalid percentile");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid percentile");
@@ -164,10 +156,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x LONG)");
             execute("INSERT INTO test VALUES (null), (null), (null)");
-            assertSql(
-                    "approx_percentile\nnull\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 0.99]) FROM test"
-            );
+            assertQuery("SELECT approx_percentile(x, ARRAY[0.5, 0.99]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("approx_percentile\nnull\n");
         });
     }
 
@@ -175,10 +166,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     public void testLongInputHighPrecision() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x FROM long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n[500.0,950.0]\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95], 3) FROM test"
-            );
+            assertQuery("SELECT approx_percentile(x, ARRAY[0.5, 0.95], 3) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("approx_percentile\n[500.0,950.0]\n");
         });
     }
 
@@ -186,10 +176,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     public void testLongInputVariant() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n[51.0,103.0]\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 1.0]) FROM test"
-            );
+            assertQuery("SELECT approx_percentile(x, ARRAY[0.5, 1.0]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("approx_percentile\n[51.0,103.0]\n");
         });
     }
 
@@ -197,10 +186,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     public void testLongInputWithPrecision() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x FROM long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n[501.0,951.0]\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95], 2) FROM test"
-            );
+            assertQuery("SELECT approx_percentile(x, ARRAY[0.5, 0.95], 2) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("approx_percentile\n[501.0,951.0]\n");
         });
     }
 
@@ -213,10 +201,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
             String singleP95 = queryResult("SELECT approx_percentile(x, 0.95) FROM test");
             String singleP100 = queryResult("SELECT approx_percentile(x, 1.0) FROM test");
 
-            assertSql(
-                    "approx_percentile\n[" + singleP50 + "," + singleP95 + "," + singleP100 + "]\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95, 1.0]) FROM test"
-            );
+            assertQuery("SELECT approx_percentile(x, ARRAY[0.5, 0.95, 1.0]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("approx_percentile\n[" + singleP50 + "," + singleP95 + "," + singleP100 + "]\n");
         });
     }
 
@@ -224,10 +211,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     public void testSinglePercentileInArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) x FROM long_sequence(100))");
-            assertSql(
-                    "approx_percentile\n[51.9375]\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5]) FROM test"
-            );
+            assertQuery("SELECT approx_percentile(x, ARRAY[0.5]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("approx_percentile\n[51.9375]\n");
         });
     }
 
@@ -236,10 +222,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x DOUBLE)");
             execute("INSERT INTO test VALUES (1.0), (null), (null), (null)");
-            assertSql(
-                    "approx_percentile\n[1.0,1.0]\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 0.99]) FROM test"
-            );
+            assertQuery("SELECT approx_percentile(x, ARRAY[0.5, 0.99]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("approx_percentile\n[1.0,1.0]\n");
         });
     }
 
@@ -249,10 +234,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
             execute("CREATE TABLE test (x DOUBLE)");
             execute("INSERT INTO test VALUES (1.0), (-1.0)");
             try {
-                assertSql(
-                        "approx_percentile\n[1.0]\n",
-                        "SELECT approx_percentile(x, ARRAY[0.5]) FROM test"
-                );
+                assertQuery("SELECT approx_percentile(x, ARRAY[0.5]) FROM test")
+                        .noLeakCheck()
+                        .returnsOnce("approx_percentile\n[1.0]\n");
                 Assert.fail();
             } catch (CairoException ignore) {
             }
@@ -263,10 +247,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     public void testWithHighPrecision() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) x FROM long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n[500.2490234375,950.4990234375]\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95], 3) FROM test"
-            );
+            assertQuery("SELECT approx_percentile(x, ARRAY[0.5, 0.95], 3) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("approx_percentile\n[500.2490234375,950.4990234375]\n");
         });
     }
 
@@ -274,10 +257,9 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     public void testWithPrecision() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) x FROM long_sequence(1000))");
-            assertSql(
-                    "approx_percentile\n[501.9921875,951.9921875]\n",
-                    "SELECT approx_percentile(x, ARRAY[0.5, 0.95], 2) FROM test"
-            );
+            assertQuery("SELECT approx_percentile(x, ARRAY[0.5, 0.95], 2) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("approx_percentile\n[501.9921875,951.9921875]\n");
         });
     }
 

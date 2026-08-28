@@ -27,9 +27,11 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -58,6 +60,7 @@ import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntMultiLongHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
@@ -65,11 +68,14 @@ import io.questdb.std.Transient;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 import static io.questdb.griffin.engine.join.AsyncWindowJoinAtom.findFunctionWithSameArg;
 import static io.questdb.griffin.engine.join.AsyncWindowJoinFastAtom.*;
 import static io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory.findPrevailingForMasterRow;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.addSaturating;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.subtractSaturating;
 
 /**
  * Single-threaded WINDOW JOIN factory with symbol-based join key optimization.
@@ -80,6 +86,41 @@ import static io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFact
  * @see AsyncWindowJoinFastRecordCursorFactory for the multi-threaded variant
  */
 public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFactory {
+    /**
+     * {@code lastSlaveTimestamp} value that marks the per-symbol index complete: the index scan ran
+     * out of slave rows, so the index holds every slave row from its lower bound onwards.
+     * <p>
+     * Master rows arrive in timestamp order, so the window's lower bound only moves forward: once
+     * the slave is exhausted, no later master row can want a row the index doesn't already hold.
+     * Parking the last indexed timestamp at {@link Long#MAX_VALUE} keeps the rebuild gate shut for
+     * the rest of the scan. Without it every master row whose window reaches past the last slave
+     * row - {@code windowHi} worth of them - rebuilds the index over its whole window and finds
+     * nothing new.
+     * <p>
+     * All four {@code hasNext()} index scans establish completeness the same way, so the rules live
+     * here rather than four times over. A scan seeds the flag from {@code isFrameCursorExhausted()}
+     * straight after {@code findRowLo()}: that lookup walks past the last frame only when it finds no
+     * row at all, so the flag stays false whenever the scan below actually runs, and the scan then has
+     * the final say. A scan ends for one of two reasons and only the first completes the index - the
+     * slave ran out of rows, or the next frame merely starts past the lookahead horizon (see
+     * {@link #indexLookaheadHi(long)}), which says nothing about the rows beyond it.
+     * <p>
+     * When the index is NOT complete, the four scans credit the horizon they SEARCHED rather than the
+     * last row they happened to find. Both are upper bounds on what the index holds, but a slave gap
+     * wider than the lookahead margin leaves the last indexed row far below the horizon, and
+     * crediting it re-fires the gate on every following master row for a re-scan that finds nothing
+     * new. Crediting the horizon is sound because a scan consumed every slave row up to it: it stops
+     * on the first row past the horizon, on a frame that opens past the horizon, or on a
+     * {@code findRowLo()} that found nothing in the whole interval. The master is ascending and the
+     * window bounds are constant here (a dynamic window never reaches this factory), so a later
+     * row's lower bound only moves up, staying inside the range the index already covers - and the
+     * aggregation re-filters the index against each master row's own window regardless.
+     * <p>
+     * The pre-scan {@code lastSlaveTimestamp = Long.MIN_VALUE} therefore has one remaining reader:
+     * a circuit breaker firing mid-scan leaves the partial index credited nothing, so the next call
+     * rebuilds instead of trusting a horizon the scan never reached.
+     */
+    private static final long INDEX_COMPLETE = Long.MAX_VALUE;
     // Index lookahead multiplier. Defines the size of the time interval used to build per-symbol
     // in-memory index with row ids/timestamps to be used by aggregation. Aimed to improve performance
     // for the dense master row timestamps case by not having to rebuild the index for each unique
@@ -87,18 +128,20 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     private static final int INDEX_LOOKAHEAD = 2;
     private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
     private static final int INITIAL_LIST_CAPACITY = 16;
-    private final AbstractWindowJoinFastRecordCursor cursor;
     private final boolean includePrevailing;
-    private final Function joinFilter;
-    private final JoinRecordMetadata joinMetadata;
-    private final RecordCursorFactory masterFactory;
+    private final long indexLookaheadMargin;
     private final int masterSymbolIndex;
-    private final RecordCursorFactory slaveFactory;
     private final int slaveSymbolIndex;
-    private final SimpleMapValue value;
     private final boolean vectorized;
     private final long windowHi;
     private final long windowLo;
+    private AbstractWindowJoinFastRecordCursor cursor;
+    private ObjList<GroupByFunction> groupByFunctions;
+    private Function joinFilter;
+    private JoinRecordMetadata joinMetadata;
+    private RecordCursorFactory masterFactory;
+    private RecordCursorFactory slaveFactory;
+    private SimpleMapValue value;
 
     public WindowJoinFastRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -119,15 +162,24 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             boolean vectorized
     ) {
         super(metadata);
-        assert slaveFactory.supportsTimeFrameCursor();
         try {
             this.masterFactory = masterFactory;
             this.slaveFactory = slaveFactory;
             this.joinMetadata = joinMetadata;
             this.joinFilter = joinFilter;
+            // Adopted here, before the first statement that can throw: the cursor only clears this
+            // list (Mutable.clear(), not close()), so _close() is its sole release point and the
+            // generator has already nulled its own reference. GroupByFunctionsUpdaterFactory below
+            // can throw, and so can the assert.
+            this.groupByFunctions = groupByFunctions;
+            // Checked after the adopting assignment above, not at the top of the constructor: the
+            // generator transfers ownership of the join filter before it calls this, and the catch
+            // below frees the FIELD, so an -ea failure any earlier leaks it.
+            assert slaveFactory.supportsTimeFrameCursor();
             this.includePrevailing = includePrevailing;
             this.windowLo = windowLo;
             this.windowHi = windowHi;
+            this.indexLookaheadMargin = indexLookaheadMargin(windowLo, windowHi);
             this.value = new SimpleMapValue(columnTypes.getColumnCount());
             final int columnSplit = masterFactory.getMetadata().getColumnCount();
             var masterMetadata = masterFactory.getMetadata();
@@ -220,7 +272,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             this.slaveSymbolIndex = slaveSymbolIndex;
             this.masterSymbolIndex = masterSymbolIndex;
         } catch (Throwable th) {
-            close();
+            releaseAdoptedStateOnConstructorFailure();
             throw th;
         }
     }
@@ -236,13 +288,22 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         TimeFrameCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             cursor.of(masterCursor, slaveCursor, executionContext);
         } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
+            // of() binds the per-query tracker and reopens the allocators before it can throw;
+            // close() frees them under that tracker and resets isOpen so the factory stays reusable.
+            Misc.free(cursor);
             throw ex;
         }
         return cursor;
+    }
+
+    @TestOnly
+    public long getIndexRebuildCount() {
+        return cursor.indexRebuildCount;
     }
 
     @Override
@@ -294,15 +355,138 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         sink.child(slaveFactory);
     }
 
+    // A join reads externally if either input does. getBaseFactory() cannot express this because it
+    // returns a single child, so the two-child propagation is explicit here, mirroring
+    // AbstractJoinRecordCursorFactory. Guards against a null child during teardown.
+    @Override
+    public boolean usesExternalDataSource() {
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        if (masterFactory != null && masterFactory.usesExternalDataSource()) {
+            return true;
+        }
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        return slaveFactory != null && slaveFactory.usesExternalDataSource();
+    }
+
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
-        Misc.free(joinFilter);
-        Misc.free(joinMetadata);
-        Misc.free(value);
+        final RecordMetadata metadata = detachMetadata();
+        final AbstractWindowJoinFastRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final ObjList<GroupByFunction> groupByFunctions = this.groupByFunctions;
+        this.groupByFunctions = null;
+        final Function joinFilter = this.joinFilter;
+        this.joinFilter = null;
+        final JoinRecordMetadata joinMetadata = this.joinMetadata;
+        this.joinMetadata = null;
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        this.slaveFactory = null;
+        final SimpleMapValue value = this.value;
+        this.value = null;
+
+        Throwable failure = Misc.freeIfCloseableBestEffort(null, metadata);
+        failure = Misc.freeBestEffort(failure, masterFactory);
+        if (slaveFactory != masterFactory) {
+            failure = Misc.freeBestEffort(failure, slaveFactory);
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, joinFilter);
+        if (joinMetadata != metadata) {
+            failure = Misc.freeBestEffort(failure, joinMetadata);
+        }
+        failure = Misc.freeBestEffort(failure, value);
+        // Last, defensively. The cursor's close() runs Misc.clearObjList(groupByFunctions), and
+        // clear() touches the very native buffers close() releases (StringDistinctAggGroupByFunction
+        // resets its sink capacity, which reallocs). Callers close the cursor before the factory and
+        // that close() is isOpen-guarded, so today the clear cannot follow the free -- ordering the
+        // free after the cursor keeps it that way if a caller ever closes the factory first.
+        failure = Misc.freeObjListBestEffort(failure, groupByFunctions);
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
+    private static StaticSymbolTable asStaticSymbolTable(SymbolTable symbolTable) {
+        if (symbolTable instanceof StaticSymbolTable sst) {
+            return sst;
+        }
+        if (symbolTable instanceof SymbolFunction sf) {
+            StaticSymbolTable sst = sf.getStaticSymbolTable();
+            if (sst != null) {
+                return sst;
+            }
+        }
+        throw new AssertionError("Failed to get static symbol table from " + symbolTable);
+    }
+
+    /**
+     * How far past the window's own upper bound ({@code masterTimestamp + windowHi}) the
+     * per-symbol slave index reaches, so that the following master rows reuse it instead of
+     * rebuilding it. Derived from the window bounds alone, so the factory computes it once and
+     * {@link #indexLookaheadHi(long)} adds it to each master row's bound.
+     * <p>
+     * The margin is {@code INDEX_LOOKAHEAD - 1} times the larger of the window's forward reach
+     * ({@code windowHi}) and its span ({@code windowLo + windowHi}), which is the reach the
+     * rebuild has to pay for anyway. Taking the span alone starves a purely future window
+     * ({@code windowLo < 0}, where {@code windowHi} is the larger of the two); taking
+     * {@code windowHi} alone starves every window that reaches back further than it reaches
+     * forward - {@code 4 HOURS PRECEDING AND CURRENT ROW} and the past-only {@code 4 HOURS
+     * PRECEDING AND 2 HOURS PRECEDING} get no margin at all (the rebuild gate fires for every
+     * master row), and {@code 4 HOURS PRECEDING AND 1 HOUR FOLLOWING} rebuilds every hour while
+     * each rebuild rescans five, a 6x slave over-read. The max amortizes the rebuild over the
+     * rows the index already holds in both directions.
+     * <p>
+     * The SQL code generator rejects a frame whose hi is below its lo, so the margin is
+     * non-negative; it only goes non-positive on a zero-width window (nothing to amortize over),
+     * and {@code indexLookaheadHi} then falls back to the bare window bound. The span saturates
+     * rather than wraps, so a window that spans the whole timestamp range keeps a positive margin.
+     */
+    private static long indexLookaheadMargin(long windowLo, long windowHi) {
+        final long span = Math.max(windowHi, addSaturating(windowLo, windowHi));
+        if (span <= 0) {
+            return span;
+        }
+        try {
+            return Math.multiplyExact(span, INDEX_LOOKAHEAD - 1);
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
+    }
+
+    /**
+     * Upper timestamp bound for building the per-symbol slave index. It must never reach below
+     * the window's own upper bound ({@code masterTimestamp + windowHi}) - doing so would drop the
+     * window's most recent rows. See {@link #indexLookaheadMargin(long, long)}.
+     */
+    private long indexLookaheadHi(long masterTimestamp) {
+        final long windowTimestampHi = addSaturating(masterTimestamp, windowHi);
+        if (indexLookaheadMargin <= 0) {
+            return windowTimestampHi;
+        }
+        // Saturate rather than wrap: the horizon must stay at or above the window's upper bound.
+        return addSaturating(windowTimestampHi, indexLookaheadMargin);
+    }
+
+    /**
+     * Releases what THIS constructor adopted, and only that.
+     * <p>
+     * The base factories and the join metadata belong to {@code SqlCodeGenerator} until the
+     * constructor returns - the contract the async siblings already honour, and the one the
+     * generator's own catch implements (it frees master, slave and the join metadata itself).
+     * Calling {@link #close()} here instead released them a second time. That is a no-op for an
+     * {@link io.questdb.cairo.AbstractRecordCursorFactory}, whose {@code close()} is flag-guarded,
+     * but not for a factory implementing {@code RecordCursorFactory} directly: for instance
+     * {@code CoveringIndexRecordCursorFactory.close()} frees its partition-frame factory and its
+     * functions unguarded, so a master of that shape was double freed.
+     * <p>
+     * Nulling the three fields before {@code close()} keeps the release of the adopted handles -
+     * the join filter, the group-by functions, the cursor and the map value - in one place.
+     */
+    private void releaseAdoptedStateOnConstructorFailure() {
+        masterFactory = null;
+        slaveFactory = null;
+        joinMetadata = null;
+        close();
     }
 
     private abstract class AbstractWindowJoinFastRecordCursor implements NoRandomAccessRecordCursor {
@@ -312,6 +496,11 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         // un-vectorized layout: | timestamp pointer | row ids pointer | current row lo |
         protected final DirectIntMultiLongHashMap slaveData;
         protected final DirectIntIntHashMap slaveSymbolLookupMap;
+        // Counts how many times the cursor rebuilt the slave index. The lookahead margin amortizes a
+        // rebuild across many master rows and INDEX_COMPLETE stops rebuilding once the index spans the
+        // rest of the slave, so this stays far below one rebuild per master row. Rows alone cannot show
+        // that - a rebuild re-derives the same index from the same rows - so tests assert on this.
+        protected long indexRebuildCount;
 
         public AbstractWindowJoinFastRecordCursor(GroupByFunctionsUpdater groupByFunctionsUpdater, int valueCount) {
             try {
@@ -349,9 +538,25 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 SqlExecutionContext sqlExecutionContext
         ) throws SqlException;
 
+        /**
+         * Binds the two slave maps to the per-query tracker, like the allocators next to them.
+         * {@code slaveSymbolLookupMap} holds one entry per master symbol and {@code slaveData} one
+         * per key in the indexed window, so both grow with the join's symbol cardinality and both
+         * belong under the per-query limit rather than the global counter alone.
+         * <p>
+         * Runs while both maps are closed - {@code close()} releases them and drops their tracker -
+         * so every block is freed under the tracker that charged it.
+         */
+        protected void bindSlaveMapsToTracker(SqlExecutionContext sqlExecutionContext) {
+            final MemoryTracker memoryTracker = sqlExecutionContext.getMemoryTracker();
+            slaveSymbolLookupMap.setMemoryTracker(memoryTracker);
+            slaveData.setMemoryTracker(memoryTracker);
+        }
+
         protected void setupSlaveLookupMap(RecordCursor masterCursor, TimeFrameCursor slaveCursor) {
             slaveSymbolLookupMap.reopen();
-            StaticSymbolTable masterSymbolTable = (StaticSymbolTable) masterCursor.getSymbolTable(masterSymbolIndex);
+            // Master may project the symbol through a SymbolColumn (e.g. CTE / sub-select), so unwrap.
+            StaticSymbolTable masterSymbolTable = asStaticSymbolTable(masterCursor.getSymbolTable(masterSymbolIndex));
             StaticSymbolTable slaveSymbolTable = slaveCursor.getSymbolTable(slaveSymbolIndex);
             for (int masterKey = 0, n = masterSymbolTable.getSymbolCount(); masterKey < n; masterKey++) {
                 final CharSequence masterSym = masterSymbolTable.valueOf(masterKey);
@@ -383,7 +588,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         private final ObjList<GroupByFunction> groupByFunctions;
         private final VirtualRecord groupByRecord;
         private final JoinRecord joinRecord;
-        private final WindowJoinSymbolTableSource joinSymbolTableSource;
+        private final JoinSymbolTableSource joinSymbolTableSource;
         private final Record record;
         protected SqlExecutionCircuitBreaker circuitBreaker;
         protected long lastSlaveTimestamp;
@@ -406,42 +611,52 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 int valueCount
         ) {
             super(groupByFunctionsUpdater, valueCount);
-            this.crossIndex = columnIndex;
-            this.columnSplit = columnSplit;
-            this.groupByFunctions = groupByFunctions;
-            this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
-            GroupByUtils.setAllocator(groupByFunctions, allocator);
-            this.value = value;
-            this.masterTimestampIndex = masterTimestampIndex;
-            this.slaveTimestampIndex = slaveTimestampIndex;
-            if (masterTimestampType == slaveTimestampType) {
-                masterTimestampScale = slaveTimestampScale = 1L;
-            } else {
-                masterTimestampScale = ColumnType.getTimestampDriver(masterTimestampType).toNanosScale();
-                slaveTimestampScale = ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale();
+            // super() eagerly mallocs slaveData and slaveSymbolLookupMap. A throw below (e.g.
+            // getSqlAsOfJoinLookAhead) reaches the factory with this.cursor still null, so the
+            // factory's own catch cannot free them - close() must. It is safe during construction:
+            // super.close() frees the two maps unconditionally and everything else is behind
+            // if (isOpen), which is still false. Matches the WindowJoinFastVectRecordCursor twin.
+            try {
+                this.crossIndex = columnIndex;
+                this.columnSplit = columnSplit;
+                this.groupByFunctions = groupByFunctions;
+                this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
+                GroupByUtils.setAllocator(groupByFunctions, allocator);
+                this.value = value;
+                this.masterTimestampIndex = masterTimestampIndex;
+                this.slaveTimestampIndex = slaveTimestampIndex;
+                if (masterTimestampType == slaveTimestampType) {
+                    masterTimestampScale = slaveTimestampScale = 1L;
+                } else {
+                    masterTimestampScale = ColumnType.getTimestampDriver(masterTimestampType).toNanosScale();
+                    slaveTimestampScale = ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale();
+                }
+                this.slaveTimeFrameHelper = new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTimestampScale);
+                this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
+
+                this.internalJoinRecord = new JoinRecord(columnSplit);
+                this.groupByRecord = new VirtualRecord(groupByFunctions);
+                groupByRecord.of(value);
+                this.joinRecord = new JoinRecord(columnSplit);
+                if (columnIndex != null) {
+                    SelectedRecord sr = new SelectedRecord(columnIndex);
+                    sr.of(joinRecord);
+                    this.record = sr;
+                } else {
+                    this.record = joinRecord;
+                }
+
+                this.slaveAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
+                this.slaveTimestamps = new GroupByLongList(INITIAL_LIST_CAPACITY);
+                this.slaveTimestamps.setAllocator(slaveAllocator);
+                this.slaveRowIds = new GroupByLongList(INITIAL_LIST_CAPACITY);
+                this.slaveRowIds.setAllocator(slaveAllocator);
+
+                this.lastSlaveTimestamp = Long.MIN_VALUE;
+            } catch (Throwable th) {
+                close();
+                throw th;
             }
-            this.slaveTimeFrameHelper = new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTimestampScale);
-            this.joinSymbolTableSource = new WindowJoinSymbolTableSource(columnSplit);
-
-            this.internalJoinRecord = new JoinRecord(columnSplit);
-            this.groupByRecord = new VirtualRecord(groupByFunctions);
-            groupByRecord.of(value);
-            this.joinRecord = new JoinRecord(columnSplit);
-            if (columnIndex != null) {
-                SelectedRecord sr = new SelectedRecord(columnIndex);
-                sr.of(joinRecord);
-                this.record = sr;
-            } else {
-                this.record = joinRecord;
-            }
-
-            this.slaveAllocator = GroupByAllocatorFactory.createAllocator(configuration);
-            this.slaveTimestamps = new GroupByLongList(INITIAL_LIST_CAPACITY, 0L);
-            this.slaveTimestamps.setAllocator(slaveAllocator);
-            this.slaveRowIds = new GroupByLongList(INITIAL_LIST_CAPACITY, 0L);
-            this.slaveRowIds.setAllocator(slaveAllocator);
-
-            this.lastSlaveTimestamp = Long.MIN_VALUE;
         }
 
         @Override
@@ -486,18 +701,22 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 return false;
             }
 
-            // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
+            // Aggregate the slave rows over [slaveTimestampLo; masterTimestampHi]; the index behind them spans the wider lookahead horizon.
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-            long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi * INDEX_LOOKAHEAD, masterTimestampScale);
-            long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
+            long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTimestampScale);
+            long masterTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTimestampScale);
 
             if (masterTimestampHi > lastSlaveTimestamp) {
+                indexRebuildCount++;
+                // Only the index rebuild reads the lookahead horizon; the reuse path never does.
+                final long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp), masterTimestampScale);
                 slaveData.clear();
                 slaveAllocator.clear();
                 lastSlaveTimestamp = Long.MIN_VALUE;
                 final Record slaveRecord = slaveTimeFrameHelper.getRecord();
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
+                // Seeded per INDEX_COMPLETE's rules; the scan below has the final say.
+                boolean isIndexComplete = slaveTimeFrameHelper.isFrameCursorExhausted();
                 if (slaveRowIndex != Long.MIN_VALUE) {
                     long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     slaveTimeFrameHelper.recordAt(baseSlaveRowId);
@@ -509,7 +728,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             break;
                         }
 
-                        lastSlaveTimestamp = slaveTimestamp;
                         final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
                         final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                         if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
@@ -524,6 +742,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
                         if (++slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                             if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
+                                // Only a slave that ran out of rows completes the index; see INDEX_COMPLETE.
+                                isIndexComplete = slaveTimeFrameHelper.isFrameCursorExhausted();
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
@@ -533,6 +753,12 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                         }
                     }
                 }
+                if (isIndexComplete) {
+                    lastSlaveTimestamp = INDEX_COMPLETE;
+                } else {
+                    // The horizon searched, not the last row found; see INDEX_COMPLETE.
+                    lastSlaveTimestamp = slaveTimestampHi;
+                }
             }
 
             groupByFunctionsUpdater.updateEmpty(value);
@@ -540,15 +766,26 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
             final int masterKey = internalJoinRecord.getInt(masterSymbolIndex);
             final int idx = toSymbolMapKey(masterKey);
-            slaveTimestamps.of(slaveData.get(idx, 1));
-            slaveRowIds.of(slaveData.get(idx, 0));
+            // Read the raw pointers before binding the flyweights: a key absent from the slave leaves
+            // 0 here, and GroupByLongList.of(0) ALLOCATES an empty list instead of binding one. The
+            // pointer is never written back, so binding unconditionally allocated once per master row
+            // and the bump allocator only reclaims at an index rebuild - which stops for good once
+            // lastSlaveTimestamp reaches INDEX_COMPLETE. Mirrors the async cursor and the two
+            // prevailing cursors below.
+            final long rowIdsPtr = slaveData.get(idx, 0);
+            final long timestampsPtr = slaveData.get(idx, 1);
 
-            if (slaveTimestamps.size() > 0) {
+            if (rowIdsPtr != 0) {
+                slaveRowIds.of(rowIdsPtr);
+                assert slaveRowIds.size() > 0;
+                slaveTimestamps.of(timestampsPtr);
+                assert slaveTimestamps.size() > 0;
+
                 long rowLo = slaveData.get(idx, 2);
-                rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                 rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
                 slaveData.put(idx, 2, rowLo);
-                long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                 rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
                 if (rowLo < rowHi) {
                     for (long i = rowLo; i < rowHi; i++) {
@@ -595,6 +832,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             masterCursor.toTop();
             slaveTimeFrameHelper.toTop();
             lastSlaveTimestamp = Long.MIN_VALUE;
+            indexRebuildCount = 0;
             slaveData.clear();
             allocator.clear();
             slaveAllocator.clear();
@@ -606,14 +844,15 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
+                bindSlaveMapsToTracker(sqlExecutionContext);
                 slaveData.reopen();
+                allocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 allocator.reopen();
+                slaveAllocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 slaveAllocator.reopen();
                 setupSlaveLookupMap(masterCursor, slaveCursor);
             }
-            this.masterCursor = masterCursor;
             this.masterRecord = masterCursor.getRecord();
-            this.slaveCursor = slaveCursor;
             joinRecord.of(masterRecord, groupByRecord);
             slaveTimeFrameHelper.of(slaveCursor);
             internalJoinRecord.of(masterRecord, slaveTimeFrameHelper.getRecord());
@@ -624,6 +863,11 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             Function.init(groupByFunctions, joinSymbolTableSource, sqlExecutionContext, null);
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();
             lastSlaveTimestamp = Long.MIN_VALUE;
+            indexRebuildCount = 0;
+
+            // Adopt master/slave last so an init() throw above can't double-free them via the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 
@@ -640,7 +884,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         private final VirtualRecord groupByRecord;
         private final JoinRecord internalJoinRecord;
         private final JoinRecord joinRecord;
-        private final WindowJoinSymbolTableSource joinSymbolTableSource;
+        private final JoinSymbolTableSource joinSymbolTableSource;
         private final int masterTimestampIndex;
         private final long masterTimestampScale;
         private final WindowJoinPrevailingCache prevailingCache;
@@ -679,7 +923,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 this.crossIndex = columnIndex;
                 this.columnSplit = columnSplit;
                 this.groupByFunctions = groupByFunctions;
-                this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                 GroupByUtils.setAllocator(groupByFunctions, allocator);
                 this.value = value;
                 this.masterTimestampIndex = masterTimestampIndex;
@@ -692,7 +936,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 }
                 this.slaveTimeFrameHelper = new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTimestampScale);
                 this.prevailingCache = new WindowJoinPrevailingCache();
-                this.joinSymbolTableSource = new WindowJoinSymbolTableSource(columnSplit);
+                this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
 
                 this.internalJoinRecord = new JoinRecord(columnSplit);
                 this.groupByRecord = new VirtualRecord(groupByFunctions);
@@ -706,10 +950,10 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                     this.record = joinRecord;
                 }
 
-                this.slaveAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+                this.slaveAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                 this.columnSink = new GroupByColumnSink(INITIAL_COLUMN_SINK_CAPACITY);
                 this.columnSink.setAllocator(slaveAllocator);
-                this.timestamps = new GroupByLongList(INITIAL_LIST_CAPACITY, 0L);
+                this.timestamps = new GroupByLongList(INITIAL_LIST_CAPACITY);
                 this.timestamps.setAllocator(slaveAllocator);
 
                 this.columnCount = groupByFuncArgs.size();
@@ -731,10 +975,10 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         public void close() {
             super.close();
             Misc.free(prevailingCache);
-            Misc.free(allocator);
-            Misc.free(slaveAllocator);
             if (isOpen) {
                 isOpen = false;
+                Misc.free(allocator);
+                Misc.free(slaveAllocator);
                 Misc.clearObjList(groupByFunctions);
                 masterCursor = Misc.free(masterCursor);
                 slaveCursor = Misc.free(slaveCursor);
@@ -765,18 +1009,22 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 return false;
             }
 
-            // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
+            // Aggregate the slave rows over [slaveTimestampLo; masterTimestampHi]; the index behind them spans the wider lookahead horizon.
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-            long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi * INDEX_LOOKAHEAD, masterTimestampScale);
-            long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
+            long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTimestampScale);
+            long masterTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTimestampScale);
 
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
             if (masterTimestampHi > lastSlaveTimestamp) {
+                indexRebuildCount++;
+                // Only the index rebuild reads the lookahead horizon; the reuse path never does.
+                final long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp), masterTimestampScale);
                 slaveData.clear();
                 slaveAllocator.clear();
                 lastSlaveTimestamp = Long.MIN_VALUE;
-                long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, masterTimestampHi, includePrevailing);
+                long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, includePrevailing);
+                // Seeded per INDEX_COMPLETE's rules; the scan below has the final say.
+                boolean isIndexComplete = slaveTimeFrameHelper.isFrameCursorExhausted();
                 final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
                 final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
                 prevailingCache.of(prevailingFrameIndex, prevailingRowIndex);
@@ -792,7 +1040,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             break;
                         }
 
-                        lastSlaveTimestamp = slaveTimestamp;
                         final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
                         final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                         if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
@@ -819,6 +1066,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
                         if (++slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                             if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
+                                // Only a slave that ran out of rows completes the index; see INDEX_COMPLETE.
+                                isIndexComplete = slaveTimeFrameHelper.isFrameCursorExhausted();
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
@@ -828,6 +1077,12 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                         }
                     }
                 }
+                if (isIndexComplete) {
+                    lastSlaveTimestamp = INDEX_COMPLETE;
+                } else {
+                    // The horizon searched, not the last row found; see INDEX_COMPLETE.
+                    lastSlaveTimestamp = slaveTimestampHi;
+                }
             }
 
             for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
@@ -836,13 +1091,17 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
             final int masterKey = internalJoinRecord.getInt(masterSymbolIndex);
             final int idx = toSymbolMapKey(masterKey);
-            timestamps.of(slaveData.get(idx, 0));
-            if (timestamps.size() > 0) {
+            // See the scalar cursor: binding the flyweight to a 0 pointer allocates an empty list
+            // that is never written back, so an unmatched key allocated once per master row.
+            final long timestampsPtr = slaveData.get(idx, 0);
+            if (timestampsPtr != 0) {
+                timestamps.of(timestampsPtr);
+                assert timestamps.size() > 0;
                 long rowLo = slaveData.get(idx, 1);
-                rowLo = Vect.binarySearch64Bit(timestamps.addressOf(0), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                 rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
                 slaveData.put(idx, 1, rowLo);
-                long rowHi = Vect.binarySearch64Bit(timestamps.addressOf(0), masterTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), masterTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                 rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                 if (includePrevailing && (rowLo >= rowHi || timestamps.get(rowLo) > slaveTimestampLo)) {
@@ -938,6 +1197,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             slaveTimeFrameHelper.toTop();
             prevailingCache.clear();
             lastSlaveTimestamp = Long.MIN_VALUE;
+            indexRebuildCount = 0;
             allocator.clear();
             slaveAllocator.clear();
             timestamps.resetPtr();
@@ -949,15 +1209,17 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
+                bindSlaveMapsToTracker(sqlExecutionContext);
                 slaveData.reopen();
+                prevailingCache.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 prevailingCache.reopen();
+                allocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 allocator.reopen();
+                slaveAllocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 slaveAllocator.reopen();
                 setupSlaveLookupMap(masterCursor, slaveCursor);
             }
-            this.masterCursor = masterCursor;
             this.masterRecord = masterCursor.getRecord();
-            this.slaveCursor = slaveCursor;
             joinRecord.of(masterRecord, groupByRecord);
             slaveTimeFrameHelper.of(slaveCursor);
             internalJoinRecord.of(masterRecord, slaveTimeFrameHelper.getRecord());
@@ -965,6 +1227,11 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             Function.init(groupByFunctions, joinSymbolTableSource, sqlExecutionContext, null);
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();
             lastSlaveTimestamp = Long.MIN_VALUE;
+            indexRebuildCount = 0;
+
+            // Adopt master/slave last so an init() throw above can't double-free them via the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 
@@ -1006,18 +1273,22 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 return false;
             }
 
-            // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
+            // Aggregate the slave rows over [slaveTimestampLo; masterTimestampHi]; the index behind them spans the wider lookahead horizon.
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-            long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi * INDEX_LOOKAHEAD, masterTimestampScale);
-            long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
+            long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTimestampScale);
+            long masterTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTimestampScale);
 
             if (masterTimestampHi > lastSlaveTimestamp) {
+                indexRebuildCount++;
+                // Only the index rebuild reads the lookahead horizon; the reuse path never does.
+                final long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp), masterTimestampScale);
                 slaveData.clear();
                 slaveAllocator.clear();
                 lastSlaveTimestamp = Long.MIN_VALUE;
                 final Record slaveRecord = slaveTimeFrameHelper.getRecord();
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
+                // Seeded per INDEX_COMPLETE's rules; the scan below has the final say.
+                boolean isIndexComplete = slaveTimeFrameHelper.isFrameCursorExhausted();
                 prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
                 prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
                 if (slaveRowIndex != Long.MIN_VALUE) {
@@ -1031,7 +1302,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             break;
                         }
 
-                        lastSlaveTimestamp = slaveTimestamp;
                         final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
                         final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                         if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
@@ -1046,6 +1316,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
                         if (++slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                             if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
+                                // Only a slave that ran out of rows completes the index; see INDEX_COMPLETE.
+                                isIndexComplete = slaveTimeFrameHelper.isFrameCursorExhausted();
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
@@ -1054,6 +1326,12 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                         }
                     }
+                }
+                if (isIndexComplete) {
+                    lastSlaveTimestamp = INDEX_COMPLETE;
+                } else {
+                    // The horizon searched, not the last row found; see INDEX_COMPLETE.
+                    lastSlaveTimestamp = slaveTimestampHi;
                 }
             }
 
@@ -1073,10 +1351,10 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 assert slaveTimestamps.size() > 0;
 
                 long rowLo = slaveData.get(idx, 2);
-                rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                 rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
                 slaveData.put(idx, 2, rowLo);
-                long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                 rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                 if (rowLo < rowHi) {
@@ -1226,7 +1504,15 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                     valueCount
             );
 
-            this.prevailingCache = new WindowJoinPrevailingCache();
+            // super() already holds the two native maps (and its own allocators). If the cache's
+            // eager DirectIntLongHashMap malloc throws, close() must free them: super.close() frees
+            // the maps and this class's close() frees the (still-null, no-op) cache.
+            try {
+                this.prevailingCache = new WindowJoinPrevailingCache();
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
         }
 
         @Override
@@ -1241,18 +1527,22 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 return false;
             }
 
-            // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
+            // Aggregate the slave rows over [slaveTimestampLo; masterTimestampHi]; the index behind them spans the wider lookahead horizon.
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-            long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi * INDEX_LOOKAHEAD, masterTimestampScale);
-            long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
+            long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTimestampScale);
+            long masterTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTimestampScale);
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
 
             if (masterTimestampHi > lastSlaveTimestamp) {
+                indexRebuildCount++;
+                // Only the index rebuild reads the lookahead horizon; the reuse path never does.
+                final long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp), masterTimestampScale);
                 slaveData.clear();
                 slaveAllocator.clear();
                 lastSlaveTimestamp = Long.MIN_VALUE;
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
+                // Seeded per INDEX_COMPLETE's rules; the scan below has the final say.
+                boolean isIndexComplete = slaveTimeFrameHelper.isFrameCursorExhausted();
                 final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
                 final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
                 prevailingCache.of(prevailingFrameIndex, prevailingRowIndex);
@@ -1268,7 +1558,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             break;
                         }
 
-                        lastSlaveTimestamp = slaveTimestamp;
                         final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
                         final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                         if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
@@ -1283,6 +1572,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
                         if (++slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                             if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
+                                // Only a slave that ran out of rows completes the index; see INDEX_COMPLETE.
+                                isIndexComplete = slaveTimeFrameHelper.isFrameCursorExhausted();
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
@@ -1291,6 +1582,12 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                         }
                     }
+                }
+                if (isIndexComplete) {
+                    lastSlaveTimestamp = INDEX_COMPLETE;
+                } else {
+                    // The horizon searched, not the last row found; see INDEX_COMPLETE.
+                    lastSlaveTimestamp = slaveTimestampHi;
                 }
             }
 
@@ -1309,10 +1606,10 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 assert slaveTimestamps.size() > 0;
 
                 long rowLo = slaveData.get(idx, 2);
-                rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                 rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
                 slaveData.put(idx, 2, rowLo);
-                long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                 rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                 if (rowLo >= rowHi || slaveTimestamps.get(rowLo) > slaveTimestampLo) {
@@ -1378,6 +1675,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
         @Override
         void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+            prevailingCache.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
             prevailingCache.reopen();
             super.of(masterCursor, slaveCursor, sqlExecutionContext);
         }

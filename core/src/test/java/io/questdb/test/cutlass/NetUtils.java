@@ -112,7 +112,7 @@ public class NetUtils {
                         } else {
                             try {
                                 byte b = (byte) ((Numbers.hexToDecimal(c1) << 4) | Numbers.hexToDecimal(c2));
-                                Unsafe.getUnsafe().putByte(sendPtr++, b);
+                                Unsafe.putByte(sendPtr++, b);
                             } catch (NumericException e) {
                                 e.printStackTrace();
                             }
@@ -154,8 +154,8 @@ public class NetUtils {
     private static void assertBuffers(int line, long expectedBuf, int expectedLen, long actualBuf, int actualLen) {
         Assert.assertEquals(expectedLen, actualLen);
         for (int j = 0; j < expectedLen; j++) {
-            if (Unsafe.getUnsafe().getByte(expectedBuf + j) != Unsafe.getUnsafe().getByte(actualBuf + j)) {
-                Assert.fail("line = " + line + ", pos = " + j + ", expected: " + Unsafe.getUnsafe().getByte(expectedBuf + j) + ", actual: " + Unsafe.getUnsafe().getByte(actualBuf + j));
+            if (Unsafe.getByte(expectedBuf + j) != Unsafe.getByte(actualBuf + j)) {
+                Assert.fail("line = " + line + ", pos = " + j + ", expected: " + Unsafe.getByte(expectedBuf + j) + ", actual: " + Unsafe.getByte(actualBuf + j));
             }
         }
     }

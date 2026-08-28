@@ -97,7 +97,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(MicrosTimestampDriver::partitionFloorYYYY, YEAR_FORMAT);
 
     private final ColumnTypeConverter.Var2FixedConverter<CharSequence> converterStr2Timestamp = this::appendToMem;
-    private final ColumnTypeConverter.Fixed2VarConverter converterTimestamp2Str = this::append;
+    private final ColumnTypeConverter.Fixed2VarConverter converterTimestamp2Str = (addr, sink, unused1, unused2) -> append(addr, sink);
     private Clock clock = MicrosecondClockImpl.INSTANCE;
 
     private MicrosTimestampDriver() {
@@ -205,7 +205,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public boolean append(long fixedAddr, CharSink<?> sink) {
-        long value = Unsafe.getUnsafe().getLong(fixedAddr);
+        long value = Unsafe.getLong(fixedAddr);
         if (value != Numbers.LONG_NULL) {
             MicrosFormatUtils.appendDateTimeUSec(sink, value);
             return true;
@@ -482,6 +482,29 @@ public class MicrosTimestampDriver implements TimestampDriver {
             return Numbers.INT_NULL;
         }
         return Micros.getIsoYear(timestamp);
+    }
+
+    @Override
+    public long getMaxDesignatedTimestamp() {
+        return Micros.YEAR_10000 - 1;
+    }
+
+    @Override
+    public long getMaxUnitValue(char unit) {
+        return switch (unit) {
+            // nanos convert by dividing, so no count of them overflows micros
+            case 'n' -> Long.MAX_VALUE;
+            case 'u', 'U' -> Long.MAX_VALUE;
+            case 'T' -> Long.MAX_VALUE / Micros.MILLI_MICROS;
+            case 's' -> Long.MAX_VALUE / Micros.SECOND_MICROS;
+            // from() narrows these four to int before scaling, so the narrowing caps them
+            // whenever it bites before the multiply does
+            case 'm' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Micros.MINUTE_MICROS);
+            case 'H', 'h' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Micros.HOUR_MICROS);
+            case 'd' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Micros.DAY_MICROS);
+            case 'w' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Micros.WEEK_MICROS);
+            default -> 0;
+        };
     }
 
     @Override

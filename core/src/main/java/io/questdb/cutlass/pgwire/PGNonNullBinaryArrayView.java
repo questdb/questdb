@@ -49,15 +49,8 @@ final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
 
     @Override
     public void appendToMemFlat(MemoryA mem, int offset, int length) {
-        switch (ColumnType.decodeArrayElementType(type)) {
-            case ColumnType.LONG:
-            case ColumnType.DOUBLE:
-                for (int i = 0; i < length; i++) {
-                    mem.putLong(getLong(i));
-                }
-                break;
-            default:
-                throw new UnsupportedOperationException("not implemented yet");
+        for (int i = 0; i < length; i++) {
+            mem.putDouble(getDoubleAtAbsIndex(offset + i));
         }
     }
 
@@ -75,16 +68,13 @@ final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
     public double getDoubleAtAbsIndex(int flatIndex) {
         final long addr = lo + Integer.BYTES + ((long) flatIndex * (Double.BYTES + Integer.BYTES));
         assert addr < hi;
-        long networkOrderVal = Unsafe.getUnsafe().getLong(addr);
+        long networkOrderVal = Unsafe.getLong(addr);
         return Double.longBitsToDouble(Numbers.bswap(networkOrderVal));
     }
 
     @Override
     public long getLongAtAbsIndex(int flatIndex) {
-        final long addr = lo + Integer.BYTES + ((long) flatIndex * (Long.BYTES + Integer.BYTES));
-        assert addr < hi;
-        long networkOrderVal = Unsafe.getUnsafe().getLong(addr);
-        return Numbers.bswap(networkOrderVal);
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -124,18 +114,11 @@ final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
     void setPtrAndCalculateStrides(long lo, long hi, int pgOidType, PGPipelineEntry pipelineEntry) throws PGMessageProcessingException {
         assert shape.size() > 0;
 
-        short componentNativeType;
+        final short componentNativeType = ColumnType.DOUBLE;
         int expectedElementSize = switch (pgOidType) {
-            case PGOids.PG_INT8 -> {
-                componentNativeType = ColumnType.LONG;
-                yield Long.BYTES;
-            }
-            case PGOids.PG_FLOAT8 -> {
-                componentNativeType = ColumnType.DOUBLE;
-                yield Double.BYTES;
-            }
+            case PGOids.PG_FLOAT8 -> Double.BYTES;
             default ->
-                    throw CairoException.nonCritical().put("unsupported array type, only arrays of int8 and float8 are supported [pgOid=").put(pgOidType).put(']');
+                    throw CairoException.nonCritical().put("unsupported array type, only arrays of float8 are supported [pgOid=").put(pgOidType).put(']');
         };
 
         // validate that there are no nulls in the array since we don't support them
@@ -144,7 +127,7 @@ final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
         for (long p = lo; p < hi; p += increment) {
 
             // element size as reported by the client
-            int actualElementSizeBE = Unsafe.getUnsafe().getInt(p);
+            int actualElementSizeBE = Unsafe.getInt(p);
 
             // -1 is a special value that indicates a NULL element
             // no need to swap bytes since -1 is always -1, regardless of endianness, it's all 1s

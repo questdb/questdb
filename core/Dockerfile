@@ -1,13 +1,16 @@
 FROM debian:bookworm AS builder
 
 ARG tag_name
-ARG GRAAL_JDK_VERSION=17.0.9
+ARG GRAAL_JDK_VERSION=25.0.2
 ARG TARGETARCH
 
-ENV GOSU_VERSION=1.19-go1.25.9
+ENV GOSU_VERSION=1.19-go1.25.14
 ENV DEBIAN_FRONTEND=noninteractive
 
 # 1) Base tools + Maven
+# `git` is required by buildnumber-maven-plugin (core/pom.xml) at build time
+# to embed the HEAD revision; keep it installed even though the sources now
+# come from the build context rather than a `git clone`.
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
        git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip maven \
@@ -51,15 +54,29 @@ RUN set -eux; \
 ENV JAVA_HOME=/usr/lib/jvm/graalvm-community-jdk-${GRAAL_JDK_VERSION}
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
-WORKDIR /build
-
 RUN echo tag_name ${tag_name:-master}
-
-RUN git clone --depth=1 --progress --branch "${tag_name:-master}" --verbose https://github.com/questdb/questdb.git
 
 WORKDIR /build/questdb
 
-RUN mvn clean package -Djdk.lang.Process.launchMechanism=vfork -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -DskipTests -P build-web-console,build-binaries
+COPY . .
+
+# Auto-detect how the java-questdb-client dependency must be resolved.
+# If core/pom.xml references a -SNAPSHOT client version, that artifact is not
+# published to Maven Central, so we build it from the bundled java-questdb-client
+# submodule by enabling the `local-client` Maven profile. For a released client
+# version we resolve it from Maven Central (no extra profile).
+# NOTE: for the SNAPSHOT path the submodule must be present in the build context
+# (the docker-release pipeline checks it out via `submodules: true`) and its
+# version must match questdb.client.version.
+RUN set -eux; \
+    CLIENT_VERSION="$(sed -n 's/.*<questdb.client.version>\(.*\)<\/questdb.client.version>.*/\1/p' core/pom.xml | head -1)"; \
+    echo "questdb.client.version=${CLIENT_VERSION}"; \
+    CLIENT_PROFILE=""; \
+    case "${CLIENT_VERSION}" in \
+      *-SNAPSHOT) echo "SNAPSHOT client detected, activating local-client profile"; CLIENT_PROFILE=",local-client" ;; \
+      *) echo "Release client detected, resolving from Maven Central" ;; \
+    esac; \
+    mvn clean package -Djdk.lang.Process.launchMechanism=vfork -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -DskipTests -P "build-web-console,build-binaries${CLIENT_PROFILE}"
 
 WORKDIR /build/questdb/core/target
 
@@ -88,12 +105,12 @@ WORKDIR /app
 
 COPY --from=builder /build/questdb/core/target/questdb-*-rt-* .
 
-COPY docker-entrypoint.sh /docker-entrypoint.sh
+COPY core/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 # Add license information
 RUN mkdir /licenses
-COPY LICENSE.txt /licenses
+COPY core/LICENSE.txt /licenses
 
 LABEL name=QuestDB \
     vendor=QuestDB \
@@ -137,7 +154,7 @@ WORKDIR /app
 COPY --from=builder /build/questdb/core/target/questdb-*-rt-* .
 COPY --from=builder /build/questdb/core/target/gosu /usr/local/bin/gosu
 
-COPY docker-entrypoint.sh /docker-entrypoint.sh
+COPY core/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 # Create questdb user and group

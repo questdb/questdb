@@ -26,6 +26,7 @@ package io.questdb.cairo.mv;
 
 import io.questdb.cairo.TableToken;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public class NoOpMatViewStateStore implements MatViewStateStore {
@@ -54,11 +55,25 @@ public class NoOpMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
+    public void enqueueFullRefresh(TableToken matViewToken, @Nullable Object fullRefreshOwner) {
+    }
+
+    @Override
     public void enqueueIncrementalRefresh(TableToken matViewToken) {
     }
 
     @Override
     public void enqueueInvalidate(TableToken matViewToken, String invalidationReason) {
+    }
+
+    @Override
+    public void enqueueInvalidate(
+            TableToken matViewToken,
+            String invalidationReason,
+            @Nullable TableToken invalidationBaseTableToken,
+            long invalidationBaseTxn,
+            boolean isInvalidationForced
+    ) {
     }
 
     @Override
@@ -91,7 +106,32 @@ public class NoOpMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
+    public void notifyRefreshRetry(TableToken matViewToken, long retryAfterMicros) {
+    }
+
+    @Override
+    public void reenqueueFailedPendingTasks() {
+    }
+
+    @Override
+    public void reenqueuePendingOnResume(TableToken matViewToken) {
+    }
+
+    @Override
+    public void reenqueueRefreshTask(MatViewRefreshTask task) {
+        // No-op: a read-only/replica node discards its refresh queue and rebuilds from disk on promote.
+    }
+
+    @Override
     public void removeViewState(TableToken matViewToken) {
+    }
+
+    @Override
+    public void requestPendingFullRefreshReenqueue(MatViewState viewState) {
+    }
+
+    @Override
+    public void requestPendingInvalidationReenqueue(MatViewState viewState) {
     }
 
     @Override

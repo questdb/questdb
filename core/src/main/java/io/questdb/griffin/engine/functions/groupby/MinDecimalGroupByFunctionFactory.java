@@ -65,20 +65,14 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) {
         final Function func = args.getQuick(0);
-        switch (ColumnType.tagOf(func.getType())) {
-            case ColumnType.DECIMAL8:
-                return new Decimal8Func(func);
-            case ColumnType.DECIMAL16:
-                return new Decimal16Func(func);
-            case ColumnType.DECIMAL32:
-                return new Decimal32Func(func);
-            case ColumnType.DECIMAL64:
-                return new Decimal64Func(func);
-            case ColumnType.DECIMAL128:
-                return new Decimal128Func(func);
-            default:
-                return new Decimal256Func(func);
-        }
+        return switch (ColumnType.tagOf(func.getType())) {
+            case ColumnType.DECIMAL8 -> new Decimal8Func(func);
+            case ColumnType.DECIMAL16 -> new Decimal16Func(func);
+            case ColumnType.DECIMAL32 -> new Decimal32Func(func);
+            case ColumnType.DECIMAL64 -> new Decimal64Func(func);
+            case ColumnType.DECIMAL128 -> new Decimal128Func(func);
+            default -> new Decimal256Func(func);
+        };
     }
 
     private static class Decimal128Func extends MinMaxDecimal128Func {
@@ -202,6 +196,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
             arg.getDecimal128(record, decimal128A);
             if (!decimal128A.isNull()) {
                 mapValue.getDecimal128(valueIndex, decimal128B);
+                decimal128B.setScale(decimal128A.getScale());
                 if (shouldStoreA(decimal128A, decimal128B) || decimal128B.isNull()) {
                     mapValue.putDecimal128(valueIndex, decimal128A);
                 }
@@ -220,9 +215,15 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
         public void merge(MapValue destValue, MapValue srcValue) {
             srcValue.getDecimal128(valueIndex, decimal128A);
             destValue.getDecimal128(valueIndex, decimal128B);
+            decimal128B.setScale(decimal128A.getScale());
             if (!decimal128A.isNull()
                     && (shouldStoreA(decimal128A, decimal128B) || decimal128B.isNull())) {
                 destValue.putDecimal128(valueIndex, decimal128A);
@@ -317,6 +318,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
             arg.getDecimal256(record, decimal256A);
             if (!decimal256A.isNull()) {
                 mapValue.getDecimal256(valueIndex, decimal256B);
+                decimal256B.setScale(decimal256A.getScale());
                 if (shouldStoreA(decimal256A, decimal256B) || decimal256B.isNull()) {
                     mapValue.putDecimal256(valueIndex, decimal256A);
                 }
@@ -343,7 +345,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         public void merge(MapValue destValue, MapValue srcValue) {
             srcValue.getDecimal256(valueIndex, decimal256A);
             destValue.getDecimal256(valueIndex, decimal256B);
-
+            decimal256B.setScale(decimal256A.getScale());
             if (!decimal256A.isNull()
                     && (shouldStoreA(decimal256A, decimal256B) || decimal256B.isNull())) {
                 destValue.putDecimal256(valueIndex, decimal256A);

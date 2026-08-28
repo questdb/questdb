@@ -50,7 +50,7 @@ public class CountIPv4GroupByFunction extends AbstractCountGroupByFunction {
             long nonNullCount = 0;
             final long hi = dataAddr + rowCount * (long) Integer.BYTES;
             for (; dataAddr < hi; dataAddr += Integer.BYTES) {
-                if (Unsafe.getUnsafe().getInt(dataAddr) != Numbers.IPv4_NULL) {
+                if (Unsafe.getInt(dataAddr) != Numbers.IPv4_NULL) {
                     nonNullCount++;
                 }
             }
@@ -87,22 +87,22 @@ public class CountIPv4GroupByFunction extends AbstractCountGroupByFunction {
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final int value = Unsafe.getUnsafe().getInt(argAddr + (rowIndex << 2));
+                final int value = Unsafe.getInt(argAddr + (rowIndex << 2));
                 if (value != Numbers.IPv4_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                    Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
+                    Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
                 }
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final int value = arg.getIPv4(record);
                 if (value != Numbers.IPv4_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                    Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
+                    Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
                 }
             }
         }

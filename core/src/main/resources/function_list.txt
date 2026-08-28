@@ -66,7 +66,11 @@ io.questdb.griffin.engine.functions.eq.EqSymStrFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqSymCharFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqSymLongFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqSymTimestampFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqNullCursorFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqTimestampCursorFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqDoubleCursorFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqIntCursorFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqLongCursorFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqCharCharFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory
@@ -100,6 +104,12 @@ io.questdb.griffin.engine.functions.conditional.NullIfDoubleFunctionFactory
 
 # '<' operator
 io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory
+io.questdb.griffin.engine.functions.lt.LtDoubleCursorFunctionFactory
+io.questdb.griffin.engine.functions.lt.GtDoubleCursorFunctionFactory
+io.questdb.griffin.engine.functions.lt.LtIntCursorFunctionFactory
+io.questdb.griffin.engine.functions.lt.GtIntCursorFunctionFactory
+io.questdb.griffin.engine.functions.lt.LtLongCursorFunctionFactory
+io.questdb.griffin.engine.functions.lt.GtLongCursorFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtTimestampCursorFunctionFactory
 io.questdb.griffin.engine.functions.lt.GtTimestampCursorFunctionFactory
@@ -132,6 +142,7 @@ io.questdb.griffin.engine.functions.math.NegLongFunctionFactory
 io.questdb.griffin.engine.functions.math.NegShortFunctionFactory
 io.questdb.griffin.engine.functions.math.NegByteFunctionFactory
 io.questdb.griffin.engine.functions.math.SubDoubleFunctionFactory
+io.questdb.griffin.engine.functions.math.SubFloatFunctionFactory
 io.questdb.griffin.engine.functions.math.SubIntFunctionFactory
 io.questdb.griffin.engine.functions.math.SubLongFunctionFactory
 io.questdb.griffin.engine.functions.math.SubTimestampFunctionFactory
@@ -159,6 +170,9 @@ io.questdb.griffin.engine.functions.math.AbsIntFunctionFactory
 io.questdb.griffin.engine.functions.math.AbsShortFunctionFactory
 io.questdb.griffin.engine.functions.math.AbsLongFunctionFactory
 io.questdb.griffin.engine.functions.math.AbsDoubleFunctionFactory
+
+# '__lateral_limit'
+io.questdb.griffin.engine.functions.math.LateralLimitFunctionFactory
 
 # 'trigonometric'
 io.questdb.griffin.engine.functions.math.SinDoubleFunctionFactory
@@ -259,6 +273,7 @@ io.questdb.griffin.engine.functions.date.VarcharToTimestampFunctionFactory
 io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory
 io.questdb.griffin.engine.functions.date.SystimestampFunctionFactory
 io.questdb.griffin.engine.functions.date.NowFunctionFactory
+io.questdb.griffin.engine.functions.date.SleepFunctionFactory
 io.questdb.griffin.engine.functions.date.HourOfDayFunctionFactory
 io.questdb.griffin.engine.functions.date.DayOfMonthFunctionFactory
 io.questdb.griffin.engine.functions.date.DayOfWeekFunctionFactory
@@ -274,6 +289,7 @@ io.questdb.griffin.engine.functions.date.MicrosOfMillsFunctionFactory
 io.questdb.griffin.engine.functions.date.MillisOfSecondFunctionFactory
 io.questdb.griffin.engine.functions.date.NanosOfMicrosFunctionFactory
 io.questdb.griffin.engine.functions.date.IsLeapYearFunctionFactory
+io.questdb.griffin.engine.functions.date.IsEndOfMonthFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampDiffFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampAddWithTimezoneFunctionFactory
@@ -549,11 +565,15 @@ io.questdb.griffin.engine.functions.bool.InVarcharVarcharArrayFunctionFactory
 io.questdb.griffin.engine.functions.bool.InVarcharFunctionFactory
 io.questdb.griffin.engine.functions.bool.InCharFunctionFactory
 io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory
+io.questdb.griffin.engine.functions.bool.InIPv4FunctionFactory
 io.questdb.griffin.engine.functions.bool.InLongFunctionFactory
 io.questdb.griffin.engine.functions.bool.InSymbolVarcharArrayFunctionFactory
 io.questdb.griffin.engine.functions.bool.InSymbolFunctionFactory
 io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory
 io.questdb.griffin.engine.functions.bool.BetweenTimestampFunctionFactory
+io.questdb.griffin.engine.functions.bool.BetweenTimestampCursorFunctionFactory
+io.questdb.griffin.engine.functions.bool.BetweenTimestampCursorLoFunctionFactory
+io.questdb.griffin.engine.functions.bool.BetweenTimestampCursorHiFunctionFactory
 io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory
 io.questdb.griffin.engine.functions.bool.InTimestampIntervalFunctionFactory
 

@@ -48,6 +48,8 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
     public static final String COLUMN_QUERY_TEXT = "query_text";
     public static final String COLUMN_TS = "ts";
     public static final String TABLE_NAME = "_query_trace";
+    // Writer lock reason used when the query-tracing job acquires its own table writer.
+    public static final String WRITER_LOCK_REASON = "query_tracing";
     private static final int BATCH_LIMIT = 1024;
     private static final int INITIAL_CAPACITY = 128;
     private static final Log LOG = LogFactory.getLog(QueryTracingJob.class.getName());
@@ -95,7 +97,7 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
                 tableToken = engine.verifyTableName(TABLE_NAME);
             }
         }
-        return engine.getWriter(tableToken, "query_tracing");
+        return engine.getWriter(tableToken, WRITER_LOCK_REASON);
     }
 
     private void putVarchar(TableWriter.Row row, int column, String value) {

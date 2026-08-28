@@ -141,7 +141,7 @@ public final class Net {
     public static void dump(long buffer, int len) {
         if (len > 0) {
             for (int i = 0; i < len; i++) {
-                Numbers.appendHex(StdoutSink.INSTANCE, Unsafe.getUnsafe().getByte(buffer + i) & 0xff);
+                Numbers.appendHex(StdoutSink.INSTANCE, Unsafe.getByte(buffer + i) & 0xff);
             }
             StdoutSink.INSTANCE.put('\n');
             StdoutSink.INSTANCE.flush();
@@ -152,7 +152,7 @@ public final class Net {
     public static void dumpAscii(long buffer, int len) {
         if (len > 0) {
             for (int i = 0; i < len; i++) {
-                char c = (char) (Unsafe.getUnsafe().getByte(buffer + i) & 0xff);
+                char c = (char) (Unsafe.getByte(buffer + i) & 0xff);
                 switch (c) {
                     case '\r':
                         System.out.print("\\r");
@@ -212,11 +212,11 @@ public final class Net {
     }
 
     public static long getMMsgBuf(long msgPtr) {
-        return Unsafe.getUnsafe().getLong(Unsafe.getUnsafe().getLong(msgPtr + MMSGHDR_BUFFER_ADDRESS_OFFSET));
+        return Unsafe.getLong(Unsafe.getLong(msgPtr + MMSGHDR_BUFFER_ADDRESS_OFFSET));
     }
 
     public static int getMMsgBufLen(long msgPtr) {
-        return Unsafe.getUnsafe().getInt(msgPtr + MMSGHDR_BUFFER_LENGTH_OFFSET);
+        return Unsafe.getInt(msgPtr + MMSGHDR_BUFFER_LENGTH_OFFSET);
     }
 
     public static int getPeerIP(long fd) {
@@ -249,6 +249,10 @@ public final class Net {
      */
     public static boolean isDead(long fd) {
         return isDead(toOsFd(fd));
+    }
+
+    public static boolean isPeerDisconnected(long fd) {
+        return fd == -1 || isPeerDisconnected(toOsFd(fd));
     }
 
     public static boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address) {
@@ -406,6 +410,8 @@ public final class Net {
     private native static int getTcpNoDelay(int fd);
 
     private static native boolean isDead(int fd);
+
+    private static native boolean isPeerDisconnected(int fd);
 
     private native static boolean join(int fd, int bindIPv4Address, int groupIPv4Address);
 

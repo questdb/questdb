@@ -49,7 +49,7 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
             final long hi = dataAddr + rowCount * (long) Character.BYTES;
             char min = 0;
             for (; dataAddr < hi; dataAddr += Character.BYTES) {
-                char value = Unsafe.getUnsafe().getChar(dataAddr);
+                char value = Unsafe.getChar(dataAddr);
                 if (value > 0 && (value < min || min == 0)) {
                     min = value;
                 }
@@ -123,7 +123,7 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
         char srcMin = srcValue.getChar(valueIndex);
         char destMin = destValue.getChar(valueIndex);
         if (srcMin != 0 && (srcMin < destMin || destMin == 0)) {
-            destValue.putInt(valueIndex, srcMin);
+            destValue.putChar(valueIndex, srcMin);
         }
     }
 

@@ -49,8 +49,10 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testSimple() throws Exception {
-        assertQuery(
-                "k\tsubstring\tlength\n" +
+        assertQuery("select k, substring(k,14,6), length(substring(k,14,6)) from x")
+                .ddl("create table x as (select rnd_str(10,25,1) k from long_sequence(15))")
+                .expectSize()
+                .returns("k\tsubstring\tlength\n" +
                         "JWCPSWHYRXPEHNRXGZSXUXIB\tNRXGZS\t6\n" +
                         "GPGWFFYUDE\t\t0\n" +
                         "QEHBHFOWLPDXYSBEOUOJSH\tSBEOUO\t6\n" +
@@ -65,13 +67,7 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
                         "\t\t-1\n" +  // null
                         "IPZIMNZZRMFMBEZG\tEZG\t3\n" +
                         "VDKFLOPJOXPKRGIIHY\tGIIHY\t5\n" +
-                        "OQMYSSMPGLUOHNZHZS\tNZHZS\t5\n",
-                "select k, substring(k,14,6), length(substring(k,14,6)) from x",
-                "create table x as (select rnd_str(10,25,1) k from long_sequence(15))",
-                null,
-                true,
-                true
-        );
+                        "OQMYSSMPGLUOHNZHZS\tNZHZS\t5\n");
     }
 
     @Test
@@ -96,12 +92,9 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
         }
 
         try {
-            assertQueryNoLeakCheck(
-                    null,
-                    "select substring('foo',1,-6)",
-                    null,
-                    true
-            );
+            assertQuery("select substring('foo',1,-6)")
+                    .noLeakCheck()
+                    .returns(null);
             assertExceptionNoLeakCheck("const negative len is not allowed");
         } catch (SqlException e) {
             // negative substring length is not allowed

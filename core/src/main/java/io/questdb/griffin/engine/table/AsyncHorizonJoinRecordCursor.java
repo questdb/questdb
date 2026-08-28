@@ -53,6 +53,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private final MessageBus messageBus;
+    // Borrowed non-group-by views into recordFunctions; the factory owns and closes the functions.
+    private final ObjList<Function> nonGroupByFunctions;
     private final AtomicBooleanCircuitBreaker postAggregationCircuitBreaker;
     private final SOUnboundedCountDownLatch postAggregationDoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger postAggregationStartedCounter = new AtomicInteger();
@@ -78,14 +80,22 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
             RecordCursorFactory slaveFactory
     ) {
         try {
+            // True during construction so the catch below can close() a partially built
+            // cursor and free what was already allocated.
             this.isOpen = true;
             this.slaveTimeFrameState = new ConcurrentTimeFrameState();
             this.messageBus = messageBus;
             this.postAggregationCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
             this.recordFunctions = recordFunctions;
+            this.nonGroupByFunctions = GroupByUtils.extractNonGroupByFunctions(recordFunctions);
             this.slaveFactory = slaveFactory;
             this.recordA = new VirtualRecord(recordFunctions);
             this.recordB = new VirtualRecord(recordFunctions);
+            // Construction succeeded: start closed so the first of() runs atom.reopen(),
+            // which opens the lazy (openOnInit=false) allocators and ASOF maps and binds the
+            // per-query tracker before any allocation. Skipping reopen() on the first cursor
+            // would leave the allocator's chunk index unallocated and the tracker unbound.
+            this.isOpen = false;
         } catch (Throwable th) {
             close();
             throw th;
@@ -174,8 +184,10 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     }
 
     private void buildMap() {
+        // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
 
         final AsyncHorizonJoinAtom atom = frameSequence.getAtom();
@@ -220,7 +232,8 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
                     slaveFrameCursor.isExternal(),
                     executionContext.getPageFrameMinRows(),
                     executionContext.getPageFrameMaxRows(),
-                    executionContext.getSharedQueryWorkerCount()
+                    executionContext.getSharedQueryWorkerCount(),
+                    executionContext.getMemoryTracker()
             );
             try {
                 frameSequence.getAtom().initTimeFrameCursors(
@@ -246,11 +259,12 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
 
     void of(UnorderedPageFrameSequence<AsyncHorizonJoinAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncHorizonJoinAtom atom = frameSequence.getAtom();
+        // Assign before reopen() so close() can drain a partially reopened atom on a breach.
+        this.frameSequence = frameSequence;
         if (!isOpen) {
             isOpen = true;
             atom.reopen();
         }
-        this.frameSequence = frameSequence;
         this.executionContext = executionContext;
         this.circuitBreaker = executionContext.getCircuitBreaker();
 
@@ -258,10 +272,17 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
         this.slaveFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, ORDER_ASC);
 
         // Initialize record functions with a symbol table source that routes lookups
-        // to the correct source (master or slave) based on column mappings
+        // to the correct source (master or slave) based on column mappings. The constructor
+        // pre-filters the non-group-by functions once, so cached re-executions skip the
+        // per-function classification scan.
         final HorizonJoinSymbolTableSource symbolTableSource = atom.getSymbolTableSource();
         symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveFrameCursor);
-        Function.init(recordFunctions, symbolTableSource, executionContext, null);
+        Function.init(nonGroupByFunctions, symbolTableSource, executionContext, null);
+        // The group by functions bind here too, and only here: a parent projection or sort over a
+        // SYMBOL aggregate resolves the output column's static symbol table at getCursor() time,
+        // which is before the slave time-frame cache is built on the first read. The atom donates
+        // the owner state to the per-worker clones when it binds those in initTimeFrameCursors().
+        atom.initOwnerGroupByFunctions(executionContext);
 
         isDataMapBuilt = false;
         isSlaveTimeFrameCacheBuilt = false;

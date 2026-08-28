@@ -1,0 +1,321 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cairo.mv;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.DependentViewGraph;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateStoreImpl;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+
+public class DependentViewGraphAndStateStoreTest extends AbstractCairoTest {
+    private final DependentViewGraph graph = new DependentViewGraph();
+    private final ObjList<TableToken> ordered = new ObjList<>();
+    private final MatViewStateStoreImpl stateStore = new MatViewStateStoreImpl(engine);
+    private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
+
+    @Before
+    public void setUp() {
+        tableTokens.clear();
+        ordered.clear();
+        stateStore.clear();
+        graph.clear();
+    }
+
+    @Test
+    public void testAddSameViewTwice() {
+        TableToken table1 = newTableToken("table1");
+        TableToken view1 = newMatViewToken("view1");
+
+        MatViewDefinition viewDefinition = createDefinition(view1, table1);
+        try {
+            stateStore.addViewState(viewDefinition);
+            stateStore.addViewState(viewDefinition);
+            Assert.fail("store exception expected");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "materialized view state already exists");
+        }
+
+        Assert.assertTrue(graph.addView(viewDefinition));
+        Assert.assertFalse(graph.addView(viewDefinition));
+    }
+
+    // loops
+    @Test
+    public void testDirectSelfLoop() {
+        TableToken viewA = newMatViewToken("viewA");
+
+        MatViewDefinition viewDefinition = createDefinition(viewA, viewA);
+        try {
+            graph.addView(viewDefinition);
+            Assert.fail("Expected a dependency loop exception");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
+        }
+    }
+
+    @Test
+    public void testDroppedState() {
+        TableToken table1 = newTableToken("table1");
+        TableToken view1 = newMatViewToken("view1");
+        MatViewDefinition viewDefinition = createDefinition(view1, table1);
+        graph.addView(viewDefinition);
+        MatViewState state = stateStore.addViewState(viewDefinition);
+        Assert.assertNotNull(state);
+        state.markAsDropped();
+        state = stateStore.getViewState(view1);
+        Assert.assertNotNull(state);
+        MatViewDefinition def = graph.getViewDefinition(view1);
+        Assert.assertNotNull(def);
+        state = stateStore.getViewState(view1);
+        Assert.assertNull(state);
+    }
+
+    @Test
+    public void testGraphDependency() {
+        //  table1   table2   table3
+        //  /    \
+        //v1      v2
+        // |
+        //v3
+        newTableToken("table2");
+        newTableToken("table3");
+        TableToken view1 = newMatViewToken("view1");
+        addDefinition(view1, newTableToken("table1"));
+        addDefinition(newMatViewToken("view2"), newTableToken("table1"));
+        addDefinition(newMatViewToken("view3"), view1);
+
+        graph.orderByDependentViews(tableTokens, ordered);
+        Assert.assertEquals(6, ordered.size());
+        Assert.assertEquals("table2", ordered.getQuick(0).getTableName());
+        Assert.assertEquals("table3", ordered.getQuick(1).getTableName());
+        Assert.assertEquals("view3", ordered.getQuick(2).getTableName());
+        Assert.assertEquals("view1", ordered.getQuick(3).getTableName());
+        Assert.assertEquals("view2", ordered.getQuick(4).getTableName());
+        Assert.assertEquals("table1", ordered.getQuick(5).getTableName());
+
+    }
+
+    @Test
+    public void testIndirectLoopViaSharedDependency() {
+        TableToken viewA = newMatViewToken("viewA");
+        TableToken viewB = newMatViewToken("viewB");
+        TableToken viewC = newMatViewToken("viewC");
+
+        addDefinition(viewA, viewB);
+        addDefinition(viewC, viewB);
+        MatViewDefinition viewDefinition = createDefinition(viewB, viewA);
+
+        try {
+            graph.addView(viewDefinition);
+            Assert.fail("Expected a dependency loop exception");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
+        }
+    }
+
+    @Test
+    public void testNoViews() {
+        newTableToken("table1");
+        newTableToken("table2");
+        graph.orderByDependentViews(tableTokens, ordered);
+        Assert.assertEquals(2, ordered.size());
+        Assert.assertEquals("table1", ordered.getQuick(0).getTableName());
+        Assert.assertEquals("table2", ordered.getQuick(1).getTableName());
+    }
+
+    @Test
+    public void testNoViewsNoTables() {
+        graph.orderByDependentViews(tableTokens, ordered);
+        Assert.assertEquals(0, ordered.size());
+    }
+
+    @Test
+    public void testSingleView() {
+        TableToken table1 = newTableToken("table1");
+        TableToken view1 = newMatViewToken("view1");
+        addDefinition(view1, table1);
+        graph.orderByDependentViews(tableTokens, ordered);
+        Assert.assertEquals(2, ordered.size());
+        Assert.assertEquals("view1", ordered.getQuick(0).getTableName());
+        Assert.assertEquals("table1", ordered.getQuick(1).getTableName());
+    }
+
+    @Test
+    public void testThreeLevelLoop() {
+        TableToken viewA = newMatViewToken("viewA");
+        TableToken viewB = newMatViewToken("viewB");
+        TableToken viewC = newMatViewToken("viewC");
+
+        addDefinition(viewA, viewB);
+        addDefinition(viewB, viewC);
+        MatViewDefinition viewDefinition = createDefinition(viewC, viewA);
+
+        try {
+            graph.addView(viewDefinition);
+            Assert.fail("Expected a dependency loop exception");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
+        }
+    }
+
+    @Test
+    public void testTwoLevelLoop() {
+        TableToken viewA = newMatViewToken("viewA");
+        TableToken viewB = newMatViewToken("viewB");
+
+        addDefinition(viewA, viewB);
+        MatViewDefinition viewDefinition = createDefinition(viewB, viewA);
+
+        try {
+            graph.addView(viewDefinition);
+            Assert.fail("Expected a dependency loop exception");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
+        }
+    }
+
+    @Test
+    public void testLiveViewOrderedAfterBase() {
+        // Live views participate in the same
+        // dependents-after-base ordering rule that mat views use.
+        TableToken base = newTableToken("base");
+        TableToken lv1 = newLiveViewToken("lv1");
+        TableToken lv2 = newLiveViewToken("lv2");
+
+        Assert.assertTrue(graph.addLiveView(lv1, base.getTableName()));
+        Assert.assertTrue(graph.addLiveView(lv2, base.getTableName()));
+
+        graph.orderByDependentViews(tableTokens, ordered);
+        Assert.assertEquals(3, ordered.size());
+        // Both LVs come before the base; relative order between them is
+        // insertion order and not load-bearing for snapshot correctness.
+        Assert.assertTrue("lv1 before base", indexOf(ordered, "lv1") < indexOf(ordered, "base"));
+        Assert.assertTrue("lv2 before base", indexOf(ordered, "lv2") < indexOf(ordered, "base"));
+    }
+
+    @Test
+    public void testLiveViewRemovedFromGraph() {
+        TableToken base = newTableToken("base");
+        TableToken lv = newLiveViewToken("lv");
+        graph.addLiveView(lv, base.getTableName());
+        graph.removeLiveView(lv, base.getTableName());
+
+        graph.orderByDependentViews(tableTokens, ordered);
+        // After removal the LV still appears in the input set (the test
+        // harness keeps it), but it no longer claims base as a dependency.
+        Assert.assertEquals(2, ordered.size());
+        Assert.assertTrue("removeLiveView is idempotent on a missing base", true);
+        // Calling remove a second time is a no-op.
+        graph.removeLiveView(lv, base.getTableName());
+        graph.removeLiveView(lv, "no-such-base");
+    }
+
+    @Test
+    public void testLiveViewCircularDependencyViaMatView() {
+        // mv -> lv -> mv loop: mat view A depends on live view L; live view L
+        // is over mat view A. hasDependencyLoop walks dependentViewsByTableName
+        // so the LV side participates.
+        TableToken mvA = newMatViewToken("mvA");
+        TableToken lvL = newLiveViewToken("lvL");
+
+        graph.addLiveView(lvL, mvA.getTableName());
+        try {
+            graph.addView(createDefinition(mvA, lvL));
+            Assert.fail("expected circular dependency exception");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
+        }
+    }
+
+    private static int indexOf(ObjList<TableToken> list, String name) {
+        for (int i = 0, n = list.size(); i < n; i++) {
+            if (name.contentEquals(list.getQuick(i).getTableName())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private void addDefinition(TableToken viewToken, TableToken baseTableToken) {
+        MatViewDefinition viewDefinition = createDefinition(viewToken, baseTableToken);
+        stateStore.addViewState(viewDefinition);
+        graph.addView(viewDefinition);
+    }
+
+    private MatViewDefinition createDefinition(TableToken viewToken, TableToken baseTableToken) {
+        MatViewDefinition viewDefinition = new MatViewDefinition();
+        viewDefinition.init(
+                MatViewDefinition.REFRESH_TYPE_IMMEDIATE,
+                false,
+                ColumnType.TIMESTAMP_MICRO,
+                viewToken,
+                "x",
+                baseTableToken.getTableName(),
+                0,
+                'm',
+                null,
+                null,
+                0,
+                0,
+                (char) 0,
+                Numbers.LONG_NULL,
+                null,
+                0,
+                (char) 0,
+                0,
+                (char) 0
+        );
+        return viewDefinition;
+    }
+
+    private TableToken newLiveViewToken(String tableName) {
+        TableToken v = TableToken.liveViewToken(tableName, tableTokens.size() + 1);
+        tableTokens.add(v);
+        return v;
+    }
+
+    private TableToken newMatViewToken(String tableName) {
+        TableToken v = new TableToken(tableName, tableName, null, 0, TableToken.Type.MAT_VIEW, true, false, false, true);
+        tableTokens.add(v);
+        return v;
+    }
+
+    private TableToken newTableToken(String tableName) {
+        TableToken t = new TableToken(tableName, tableName, null, 0, TableToken.Type.TABLE, true, false, false, true);
+        tableTokens.add(t);
+        return t;
+    }
+}

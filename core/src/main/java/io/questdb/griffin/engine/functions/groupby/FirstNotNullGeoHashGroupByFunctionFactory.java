@@ -81,7 +81,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
                 final long hi = dataAddr + rowCount;
                 long offset = 0;
                 for (; dataAddr < hi; dataAddr++) {
-                    byte value = Unsafe.getUnsafe().getByte(dataAddr);
+                    byte value = Unsafe.getByte(dataAddr);
                     if (value != GeoHashes.BYTE_NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);
@@ -98,8 +98,12 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (mapValue.getGeoByte(valueIndex + 1) == GeoHashes.BYTE_NULL) {
-                computeFirst(mapValue, record, rowId);
+            final byte value = arg.getGeoByte(record);
+            if (value != GeoHashes.BYTE_NULL) {
+                if (mapValue.getGeoByte(valueIndex + 1) == GeoHashes.BYTE_NULL || rowId < mapValue.getLong(valueIndex)) {
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putByte(valueIndex + 1, value);
+                }
             }
         }
 
@@ -135,7 +139,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
                 final long hi = dataAddr + rowCount * 4L;
                 long offset = 0;
                 for (; dataAddr < hi; dataAddr += 4L) {
-                    int value = Unsafe.getUnsafe().getInt(dataAddr);
+                    int value = Unsafe.getInt(dataAddr);
                     if (value != GeoHashes.INT_NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);
@@ -152,8 +156,12 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (mapValue.getGeoInt(valueIndex + 1) == GeoHashes.INT_NULL) {
-                computeFirst(mapValue, record, rowId);
+            final int value = arg.getGeoInt(record);
+            if (value != GeoHashes.INT_NULL) {
+                if (mapValue.getGeoInt(valueIndex + 1) == GeoHashes.INT_NULL || rowId < mapValue.getLong(valueIndex)) {
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putInt(valueIndex + 1, value);
+                }
             }
         }
 
@@ -189,7 +197,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
                 final long hi = dataAddr + rowCount * 8L;
                 long offset = 0;
                 for (; dataAddr < hi; dataAddr += 8L) {
-                    long value = Unsafe.getUnsafe().getLong(dataAddr);
+                    long value = Unsafe.getLong(dataAddr);
                     if (value != GeoHashes.NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);
@@ -206,8 +214,12 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (mapValue.getGeoLong(valueIndex + 1) == GeoHashes.NULL) {
-                computeFirst(mapValue, record, rowId);
+            final long value = arg.getGeoLong(record);
+            if (value != GeoHashes.NULL) {
+                if (mapValue.getGeoLong(valueIndex + 1) == GeoHashes.NULL || rowId < mapValue.getLong(valueIndex)) {
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putLong(valueIndex + 1, value);
+                }
             }
         }
 
@@ -243,7 +255,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
                 final long hi = dataAddr + rowCount * 2L;
                 long offset = 0;
                 for (; dataAddr < hi; dataAddr += 2L) {
-                    short value = Unsafe.getUnsafe().getShort(dataAddr);
+                    short value = Unsafe.getShort(dataAddr);
                     if (value != GeoHashes.SHORT_NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);
@@ -260,8 +272,12 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (mapValue.getGeoShort(valueIndex + 1) == GeoHashes.SHORT_NULL) {
-                computeFirst(mapValue, record, rowId);
+            final short value = arg.getGeoShort(record);
+            if (value != GeoHashes.SHORT_NULL) {
+                if (mapValue.getGeoShort(valueIndex + 1) == GeoHashes.SHORT_NULL || rowId < mapValue.getLong(valueIndex)) {
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putShort(valueIndex + 1, value);
+                }
             }
         }
 

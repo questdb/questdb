@@ -33,7 +33,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.datetime.AbstractDateFormat;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
@@ -145,7 +145,7 @@ public class NanosFormatCompiler {
     private static final int P_INPUT_STR = 1;
     private static final int P_LO = 2;
     private static final int P_LOCALE = 4;
-    private final static ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private final static CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final IntList delimiterIndexes = new IntList();
     private final ObjList<String> delimiters = new ObjList<>();
@@ -158,6 +158,18 @@ public class NanosFormatCompiler {
         for (int i = 0, n = opList.size(); i < n; i++) {
             lexer.defineSymbol(opList.getQuick(i));
         }
+    }
+
+    public static int getOpCode(String opName) {
+        return opMap.get(opName);
+    }
+
+    public static int getOpCount() {
+        return opList.size();
+    }
+
+    public static String getOpName(int index) {
+        return opList.getQuick(index);
     }
 
     public DateFormat compile(CharSequence pattern) {

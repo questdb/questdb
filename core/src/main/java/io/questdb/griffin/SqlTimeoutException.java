@@ -24,10 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 
 public class SqlTimeoutException extends SqlException {
-    private static final ThreadLocal<SqlTimeoutException> tlException = new ThreadLocal<>(SqlTimeoutException::new);
+    private static final CarrierLocal<SqlTimeoutException> tlException = new CarrierLocal<>(SqlTimeoutException::new);
 
     public static SqlTimeoutException timeout(CharSequence message) {
         SqlTimeoutException ex = tlException.get();

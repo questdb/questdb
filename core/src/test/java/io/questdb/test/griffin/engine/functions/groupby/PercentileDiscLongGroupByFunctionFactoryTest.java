@@ -91,10 +91,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     public void test0thPercentileLongValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
-            assertSql(
-                    "percentile_disc\n1\n",
-                    "SELECT percentile_disc(x, 0) FROM test"
-            );
+            assertQuery("SELECT percentile_disc(x, 0) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_disc\n1\n");
         });
     }
 
@@ -102,10 +101,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     public void test100thPercentileLongValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
-            assertSql(
-                    "percentile_disc\n100\n",
-                    "SELECT percentile_disc(x, 1.0) FROM test"
-            );
+            assertQuery("SELECT percentile_disc(x, 1.0) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_disc\n100\n");
         });
     }
 
@@ -113,10 +111,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     public void test50thPercentileIntValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT cast(x AS INT) x FROM long_sequence(100))");
-            assertSql(
-                    "percentile_disc\n50\n",
-                    "SELECT percentile_disc(x, 0.5) FROM test"
-            );
+            assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_disc\n50\n");
         });
     }
 
@@ -124,10 +121,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     public void test50thPercentileLongValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
-            assertSql(
-                    "percentile_disc\n50\n",
-                    "SELECT percentile_disc(x, 0.5) FROM test"
-            );
+            assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_disc\n50\n");
         });
     }
 
@@ -136,10 +132,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     public void test50thPercentileWithPrecision() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x FROM long_sequence(1000))");
-            assertSql(
-                    "percentile_disc\n500\n",
-                    "SELECT percentile_disc(x, 0.5) FROM test"
-            );
+            assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_disc\n500\n");
         });
     }
 
@@ -166,10 +161,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
             // -1.0 should be equivalent to 1 - 1.0 = 0.0 (0th percentile)
-            assertSql(
-                    "percentile_disc\n1\n",
-                    "SELECT percentile_disc(x, -1.0) FROM test"
-            );
+            assertQuery("SELECT percentile_disc(x, -1.0) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_disc\n1\n");
         });
     }
 
@@ -178,10 +172,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
             // -0.95 should be equivalent to 1 - 0.95 = 0.05
-            assertSql(
-                    "percentile_disc\n6\n",
-                    "SELECT percentile_disc(x, -0.95) FROM test"
-            );
+            assertQuery("SELECT percentile_disc(x, -0.95) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_disc\n6\n");
         });
     }
 
@@ -190,10 +183,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
             // -0.5 should be equivalent to 1 - 0.5 = 0.5
-            assertSql(
-                    "percentile_disc\n50\n",
-                    "SELECT percentile_disc(x, -0.5) FROM test"
-            );
+            assertQuery("SELECT percentile_disc(x, -0.5) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_disc\n50\n");
         });
     }
 
@@ -202,13 +194,12 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x LONG)");
             execute("INSERT INTO test VALUES (1), (-1)");
-            assertSql(
-                    """
+            assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             percentile_disc
                             -1
-                            """,
-                    "SELECT percentile_disc(x, 0.5) FROM test"
-            );
+                            """);
         });
     }
 
@@ -217,13 +208,12 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x LONG)");
             execute("INSERT INTO test VALUES (null), (null), (null)");
-            assertSql(
-                    """
+            assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             percentile_disc
                             null
-                            """,
-                    "SELECT percentile_disc(x, 0.5) FROM test"
-            );
+                            """);
         });
     }
 
@@ -231,10 +221,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     public void testPercentileAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT 5L x FROM long_sequence(100))");
-            assertSql(
-                    "percentile_disc\n5\n",
-                    "SELECT percentile_disc(x, 0.5) FROM test"
-            );
+            assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_disc\n5\n");
         });
     }
 
@@ -242,13 +231,12 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     public void testPercentileEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x LONG)");
-            assertSql(
-                    """
+            assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             percentile_disc
                             null
-                            """,
-                    "SELECT percentile_disc(x, 0.5) FROM test"
-            );
+                            """);
         });
     }
 
@@ -257,13 +245,12 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x LONG)");
             execute("INSERT INTO test VALUES (1), (null), (null), (null)");
-            assertSql(
-                    """
+            assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             percentile_disc
                             1
-                            """,
-                    "SELECT percentile_disc(x, 0.5) FROM test"
-            );
+                            """);
         });
     }
 
@@ -272,10 +259,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
         bindVariableService.setDouble(0, 0.5);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT 5L x FROM long_sequence(100))");
-            assertSql(
-                    "percentile_disc\n5\n",
-                    "SELECT percentile_disc(x, $1) FROM test"
-            );
+            assertQuery("SELECT percentile_disc(x, $1) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_disc\n5\n");
         });
     }
 
@@ -284,13 +270,12 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x LONG)");
             execute("INSERT INTO test VALUES (1), (-1)");
-            assertSql(
-                    """
+            assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             percentile_disc
                             -1
-                            """,
-                    "SELECT percentile_disc(x, 0.5) FROM test"
-            );
+                            """);
         });
     }
 
@@ -304,15 +289,14 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
                     ('B', 100), ('B', 200), ('B', 300), ('B', 400), ('B', 500),
                     ('C', 1), ('C', 1), ('C', 1), ('C', 1), ('C', 1)
                     """);
-            assertSql(
-                    """
+            assertQuery("SELECT grp, percentile_disc(val, 0.5) FROM grouped ORDER BY grp")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             grp\tpercentile_disc
                             A\t30
                             B\t300
                             C\t1
-                            """,
-                    "SELECT grp, percentile_disc(val, 0.5) FROM grouped ORDER BY grp"
-            );
+                            """);
         });
     }
 
@@ -321,11 +305,12 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
         assertMemoryLeak(() -> {
             execute(txDdl);
             execute(txDml);
-            assertSql("""
+            assertQuery("SELECT percentile_disc(value, 0.95) FROM tx_traffic")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             percentile_disc
                             289
-                            """,
-                    "SELECT percentile_disc(value, 0.95) FROM tx_traffic");
+                            """);
         });
     }
 }

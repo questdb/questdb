@@ -2285,6 +2285,8 @@ public class RecordSinkFactory {
                     asm.invokeInterface(wPutDecimal256, 1);
                     // stack: []
                     break;
+                case ColumnType.NULL:
+                    break; // ignore
                 default:
                     throw new IllegalArgumentException("Unexpected function type: " + ColumnType.nameOf(type));
             }

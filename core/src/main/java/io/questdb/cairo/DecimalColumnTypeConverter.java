@@ -33,6 +33,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.StringSink;
+
+import java.math.RoundingMode;
 
 public class DecimalColumnTypeConverter {
     private static final Loader loaderFromByte = DecimalColumnTypeConverter::loadDecimalFromByte;
@@ -47,33 +50,19 @@ public class DecimalColumnTypeConverter {
     private static final Loader loaderFromShort = DecimalColumnTypeConverter::loadDecimalFromShort;
 
     public static boolean convertToDecimal(long srcMem, int srcType, MemoryA dstMem, int dstType, long srcColumnTypeSize, long rowCount) {
-        final int srcScale = ColumnType.isDecimal(srcType) ? ColumnType.getDecimalScale(srcType) : 0;
-        final int dstScale = ColumnType.getDecimalScale(dstType);
-        final int dstPrecision = ColumnType.getDecimalPrecision(dstType);
-        final Loader loader = getLoader(srcType);
-        if (loader == null) {
-            return false;
+        // A binary float has no per-column scale - 1.5 is scale 1 and 3.14159 is scale 5 - so the
+        // Loader indirection, which reads one srcScale for the whole column, cannot describe it.
+        // Both convert straight to the target precision and scale instead.
+        switch (ColumnType.tagOf(srcType)) {
+            case ColumnType.DOUBLE:
+                convertDoubleToDecimal(srcMem, dstMem, dstType, srcColumnTypeSize, rowCount);
+                return true;
+            case ColumnType.FLOAT:
+                convertFloatToDecimal(srcMem, dstMem, dstType, srcColumnTypeSize, rowCount);
+                return true;
+            default:
+                return convertFixedToDecimal(srcMem, srcType, dstMem, dstType, srcColumnTypeSize, rowCount);
         }
-
-        var decimal = Misc.getThreadLocalDecimal256();
-        long hi = srcMem + rowCount * srcColumnTypeSize;
-        try {
-            for (long i = srcMem; i < hi; i += srcColumnTypeSize) {
-                loader.load(decimal, i);
-                if (srcScale != dstScale) {
-                    decimal.setScale(srcScale);
-                    decimal.rescale(dstScale);
-                }
-                if (!decimal.comparePrecision(dstPrecision)) {
-                    return false;
-                }
-                DecimalUtil.store(decimal, dstMem, dstType);
-            }
-        } catch (NumericException ignored) {
-            return false;
-        }
-
-        return true;
     }
 
     static Loader getLoader(int type) {
@@ -92,14 +81,112 @@ public class DecimalColumnTypeConverter {
         };
     }
 
+    private static void convertDoubleToDecimal(long srcMem, MemoryA dstMem, int dstType, long srcColumnTypeSize, long rowCount) {
+        final int dstScale = ColumnType.getDecimalScale(dstType);
+        final int dstPrecision = ColumnType.getDecimalPrecision(dstType);
+        final Decimal256 decimal = Misc.getThreadLocalDecimal256();
+        final long hi = srcMem + rowCount * srcColumnTypeSize;
+        for (long i = srcMem; i < hi; i += srcColumnTypeSize) {
+            final double value = Unsafe.getDouble(i);
+            // NaN is the DOUBLE NULL and neither infinity has a decimal representation. A magnitude
+            // beyond the target precision becomes NULL too, the same policy the loop above follows.
+            // Excess fractional digits truncate, matching the DOUBLE -> DECIMAL SQL cast.
+            if (Numbers.isFinite(value)) {
+                try {
+                    Numbers.doubleToDecimal(value, decimal, dstPrecision, dstScale, true);
+                } catch (NumericException ignored) {
+                    decimal.ofNull();
+                }
+            } else {
+                decimal.ofNull();
+            }
+            DecimalUtil.store(decimal, dstMem, dstType);
+        }
+    }
+
+    private static boolean convertFixedToDecimal(long srcMem, int srcType, MemoryA dstMem, int dstType, long srcColumnTypeSize, long rowCount) {
+        final int srcScale = ColumnType.isDecimal(srcType) ? ColumnType.getDecimalScale(srcType) : 0;
+        final int dstScale = ColumnType.getDecimalScale(dstType);
+        final int dstPrecision = ColumnType.getDecimalPrecision(dstType);
+        final Loader loader = getLoader(srcType);
+        if (loader == null) {
+            return false;
+        }
+
+        var decimal = Misc.getThreadLocalDecimal256();
+        long hi = srcMem + rowCount * srcColumnTypeSize;
+        for (long i = srcMem; i < hi; i += srcColumnTypeSize) {
+            loader.load(decimal, i);
+            // Align with SQL store-assignment semantics: excess fractional digits are rounded to the
+            // target scale (round half away from zero), and only a magnitude overflow - the integer
+            // part exceeds the target precision - cannot be represented. The unrepresentable value
+            // becomes the target NULL sentinel rather than aborting the whole conversion; aborting
+            // would surface as "column is corrupt" and suspend a WAL table. Instead we mirror the
+            // fixed->fixed converters, where an out-of-range value becomes the target NULL sentinel
+            // (e.g. an out-of-range DOUBLE->FLOAT becomes NaN). So NULL is produced only when the
+            // magnitude exceeds the target precision (comparePrecision); a scale reduction rounds.
+            // Source NULLs flow through unchanged (the loader already set the decimal to NULL).
+            if (!decimal.isNull()) {
+                try {
+                    if (srcScale != dstScale) {
+                        decimal.setScale(srcScale);
+                        if (dstScale < srcScale) {
+                            // Scale reduction rounds half away from zero, like every mainstream SQL
+                            // database storing into DECIMAL(p,s); it never fails on lost fraction.
+                            decimal.round(dstScale, RoundingMode.HALF_UP);
+                        } else {
+                            // Scale increase is lossless.
+                            decimal.rescale(dstScale);
+                        }
+                    }
+                    if (!decimal.comparePrecision(dstPrecision)) {
+                        decimal.ofNull();
+                    }
+                } catch (NumericException ignored) {
+                    decimal.ofNull();
+                }
+            }
+            DecimalUtil.store(decimal, dstMem, dstType);
+        }
+        return true;
+    }
+
+    private static void convertFloatToDecimal(long srcMem, MemoryA dstMem, int dstType, long srcColumnTypeSize, long rowCount) {
+        final int dstScale = ColumnType.getDecimalScale(dstType);
+        final int dstPrecision = ColumnType.getDecimalPrecision(dstType);
+        final Decimal256 decimal = Misc.getThreadLocalDecimal256();
+        final StringSink sink = Misc.getThreadLocalSink();
+        final long hi = srcMem + rowCount * srcColumnTypeSize;
+        for (long i = srcMem; i < hi; i += srcColumnTypeSize) {
+            final float value = Unsafe.getFloat(i);
+            // Same NULL and overflow policy as the double loop below. The value routes through its
+            // shortest round-trip text rather than a widening to double, because widening exposes
+            // the binary residue - 0.1f becomes 0.100000001490116119384765625 - which the
+            // FLOAT -> DECIMAL SQL cast does not store either.
+            if (Float.isFinite(value)) {
+                sink.clear();
+                sink.put(value);
+                try {
+                    decimal.ofString(sink, 0, sink.length(), dstPrecision, dstScale, false, true);
+                } catch (NumericException ignored) {
+                    decimal.ofNull();
+                }
+            } else {
+                decimal.ofNull();
+            }
+            DecimalUtil.store(decimal, dstMem, dstType);
+        }
+        sink.clear();
+    }
+
     private static void loadDecimalFromByte(Decimal256 decimal, long addr) {
-        byte b = Unsafe.getUnsafe().getByte(addr);
+        byte b = Unsafe.getByte(addr);
         decimal.ofRaw(b);
     }
 
     private static void loadDecimalFromDecimal128(Decimal256 decimal, long addr) {
-        long hi = Unsafe.getUnsafe().getLong(addr);
-        long lo = Unsafe.getUnsafe().getLong(addr + 8L);
+        long hi = Unsafe.getLong(addr);
+        long lo = Unsafe.getLong(addr + 8L);
         if (Decimal128.isNull(hi, lo)) {
             decimal.ofRawNull();
         } else {
@@ -108,7 +195,7 @@ public class DecimalColumnTypeConverter {
     }
 
     private static void loadDecimalFromDecimal16(Decimal256 decimal, long addr) {
-        short s = Unsafe.getUnsafe().getShort(addr);
+        short s = Unsafe.getShort(addr);
         if (s == Decimals.DECIMAL16_NULL) {
             decimal.ofRawNull();
         } else {
@@ -121,7 +208,7 @@ public class DecimalColumnTypeConverter {
     }
 
     private static void loadDecimalFromDecimal32(Decimal256 decimal, long addr) {
-        int i = Unsafe.getUnsafe().getInt(addr);
+        int i = Unsafe.getInt(addr);
         if (i == Decimals.DECIMAL32_NULL) {
             decimal.ofRawNull();
         } else {
@@ -130,7 +217,7 @@ public class DecimalColumnTypeConverter {
     }
 
     private static void loadDecimalFromDecimal64(Decimal256 decimal, long addr) {
-        long l = Unsafe.getUnsafe().getLong(addr);
+        long l = Unsafe.getLong(addr);
         if (l == Decimals.DECIMAL64_NULL) {
             decimal.ofRawNull();
         } else {
@@ -139,7 +226,7 @@ public class DecimalColumnTypeConverter {
     }
 
     private static void loadDecimalFromDecimal8(Decimal256 decimal, long addr) {
-        byte b = Unsafe.getUnsafe().getByte(addr);
+        byte b = Unsafe.getByte(addr);
         if (b == Decimals.DECIMAL8_NULL) {
             decimal.ofRawNull();
         } else {
@@ -148,7 +235,7 @@ public class DecimalColumnTypeConverter {
     }
 
     private static void loadDecimalFromInt(Decimal256 decimal, long addr) {
-        int i = Unsafe.getUnsafe().getInt(addr);
+        int i = Unsafe.getInt(addr);
         if (i == Numbers.INT_NULL) {
             decimal.ofRawNull();
         } else {
@@ -157,7 +244,7 @@ public class DecimalColumnTypeConverter {
     }
 
     private static void loadDecimalFromLong(Decimal256 decimal, long addr) {
-        long l = Unsafe.getUnsafe().getLong(addr);
+        long l = Unsafe.getLong(addr);
         if (l == Numbers.LONG_NULL) {
             decimal.ofNull();
         } else {
@@ -166,7 +253,7 @@ public class DecimalColumnTypeConverter {
     }
 
     private static void loadDecimalFromShort(Decimal256 decimal, long addr) {
-        short s = Unsafe.getUnsafe().getShort(addr);
+        short s = Unsafe.getShort(addr);
         decimal.ofRaw(s);
     }
 

@@ -38,10 +38,10 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractCairoTest {
                     "    cast(null as GeOhAsH(50b)) geohash2 " +
                     "from long_sequence(1)" +
                     ")");
-            assertSql(
-                    "geohash1\tgeohash2\n" +
-                            "sp052w92p1\t\n", "geohash where 'sp052w92p1' = geohash1"
-            );
+            assertQuery("geohash where 'sp052w92p1' = geohash1")
+                    .noLeakCheck()
+                    .returns("geohash1\tgeohash2\n" +
+                            "sp052w92p1\t\n");
         });
     }
 
@@ -54,10 +54,10 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractCairoTest {
                     "    cast(null as GeOhAsH(50b)) geohash2 " +
                     "from long_sequence(1)" +
                     ")");
-            assertSql(
-                    "geohash1\tgeohash2\n" +
-                            "sp052w92p1\t\n", "geohash where geohash1 = 'sp052w92p1'"
-            );
+            assertQuery("geohash where geohash1 = 'sp052w92p1'")
+                    .noLeakCheck()
+                    .returns("geohash1\tgeohash2\n" +
+                            "sp052w92p1\t\n");
         });
     }
 
@@ -70,10 +70,10 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractCairoTest {
                     "    cast(null as GeOhAsH(50b)) geohash2 " +
                     "from long_sequence(1)" +
                     ")");
-            assertSql(
-                    "geohash1\tgeohash2\n" +
-                            "sp052w92p1\t\n", "geohash where geohash2 = null"
-            );
+            assertQuery("geohash where geohash2 = null")
+                    .noLeakCheck()
+                    .returns("geohash1\tgeohash2\n" +
+                            "sp052w92p1\t\n");
         });
     }
 
@@ -86,10 +86,10 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractCairoTest {
                     "    cast(null as GeOhAsH(50b)) geohash2 " +
                     "from long_sequence(1)" +
                     ")");
-            assertSql(
-                    "geohash1\tgeohash2\n" +
-                            "sp052w92p1\t\n", "geohash where 'sp052w92p0' != geohash1"
-            );
+            assertQuery("geohash where 'sp052w92p0' != geohash1")
+                    .noLeakCheck()
+                    .returns("geohash1\tgeohash2\n" +
+                            "sp052w92p1\t\n");
         });
     }
 
@@ -102,10 +102,10 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractCairoTest {
                     "    cast(null as GeOhAsH(50b)) geohash2 " +
                     "from long_sequence(1)" +
                     ")");
-            assertSql(
-                    "geohash1\tgeohash2\n" +
-                            "sp052w92p1\t\n", "geohash where geohash1 != 'sp052w92p0'"
-            );
+            assertQuery("geohash where geohash1 != 'sp052w92p0'")
+                    .noLeakCheck()
+                    .returns("geohash1\tgeohash2\n" +
+                            "sp052w92p1\t\n");
         });
     }
 
@@ -118,9 +118,9 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractCairoTest {
                     "    cast(null as GeOhAsH(50b)) geohash2 " +
                     "from long_sequence(1)" +
                     ")");
-            assertSql(
-                    "geohash1\tgeohash2\n", "geohash where geohash2 != null"
-            );
+            assertQuery("geohash where geohash2 != null")
+                    .noLeakCheck()
+                    .returns("geohash1\tgeohash2\n");
         });
     }
 }

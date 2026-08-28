@@ -129,12 +129,14 @@ namespace questdb::aarch64 {
     jit_value_t
     read_vars_mem(Compiler &c, data_type_t type, int32_t idx, const Gp &vars_ptr) {
         // ARM64: load eagerly since we can't use complex memory operands later.
-        // add-immediate is 12-bit unsigned, so idx*8 must be < 4096 => idx < 512.
+        // Bind-variable slots are a fixed 16-byte stride so UUID (i128) values
+        // fit alongside narrower types (see AsyncFilterUtils.writeBindVarFunction).
+        // add-immediate is 12-bit unsigned, so idx*16 must be < 4096 => idx < 256.
         Gp addr = c.new_gp64("var_addr");
-        if (idx >= 0 && idx < 512) {
-            c.add(addr, vars_ptr, imm(idx * 8));
+        if (idx >= 0 && idx < 256) {
+            c.add(addr, vars_ptr, imm(idx * 16));
         } else {
-            c.mov(addr, static_cast<int64_t>(idx) * 8);
+            c.mov(addr, static_cast<int64_t>(idx) * 16);
             c.add(addr, vars_ptr, addr);
         }
         switch (type) {
@@ -209,14 +211,18 @@ namespace questdb::aarch64 {
         ldr_indexed(c, column_address, data_ptr, column_idx);
         c.add(column_address, column_address, offset);
         if (header_size == 4) {
-            c.ldr(length.w(), ptr(column_address));
+            // ldrsw, not a 32-bit ldr: the narrow load zero-extends, which would leave the -1
+            // NULL_LEN header as 0x00000000ffffffff and never match the 64-bit NULL sentinel.
+            c.ldrsw(length, ptr(column_address));
         } else {
             c.ldr(length, ptr(column_address));
         }
         c.bind(l_nonzero);
-        if (header_size == 4) {
-            return {length.w(), data_type_t::i32, data_kind_t::kMemory};
-        }
+        // Report i64 for a four-byte STRING header as well as for an eight-byte BINARY one. Both
+        // arms leave a sign-correct 64-bit value in `length`: the fast path subtracts two 64-bit
+        // offsets, and the slow path sign-extends the header with ldrsw. Typing the result i64
+        // matches serializeNull(), which spells every var-size header NULL sentinel as an I8
+        // immediate, so convert() harmonises nothing and the loop pays no per-row int32_to_int64.
         return {length, data_type_t::i64, data_kind_t::kMemory};
     }
 
@@ -732,6 +738,15 @@ namespace questdb::aarch64 {
         }
     }
 
+    // Narrow int arithmetic always runs at i32 width via int32_*. With
+    // null_check on, the result can carry INT_NULL (e.g. INT operand was
+    // INT_NULL, or division by zero), so it must be tagged i32 -- otherwise
+    // a downstream f32/f64 conversion would skip the null check via
+    // cvt_null_check(i8) / cvt_null_check(i16) and miss the NaN substitution.
+    inline data_type_t narrow_arith_result(data_type_t dt, bool null_check) {
+        return null_check ? data_type_t::i32 : dt;
+    }
+
     jit_value_t add(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
@@ -739,7 +754,8 @@ namespace questdb::aarch64 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_add(c, lhs.gp().w(), rhs.gp().w(), null_check), dt, dk};
+                return {int32_add(c, lhs.gp().w(), rhs.gp().w(), null_check),
+                        narrow_arith_result(dt, null_check), dk};
             case data_type_t::i64:
                 return {int64_add(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -758,7 +774,8 @@ namespace questdb::aarch64 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_sub(c, lhs.gp().w(), rhs.gp().w(), null_check), dt, dk};
+                return {int32_sub(c, lhs.gp().w(), rhs.gp().w(), null_check),
+                        narrow_arith_result(dt, null_check), dk};
             case data_type_t::i64:
                 return {int64_sub(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -777,7 +794,8 @@ namespace questdb::aarch64 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_mul(c, lhs.gp().w(), rhs.gp().w(), null_check), dt, dk};
+                return {int32_mul(c, lhs.gp().w(), rhs.gp().w(), null_check),
+                        narrow_arith_result(dt, null_check), dk};
             case data_type_t::i64:
                 return {int64_mul(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -796,7 +814,8 @@ namespace questdb::aarch64 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_div(c, lhs.gp().w(), rhs.gp().w(), null_check), dt, dk};
+                return {int32_div(c, lhs.gp().w(), rhs.gp().w(), null_check),
+                        narrow_arith_result(dt, null_check), dk};
             case data_type_t::i64:
                 return {int64_div(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -984,6 +1003,17 @@ namespace questdb::aarch64 {
         }
     };
 
+    // Declines the filter. Compiler::report_error records the reason on the JitErrorHandler that
+    // compileFunction() installed, and compileFunction() reads that error BEFORE c.finalize() and
+    // before gGlobalContext.rt.add(), so a declined function is never register-allocated, never
+    // assembled and never registered - nothing emitted after this call can run. SqlCodeGenerator
+    // then falls back to the Java filter, the same graceful decline any other unsupported shape
+    // takes. Mirrors questdb::avx2::decline_filter(); this backend cannot reach that one because
+    // avx2.h is x86-only and compiler.cpp does not include it on aarch64.
+    inline void decline_filter(Compiler &c, const char *reason) {
+        c.report_error(asmjit::Error::kInvalidState, reason);
+    }
+
     void emit_bin_op(Compiler &c, Arena &arena, const instruction_t &instr, ArenaVector<jit_value_t> &values, bool null_check,
                      bool has_short_circuit_label, opcodes next_opcode) {
         if (instr.opcode == opcodes::Eq || instr.opcode == opcodes::Ne) {
@@ -1080,7 +1110,22 @@ namespace questdb::aarch64 {
                 values.append(arena, div(c, lhs, rhs, null_check));
                 break;
             default:
-                __builtin_unreachable();
+                // Fail closed, for the same reason avx2::emit_bin_op does - and this backend is the
+                // ONLY one ARM64 has, so nothing else covers it. emit_code() routes EVERY opcode it
+                // does not handle itself into this function, so this arm sees whatever a corrupt or
+                // future-extended IR stream carries. __builtin_unreachable() made that undefined
+                // behaviour: the compiler drops the range check on the jump table and an
+                // out-of-enum opcode indexes past its end, inside the JVM and with no recovery.
+                //
+                // get_arguments() already popped both operands, so push a placeholder mask back -
+                // the same balancing the flag-optimization path above does with its flags_marker.
+                // scalar_tail() reads the top of the stack as a Gp (cbz), and lhs is a Vec for a
+                // float operand, so the placeholder is a fresh i32 register rather than lhs. It is
+                // never read: compileFunction() sees the error before c.finalize(), so the function
+                // is never register-allocated, assembled or registered.
+                decline_filter(c, "unsupported opcode in the scalar path");
+                values.append(arena, {c.new_gp32("declined_mask"), data_type_t::i32, data_kind_t::kConst});
+                break;
         }
     }
 
@@ -1096,10 +1141,31 @@ namespace questdb::aarch64 {
               const ConstantCache &const_cache,
               ColumnValueCache &value_cache) {
 
+        // Snapshot of value_cache.size() taken at BEGIN_SC. Restored at
+        // END_SC so column reads emitted between BEGIN_SC and END_SC do not
+        // leak cached registers past END_SC: an OR_SC forward jump can skip
+        // the load that populated such an entry, and a later MEM read for
+        // the same column would otherwise return a register that was never
+        // written on the jumped-to path. Multi-value IN() is the source of
+        // these blocks today and they never nest, so a single counter is
+        // sufficient.
+        size_t sc_value_cache_snapshot = 0;
+
         for (size_t i = 0; i < size; ++i) {
             auto &instr = istream[i];
             switch (instr.opcode) {
                 case opcodes::Inv:
+                    // Fail closed. Inv is the placeholder the serializer writes for a symbol bind
+                    // variable and a constant stub; backfillNode() either overwrites those 24 bytes
+                    // or throws, so a finished IR stream never carries one. Should one ever survive,
+                    // returning here abandons code generation with NOTHING on the value stack, and
+                    // scalar_tail()'s !values.is_empty() guard - which exists for the legitimate
+                    // case where every predicate resolved through a short-circuit jump - then skips
+                    // the final cbz and falls straight into the unconditional row store. That
+                    // filter selects every row, silently, and this is the ONLY backend aarch64 has:
+                    // Function::compile() there always takes scalar_loop. Decline first so it falls
+                    // back to the Java filter and the log names the reason.
+                    decline_filter(c, "invalid opcode in the scalar path");
                     return;
                 case opcodes::Ret:
                     return;
@@ -1124,6 +1190,25 @@ namespace questdb::aarch64 {
                 case opcodes::Not:
                     values.append(arena, bin_not(c, get_argument(c, values)));
                     break;
+                case opcodes::Sx_I64: {
+                    // Sign-extend the top of stack to i64. Used to widen narrow
+                    // integer operands (BYTE/SHORT/INT) before arithmetic so the
+                    // op dispatches to int64_*, matching the Java filter's
+                    // MulInt.getLong / AddInt.getLong (which compute via
+                    // ((long) l) OP r at long width). For i64 / f32 / f64 inputs
+                    // this is a no-op (left untouched).
+                    auto arg = get_argument(c, values);
+                    auto dt = arg.dtype();
+                    if (dt == data_type_t::i8 || dt == data_type_t::i16 || dt == data_type_t::i32) {
+                        values.append(arena, jit_value_t(
+                                int32_to_int64(c, arg.gp().w(), null_check),
+                                data_type_t::i64,
+                                arg.dkind()));
+                    } else {
+                        values.append(arena, arg);
+                    }
+                    break;
+                }
                 case opcodes::And_Sc: {
                     auto label_idx = static_cast<size_t>(instr.ipayload.lo);
                     auto arg = values.pop();
@@ -1160,6 +1245,7 @@ namespace questdb::aarch64 {
                     auto label_idx = static_cast<size_t>(instr.ipayload.lo);
                     Label label = c.new_label();
                     labels.set(label_idx, label);
+                    sc_value_cache_snapshot = value_cache.size();
                     break;
                 }
                 case opcodes::End_Sc: {
@@ -1167,6 +1253,7 @@ namespace questdb::aarch64 {
                     if (labels.has(label_idx)) {
                         c.bind(labels.get(label_idx));
                     }
+                    value_cache.truncate(sc_value_cache_snapshot);
                     break;
                 }
                 default: {

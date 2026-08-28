@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ImplicitCastException;
@@ -36,11 +37,13 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -293,10 +296,14 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             execute("insert into src_ts values (0, '2023-06-15T14:30:00.123456Z')");
             execute("insert into dst_date select * from src_ts");
 
-            assertSql("""
-                    ts\td
-                    1970-01-01T00:00:00.000000Z\t2023-06-15T14:30:00.123Z
-                    """, "dst_date");
+            assertQuery("dst_date")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\td
+                            1970-01-01T00:00:00.000000Z\t2023-06-15T14:30:00.123Z
+                            """);
 
             // Date to Timestamp
             execute("create table src_date (ts timestamp, d date) timestamp(ts) partition by DAY");
@@ -305,10 +312,14 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             execute("insert into src_date values (0, '2023-06-15T14:30:00.000Z')");
             execute("insert into dst_ts select * from src_date");
 
-            assertSql("""
-                    ts\tt
-                    1970-01-01T00:00:00.000000Z\t2023-06-15T14:30:00.000000Z
-                    """, "dst_ts");
+            assertQuery("dst_ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tt
+                            1970-01-01T00:00:00.000000Z\t2023-06-15T14:30:00.000000Z
+                            """);
         });
     }
 
@@ -367,11 +378,15 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             execute("insert into src_str values (0, '192.168.1.1'), (1000, '10.0.0.1')");
             execute("insert into dst_ipv4 select * from src_str");
 
-            assertSql("""
-                    ts\tip
-                    1970-01-01T00:00:00.000000Z\t192.168.1.1
-                    1970-01-01T00:00:00.001000Z\t10.0.0.1
-                    """, "dst_ipv4");
+            assertQuery("dst_ipv4")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tip
+                            1970-01-01T00:00:00.000000Z\t192.168.1.1
+                            1970-01-01T00:00:00.001000Z\t10.0.0.1
+                            """);
 
             // Varchar to IPv4
             execute("create table src_vc (ts timestamp, v varchar) timestamp(ts) partition by DAY");
@@ -380,11 +395,15 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             execute("insert into src_vc values (0, '172.16.0.1'), (1000, '8.8.8.8')");
             execute("insert into dst_ipv4_2 select * from src_vc");
 
-            assertSql("""
-                    ts\tip
-                    1970-01-01T00:00:00.000000Z\t172.16.0.1
-                    1970-01-01T00:00:00.001000Z\t8.8.8.8
-                    """, "dst_ipv4_2");
+            assertQuery("dst_ipv4_2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tip
+                            1970-01-01T00:00:00.000000Z\t172.16.0.1
+                            1970-01-01T00:00:00.001000Z\t8.8.8.8
+                            """);
         });
     }
 
@@ -402,7 +421,11 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             execute("insert into src values (0, null), (1000, null)");
             execute("insert into dst select * from src");
 
-            assertSql("count\n2\n", "select count(*) from dst");
+            assertQuery("select count(*) from dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
         });
     }
 
@@ -429,7 +452,11 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             execute("insert into src_vc values (0, '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'), (1000, null)");
             execute("insert into dst_l256 select * from src_vc");
 
-            assertSql("count\n2\n", "select count(*) from dst_l256");
+            assertQuery("select count(*) from dst_l256")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
 
             // Varchar expression (cast) to Long256 - tests non-DirectUtf8Sequence path
             execute("create table src_str (ts timestamp, s string) timestamp(ts) partition by DAY");
@@ -473,23 +500,31 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             execute("insert into src_sym values (0, 'apple'), (1000, 'banana'), (2000, null)");
             execute("insert into dst_str select * from src_sym");
 
-            assertSql("""
-                    ts\ts
-                    1970-01-01T00:00:00.000000Z\tapple
-                    1970-01-01T00:00:00.001000Z\tbanana
-                    1970-01-01T00:00:00.002000Z\t
-                    """, "dst_str");
+            assertQuery("dst_str")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts
+                            1970-01-01T00:00:00.000000Z\tapple
+                            1970-01-01T00:00:00.001000Z\tbanana
+                            1970-01-01T00:00:00.002000Z\t
+                            """);
 
             // Symbol to Varchar
             execute("create table dst_vc (ts timestamp, v varchar) timestamp(ts) partition by DAY");
             execute("insert into dst_vc select * from src_sym");
 
-            assertSql("""
-                    ts\tv
-                    1970-01-01T00:00:00.000000Z\tapple
-                    1970-01-01T00:00:00.001000Z\tbanana
-                    1970-01-01T00:00:00.002000Z\t
-                    """, "dst_vc");
+            assertQuery("dst_vc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000000Z\tapple
+                            1970-01-01T00:00:00.001000Z\tbanana
+                            1970-01-01T00:00:00.002000Z\t
+                            """);
 
             // String to Symbol
             execute("create table src_str2 (ts timestamp, s string) timestamp(ts) partition by DAY");
@@ -498,11 +533,15 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             execute("insert into src_str2 values (0, 'foo'), (1000, 'bar')");
             execute("insert into dst_sym select * from src_str2");
 
-            assertSql("""
-                    ts\tsym
-                    1970-01-01T00:00:00.000000Z\tfoo
-                    1970-01-01T00:00:00.001000Z\tbar
-                    """, "dst_sym");
+            assertQuery("dst_sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym
+                            1970-01-01T00:00:00.000000Z\tfoo
+                            1970-01-01T00:00:00.001000Z\tbar
+                            """);
         });
     }
 
@@ -533,17 +572,25 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             execute("insert into dst_str select * from src");
             execute("insert into dst_vc select * from src");
 
-            assertSql("""
-                    ts\ts
-                    1970-01-01T00:00:00.000000Z\t550e8400-e29b-41d4-a716-446655440000
-                    1970-01-01T00:00:00.001000Z\t
-                    """, "dst_str");
+            assertQuery("dst_str")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts
+                            1970-01-01T00:00:00.000000Z\t550e8400-e29b-41d4-a716-446655440000
+                            1970-01-01T00:00:00.001000Z\t
+                            """);
 
-            assertSql("""
-                    ts\tv
-                    1970-01-01T00:00:00.000000Z\t550e8400-e29b-41d4-a716-446655440000
-                    1970-01-01T00:00:00.001000Z\t
-                    """, "dst_vc");
+            assertQuery("dst_vc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000000Z\t550e8400-e29b-41d4-a716-446655440000
+                            1970-01-01T00:00:00.001000Z\t
+                            """);
         });
     }
 
@@ -571,12 +618,30 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             execute("insert into dst_float select * from src");
             execute("insert into dst_double select * from src");
 
-            assertSql("b\n42\n-17\n100\n", "select b from dst_byte order by ts");
-            assertSql("s\n42\n-17\n100\n", "select s from dst_short order by ts");
-            assertSql("i\n42\n-17\n100\n", "select i from dst_int order by ts");
-            assertSql("l\n42\n-17\n100\n", "select l from dst_long order by ts");
-            assertSql("f\n42.0\n-17.0\n100.0\n", "select f from dst_float order by ts");
-            assertSql("d\n42.0\n-17.0\n100.0\n", "select d from dst_double order by ts");
+            assertQuery("select b from dst_byte order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("b\n42\n-17\n100\n");
+            assertQuery("select s from dst_short order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("s\n42\n-17\n100\n");
+            assertQuery("select i from dst_int order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("i\n42\n-17\n100\n");
+            assertQuery("select l from dst_long order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("l\n42\n-17\n100\n");
+            assertQuery("select f from dst_float order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("f\n42.0\n-17.0\n100.0\n");
+            assertQuery("select d from dst_double order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("d\n42.0\n-17.0\n100.0\n");
         });
     }
 
@@ -594,14 +659,18 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             execute("insert into src_vc values (0, 'hello'), (1000, 'world'), (2000, null), (3000, 'über'), (4000, '日本語')");
             execute("insert into dst_str select * from src_vc");
 
-            assertSql("""
-                    ts\ts
-                    1970-01-01T00:00:00.000000Z\thello
-                    1970-01-01T00:00:00.001000Z\tworld
-                    1970-01-01T00:00:00.002000Z\t
-                    1970-01-01T00:00:00.003000Z\tüber
-                    1970-01-01T00:00:00.004000Z\t日本語
-                    """, "dst_str order by ts");
+            assertQuery("dst_str order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts
+                            1970-01-01T00:00:00.000000Z\thello
+                            1970-01-01T00:00:00.001000Z\tworld
+                            1970-01-01T00:00:00.002000Z\t
+                            1970-01-01T00:00:00.003000Z\tüber
+                            1970-01-01T00:00:00.004000Z\t日本語
+                            """);
 
             // STRING column to VARCHAR column
             execute("create table src_str (ts timestamp, s string) timestamp(ts) partition by DAY");
@@ -610,16 +679,20 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             execute("insert into src_str values (0, 'foo'), (1000, 'bar'), (2000, null), (3000, 'café'), (4000, '日本語'), (5000, 'Привет'), (6000, '🎉emoji🚀')");
             execute("insert into dst_vc select * from src_str");
 
-            assertSql("""
-                    ts\tv
-                    1970-01-01T00:00:00.000000Z\tfoo
-                    1970-01-01T00:00:00.001000Z\tbar
-                    1970-01-01T00:00:00.002000Z\t
-                    1970-01-01T00:00:00.003000Z\tcafé
-                    1970-01-01T00:00:00.004000Z\t日本語
-                    1970-01-01T00:00:00.005000Z\tПривет
-                    1970-01-01T00:00:00.006000Z\t🎉emoji🚀
-                    """, "dst_vc order by ts");
+            assertQuery("dst_vc order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000000Z\tfoo
+                            1970-01-01T00:00:00.001000Z\tbar
+                            1970-01-01T00:00:00.002000Z\t
+                            1970-01-01T00:00:00.003000Z\tcafé
+                            1970-01-01T00:00:00.004000Z\t日本語
+                            1970-01-01T00:00:00.005000Z\tПривет
+                            1970-01-01T00:00:00.006000Z\t🎉emoji🚀
+                            """);
 
             // STRING expression (cast) to VARCHAR column with non-ASCII
             execute("create table dst_vc2 (ts timestamp, v varchar) timestamp(ts) partition by DAY");
@@ -633,6 +706,123 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             execute("insert into dst_str2 select ts, s::varchar from src_str");
 
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src_str order by ts", "dst_str2 order by ts", LOG);
+        });
+    }
+
+    @Test
+    public void testTransferDecimalIntoNonDecimalTargetRejected() {
+        // RowAsserter fails on any put, so a silent write into a non-decimal column is caught too.
+        // Zero is what clears transferDecimal's precision guard, leaving the storage switch to reject.
+        final Decimal256 decimal256 = new Decimal256();
+        final Decimal128 decimal128 = new Decimal128();
+        final RowAsserter row = new RowAsserter();
+
+        for (int toType : new int[]{ColumnType.INT, ColumnType.LONG, ColumnType.DOUBLE, ColumnType.UUID}) {
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferDecimal8(row, 0, decimal256, ColumnType.getDecimalType(1, 0), toType, (byte) 0));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferDecimal16(row, 0, decimal256, ColumnType.getDecimalType(4, 0), toType, (short) 0));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferDecimal32(row, 0, decimal256, ColumnType.getDecimalType(9, 0), toType, 0));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferDecimal64(row, 0, decimal256, ColumnType.getDecimalType(18, 0), toType, 0L));
+            assertTransferDecimalRejected(toType, () -> {
+                decimal128.ofLong(0, 0);
+                RecordToRowCopierUtils.transferDecimal128(row, 0, decimal256, ColumnType.getDecimalType(38, 0), toType, decimal128);
+            });
+            assertTransferDecimalRejected(toType, () -> {
+                decimal256.ofLong(0, 0);
+                RecordToRowCopierUtils.transferDecimal256(row, 0, decimal256, ColumnType.getDecimalType(76, 0), toType);
+            });
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferByteToDecimal(row, 0, (byte) 0, decimal256, toType));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferShortToDecimal(row, 0, (short) 0, decimal256, toType));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferIntToDecimal(row, 0, 0, decimal256, toType));
+            assertTransferDecimalRejected(toType, () ->
+                    RecordToRowCopierUtils.transferLongToDecimal(row, 0, 0L, decimal256, toType));
+        }
+    }
+
+    private static void assertTransferDecimalRejected(int toType, Runnable transfer) {
+        try {
+            transfer.run();
+            Assert.fail("expected the transfer to be rejected");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "cannot store decimal into column type: " + ColumnType.nameOf(toType));
+        }
+    }
+
+    @Test
+    public void testMalformedVarcharConversionsAreNull() throws Exception {
+        assertMemoryLeak(() -> {
+            setCopierType(RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD);
+            execute("CREATE TABLE src (v VARCHAR)");
+            execute("CREATE TABLE dst_direct_str (s STRING)");
+            execute("CREATE TABLE dst_str (s STRING)");
+            execute("CREATE TABLE dst_sym (sym SYMBOL)");
+
+            try (TableWriter writer = getWriter("src")) {
+                TableWriter.Row row = writer.newRow();
+                row.putVarchar(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.append();
+                writer.commit();
+            }
+
+            execute("INSERT INTO dst_direct_str SELECT v FROM src");
+            execute("INSERT INTO dst_str SELECT replace(v, 'z', 'z') FROM src");
+            execute("INSERT INTO dst_sym SELECT v FROM src");
+
+            assertQuery("""
+                    SELECT direct.s IS NULL AS direct_str_null,
+                           decoded.s IS NULL AS decoded_str_null,
+                           sym IS NULL AS sym_null
+                    FROM dst_direct_str direct
+                    CROSS JOIN dst_str decoded
+                    CROSS JOIN dst_sym
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            direct_str_null\tdecoded_str_null\tsym_null
+                            true\ttrue\ttrue
+                            """);
+        });
+    }
+
+    @Test
+    public void testO3InsertSelectVarcharToString() throws Exception {
+        assertMemoryLeak(() -> {
+            setCopierType(RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD);
+            execute("CREATE TABLE src (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE dst (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO dst VALUES ('tail', '1970-01-01T03:00:00.000000Z')");
+
+            try (TableWriter writer = getWriter("src")) {
+                TableWriter.Row row = writer.newRow(3_600_000_000L);
+                row.putVarchar(0, new Utf8String("über"));
+                row.append();
+
+                row = writer.newRow(7_200_000_000L);
+                row.putVarchar(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.append();
+                writer.commit();
+            }
+
+            execute("INSERT INTO dst SELECT v, ts FROM src");
+
+            assertQuery("SELECT ts, s, s IS NULL AS is_null FROM dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts\tis_null
+                            1970-01-01T01:00:00.000000Z\tüber\tfalse
+                            1970-01-01T02:00:00.000000Z\t\ttrue
+                            1970-01-01T03:00:00.000000Z\ttail\tfalse
+                            """);
         });
     }
 

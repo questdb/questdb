@@ -32,41 +32,41 @@ import org.junit.Test;
 public class MidPriceFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testMidPrice() throws Exception {
-        assertQuery("mid\n2.0\n", "select mid(2.0, 2.0)");
-        assertQuery("mid\n2.0\n", "select mid(1.0, 3.0)");
-        assertQuery("mid\n2.0\n", "select mid(0.0, 4.0)");
-        assertQuery("mid\n1.5\n", "select mid(1.0, 2.0)");
-        assertQuery("mid\n1.625\n", "select mid(1.5, 1.75)");
-        assertQuery("mid\n1.5550000000000002\n", "select mid(1.5, 1.61)");
-        assertQuery("mid\n0.0\n", "select mid(0.0,0.0)");
-        assertQuery("mid\n0.0\n", "select mid(-1.0,1.0)");
-        assertQuery("mid\n-0.5\n", "select mid(-1.0,0.0)");
-        assertQuery("mid\n-1.5\n", "select mid(-2.0,-1.0)");
-        assertQuery("mid\n-1.6666655000000001\n", "select mid(-2.22222,-1.111111)");
+        assertQuery("select mid(2.0, 2.0)").expectSize().returns("mid\n2.0\n");
+        assertQuery("select mid(1.0, 3.0)").expectSize().returns("mid\n2.0\n");
+        assertQuery("select mid(0.0, 4.0)").expectSize().returns("mid\n2.0\n");
+        assertQuery("select mid(1.0, 2.0)").expectSize().returns("mid\n1.5\n");
+        assertQuery("select mid(1.5, 1.75)").expectSize().returns("mid\n1.625\n");
+        assertQuery("select mid(1.5, 1.61)").expectSize().returns("mid\n1.5550000000000002\n");
+        assertQuery("select mid(0.0,0.0)").expectSize().returns("mid\n0.0\n");
+        assertQuery("select mid(-1.0,1.0)").expectSize().returns("mid\n0.0\n");
+        assertQuery("select mid(-1.0,0.0)").expectSize().returns("mid\n-0.5\n");
+        assertQuery("select mid(-2.0,-1.0)").expectSize().returns("mid\n-1.5\n");
+        assertQuery("select mid(-2.22222,-1.111111)").expectSize().returns("mid\n-1.6666655000000001\n");
     }
 
     @Test
     public void testNonFiniteNumber() throws Exception {
         final String expected = "mid\nnull\n";
-        assertQuery(expected, "select mid(NULL, 1.0)");
-        assertQuery(expected, "select mid(1.0, NULL)");
-        assertQuery(expected, "select mid(NULL, NULL)");
+        assertQuery("select mid(NULL, 1.0)").expectSize().returns(expected);
+        assertQuery("select mid(1.0, NULL)").expectSize().returns(expected);
+        assertQuery("select mid(NULL, NULL)").expectSize().returns(expected);
     }
 
     @Test
     public void testNullBehavior() throws Exception {
         final String expected = "mid\nnull\n";
-        assertQuery(expected, "select mid(NULL, 1.0)");
-        assertQuery(expected, "select mid(1.0, NULL)");
-        assertQuery(expected, "select mid(NULL, NULL)");
+        assertQuery("select mid(NULL, 1.0)").expectSize().returns(expected);
+        assertQuery("select mid(1.0, NULL)").expectSize().returns(expected);
+        assertQuery("select mid(NULL, NULL)").expectSize().returns(expected);
 
     }
 
     @Test
     public void testThatOrderDoesNotMatter() throws Exception {
         final String expected = "mid\n2.0\n";
-        assertQuery(expected, "select mid(1.0, 3.0)");
-        assertQuery(expected, "select mid(3.0, 1.0)");
+        assertQuery("select mid(1.0, 3.0)").expectSize().returns(expected);
+        assertQuery("select mid(3.0, 1.0)").expectSize().returns(expected);
     }
 
     @Override

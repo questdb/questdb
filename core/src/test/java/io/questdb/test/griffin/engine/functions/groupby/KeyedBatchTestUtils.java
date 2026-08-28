@@ -82,9 +82,37 @@ final class KeyedBatchTestUtils {
     // split 4/4 between primed (existing) and fresh (new) slots. The priming
     // batch targets entries 0..3 via rows 0, 2, 4, 6; the test batch pairs
     // each of the eight entries with a distinct row index.
+    //
+    // The batches run at base rowIds 2000, 3000, then 1000: the test batch replays above the
+    // primed rowIds, the descending batch below every rowId written so far. Without it every
+    // incoming rowId exceeds every stored one, so "rowId < stored" is never true and
+    // "rowId > stored" never false, leaving a first_not_null override's rowId comparison and a
+    // last_not_null override's stored-value-is-null guard as redundant disjuncts that no
+    // assertion can tell apart from the plain base.
+    //
+    // Null placement varies by type (notably IPv4), so which entries hold a stored NULL also varies.
+    // The descending rows are chosen to revisit the mix with lower rowIds; rows may repeat because
+    // buildBatchBuffer pairs rows with entry offsets independently.
+    private static final long DESCENDING_BASE_ROW_ID = 1000;
+    private static final boolean[] DESCENDING_IS_NEW = {false, false, false, false, false, false, false, false};
+    private static final long[] DESCENDING_ROWS = {0, 4, 1, 7, 2, 6, 6, 0};
     private static final int ENTRY_COUNT = 8;
+    private static final long PRIME_BASE_ROW_ID = 2000;
     private static final boolean[] PRIME_IS_NEW = {true, true, true, true};
     private static final long[] PRIME_ROWS = {0, 2, 4, 6};
+    // Every batch above pairs each entry with exactly ONE row, so none of them covers a key that
+    // several rows of the same batch land on - what a low-cardinality key does in production, where
+    // a 2048-row frame collapses onto a handful of entries. Nor can they tell one scan direction
+    // from another. This batch covers it: four entries, two rows each, ascending rows, over fresh
+    // regions so the first row to reach an entry creates it, as probeBatch marks it.
+    //
+    // The exact NULL/non-null combination for each entry depends on the type-specific fixture. The
+    // shared invariant is that every entry receives two rows, exercising revisits and scan direction;
+    // fixtures with NULLs additionally exercise replacing or retaining stored NULL values.
+    private static final long REPEATED_BASE_ROW_ID = 4000;
+    private static final boolean[] REPEATED_IS_NEW = {true, true, true, false, false, true, false, false};
+    private static final long[] REPEATED_ROWS = {0, 1, 2, 3, 4, 5, 6, 7};
+    private static final long TEST_BASE_ROW_ID = 3000;
     private static final boolean[] TEST_IS_NEW = {false, false, false, false, true, true, true, true};
     private static final long[] TEST_ROWS = {3, 1, 6, 5, 0, 1, 2, 5};
 
@@ -101,7 +129,7 @@ final class KeyedBatchTestUtils {
         final long bytes = values.length;
         final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putByte(addr + i, values[i]);
+            Unsafe.putByte(addr + i, values[i]);
         }
         return addr;
     }
@@ -110,7 +138,7 @@ final class KeyedBatchTestUtils {
         final long bytes = (long) values.length * Character.BYTES;
         final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putChar(addr + (long) i * Character.BYTES, values[i]);
+            Unsafe.putChar(addr + (long) i * Character.BYTES, values[i]);
         }
         return addr;
     }
@@ -119,7 +147,7 @@ final class KeyedBatchTestUtils {
         final long bytes = (long) values.length * Short.BYTES;
         final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putShort(addr + (long) i * Short.BYTES, values[i]);
+            Unsafe.putShort(addr + (long) i * Short.BYTES, values[i]);
         }
         return addr;
     }
@@ -128,7 +156,7 @@ final class KeyedBatchTestUtils {
         final long bytes = (long) values.length * Integer.BYTES;
         final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putInt(addr + (long) i * Integer.BYTES, values[i]);
+            Unsafe.putInt(addr + (long) i * Integer.BYTES, values[i]);
         }
         return addr;
     }
@@ -137,7 +165,7 @@ final class KeyedBatchTestUtils {
         final long bytes = (long) values.length * Long.BYTES;
         final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putLong(addr + (long) i * Long.BYTES, values[i]);
+            Unsafe.putLong(addr + (long) i * Long.BYTES, values[i]);
         }
         return addr;
     }
@@ -146,7 +174,7 @@ final class KeyedBatchTestUtils {
         final long bytes = (long) values.length * Float.BYTES;
         final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putFloat(addr + (long) i * Float.BYTES, values[i]);
+            Unsafe.putFloat(addr + (long) i * Float.BYTES, values[i]);
         }
         return addr;
     }
@@ -155,7 +183,7 @@ final class KeyedBatchTestUtils {
         final long bytes = (long) values.length * Double.BYTES;
         final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putDouble(addr + (long) i * Double.BYTES, values[i]);
+            Unsafe.putDouble(addr + (long) i * Double.BYTES, values[i]);
         }
         return addr;
     }
@@ -173,10 +201,10 @@ final class KeyedBatchTestUtils {
         final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < l0.length; i++) {
             final long base = addr + (long) i * 32L;
-            Unsafe.getUnsafe().putLong(base, l0[i]);
-            Unsafe.getUnsafe().putLong(base + 8, l1[i]);
-            Unsafe.getUnsafe().putLong(base + 16, l2[i]);
-            Unsafe.getUnsafe().putLong(base + 24, l3[i]);
+            Unsafe.putLong(base, l0[i]);
+            Unsafe.putLong(base + 8, l1[i]);
+            Unsafe.putLong(base + 16, l2[i]);
+            Unsafe.putLong(base + 24, l3[i]);
         }
         return addr;
     }
@@ -192,8 +220,8 @@ final class KeyedBatchTestUtils {
         final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < lo.length; i++) {
             final long base = addr + (long) i * 16L;
-            Unsafe.getUnsafe().putLong(base, lo[i]);
-            Unsafe.getUnsafe().putLong(base + 8, hi[i]);
+            Unsafe.putLong(base, lo[i]);
+            Unsafe.putLong(base + 8, hi[i]);
         }
         return addr;
     }
@@ -208,7 +236,7 @@ final class KeyedBatchTestUtils {
     static long allocEtalonRegion(GroupByFunction function, int entryCount, long valueSize, FlyweightPackedMapValue flyweight) {
         final long bytes = (long) entryCount * valueSize;
         final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
-        Unsafe.getUnsafe().setMemory(addr, bytes, (byte) 0);
+        Unsafe.setMemory(addr, bytes, (byte) 0);
         for (int i = 0; i < entryCount; i++) {
             flyweight.of(addr + (long) i * valueSize);
             function.setEmpty(flyweight);
@@ -223,8 +251,8 @@ final class KeyedBatchTestUtils {
      */
     static void assertBytesEqual(long baseA, long baseB, long totalBytes) {
         for (long i = 0; i < totalBytes; i++) {
-            final byte a = Unsafe.getUnsafe().getByte(baseA + i);
-            final byte b = Unsafe.getUnsafe().getByte(baseB + i);
+            final byte a = Unsafe.getByte(baseA + i);
+            final byte b = Unsafe.getByte(baseB + i);
             if (a != b) {
                 Assert.fail("value regions diverge at byte offset " + i
                         + ": ref=0x" + Integer.toHexString(a & 0xff)
@@ -244,7 +272,10 @@ final class KeyedBatchTestUtils {
      *         entries);</li>
      *     <li>the test batch then pairs each of those eight entries with a
      *         distinct row, producing every {isNew, isNull} combination in a
-     *         single pass.</li>
+     *         single pass, at rowIds above the primed ones;</li>
+     *     <li>the descending batch finally revisits all eight entries at rowIds
+     *         below every rowId written so far, so both rowId directions are
+     *         exercised against both a stored non-null value and a stored NULL.</li>
      * </ul>
      * The caller supplies an already-allocated argument buffer along with its
      * element size (in bytes); ownership transfers to the returned record so
@@ -269,8 +300,8 @@ final class KeyedBatchTestUtils {
                 final long[] primeOffsets = {0, valueSize, 2 * valueSize, 3 * valueSize};
                 final long primeBatch = buildBatchBuffer(PRIME_ROWS, primeOffsets, PRIME_IS_NEW);
                 try {
-                    runReferencePath(function, record, flyweightA, baseA, primeBatch, PRIME_ROWS.length, 0);
-                    runReferencePath(function, record, flyweightB, baseB, primeBatch, PRIME_ROWS.length, 0);
+                    runReferencePath(function, record, flyweightA, baseA, primeBatch, PRIME_ROWS.length, PRIME_BASE_ROW_ID);
+                    runReferencePath(function, record, flyweightB, baseB, primeBatch, PRIME_ROWS.length, PRIME_BASE_ROW_ID);
                 } finally {
                     Unsafe.free(primeBatch, (long) PRIME_ROWS.length * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 }
@@ -281,24 +312,61 @@ final class KeyedBatchTestUtils {
                 assertBytesEqual(baseA, baseB, regionBytes);
 
                 // Test batch: existing entries first, then new entries. Row
-                // indexes alternate null / non-null values from the caller's
-                // ARG_VALUES to cover {isNew, isNull} × {true, false}.
+                // indexes select the caller's type-specific mix of null and non-null values to cover
+                // new and existing entries with both value states.
                 final long[] testOffsets = {
                         0, valueSize, 2 * valueSize, 3 * valueSize,
                         4 * valueSize, 5 * valueSize, 6 * valueSize, 7 * valueSize
                 };
                 final long testBatch = buildBatchBuffer(TEST_ROWS, testOffsets, TEST_IS_NEW);
                 try {
-                    runReferencePath(function, record, flyweightA, baseA, testBatch, TEST_ROWS.length, 1000);
-                    function.computeKeyedBatch(record, flyweightB, baseB, testBatch, TEST_ROWS.length, 1000);
+                    runReferencePath(function, record, flyweightA, baseA, testBatch, TEST_ROWS.length, TEST_BASE_ROW_ID);
+                    function.computeKeyedBatch(record, flyweightB, baseB, testBatch, TEST_ROWS.length, TEST_BASE_ROW_ID);
                 } finally {
                     Unsafe.free(testBatch, (long) TEST_ROWS.length * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+
+                assertBytesEqual(baseA, baseB, regionBytes);
+
+                // Descending batch: revisits all eight entries below every rowId written so far,
+                // so a lower incoming rowId meets both a stored non-null value (which "first"
+                // must replace and "last" must keep) and a stored NULL (which both not-null
+                // variants must replace).
+                final long descendingBatch = buildBatchBuffer(DESCENDING_ROWS, testOffsets, DESCENDING_IS_NEW);
+                try {
+                    runReferencePath(function, record, flyweightA, baseA, descendingBatch, DESCENDING_ROWS.length, DESCENDING_BASE_ROW_ID);
+                    function.computeKeyedBatch(record, flyweightB, baseB, descendingBatch, DESCENDING_ROWS.length, DESCENDING_BASE_ROW_ID);
+                } finally {
+                    Unsafe.free(descendingBatch, (long) DESCENDING_ROWS.length * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 }
 
                 assertBytesEqual(baseA, baseB, regionBytes);
             } finally {
                 Unsafe.free(baseA, regionBytes, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(baseB, regionBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            // Repeated-entry batch, on its own pair of regions so that an entry can be created and
+            // then revisited within the one batch. See REPEATED_ROWS for what each entry covers.
+            final long baseC = allocEtalonRegion(function, ENTRY_COUNT, valueSize, flyweightA);
+            final long baseD = allocEtalonRegion(function, ENTRY_COUNT, valueSize, flyweightB);
+            try {
+                final long[] repeatedOffsets = {
+                        0, valueSize, 2 * valueSize, 0,
+                        valueSize, 3 * valueSize, 2 * valueSize, 3 * valueSize
+                };
+                final long repeatedBatch = buildBatchBuffer(REPEATED_ROWS, repeatedOffsets, REPEATED_IS_NEW);
+                try {
+                    runReferencePath(function, record, flyweightA, baseC, repeatedBatch, REPEATED_ROWS.length, REPEATED_BASE_ROW_ID);
+                    function.computeKeyedBatch(record, flyweightB, baseD, repeatedBatch, REPEATED_ROWS.length, REPEATED_BASE_ROW_ID);
+                } finally {
+                    Unsafe.free(repeatedBatch, (long) REPEATED_ROWS.length * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+
+                assertBytesEqual(baseC, baseD, regionBytes);
+            } finally {
+                Unsafe.free(baseC, regionBytes, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(baseD, regionBytes, MemoryTag.NATIVE_DEFAULT);
             }
         }
     }
@@ -316,7 +384,7 @@ final class KeyedBatchTestUtils {
         final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < n; i++) {
             final long encoded = Map.encodeBatchEntry(rowIndexes[i], entryOffsets[i], isNewFlags[i]);
-            Unsafe.getUnsafe().putLong(addr + (long) i * Long.BYTES, encoded);
+            Unsafe.putLong(addr + (long) i * Long.BYTES, encoded);
         }
         return addr;
     }
@@ -355,7 +423,7 @@ final class KeyedBatchTestUtils {
             long baseRowId
     ) {
         for (long i = 0; i < rowCount; i++) {
-            final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            final long encoded = Unsafe.getLong(batchAddr + (i << 3));
             final long valueOffset = Map.decodeBatchOffset(encoded);
             final int rowIndex = Map.decodeBatchRowIndex(encoded);
             final boolean isNew = Map.isNewBatchEntry(encoded);
@@ -635,82 +703,82 @@ final class KeyedBatchTestUtils {
 
         @Override
         public boolean getBool(int columnIndex) {
-            return Unsafe.getUnsafe().getByte(bufferAddr + rowIndex * elemSize) != 0;
+            return Unsafe.getByte(bufferAddr + rowIndex * elemSize) != 0;
         }
 
         @Override
         public byte getByte(int columnIndex) {
-            return Unsafe.getUnsafe().getByte(bufferAddr + rowIndex * elemSize);
+            return Unsafe.getByte(bufferAddr + rowIndex * elemSize);
         }
 
         @Override
         public char getChar(int columnIndex) {
-            return Unsafe.getUnsafe().getChar(bufferAddr + rowIndex * elemSize);
+            return Unsafe.getChar(bufferAddr + rowIndex * elemSize);
         }
 
         @Override
         public double getDouble(int columnIndex) {
-            return Unsafe.getUnsafe().getDouble(bufferAddr + rowIndex * elemSize);
+            return Unsafe.getDouble(bufferAddr + rowIndex * elemSize);
         }
 
         @Override
         public float getFloat(int columnIndex) {
-            return Unsafe.getUnsafe().getFloat(bufferAddr + rowIndex * elemSize);
+            return Unsafe.getFloat(bufferAddr + rowIndex * elemSize);
         }
 
         @Override
         public byte getGeoByte(int columnIndex) {
-            return Unsafe.getUnsafe().getByte(bufferAddr + rowIndex * elemSize);
+            return Unsafe.getByte(bufferAddr + rowIndex * elemSize);
         }
 
         @Override
         public int getGeoInt(int columnIndex) {
-            return Unsafe.getUnsafe().getInt(bufferAddr + rowIndex * elemSize);
+            return Unsafe.getInt(bufferAddr + rowIndex * elemSize);
         }
 
         @Override
         public long getGeoLong(int columnIndex) {
-            return Unsafe.getUnsafe().getLong(bufferAddr + rowIndex * elemSize);
+            return Unsafe.getLong(bufferAddr + rowIndex * elemSize);
         }
 
         @Override
         public short getGeoShort(int columnIndex) {
-            return Unsafe.getUnsafe().getShort(bufferAddr + rowIndex * elemSize);
+            return Unsafe.getShort(bufferAddr + rowIndex * elemSize);
         }
 
         @Override
         public int getIPv4(int columnIndex) {
-            return Unsafe.getUnsafe().getInt(bufferAddr + rowIndex * elemSize);
+            return Unsafe.getInt(bufferAddr + rowIndex * elemSize);
         }
 
         @Override
         public int getInt(int columnIndex) {
-            return Unsafe.getUnsafe().getInt(bufferAddr + rowIndex * elemSize);
+            return Unsafe.getInt(bufferAddr + rowIndex * elemSize);
         }
 
         @Override
         public long getLong(int columnIndex) {
-            return Unsafe.getUnsafe().getLong(bufferAddr + rowIndex * elemSize);
+            return Unsafe.getLong(bufferAddr + rowIndex * elemSize);
         }
 
         @Override
         public long getLong128Hi(int columnIndex) {
-            return Unsafe.getUnsafe().getLong(bufferAddr + rowIndex * elemSize + 8);
+            return Unsafe.getLong(bufferAddr + rowIndex * elemSize + 8);
         }
 
         @Override
         public long getLong128Lo(int columnIndex) {
-            return Unsafe.getUnsafe().getLong(bufferAddr + rowIndex * elemSize);
+            return Unsafe.getLong(bufferAddr + rowIndex * elemSize);
         }
 
         @Override
         public Long256 getLong256A(int columnIndex) {
             final long base = bufferAddr + rowIndex * elemSize;
             long256.setAll(
-                    Unsafe.getUnsafe().getLong(base),
-                    Unsafe.getUnsafe().getLong(base + 8),
-                    Unsafe.getUnsafe().getLong(base + 16),
-                    Unsafe.getUnsafe().getLong(base + 24)
+                    Unsafe.getLong(base),
+                    Unsafe.getLong(base + 8),
+                    Unsafe.getLong(base + 16),
+                    Unsafe.getLong(base + 24)
             );
             return long256;
         }
@@ -722,12 +790,12 @@ final class KeyedBatchTestUtils {
 
         @Override
         public short getShort(int columnIndex) {
-            return Unsafe.getUnsafe().getShort(bufferAddr + rowIndex * elemSize);
+            return Unsafe.getShort(bufferAddr + rowIndex * elemSize);
         }
 
         @Override
         public int getStrLen(int columnIndex) {
-            return Unsafe.getUnsafe().getInt(bufferAddr + rowIndex * elemSize);
+            return Unsafe.getInt(bufferAddr + rowIndex * elemSize);
         }
 
         @Override
@@ -737,7 +805,7 @@ final class KeyedBatchTestUtils {
 
         @Override
         public int getVarcharSize(int columnIndex) {
-            return Unsafe.getUnsafe().getInt(bufferAddr + rowIndex * elemSize);
+            return Unsafe.getInt(bufferAddr + rowIndex * elemSize);
         }
 
         void setPageAvailable(boolean value) {

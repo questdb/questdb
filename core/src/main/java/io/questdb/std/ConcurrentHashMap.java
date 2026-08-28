@@ -64,7 +64,6 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.ObjectStreamField;
 import java.io.Serializable;
-import java.lang.ThreadLocal;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.AbstractMap;
@@ -609,7 +608,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             new ObjectStreamField("segmentShift", Integer.TYPE)
     };
     private static final long serialVersionUID = 7249069246763182397L;
-    private final java.lang.ThreadLocal<Traverser<V>> tlTraverser = ThreadLocal.withInitial(Traverser::new);
+    private final CarrierLocal<Traverser<V>> tlTraverser = CarrierLocal.withInitial(Traverser::new);
     /**
      * The array of bins. Lazily initialized upon first insertion.
      * Size is always a power of two. Accessed directly by iterators.
@@ -787,7 +786,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                     if (tabAt(tab, i) == f) {
                         Node<V> p = (fh >= 0 ? f :
                                 (f instanceof TreeBin) ?
-                                        ((TreeBin<V>) f).first : null);
+                                ((TreeBin<V>) f).first : null);
                         while (p != null) {
                             --delta;
                             p = p.next;
@@ -955,6 +954,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         for (Node<V>[] tab = table; ; ) {
             Node<V> f;
             int n, i, fh;
+            CharSequence fk;
+            V fv;
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
@@ -975,6 +976,10 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                     break;
             } else if ((fh = f.hash) == MOVED)
                 tab = helpTransfer(tab, f);
+            else if (fh == h    // check first node without acquiring lock
+                    && ((fk = f.key) == key || (fk != null && keyEquals(key, fk)))
+                    && (fv = f.val) != null)
+                return fv;
             else {
                 boolean added = false;
                 synchronized (f) {
@@ -1056,6 +1061,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         for (Node<V>[] tab = table; ; ) {
             Node<V> f;
             int n, i, fh;
+            CharSequence fk;
+            V fv;
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
@@ -1076,6 +1083,10 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                     break;
             } else if ((fh = f.hash) == MOVED)
                 tab = helpTransfer(tab, f);
+            else if (fh == h    // check first node without acquiring lock
+                    && ((fk = f.key) == key || (fk != null && keyEquals(key, fk)))
+                    && (fv = f.val) != null)
+                return fv;
             else {
                 boolean added = false;
                 synchronized (f) {
@@ -1538,7 +1549,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         long n = sumCount();
         return ((n < 0L) ? 0 :
                 (n > (long) Integer.MAX_VALUE) ? Integer.MAX_VALUE :
-                        (int) n);
+                (int) n);
     }
 
     /**
@@ -1679,9 +1690,9 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                 if (sc < 0) {
                     if (sc >>> RESIZE_STAMP_SHIFT != rs || sc == rs + MAX_RESIZERS || (nt = nextTable) == null || transferIndex <= 0)
                         break;
-                    if (Unsafe.getUnsafe().compareAndSwapInt(this, SIZECTL, sc, sc + 1))
+                    if (Unsafe.cas(this, SIZECTL, sc, sc + 1))
                         transfer(tab, nt);
-                } else if (Unsafe.getUnsafe().compareAndSwapInt(this, SIZECTL, sc,
+                } else if (Unsafe.cas(this, SIZECTL, sc,
                         (rs << RESIZE_STAMP_SHIFT) + 2))
                     transfer(tab, null);
                 s = sumCount();
@@ -1708,7 +1719,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                     if (cellsBusy == 0) {            // Try to attach new Cell
                         CounterCell r = new CounterCell(x); // Optimistic create
                         if (cellsBusy == 0 &&
-                                Unsafe.getUnsafe().compareAndSwapInt(this, CELLSBUSY, 0, 1)) {
+                                Unsafe.cas(this, CELLSBUSY, 0, 1)) {
                             boolean created = false;
                             try {               // Recheck under lock
                                 CounterCell[] rs;
@@ -1737,7 +1748,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                 else if (!collide)
                     collide = true;
                 else if (cellsBusy == 0 &&
-                        Unsafe.getUnsafe().compareAndSwapInt(this, CELLSBUSY, 0, 1)) {
+                        Unsafe.cas(this, CELLSBUSY, 0, 1)) {
                     try {
                         if (counterCells == as) {// Expand table unless stale
                             CounterCell[] rs = new CounterCell[n << 1];
@@ -1752,7 +1763,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                 }
                 h = advanceProbe(h);
             } else if (cellsBusy == 0 && counterCells == as &&
-                    Unsafe.getUnsafe().compareAndSwapInt(this, CELLSBUSY, 0, 1)) {
+                    Unsafe.cas(this, CELLSBUSY, 0, 1)) {
                 boolean init = false;
                 try {                           // Initialize table
                     if (counterCells == as) {
@@ -1787,7 +1798,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         while ((tab = table) == null || tab.length == 0) {
             if ((sc = sizeCtl) < 0)
                 Os.pause(); // lost initialization race; just spin
-            else if (Unsafe.getUnsafe().compareAndSwapInt(this, SIZECTL, sc, -1)) {
+            else if (Unsafe.cas(this, SIZECTL, sc, -1)) {
                 try {
                     if ((tab = table) == null || tab.length == 0) {
                         int n = (sc > 0) ? sc : DEFAULT_CAPACITY;
@@ -1848,7 +1859,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                 else if ((nextIndex = transferIndex) <= 0) {
                     i = -1;
                     advance = false;
-                } else if (Unsafe.getUnsafe().compareAndSwapInt
+                } else if (Unsafe.cas
                         (this, TRANSFERINDEX, nextIndex,
                                 nextBound = (nextIndex > stride ?
                                         nextIndex - stride : 0))) {
@@ -1865,7 +1876,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                     sizeCtl = (n << 1) - (n >>> 1);
                     return;
                 }
-                if (Unsafe.getUnsafe().compareAndSwapInt(this, SIZECTL, sc = sizeCtl, sc - 1)) {
+                if (Unsafe.cas(this, SIZECTL, sc = sizeCtl, sc - 1)) {
                     if ((sc - 2) != resizeStamp(n) << RESIZE_STAMP_SHIFT)
                         return;
                     finishing = advance = true;
@@ -1995,7 +2006,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             int n;
             if (tab == null || (n = tab.length) == 0) {
                 n = Math.max(sc, c);
-                if (Unsafe.getUnsafe().compareAndSwapInt(this, SIZECTL, sc, -1)) {
+                if (Unsafe.cas(this, SIZECTL, sc, -1)) {
                     try {
                         if (table == tab) {
                             @SuppressWarnings("unchecked")
@@ -2017,9 +2028,9 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                             sc == rs + MAX_RESIZERS || (nt = nextTable) == null ||
                             transferIndex <= 0)
                         break;
-                    if (Unsafe.getUnsafe().compareAndSwapInt(this, SIZECTL, sc, sc + 1))
+                    if (Unsafe.cas(this, SIZECTL, sc, sc + 1))
                         transfer(tab, nt);
-                } else if (Unsafe.getUnsafe().compareAndSwapInt(this, SIZECTL, sc,
+                } else if (Unsafe.cas(this, SIZECTL, sc,
                         (rs << RESIZE_STAMP_SHIFT) + 2))
                     transfer(tab, null);
             }
@@ -2030,7 +2041,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         probe ^= probe << 13;   // xorshift
         probe ^= probe >>> 17;
         probe ^= probe << 5;
-        Unsafe.getUnsafe().putInt(Thread.currentThread(), PROBE, probe);
+        Unsafe.putInt(Thread.currentThread(), PROBE, probe);
         return probe;
     }
 
@@ -2038,7 +2049,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
 
     static <V> boolean casTabAt(Node<V>[] tab, int i,
                                 Node<V> v) {
-        return Unsafe.getUnsafe().compareAndSwapObject(tab, ((long) i << ASHIFT) + ABASE, null, v);
+        return Unsafe.cas(tab, ((long) i << ASHIFT) + ABASE, null, v);
     }
 
     /* ---------------- TreeBins -------------- */
@@ -2082,7 +2093,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     }
 
     static int getProbe() {
-        return Unsafe.getUnsafe().getInt(Thread.currentThread(), PROBE);
+        return Unsafe.getInt(Thread.currentThread(), PROBE);
     }
 
     /**
@@ -2097,8 +2108,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         int probe = (p == 0) ? 1 : p; // skip 0
         long seed = mix64(seeder.getAndAdd(SEEDER_INCREMENT));
         Thread t = Thread.currentThread();
-        Unsafe.getUnsafe().putLong(t, SEED, seed);
-        Unsafe.getUnsafe().putInt(t, PROBE, probe);
+        Unsafe.putLong(t, SEED, seed);
+        Unsafe.putInt(t, PROBE, probe);
     }
 
     /**
@@ -2110,7 +2121,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     }
 
     static <K, V> void setTabAt(Node<V>[] tab, int i, Node<V> v) {
-        Unsafe.getUnsafe().putObjectVolatile(tab, ((long) i << ASHIFT) + ABASE, v);
+        Unsafe.putObjectVolatile(tab, ((long) i << ASHIFT) + ABASE, v);
     }
 
     /**
@@ -2135,7 +2146,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
 
     @SuppressWarnings("unchecked")
     static <V> Node<V> tabAt(Node<V>[] tab, int i) {
-        return (Node<V>) Unsafe.getUnsafe().getObjectVolatile(tab, ((long) i << ASHIFT) + ABASE);
+        return (Node<V>) Unsafe.getObjectVolatile(tab, ((long) i << ASHIFT) + ABASE);
     }
 
     /* ----------------Views -------------- */
@@ -2170,7 +2181,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                 if ((sc >>> RESIZE_STAMP_SHIFT) != rs || sc == rs + 1 ||
                         sc == rs + MAX_RESIZERS || transferIndex <= 0)
                     break;
-                if (Unsafe.getUnsafe().compareAndSwapInt(this, SIZECTL, sc, sc + 1)) {
+                if (Unsafe.cas(this, SIZECTL, sc, sc + 1)) {
                     transfer(tab, nextTab);
                     break;
                 }
@@ -2576,7 +2587,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             implements Set<Map.Entry<CharSequence, V>>, java.io.Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
 
-        private final ThreadLocal<EntryIterator<V>> tlEntryIterator = ThreadLocal.withInitial(EntryIterator::new);
+        private final CarrierLocal<EntryIterator<V>> tlEntryIterator = CarrierLocal.withInitial(EntryIterator::new);
 
         EntrySetView(ConcurrentHashMap<V> map) {
             super(map);
@@ -2712,7 +2723,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     public static class KeySetView<V> extends CollectionView<V, CharSequence>
             implements Set<CharSequence>, java.io.Serializable {
         private static final long serialVersionUID = 7249069246763182397L;
-        private final ThreadLocal<KeyIterator<V>> tlKeyIterator = ThreadLocal.withInitial(KeyIterator::new);
+        private final CarrierLocal<KeyIterator<V>> tlKeyIterator = CarrierLocal.withInitial(KeyIterator::new);
         private final V value;
 
         KeySetView(ConcurrentHashMap<V> map, V value) {  // non-public
@@ -3106,7 +3117,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         // values for lockState
         static final int WRITER = 1; // set while holding write lock
         private static final long LOCKSTATE;
-        private static final sun.misc.Unsafe U;
         volatile TreeNode<V> first;
         volatile int lockState;
         TreeNode<V> root;
@@ -3162,21 +3172,32 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          * Possibly blocks awaiting root lock.
          */
         private void contendedLock() {
-            boolean waiting = false;
-            for (int s; ; ) {
-                if (((s = lockState) & ~WAITER) == 0) {
-                    if (U.compareAndSwapInt(this, LOCKSTATE, s, WRITER)) {
-                        if (waiting)
-                            waiter = null;
-                        return;
+            boolean isInterrupted = false;
+            boolean isWaiting = false;
+            try {
+                for (int s; ; ) {
+                    if (((s = lockState) & ~WAITER) == 0) {
+                        if (Unsafe.cas(this, LOCKSTATE, s, WRITER)) {
+                            if (isWaiting)
+                                waiter = null;
+                            return;
+                        }
+                    } else if ((s & WAITER) == 0) {
+                        if (Unsafe.cas(this, LOCKSTATE, s, s | WAITER)) {
+                            isWaiting = true;
+                            waiter = Thread.currentThread();
+                        }
+                    } else if (isWaiting) {
+                        // The bin monitor admits one writer, so only this thread can own WAITER.
+                        LockSupport.park(this);
+                        // Consume interrupts so the next park can block; restore the flag on exit.
+                        isInterrupted |= Thread.interrupted();
                     }
-                } else if ((s & WAITER) == 0) {
-                    if (U.compareAndSwapInt(this, LOCKSTATE, s, s | WAITER)) {
-                        waiting = true;
-                        waiter = Thread.currentThread();
-                    }
-                } else if (waiting)
-                    LockSupport.park(this);
+                }
+            } finally {
+                if (isInterrupted) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
 
@@ -3184,7 +3205,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          * Acquires write lock for tree restructuring.
          */
         private void lockRoot() {
-            if (!U.compareAndSwapInt(this, LOCKSTATE, 0, WRITER))
+            assert Thread.holdsLock(this) : "TreeBin writer must hold the bin monitor";
+            if (!Unsafe.cas(this, LOCKSTATE, 0, WRITER))
                 contendedLock(); // offload to separate method
         }
 
@@ -3421,7 +3443,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                                 ((ek = e.key) == k || (ek != null && keyEquals(k, ek, ics))))
                             return e;
                         e = e.next;
-                    } else if (U.compareAndSwapInt(this, LOCKSTATE, s,
+                    } else if (Unsafe.cas(this, LOCKSTATE, s,
                             s + READER)) {
                         TreeNode<V> r, p;
                         try {
@@ -3429,7 +3451,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                                     r.findTreeNode(h, k, null));
                         } finally {
                             Thread w;
-                            if (U.getAndAddInt(this, LOCKSTATE, -READER) ==
+                            if (Unsafe.getAndAddInt(this, LOCKSTATE, -READER) ==
                                     (READER | WAITER) && (w = waiter) != null)
                                 LockSupport.unpark(w);
                         }
@@ -3610,9 +3632,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
 
         static {
             try {
-                U = Unsafe.getUnsafe();
                 Class<?> k = TreeBin.class;
-                LOCKSTATE = U.objectFieldOffset
+                LOCKSTATE = Unsafe.objectFieldOffset
                         (k.getDeclaredField("lockState"));
             } catch (Exception e) {
                 throw new Error(e);
@@ -3716,7 +3737,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     static final class ValuesView<V> extends CollectionView<V, V>
             implements Collection<V>, java.io.Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
-        private final ThreadLocal<ValueIterator<V>> tlValueIterator = ThreadLocal.withInitial(ValueIterator::new);
+        private final CarrierLocal<ValueIterator<V>> tlValueIterator = CarrierLocal.withInitial(ValueIterator::new);
 
         ValuesView(ConcurrentHashMap<V> map) {
             super(map);
@@ -3757,8 +3778,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     static {
         try {
             Class<?> tk = Thread.class;
-            SEED = Unsafe.getUnsafe().objectFieldOffset(tk.getDeclaredField("threadLocalRandomSeed"));
-            PROBE = Unsafe.getUnsafe().objectFieldOffset(tk.getDeclaredField("threadLocalRandomProbe"));
+            SEED = Unsafe.objectFieldOffset(tk.getDeclaredField("threadLocalRandomSeed"));
+            PROBE = Unsafe.objectFieldOffset(tk.getDeclaredField("threadLocalRandomProbe"));
         } catch (Exception e) {
             throw new Error(e);
         }
@@ -3767,20 +3788,20 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     static {
         try {
             Class<?> k = ConcurrentHashMap.class;
-            SIZECTL = Unsafe.getUnsafe().objectFieldOffset
+            SIZECTL = Unsafe.objectFieldOffset
                     (k.getDeclaredField("sizeCtl"));
-            TRANSFERINDEX = Unsafe.getUnsafe().objectFieldOffset
+            TRANSFERINDEX = Unsafe.objectFieldOffset
                     (k.getDeclaredField("transferIndex"));
-            BASECOUNT = Unsafe.getUnsafe().objectFieldOffset
+            BASECOUNT = Unsafe.objectFieldOffset
                     (k.getDeclaredField("baseCount"));
-            CELLSBUSY = Unsafe.getUnsafe().objectFieldOffset
+            CELLSBUSY = Unsafe.objectFieldOffset
                     (k.getDeclaredField("cellsBusy"));
             Class<?> ck = CounterCell.class;
-            CELLVALUE = Unsafe.getUnsafe().objectFieldOffset
+            CELLVALUE = Unsafe.objectFieldOffset
                     (ck.getDeclaredField("value"));
             Class<?> ak = Node[].class;
-            ABASE = Unsafe.getUnsafe().arrayBaseOffset(ak);
-            int scale = Unsafe.getUnsafe().arrayIndexScale(ak);
+            ABASE = Unsafe.arrayBaseOffset(ak);
+            int scale = Unsafe.arrayIndexScale(ak);
             if ((scale & (scale - 1)) != 0)
                 throw new Error("data type scale not a power of two");
             ASHIFT = 31 - Integer.numberOfLeadingZeros(scale);

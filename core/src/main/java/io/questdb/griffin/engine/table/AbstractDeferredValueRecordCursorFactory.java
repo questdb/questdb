@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
@@ -43,9 +44,9 @@ import org.jetbrains.annotations.Nullable;
 abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     protected final int columnIndex;
     protected final IntList columnIndexes;
-    private final Function symbolFunc;
     protected Function filter;
     private AbstractLatestByValueRecordCursor cursor;
+    private Function symbolFunc;
 
     public AbstractDeferredValueRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -89,9 +90,24 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
 
     @Override
     protected void _close() {
-        super._close();
-        filter = Misc.free(filter);
-        Misc.free(cursor);
+        final AbstractLatestByValueRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        final Function symbolFunc = this.symbolFunc;
+        this.symbolFunc = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, cursor);
+        if (symbolFunc != filter) {
+            failure = Misc.freeBestEffort(failure, symbolFunc);
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     protected abstract AbstractLatestByValueRecordCursor createCursorFor(int symbolKey);
@@ -104,6 +120,9 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
         symbolFunc.init(pageFrameCursor, executionContext);
 
         if (lookupDeferredSymbol(pageFrameCursor)) {
+            // The deferred symbol is absent, so this returns a shared empty cursor that never checks the
+            // breaker on its own. Consult it once at open so the query still observes cancellation.
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
             if (recordCursorSupportsRandomAccess()) {
                 return EmptyTableRandomRecordCursor.INSTANCE;
             }

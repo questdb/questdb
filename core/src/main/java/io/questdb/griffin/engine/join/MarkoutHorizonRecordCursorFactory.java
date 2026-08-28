@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordArray;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -92,9 +93,9 @@ import io.questdb.std.Unsafe;
  * executes one step of the algorithm, resulting in a single output row.
  */
 public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final MarkoutHorizonRecordCursor cursor;
     private final int masterColumnIndex;
     private final int slaveColumnIndex;
+    private MarkoutHorizonRecordCursor cursor;
 
     /**
      * Creates a new markout horizon cursor factory.
@@ -153,12 +154,21 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
         try {
+            // emitJoinRecord() revisits master rows via recordAt() in output (master_ts +
+            // offset) order, so the set of simultaneously active master rows spans the offset
+            // grid. A wide horizon over fine partitions can keep more than MONOTONIC's 4 frames
+            // live at once, so SCATTERED avoids re-decode thrash (at the cost of the full budget).
+            masterCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             slaveCursor = slaveFactory.getCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
+            cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
+            // of() binds the per-query tracker before materializing the slave; close() frees the
+            // partial RecordArray under that tracker. master/slave are adopted only after the
+            // materialization, so this does not double-free them.
+            Misc.free(cursor);
             throw ex;
         }
     }
@@ -189,9 +199,11 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
+        final MarkoutHorizonRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     /**
@@ -354,15 +366,15 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         }
 
         private static int block_decUsedSlotCount(long blockAddr) {
-            int count = Unsafe.getUnsafe().getInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT);
+            int count = Unsafe.getInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT);
             count--;
-            Unsafe.getUnsafe().putInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT, count);
+            Unsafe.putInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT, count);
             return count;
         }
 
         private static void block_incUsedSlotCount(long blockAddr) {
-            int count = Unsafe.getUnsafe().getInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT);
-            Unsafe.getUnsafe().putInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT, count + 1);
+            int count = Unsafe.getInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT);
+            Unsafe.putInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT, count + 1);
         }
 
         private static long block_iteratorAddr(long blockAddr, int slot) {
@@ -370,67 +382,67 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         }
 
         private static long block_nextBlockAddr(long blockAddr) {
-            return Unsafe.getUnsafe().getLong(blockAddr + BLOCK_OFFSET_NEXT_BLOCK_ADDR);
+            return Unsafe.getLong(blockAddr + BLOCK_OFFSET_NEXT_BLOCK_ADDR);
         }
 
         private static int block_nextFreeSlot(long blockAddr) {
-            return Unsafe.getUnsafe().getInt(blockAddr + BLOCK_OFFSET_NEXT_FREE_SLOT);
+            return Unsafe.getInt(blockAddr + BLOCK_OFFSET_NEXT_FREE_SLOT);
         }
 
         private static void block_setNextBlockAddr(long blockAddr, long nextAddr) {
-            Unsafe.getUnsafe().putLong(blockAddr + BLOCK_OFFSET_NEXT_BLOCK_ADDR, nextAddr);
+            Unsafe.putLong(blockAddr + BLOCK_OFFSET_NEXT_BLOCK_ADDR, nextAddr);
         }
 
         private static void block_setNextFreeSlot(long blockAddr, int slot) {
-            Unsafe.getUnsafe().putInt(blockAddr + BLOCK_OFFSET_NEXT_FREE_SLOT, slot);
+            Unsafe.putInt(blockAddr + BLOCK_OFFSET_NEXT_FREE_SLOT, slot);
         }
 
         private static long iter_masterRowId(long iterAddr) {
-            return Unsafe.getUnsafe().getLong(iterAddr + ITERATOR_OFFSET_MASTER_ROW_ID);
+            return Unsafe.getLong(iterAddr + ITERATOR_OFFSET_MASTER_ROW_ID);
         }
 
         private static long iter_masterTimestamp(long iterAddr) {
-            return Unsafe.getUnsafe().getLong(iterAddr + ITERATOR_OFFSET_MASTER_TIMESTAMP);
+            return Unsafe.getLong(iterAddr + ITERATOR_OFFSET_MASTER_TIMESTAMP);
         }
 
         private static long iter_nextIterAddr(long iterAddr) {
-            return Unsafe.getUnsafe().getLong(iterAddr + ITERATOR_OFFSET_NEXT_ITER_ADDR);
+            return Unsafe.getLong(iterAddr + ITERATOR_OFFSET_NEXT_ITER_ADDR);
         }
 
         private static int iter_nextSlaveRowNum(long iterAddr) {
-            return Unsafe.getUnsafe().getInt(iterAddr + ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM);
+            return Unsafe.getInt(iterAddr + ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM);
         }
 
         private static long iter_nextTimestamp(long iterAddr) {
-            return Unsafe.getUnsafe().getLong(iterAddr + ITERATOR_OFFSET_NEXT_TIMESTAMP);
+            return Unsafe.getLong(iterAddr + ITERATOR_OFFSET_NEXT_TIMESTAMP);
         }
 
         private static int iter_offsetFromBlockStart(long iterAddr) {
-            return Unsafe.getUnsafe().getInt(iterAddr + ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START);
+            return Unsafe.getInt(iterAddr + ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START);
         }
 
         private static void iter_setMasterRowId(long iterAddr, long value) {
-            Unsafe.getUnsafe().putLong(iterAddr + ITERATOR_OFFSET_MASTER_ROW_ID, value);
+            Unsafe.putLong(iterAddr + ITERATOR_OFFSET_MASTER_ROW_ID, value);
         }
 
         private static void iter_setMasterTimestamp(long iterAddr, long value) {
-            Unsafe.getUnsafe().putLong(iterAddr + ITERATOR_OFFSET_MASTER_TIMESTAMP, value);
+            Unsafe.putLong(iterAddr + ITERATOR_OFFSET_MASTER_TIMESTAMP, value);
         }
 
         private static void iter_setNextIterAddr(long iterAddr, long value) {
-            Unsafe.getUnsafe().putLong(iterAddr + ITERATOR_OFFSET_NEXT_ITER_ADDR, value);
+            Unsafe.putLong(iterAddr + ITERATOR_OFFSET_NEXT_ITER_ADDR, value);
         }
 
         private static void iter_setNextSlaveRowNum(long iterAddr, int value) {
-            Unsafe.getUnsafe().putInt(iterAddr + ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM, value);
+            Unsafe.putInt(iterAddr + ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM, value);
         }
 
         private static void iter_setNextTimestamp(long iterAddr, long value) {
-            Unsafe.getUnsafe().putLong(iterAddr + ITERATOR_OFFSET_NEXT_TIMESTAMP, value);
+            Unsafe.putLong(iterAddr + ITERATOR_OFFSET_NEXT_TIMESTAMP, value);
         }
 
         private static void iter_setOffsetFromBlockStart(long iterAddr, int value) {
-            Unsafe.getUnsafe().putInt(iterAddr + ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START, value);
+            Unsafe.putInt(iterAddr + ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START, value);
         }
 
         private long activateMasterRow() {
@@ -456,7 +468,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
 
         private long block_alloc() {
             long blockAddr = Unsafe.malloc(BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.getUnsafe().setMemory(blockAddr, BLOCK_HEADER_SIZE, (byte) 0);
+            Unsafe.setMemory(blockAddr, BLOCK_HEADER_SIZE, (byte) 0);
             return blockAddr;
         }
 
@@ -596,14 +608,14 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             emittedRowCount = 0;
         }
 
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            this.masterCursor = masterCursor;
-            this.masterRecord = masterCursor.getRecord();
-            this.slaveCursor = slaveCursor;
-            this.circuitBreaker = circuitBreaker;
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
+            final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
 
-            // Materialize the slave cursor into RecordArray to enable random access
+            // Materialize the slave cursor into RecordArray to enable random access.
+            // Bind the per-query tracker before the first put so the materialization is charged to
+            // (and capped by) the query memory limit; clear() releases any prior backing first.
             slaveRecordArray.clear();
+            slaveRecordArray.setMemoryTracker(executionContext.getMemoryTracker());
             slaveRecordOffsets.clear();
             if (slaveCursor.size() > Integer.MAX_VALUE) {
                 throw CairoException.critical(-1)
@@ -640,6 +652,14 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             // Free any existing iterator blocks from previous execution
             freeAllIteratorBlocks();
             resetLocalState();
+
+            // Adopt the cursors last: the materialization above can breach the query memory limit,
+            // and the factory getCursor() catch frees the local cursors plus this cursor's partial
+            // RecordArray. Assigning here keeps a breach from double-freeing master/slave.
+            this.masterCursor = masterCursor;
+            this.masterRecord = masterCursor.getRecord();
+            this.slaveCursor = slaveCursor;
+            this.circuitBreaker = circuitBreaker;
         }
     }
 }

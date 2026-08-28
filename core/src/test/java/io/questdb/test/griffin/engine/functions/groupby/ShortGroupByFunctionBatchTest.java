@@ -24,27 +24,21 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.ShortColumn;
 import io.questdb.griffin.engine.functions.groupby.AvgShortGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstShortGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.LastShortGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.MaxShortGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.MinShortGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.SumShortGroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
-public class ShortGroupByFunctionBatchTest {
-    private static final int COLUMN_INDEX = 789;
-    private long lastAllocated;
-    private long lastSize;
-
+public class ShortGroupByFunctionBatchTest extends AbstractGroupByFunctionBatchTest {
     @Test
     public void testAvgShortBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -211,6 +205,188 @@ public class ShortGroupByFunctionBatchTest {
     }
 
     @Test
+    public void testMaxShortBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            MaxShortGroupByFunction function = new MaxShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                long ptr = allocateShorts((short) 4, (short) 1, (short) 9, (short) 3);
+                function.computeBatch(value, ptr, 4, 0);
+
+                Assert.assertEquals(9, function.getInt(value));
+                Assert.assertTrue(function.supportsBatchComputation());
+            } finally {
+                freeLast();
+            }
+        });
+    }
+
+    @Test
+    public void testMaxShortBatchAccumulates() throws Exception {
+        assertMemoryLeak(() -> {
+            MaxShortGroupByFunction function = new MaxShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                long ptr = allocateShorts((short) 1, (short) 5);
+                function.computeBatch(value, ptr, 2, 0);
+
+                ptr = allocateShorts((short) 7, (short) 3);
+                function.computeBatch(value, ptr, 2, 2);
+
+                Assert.assertEquals(7, function.getInt(value));
+            } finally {
+                freeLast();
+            }
+        });
+    }
+
+    @Test
+    public void testMaxShortBatchKeepsExistingHigher() throws Exception {
+        assertMemoryLeak(() -> {
+            MaxShortGroupByFunction function = new MaxShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                long ptr = allocateShorts((short) 50);
+                function.computeBatch(value, ptr, 1, 0);
+
+                ptr = allocateShorts((short) 10, (short) 20);
+                function.computeBatch(value, ptr, 2, 1);
+
+                Assert.assertEquals(50, function.getInt(value));
+            } finally {
+                freeLast();
+            }
+        });
+    }
+
+    @Test
+    public void testMaxShortBatchNegativeValues() throws Exception {
+        assertMemoryLeak(() -> {
+            MaxShortGroupByFunction function = new MaxShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                long ptr = allocateShorts((short) -10, (short) -5, (short) -20);
+                function.computeBatch(value, ptr, 3, 0);
+
+                Assert.assertEquals(-5, function.getInt(value));
+            } finally {
+                freeLast();
+            }
+        });
+    }
+
+    @Test
+    public void testMaxShortBatchZeroCountKeepsExistingValue() throws Exception {
+        assertMemoryLeak(() -> {
+            MaxShortGroupByFunction function = new MaxShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                value.putInt(0, 42);
+
+                function.computeBatch(value, 0, 0, 0);
+
+                Assert.assertEquals(42, function.getInt(value));
+            }
+        });
+    }
+
+    @Test
+    public void testMaxShortSetEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            MaxShortGroupByFunction function = new MaxShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                Assert.assertEquals(Numbers.INT_NULL, function.getInt(value));
+            }
+        });
+    }
+
+    @Test
+    public void testMinShortBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            MinShortGroupByFunction function = new MinShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                long ptr = allocateShorts((short) 4, (short) 1, (short) 9, (short) 3);
+                function.computeBatch(value, ptr, 4, 0);
+
+                Assert.assertEquals(1, function.getInt(value));
+                Assert.assertTrue(function.supportsBatchComputation());
+            } finally {
+                freeLast();
+            }
+        });
+    }
+
+    @Test
+    public void testMinShortBatchAccumulates() throws Exception {
+        assertMemoryLeak(() -> {
+            MinShortGroupByFunction function = new MinShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                long ptr = allocateShorts((short) 7, (short) 5);
+                function.computeBatch(value, ptr, 2, 0);
+
+                ptr = allocateShorts((short) 1, (short) 3);
+                function.computeBatch(value, ptr, 2, 2);
+
+                Assert.assertEquals(1, function.getInt(value));
+            } finally {
+                freeLast();
+            }
+        });
+    }
+
+    @Test
+    public void testMinShortBatchKeepsExistingLower() throws Exception {
+        assertMemoryLeak(() -> {
+            MinShortGroupByFunction function = new MinShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                long ptr = allocateShorts((short) 5);
+                function.computeBatch(value, ptr, 1, 0);
+
+                ptr = allocateShorts((short) 10, (short) 20);
+                function.computeBatch(value, ptr, 2, 1);
+
+                Assert.assertEquals(5, function.getInt(value));
+            } finally {
+                freeLast();
+            }
+        });
+    }
+
+    @Test
+    public void testMinShortBatchNegativeValues() throws Exception {
+        assertMemoryLeak(() -> {
+            MinShortGroupByFunction function = new MinShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                long ptr = allocateShorts((short) -10, (short) -5, (short) -20);
+                function.computeBatch(value, ptr, 3, 0);
+
+                Assert.assertEquals(-20, function.getInt(value));
+            } finally {
+                freeLast();
+            }
+        });
+    }
+
+    @Test
+    public void testMinShortBatchZeroCountKeepsExistingValue() throws Exception {
+        assertMemoryLeak(() -> {
+            MinShortGroupByFunction function = new MinShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                value.putInt(0, 42);
+
+                function.computeBatch(value, 0, 0, 0);
+
+                Assert.assertEquals(42, function.getInt(value));
+            }
+        });
+    }
+
+    @Test
+    public void testMinShortSetEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            MinShortGroupByFunction function = new MinShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                Assert.assertEquals(Numbers.INT_NULL, function.getInt(value));
+            }
+        });
+    }
+
+    @Test
     public void testSumShortBatch() throws Exception {
         assertMemoryLeak(() -> {
             SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
@@ -281,34 +457,5 @@ public class ShortGroupByFunctionBatchTest {
                 Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
             }
         });
-    }
-
-    private long allocateShorts(short... values) {
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-        }
-        lastSize = (long) values.length * Short.BYTES;
-        lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
-        for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putShort(lastAllocated + (long) i * Short.BYTES, values[i]);
-        }
-        return lastAllocated;
-    }
-
-    private void freeLast() {
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-            lastAllocated = 0;
-            lastSize = 0;
-        }
-    }
-
-    private SimpleMapValue prepare(GroupByFunction function) {
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        return value;
     }
 }

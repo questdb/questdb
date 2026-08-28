@@ -24,6 +24,16 @@ steps:
     displayName: "qdb-core: cargo fmt"
     condition: ${{ parameters.shouldRun }}
   - script: |
+      cd core/rust/qdb-parquet-meta
+      cargo clippy --all-targets --all-features -- -D warnings
+    displayName: "qdb-parquet-meta: cargo clippy"
+    condition: ${{ parameters.shouldRun }}
+  - script: |
+      cd core/rust/qdb-parquet-meta
+      cargo fmt --check
+    displayName: "qdb-parquet-meta: cargo fmt"
+    condition: ${{ parameters.shouldRun }}
+  - script: |
       cd core/rust/qdbr
       cargo clippy --all-targets --all-features -- -D warnings
     displayName: "qdbr: cargo clippy"
@@ -52,6 +62,15 @@ steps:
   - bash: |
       set -eux
       export RUSTFLAGS="-C instrument-coverage -D warnings"
+      export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/qdb-parquet-meta-%m.profraw"
+      cd core/rust/qdb-parquet-meta
+      cargo test --all-targets --no-fail-fast
+    displayName: "qdb-parquet-meta: cargo test (coverage)"
+    condition: ${{ parameters.shouldRun }}
+
+  - bash: |
+      set -eux
+      export RUSTFLAGS="-C instrument-coverage -D warnings"
       export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/qdbr-%m.profraw"
       cd core/rust/qdbr
       cargo test --all-targets --no-fail-fast
@@ -63,8 +82,8 @@ steps:
       export RUSTFLAGS="-C instrument-coverage -D warnings"
       export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/parquet2-%m.profraw"
       export PARQUET2_IGNORE_PYARROW_TESTS=1
-      git submodule update --init core/rust/qdbr/parquet2/testing/parquet-testing
-      cd core/rust/qdbr/parquet2
+      git submodule update --init core/rust/parquet2/testing/parquet-testing
+      cd core/rust/parquet2
       cargo test --all-targets --no-fail-fast
     displayName: "parquet2: cargo test (coverage)"
     condition: ${{ parameters.shouldRun }}
@@ -104,13 +123,14 @@ steps:
         echo "Generated $CRATE.lcov"
       }
 
-      generate_lcov qdb-core core/rust/qdb-core/target/debug
-      generate_lcov qdbr     core/rust/qdbr/target/debug
-      generate_lcov parquet2 core/rust/qdbr/parquet2/target/debug
+      generate_lcov qdb-core         core/rust/qdb-core/target/debug
+      generate_lcov qdb-parquet-meta core/rust/qdb-parquet-meta/target/debug
+      generate_lcov qdbr             core/rust/qdbr/target/debug
+      generate_lcov parquet2         core/rust/parquet2/target/debug
 
       # Remove intermediate profraw files, keep profdata and lcov for upload.
       rm -f "$PROFRAW_DIR"/*.profraw
-    displayName: "qdb-core/parquet2: create coverage reports (LCOV)"
+    displayName: "rust crates: create coverage reports (LCOV)"
     condition: ${{ parameters.shouldRun }}
 
   - task: PublishBuildArtifacts@1

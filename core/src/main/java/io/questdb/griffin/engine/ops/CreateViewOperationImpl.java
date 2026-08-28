@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
@@ -190,8 +191,8 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     }
 
     @Override
-    public boolean isIndexed(int index) {
-        return false;
+    public byte getIndexType(int index) {
+        return IndexType.NONE;
     }
 
     @Override
@@ -238,8 +239,8 @@ public class CreateViewOperationImpl implements CreateViewOperation {
             model.setColumnType(ColumnType.UNDEFINED);
             // Copy index() definitions from create table op, so that we don't lose them.
             TableColumnMetadata augColumnMetadata = augColumnMetadataMap.get(columnName);
-            if (augColumnMetadata != null && augColumnMetadata.isSymbolIndexFlag()) {
-                model.setIndexed(true, qc.getAst().position, augColumnMetadata.getIndexValueBlockCapacity());
+            if (augColumnMetadata != null && augColumnMetadata.isIndexed()) {
+                model.setIndexType(augColumnMetadata.getIndexType(), qc.getAst().position, augColumnMetadata.getIndexValueBlockCapacity());
             }
             createColumnModelMap.put(columnName, model);
         }

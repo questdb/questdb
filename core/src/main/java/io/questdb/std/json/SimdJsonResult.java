@@ -48,17 +48,17 @@ public class SimdJsonResult implements QuietCloseable {
 
     // See constants in `SimdJsonError` for possible values.
     public int getError() {
-        return Unsafe.getUnsafe().getInt(impl);
+        return Unsafe.getInt(impl);
     }
 
     // See constants in `SimdJsonNumberType` for possible values.
     public int getNumberType() {
-        return Unsafe.getUnsafe().getInt(impl + JSON_RESULT_STRUCT_NUMBER_TYPE_OFFSET);
+        return Unsafe.getInt(impl + JSON_RESULT_STRUCT_NUMBER_TYPE_OFFSET);
     }
 
     // See constants in `SimdJsonType` for possible values.
     public int getType() {
-        return Unsafe.getUnsafe().getInt(impl + JSON_RESULT_STRUCT_TYPE_OFFSET);
+        return Unsafe.getInt(impl + JSON_RESULT_STRUCT_TYPE_OFFSET);
     }
 
     /**

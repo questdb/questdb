@@ -34,6 +34,13 @@ public class HttpCookieTest extends BaseHttpCookieTest {
     }
 
     @Test
+    public void testIdleSessionEvictedBySweep() throws Exception {
+        final AtomicLong currentMicros = new AtomicLong(1760743438000000L);
+        final Bootstrap bootstrap = getBootstrapWithMockClock(currentMicros);
+        testIdleSessionEvictedBySweep(() -> new ServerMain(bootstrap), HttpClientFactory::newPlainTextInstance, currentMicros);
+    }
+
+    @Test
     public void testRotatedSessionDestroyedWithNewSessionId() throws Exception {
         testRotatedSessionDestroyed(true);
     }

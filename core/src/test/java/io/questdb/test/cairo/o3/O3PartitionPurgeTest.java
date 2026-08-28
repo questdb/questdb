@@ -484,7 +484,11 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 );
             }
 
-            assertSql("""
+            assertQuery("tbl")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x	ts
                             101	1970-01-10T09:00:00.000000Z
                             1	1970-01-10T10:00:00.000000Z
@@ -498,9 +502,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                             9	1970-01-10T10:00:08.000000Z
                             10	1970-01-10T10:00:09.000000Z
                             202	1970-01-10T11:00:00.000000Z
-                            """,
-                    "tbl"
-            );
+                            """);
         });
     }
 

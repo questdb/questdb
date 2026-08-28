@@ -91,24 +91,24 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final int value = Unsafe.getUnsafe().getInt(argAddr + (rowIndex << 2));
+                final int value = Unsafe.getInt(argAddr + (rowIndex << 2));
                 if (value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                    final long current = Unsafe.getUnsafe().getLong(addr);
-                    Unsafe.getUnsafe().putLong(addr, current != Numbers.LONG_NULL ? current + value : value);
+                    final long current = Unsafe.getLong(addr);
+                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? current + value : value);
                 }
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final int value = arg.getInt(record);
                 if (value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                    final long current = Unsafe.getUnsafe().getLong(addr);
-                    Unsafe.getUnsafe().putLong(addr, current != Numbers.LONG_NULL ? current + value : value);
+                    final long current = Unsafe.getLong(addr);
+                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? current + value : value);
                 }
             }
         }

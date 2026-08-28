@@ -98,7 +98,7 @@ public class NanosTimestampDriver implements TimestampDriver {
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorYYYY, NanosFormatUtils.YEAR_FORMAT);
 
     private final ColumnTypeConverter.Var2FixedConverter<CharSequence> converterStr2Timestamp = this::appendToMem;
-    private final ColumnTypeConverter.Fixed2VarConverter converterTimestamp2Str = this::append;
+    private final ColumnTypeConverter.Fixed2VarConverter converterTimestamp2Str = (addr, sink, unused1, unused2) -> append(addr, sink);
     private Clock clock = NanosecondClockImpl.INSTANCE;
 
     private NanosTimestampDriver() {
@@ -204,7 +204,7 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public boolean append(long fixedAddr, CharSink<?> sink) {
-        long value = Unsafe.getUnsafe().getLong(fixedAddr);
+        long value = Unsafe.getLong(fixedAddr);
         if (value != Numbers.LONG_NULL) {
             NanosFormatUtils.appendDateTimeNSec(sink, value);
             return true;
@@ -484,6 +484,29 @@ public class NanosTimestampDriver implements TimestampDriver {
             return Numbers.INT_NULL;
         }
         return Nanos.getIsoYear(timestamp);
+    }
+
+    @Override
+    public long getMaxDesignatedTimestamp() {
+        // nanos are not capped below the long range, so a designated timestamp can reach Long.MAX_VALUE
+        return Long.MAX_VALUE;
+    }
+
+    @Override
+    public long getMaxUnitValue(char unit) {
+        return switch (unit) {
+            case 'n' -> Long.MAX_VALUE;
+            case 'u', 'U' -> Long.MAX_VALUE / Nanos.MICRO_NANOS;
+            case 'T' -> Long.MAX_VALUE / Nanos.MILLI_NANOS;
+            case 's' -> Long.MAX_VALUE / Nanos.SECOND_NANOS;
+            // from() narrows these four to int before scaling, so the narrowing caps them
+            // whenever it bites before the multiply does
+            case 'm' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Nanos.MINUTE_NANOS);
+            case 'H', 'h' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Nanos.HOUR_NANOS);
+            case 'd' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Nanos.DAY_NANOS);
+            case 'w' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Nanos.WEEK_NANOS);
+            default -> 0;
+        };
     }
 
     @Override

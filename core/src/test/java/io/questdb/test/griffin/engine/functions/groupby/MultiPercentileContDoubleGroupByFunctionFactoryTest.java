@@ -94,13 +94,12 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // For 4 values:
             // percentile_cont at 0.5: position = 1.5, interpolates to 2.5
             // percentile_disc at 0.5: ceil(4*0.5)-1 = 1, returns 2.0
-            assertSql(
-                    """
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.5, 0.5]), percentile_disc(x, ARRAY[0.5, 0.5]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             percentile_cont\tpercentile_disc
                             [2.5,2.5]\t[2.0,2.0]
-                            """,
-                    "SELECT percentile_cont(x, ARRAY[0.5, 0.5]), percentile_disc(x, ARRAY[0.5, 0.5]) FROM test"
-            );
+                            """);
         });
     }
 
@@ -137,14 +136,13 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             execute("CREATE TABLE test AS (" +
                     "SELECT x % 2 AS category, cast(x AS DOUBLE) AS value FROM long_sequence(10)" +
                     ")");
-            assertSql(
-                    """
+            assertQuery("SELECT category, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) FROM test GROUP BY category ORDER BY category")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             category\tpercentile_cont
                             0\t[4.0,6.0,8.0]
                             1\t[3.0,5.0,7.0]
-                            """,
-                    "SELECT category, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) FROM test GROUP BY category ORDER BY category"
-            );
+                            """);
         });
     }
 
@@ -154,13 +152,12 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             execute("CREATE TABLE test AS (" +
                     "SELECT 1 AS category, null::DOUBLE AS value FROM long_sequence(5)" +
                     ")");
-            assertSql(
-                    """
+            assertQuery("SELECT category, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) FROM test GROUP BY category")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             category\tpercentile_cont
                             1\tnull
-                            """,
-                    "SELECT category, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) FROM test GROUP BY category"
-            );
+                            """);
         });
     }
 
@@ -170,14 +167,13 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             execute("CREATE TABLE test AS (" +
                     "SELECT x % 2 AS category, cast(x AS DOUBLE) AS value FROM long_sequence(10)" +
                     ")");
-            assertSql(
-                    """
+            assertQuery("SELECT category, percentile_cont(value, ARRAY[0.0, 0.5, 1.0]) FROM test GROUP BY category ORDER BY category")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             category\tpercentile_cont
                             0\t[2.0,6.0,10.0]
                             1\t[1.0,5.0,9.0]
-                            """,
-                    "SELECT category, percentile_cont(value, ARRAY[0.0, 0.5, 1.0]) FROM test GROUP BY category ORDER BY category"
-            );
+                            """);
         });
     }
 
@@ -201,8 +197,10 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             //   50th: 0.50 * 1 = 0.50 → 2 + 0.50*(8-2) = 5.0
             //   75th: 0.75 * 1 = 0.75 → 2 + 0.75*(8-2) = 6.5
             // Similar for cat1=1
-            assertSql(
-                    """
+            assertQuery("SELECT cat1, cat2, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) " +
+                            "FROM test GROUP BY cat1, cat2 ORDER BY cat1, cat2")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             cat1\tcat2\tpercentile_cont
                             0\t0\t[7.5,9.0,10.5]
                             0\t1\t[5.5,7.0,8.5]
@@ -210,10 +208,7 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
                             1\t0\t[4.5,6.0,7.5]
                             1\t1\t[2.5,4.0,5.5]
                             1\t2\t[6.5,8.0,9.5]
-                            """,
-                    "SELECT cat1, cat2, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) " +
-                            "FROM test GROUP BY cat1, cat2 ORDER BY cat1, cat2"
-            );
+                            """);
         });
     }
 
@@ -233,14 +228,13 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             //   25th: 0.25 * 4 = 1.0 → index 1 → 3.0
             //   50th: 0.50 * 4 = 2.0 → index 2 → 5.0
             //   75th: 0.75 * 4 = 3.0 → index 3 → 7.0
-            assertSql(
-                    """
+            assertQuery("SELECT category, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) FROM test GROUP BY category ORDER BY category")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             category\tpercentile_cont
                             0\t[4.0,6.0,8.0]
                             1\t[3.0,5.0,7.0]
-                            """,
-                    "SELECT category, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) FROM test GROUP BY category ORDER BY category"
-            );
+                            """);
         });
     }
 
@@ -251,17 +245,16 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
                     "SELECT x, cast(x AS DOUBLE) AS value FROM long_sequence(5)" +
                     ")");
             // Each group has one value, all percentiles should return that value
-            assertSql(
-                    """
+            assertQuery("SELECT x, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) FROM test GROUP BY x ORDER BY x")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             x\tpercentile_cont
                             1\t[1.0,1.0,1.0]
                             2\t[2.0,2.0,2.0]
                             3\t[3.0,3.0,3.0]
                             4\t[4.0,4.0,4.0]
                             5\t[5.0,5.0,5.0]
-                            """,
-                    "SELECT x, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) FROM test GROUP BY x ORDER BY x"
-            );
+                            """);
         });
     }
 
@@ -270,13 +263,12 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) value FROM long_sequence(100))");
             // Test with percentiles that have more decimal places
-            assertSql(
-                    """
+            assertQuery("SELECT count(*) FROM (SELECT value, percentile_cont(value, ARRAY[0.1, 0.25, 0.333, 0.5, 0.667, 0.75, 0.9]) OVER () FROM test)")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             count
                             100
-                            """,
-                    "SELECT count(*) FROM (SELECT value, percentile_cont(value, ARRAY[0.1, 0.25, 0.333, 0.5, 0.667, 0.75, 0.9]) OVER () FROM test)"
-            );
+                            """);
         });
     }
 
@@ -288,8 +280,9 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // 25th: position = 0.25 * 9 = 2.25 → -2.75
             // 50th: position = 0.50 * 9 = 4.5 → -0.5
             // 75th: position = 0.75 * 9 = 6.75 → 1.75
-            assertSql(
-                    """
+            assertQuery("SELECT value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) OVER () FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             value\tpercentile_cont
                             -5.0\t[-2.75,-0.5,1.75]
                             -4.0\t[-2.75,-0.5,1.75]
@@ -301,9 +294,7 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
                             2.0\t[-2.75,-0.5,1.75]
                             3.0\t[-2.75,-0.5,1.75]
                             4.0\t[-2.75,-0.5,1.75]
-                            """,
-                    "SELECT value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) OVER () FROM test"
-            );
+                            """);
         });
     }
 
@@ -312,8 +303,9 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) value FROM long_sequence(10))");
             // Test with just two percentiles
-            assertSql(
-                    """
+            assertQuery("SELECT value, percentile_cont(value, ARRAY[0.25, 0.75]) OVER () FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             value\tpercentile_cont
                             1.0\t[3.25,7.75]
                             2.0\t[3.25,7.75]
@@ -325,9 +317,7 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
                             8.0\t[3.25,7.75]
                             9.0\t[3.25,7.75]
                             10.0\t[3.25,7.75]
-                            """,
-                    "SELECT value, percentile_cont(value, ARRAY[0.25, 0.75]) OVER () FROM test"
-            );
+                            """);
         });
     }
 
@@ -336,17 +326,16 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) value FROM long_sequence(10))");
             // Test with 20 percentiles
-            assertSql(
-                    """
-                            count
-                            10
-                            """,
-                    "SELECT count(*) FROM (" +
+            assertQuery("SELECT count(*) FROM (" +
                             "SELECT value, percentile_cont(value, ARRAY[" +
                             "0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, " +
                             "0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0" +
-                            "]) OVER () FROM test)"
-            );
+                            "]) OVER () FROM test)")
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            count
+                            10
+                            """);
         });
     }
 
@@ -355,13 +344,12 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x LONG)");
             execute("INSERT INTO test VALUES (null), (null), (null)");
-            assertSql(
-                    """
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             percentile_cont
                             null
-                            """,
-                    "SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
-            );
+                            """);
         });
     }
 
@@ -369,10 +357,9 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
     public void testMultiplePercentilesAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT 5.0 x FROM long_sequence(100))");
-            assertSql(
-                    "percentile_cont\n[5.0,5.0,5.0,5.0]\n",
-                    "SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
-            );
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_cont\n[5.0,5.0,5.0,5.0]\n");
         });
     }
 
@@ -380,10 +367,9 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
     public void testMultiplePercentilesAllZeros() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT 0.0 x FROM long_sequence(100))");
-            assertSql(
-                    "percentile_cont\n[0.0,0.0,0.0,0.0]\n",
-                    "SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
-            );
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_cont\n[0.0,0.0,0.0,0.0]\n");
         });
     }
 
@@ -396,10 +382,9 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // 0.95: position = 0.95 * 99 = 94.05, interpolate between 95.0 and 96.0
             // 0.90: position = 0.90 * 99 = 89.1, interpolate between 90.0 and 91.0
             // 0.50: position = 0.50 * 99 = 49.5, interpolate between 50.0 and 51.0
-            assertSql(
-                    "percentile_cont\n[98.02,95.05,90.10000000000001,50.5]\n",
-                    "SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
-            );
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_cont\n[98.02,95.05,90.10000000000001,50.5]\n");
         });
     }
 
@@ -407,10 +392,9 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
     public void testMultiplePercentilesEmptyArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
-            assertSql(
-                    "percentile_cont\n[]\n",
-                    "SELECT percentile_cont(x, ARRAY[]) FROM test"
-            );
+            assertQuery("SELECT percentile_cont(x, ARRAY[]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_cont\n[]\n");
         });
     }
 
@@ -418,13 +402,12 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
     public void testMultiplePercentilesEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x DOUBLE)");
-            assertSql(
-                    """
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             percentile_cont
                             null
-                            """,
-                    "SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
-            );
+                            """);
         });
     }
 
@@ -433,10 +416,9 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT cast(x AS FLOAT) x FROM long_sequence(100))");
             // Same as double values test
-            assertSql(
-                    "percentile_cont\n[98.02,95.05,90.10000000000001,50.5]\n",
-                    "SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
-            );
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_cont\n[98.02,95.05,90.10000000000001,50.5]\n");
         });
     }
 
@@ -448,10 +430,9 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // 0.98 -> position = 97.02, interpolates
             // 0.0 -> position = 0, returns 1.0
             // 0.50 -> position = 49.5, interpolates
-            assertSql(
-                    "percentile_cont\n[100.0,98.02,1.0,50.5]\n",
-                    "SELECT percentile_cont(x, ARRAY[1.0, 0.98, 0.0, 0.50]) FROM test"
-            );
+            assertQuery("SELECT percentile_cont(x, ARRAY[1.0, 0.98, 0.0, 0.50]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_cont\n[100.0,98.02,1.0,50.5]\n");
         });
     }
 
@@ -464,10 +445,9 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // 0.95: position = 0.95 * 9999 = 9499.05
             // 0.90: position = 0.90 * 9999 = 8999.1
             // 0.50: position = 0.50 * 9999 = 4999.5
-            assertSql(
-                    "percentile_cont\n[9800.02,9500.05,9000.1,5000.5]\n",
-                    "SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
-            );
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_cont\n[9800.02,9500.05,9000.1,5000.5]\n");
         });
     }
 
@@ -482,13 +462,12 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // 0.95: position = 0.95 * 4 = 3.8, interpolate between 7.0 and 10.0 = 7.0 + 0.8*3 = 9.4
             // 0.90: position = 0.90 * 4 = 3.6, interpolate between 7.0 and 10.0 = 7.0 + 0.6*3 = 8.8
             // 0.50: position = 0.50 * 4 = 2.0, returns 5.0
-            assertSql(
-                    """
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             percentile_cont
                             [9.76,9.399999999999999,8.8,5.0]
-                            """,
-                    "SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
-            );
+                            """);
         });
     }
 
@@ -496,10 +475,9 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
     public void testMultiplePercentilesSinglePercentile() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
-            assertSql(
-                    "percentile_cont\n[50.5]\n",
-                    "SELECT percentile_cont(x, ARRAY[0.50]) FROM test"
-            );
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.50]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_cont\n[50.5]\n");
         });
     }
 
@@ -508,13 +486,12 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x DOUBLE)");
             execute("INSERT INTO test VALUES (42.0)");
-            assertSql(
-                    """
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             percentile_cont
                             [42.0,42.0,42.0,42.0]
-                            """,
-                    "SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
-            );
+                            """);
         });
     }
 
@@ -523,13 +500,12 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x DOUBLE)");
             execute("INSERT INTO test VALUES (1.0), (null), (null), (null)");
-            assertSql(
-                    """
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             percentile_cont
                             [1.0,1.0,1.0,1.0]
-                            """,
-                    "SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
-            );
+                            """);
         });
     }
 
@@ -544,13 +520,12 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // 0.95: position = 0.95 * 1 = 0.95, interpolate 10 + 0.95*10 = 19.5
             // 0.90: position = 0.90 * 1 = 0.90, interpolate 10 + 0.90*10 = 19.0
             // 0.50: position = 0.50 * 1 = 0.50, interpolate 10 + 0.50*10 = 15.0
-            assertSql(
-                    """
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             percentile_cont
                             [19.8,19.5,19.0,15.0]
-                            """,
-                    "SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
-            );
+                            """);
         });
     }
 
@@ -565,13 +540,12 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // 0.95: position = 0.95 * 5 = 4.75, interpolate between 3.0 and 3.0 = 3.0
             // 0.90: position = 0.90 * 5 = 4.5, interpolate between 3.0 and 3.0 = 3.0
             // 0.50: position = 0.50 * 5 = 2.5, interpolate between 2.0 and 2.0 = 2.0
-            assertSql(
-                    """
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             percentile_cont
                             [3.0,3.0,3.0,2.0]
-                            """,
-                    "SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
-            );
+                            """);
         });
     }
 
@@ -587,14 +561,13 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // 0.50: position = 0.50 * 2 = 1.0
             // Group A: interpolate between 2.0 and 3.0
             // Group B: interpolate between 20.0 and 30.0
-            assertSql(
-                    """
+            assertQuery("SELECT category, percentile_cont(value, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test ORDER BY category")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             category\tpercentile_cont
                             A\t[2.96,2.9,2.8,2.0]
                             B\t[29.6,29.0,28.0,20.0]
-                            """,
-                    "SELECT category, percentile_cont(value, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test ORDER BY category"
-            );
+                            """);
         });
     }
 
@@ -608,11 +581,12 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // 0.95: position = 46.55, interpolate between indices 46 and 47
             // 0.90: position = 44.10, interpolate between indices 44 and 45
             // 0.50: position = 24.50, interpolate between indices 24 and 25
-            assertSql("""
+            assertQuery("SELECT percentile_cont(value, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM tx_traffic")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             percentile_cont
                             [415.8181599999982,268.20624999999984,225.85070000000002,64.8365]
-                            """,
-                    "SELECT percentile_cont(value, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM tx_traffic");
+                            """);
         });
     }
 
@@ -627,13 +601,12 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // 0.95: position = 0.95 * 5 = 4.75, interpolate between 5.0 and 10.0 = 5 + 0.75*5 = 8.75
             // 0.90: position = 0.90 * 5 = 4.5, interpolate between 5.0 and 10.0 = 5 + 0.5*5 = 7.5
             // 0.50: position = 0.50 * 5 = 2.5, interpolate between -1.0 and 1.0 = -1 + 0.5*2 = 0.0
-            assertSql(
-                    """
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             percentile_cont
                             [9.500000000000002,8.75,7.5,0.0]
-                            """,
-                    "SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
-            );
+                            """);
         });
     }
 
@@ -646,10 +619,9 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             // 0.95: position = 0.95 * 999 = 949.05
             // 0.90: position = 0.90 * 999 = 899.1
             // 0.50: position = 0.50 * 999 = 499.5
-            assertSql(
-                    "percentile_cont\n[980.02,950.05,900.1,500.5]\n",
-                    "SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
-            );
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test")
+                    .noLeakCheck()
+                    .returnsOnce("percentile_cont\n[980.02,950.05,900.1,500.5]\n");
         });
     }
 
@@ -657,15 +629,14 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
     public void testSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x::DOUBLE AS val, timestamp_sequence('2024-01-01T00:00:00', 3600000000L) ts FROM long_sequence(5)) TIMESTAMP(ts)");
-            assertSql(
-                    "ts\tpercentile_cont\n" +
+            assertQuery("SELECT ts, percentile_cont(val, ARRAY[0.5]) FROM test SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .returnsOnce("ts\tpercentile_cont\n" +
                             "2024-01-01T00:00:00.000000Z\t[1.0]\n" +
                             "2024-01-01T01:00:00.000000Z\t[2.0]\n" +
                             "2024-01-01T02:00:00.000000Z\t[3.0]\n" +
                             "2024-01-01T03:00:00.000000Z\t[4.0]\n" +
-                            "2024-01-01T04:00:00.000000Z\t[5.0]\n",
-                    "SELECT ts, percentile_cont(val, ARRAY[0.5]) FROM test SAMPLE BY 1h"
-            );
+                            "2024-01-01T04:00:00.000000Z\t[5.0]\n");
         });
     }
 

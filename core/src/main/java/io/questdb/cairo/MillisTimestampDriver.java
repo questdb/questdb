@@ -66,7 +66,7 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MILLIS;
 public class MillisTimestampDriver implements TimestampDriver {
     public static final TimestampDriver INSTANCE = new MillisTimestampDriver();
     private final Clock clock = MillisecondClockImpl.INSTANCE;
-    private final ColumnTypeConverter.Fixed2VarConverter converterDate2Str = this::append;
+    private final ColumnTypeConverter.Fixed2VarConverter converterDate2Str = (addr, sink, unused1, unused2) -> append(addr, sink);
     private final ColumnTypeConverter.Var2FixedConverter<CharSequence> converterStr2Date = this::appendToMem;
 
     private MillisTimestampDriver() {
@@ -120,7 +120,7 @@ public class MillisTimestampDriver implements TimestampDriver {
 
     @Override
     public boolean append(long fixedAddr, CharSink<?> sink) {
-        long value = Unsafe.getUnsafe().getLong(fixedAddr);
+        long value = Unsafe.getLong(fixedAddr);
         if (value != Numbers.LONG_NULL) {
             DateFormatUtils.appendDateTime(sink, value);
             return true;
@@ -389,6 +389,30 @@ public class MillisTimestampDriver implements TimestampDriver {
             return Numbers.INT_NULL;
         }
         return Dates.getIsoYear(timestamp);
+    }
+
+    @Override
+    public long getMaxDesignatedTimestamp() {
+        // millis cannot be a designated timestamp (validateBounds is unsupported); stay conservative
+        return Long.MAX_VALUE;
+    }
+
+    @Override
+    public long getMaxUnitValue(char unit) {
+        return switch (unit) {
+            // nanos and micros convert by dividing, so no count of them overflows millis
+            case 'n' -> Long.MAX_VALUE;
+            case 'u', 'U' -> Long.MAX_VALUE;
+            case 'T' -> Long.MAX_VALUE;
+            case 's' -> Long.MAX_VALUE / Dates.SECOND_MILLIS;
+            // from() narrows these four to int before scaling, so the narrowing caps them
+            // whenever it bites before the multiply does
+            case 'm' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Dates.MINUTE_MILLIS);
+            case 'H', 'h' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Dates.HOUR_MILLIS);
+            case 'd' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Dates.DAY_MILLIS);
+            case 'w' -> Math.min(Integer.MAX_VALUE, Long.MAX_VALUE / Dates.WEEK_MILLIS);
+            default -> 0;
+        };
     }
 
     @Override

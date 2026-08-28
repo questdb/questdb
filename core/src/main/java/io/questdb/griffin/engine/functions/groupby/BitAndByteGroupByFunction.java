@@ -72,21 +72,21 @@ public class BitAndByteGroupByFunction extends ByteFunction implements GroupByFu
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final byte value = Unsafe.getUnsafe().getByte(argAddr + rowIndex);
+                final byte value = Unsafe.getByte(argAddr + rowIndex);
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                final byte current = Unsafe.getUnsafe().getByte(addr);
-                Unsafe.getUnsafe().putByte(addr, Map.isNewBatchEntry(encoded) ? value : (byte) (current & value));
+                final byte current = Unsafe.getByte(addr);
+                Unsafe.putByte(addr, Map.isNewBatchEntry(encoded) ? value : (byte) (current & value));
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final byte value = arg.getByte(record);
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                final byte current = Unsafe.getUnsafe().getByte(addr);
-                Unsafe.getUnsafe().putByte(addr, Map.isNewBatchEntry(encoded) ? value : (byte) (current & value));
+                final byte current = Unsafe.getByte(addr);
+                Unsafe.putByte(addr, Map.isNewBatchEntry(encoded) ? value : (byte) (current & value));
             }
         }
     }

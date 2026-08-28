@@ -53,6 +53,7 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     private long countsAddr;
     private int valueOffset;
 
+    @SuppressWarnings("unused")
     public AvgIntVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
@@ -75,7 +76,7 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
         if (address != 0) {
             final double s = Vect.sumIntAcc(address, frameRowCount, countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
             if (Numbers.isFinite(s)) {
-                final long c = Unsafe.getUnsafe().getLong(countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
+                final long c = Unsafe.getLong(countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
                 sum.add(s);
                 count.add(c);
             }
@@ -133,8 +134,8 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     public void initRosti(long pRosti) {
         // as for sums, except we space out values
         // we will have to replace them with doubles
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);
     }
 
     @Override

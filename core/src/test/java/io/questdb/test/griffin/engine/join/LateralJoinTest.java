@@ -24,7 +24,19 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlOptimiser;
+import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.QueryModelWrapper;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.BindVarTuple;
+import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -42,20 +54,97 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 2, 20.0, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    CROSS JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
                             1\t10.0
                             2\t20.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            CROSS JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossLateralPlainScalarAggregateRuntimeLimitDropsRows() throws Exception {
+        assertMemoryLeak(() -> assertPlainScalarAggregateRuntimeLimit(
+                """
+                        SELECT t1.k, l.m
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT max(v) AS m
+                            FROM t2
+                            WHERE t2.k = t1.k
+                            LIMIT :lim
+                        ) l
+                        ORDER BY t1.k
+                        """,
+                "k\tm\n1\t20\n2\t30\n",
+                "k\tm\n"
+        ));
+    }
+
+    @Test
+    public void testCrossLateralScalarCountWrapperFilterRejectsRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (a INT)");
+            execute("INSERT INTO o VALUES (1), (2)");
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (1)");
+
+            String sql = """
+                    SELECT o.a, l.cnt
+                    FROM o
+                    CROSS JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t
+                            WHERE t.x = o.a
+                        ) counted
+                        WHERE cnt > 1
+                    ) l
+                    ORDER BY o.a
+                    """;
+
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            """);
+
+            execute("INSERT INTO t VALUES (1)");
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.a, l.cnt
+                    FROM o
+                    CROSS JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t
+                            WHERE t.x = o.a
+                        ) counted
+                        WHERE cnt >= 0
+                    ) l
+                    ORDER BY o.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
         });
     }
 
@@ -77,25 +166,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 30, '2024-01-01T01:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, x.total
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT sum(val) AS total
+                        FROM (SELECT val, t1_id FROM t2 WHERE t2.t1_id = t1.a)
+                        WHERE t1_id = t1.a
+                        GROUP BY t1.a
+                    ) x
+                    ORDER BY t1.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a\ttotal
                             1\t13
                             2\t50
-                            """,
-                    """
-                            SELECT t1.a, x.total
-                            FROM t1
-                            JOIN LATERAL (
-                                SELECT sum(val) AS total
-                                FROM (SELECT val, t1_id FROM t2 WHERE t2.t1_id = t1.a)
-                                WHERE t1_id = t1.a
-                                GROUP BY t1.a
-                            ) x
-                            ORDER BY t1.a
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -117,26 +204,24 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 30, '2024-01-01T01:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, x.result
+                    FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT val + t1.b AS result
+                        FROM (
+                            SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                        )
+                        WHERE val > t1.threshold
+                    ) x
+                    ORDER BY t1.a, x.result
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a\tresult
                             1\t110
                             2\t230
-                            """,
-                    """
-                            SELECT t1.a, x.result
-                            FROM t1
-                            CROSS JOIN LATERAL (
-                                SELECT val + t1.b AS result
-                                FROM (
-                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
-                                )
-                                WHERE val > t1.threshold
-                            ) x
-                            ORDER BY t1.a, x.result
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -158,27 +243,25 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 30, '2024-01-01T01:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, x.b
+                    FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT t1.b AS b
+                        FROM (
+                            SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                        )
+                        WHERE val > t1.threshold OR val < 10
+                    ) x
+                    ORDER BY t1.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a\tb
                             1\t100
                             1\t100
                             2\t200
-                            """,
-                    """
-                            SELECT t1.a, x.b
-                            FROM t1
-                            CROSS JOIN LATERAL (
-                                SELECT t1.b AS b
-                                FROM (
-                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
-                                )
-                                WHERE val > t1.threshold OR val < 10
-                            ) x
-                            ORDER BY t1.a
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -200,26 +283,24 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 30, '2024-01-01T01:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, x.result
+                    FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT val + t1.b AS result, val + t1.b AS result1
+                        FROM (
+                            SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                        )
+                        WHERE val > t1.threshold
+                    ) x
+                    ORDER BY t1.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a\tresult
                             1\t110
                             2\t230
-                            """,
-                    """
-                            SELECT t1.a, x.result
-                            FROM t1
-                            CROSS JOIN LATERAL (
-                                SELECT val + t1.b AS result, val + t1.b AS result1
-                                FROM (
-                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
-                                )
-                                WHERE val > t1.threshold
-                            ) x
-                            ORDER BY t1.a
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -241,27 +322,886 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 30, '2024-01-01T01:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, x.result
+                    FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT val + t1.b AS result
+                        FROM (
+                            SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                        )
+                        WHERE val > t1.threshold OR val < 5
+                    ) x
+                    ORDER BY t1.a, x.result
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a\tresult
                             1\t103
                             1\t110
                             2\t230
-                            """,
-                    """
-                            SELECT t1.a, x.result
-                            FROM t1
-                            CROSS JOIN LATERAL (
-                                SELECT val + t1.b AS result
-                                FROM (
-                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
-                                )
-                                WHERE val > t1.threshold OR val < 5
-                            ) x
-                            ORDER BY t1.a, x.result
-                            """,
-                    null, true, false
-            );
+                            """);
+        });
+    }
+
+    @Test
+    public void testGeneratedColumnWildcardMetadataLifecycle() {
+        QueryColumn column = new QueryColumn().of("generated", null);
+        Assert.assertFalse(column.isGenerated());
+
+        column.setGenerated(true);
+        column.of("renamed", null);
+        Assert.assertTrue(column.isGenerated());
+
+        column.clear();
+        Assert.assertFalse(column.isGenerated());
+        Assert.assertTrue(column.isIncludeIntoWildcard());
+    }
+
+    @Test
+    public void testInnerLateralPlainScalarAggregateRuntimeLimitDropsRows() throws Exception {
+        assertMemoryLeak(() -> assertPlainScalarAggregateRuntimeLimit(
+                """
+                        SELECT t1.k, l.s
+                        FROM t1
+                        JOIN LATERAL (
+                            SELECT sum(v) AS s
+                            FROM t2
+                            WHERE t2.k = t1.k
+                            LIMIT :lim
+                        ) l ON true
+                        ORDER BY t1.k
+                        """,
+                "k\ts\n1\t30\n2\t30\n",
+                "k\ts\n"
+        ));
+    }
+
+    @Test
+    public void testInnerLateralScalarAggregateJoinBranchOnRejectsRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 10)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.m
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.m
+                        FROM t1
+                        JOIN LATERAL (
+                            SELECT max(v) AS m
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2 ON l2.m > 0
+                        WHERE t1.k = t0.a
+                    ) l1 ON true
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tm
+                            1\t1\t10
+                            2\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerLateralScalarCountDistinctJoinBranchOnRejectsRowNonPerSide() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.v
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.v
+                        FROM t1
+                        JOIN LATERAL (
+                            SELECT count_distinct(t2.x) AS v
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2 ON l2.v > 0
+                        WHERE t1.k = t0.a
+                    ) l1 ON true
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tv
+                            1\t1\t1
+                            2\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerLateralScalarCountDistinctJoinBranchOnRejectsRowPerSide() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.v
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.v
+                        FROM t1
+                        JOIN LATERAL (
+                            SELECT count_distinct(t2.x) AS v
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2 ON l2.v > 0
+                    ) l1 ON true
+                    ORDER BY t0.a, l1.k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tv
+                            1\t1\t1
+                            1\t2\t1
+                            2\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerLateralScalarCountJoinBranchOnRejectsRowKeepsBareCount() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.v
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.v
+                        FROM t1
+                        JOIN LATERAL (
+                            SELECT count(*) AS v
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2 ON l2.v > 0
+                        WHERE t1.k = t0.a
+                    ) l1 ON true
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tv
+                            1\t1\t1
+                            2\t2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.v
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.v
+                        FROM t1
+                        JOIN LATERAL (
+                            SELECT c AS v
+                            FROM (
+                                SELECT count(*) AS c
+                                FROM t2
+                                WHERE t2.x = t0.a
+                            ) counted
+                        ) l2 ON l2.v > 0
+                        WHERE t1.k = t0.a
+                    ) l1 ON true
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tv
+                            1\t1\t1
+                            2\t2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.v
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.v
+                        FROM t1
+                        JOIN LATERAL (
+                            SELECT count(*) AS v
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2 ON l2.v > 0
+                    ) l1 ON true
+                    ORDER BY t0.a, l1.k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tv
+                            1\t1\t1
+                            1\t2\t1
+                            2\t1\t0
+                            2\t2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerLateralScalarCountJoinBranchOnRejectsRowNonPerSide() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.v
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.v
+                        FROM t1
+                        JOIN LATERAL (
+                            SELECT count(*) + 2 AS v
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2 ON l2.v > 2
+                        WHERE t1.k = t0.a
+                    ) l1 ON true
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tv
+                            1\t1\t3
+                            2\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerLateralScalarCountJoinBranchOnRejectsRowPerSide() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.v
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.v
+                        FROM t1
+                        JOIN LATERAL (
+                            SELECT count(*) + 2 AS v
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2 ON l2.v > 2
+                    ) l1 ON true
+                    ORDER BY t0.a, l1.k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tv
+                            1\t1\t3
+                            1\t2\t3
+                            2\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerLateralScalarCountJoinBranchTrivialOnDoesNotRetainFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.v
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.v
+                        FROM t1
+                        JOIN LATERAL (
+                            SELECT count(*) AS v
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2 ON true
+                        WHERE t1.k = t0.a
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining(
+                            "Hash Left Outer Join Light",
+                            "condition: l2.__qdb_outer_ref__1_a=t1.k"
+                    )
+                    .withPlanNotContaining("filter: true")
+                    .returns("""
+                            a\tk\tv
+                            1\t1\t1
+                            2\t2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.v
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.v
+                        FROM t1
+                        JOIN LATERAL (
+                            SELECT count(*) AS v
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2 ON true
+                    ) l1
+                    ORDER BY t0.a, l1.k
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining(
+                            "Hash Left Outer Join Light",
+                            "condition: l2.__qdb_outer_ref__2_a=__qdb_count_driver__1.__qdb_count_driver__1_a"
+                    )
+                    .withPlanNotContaining("filter: true")
+                    .returns("""
+                            a\tk\tv
+                            1\t1\t1
+                            1\t2\t1
+                            2\t1\t0
+                            2\t2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerLateralScalarCountOnRejectsRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t1.k, l.c
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT count(*) AS c
+                        FROM t2
+                        WHERE t2.k = t1.k
+                    ) l ON l.c > 0
+                    ORDER BY t1.k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerLateralScalarCountRuntimeLimitDropsRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            String crossSql = "SELECT t1.k, l.c FROM t1 CROSS JOIN LATERAL "
+                    + "(SELECT count(*) AS c FROM t2 WHERE t2.k = t1.k LIMIT :lim) l ORDER BY t1.k";
+            String innerSql = "SELECT t1.k, l.c FROM t1 JOIN LATERAL "
+                    + "(SELECT count(*) AS c FROM t2 WHERE t2.k = t1.k LIMIT :lim) l ON true ORDER BY t1.k";
+
+            bindVariableService.clear();
+            bindVariableService.setLong("lim", 1);
+            assertQuery(crossSql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t0
+                    """);
+            assertQuery(innerSql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t0
+                    """);
+
+            bindVariableService.setLong("lim", 0);
+            assertQuery(crossSql).noLeakCheck().returns("""
+                    k\tc
+                    """);
+            assertQuery(innerSql).noLeakCheck().returns("""
+                    k\tc
+                    """);
+        });
+    }
+
+    @Test
+    public void testInnerLateralScalarCountWrapperFilterRejectsRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (a INT)");
+            execute("INSERT INTO o VALUES (1), (2)");
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (1)");
+
+            String sql = """
+                    SELECT o.a, l.cnt
+                    FROM o
+                    JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t
+                            WHERE t.x = o.a
+                        ) counted
+                        WHERE cnt > 1
+                    ) l ON true
+                    ORDER BY o.a
+                    """;
+
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            """);
+
+            execute("INSERT INTO t VALUES (1)");
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralAliasCollisionCarrierNotLeakedWhenNotEliminable() throws Exception {
+        // Correlation through an expression (t0.a + 0) cannot be eliminated, so the
+        // hidden __qdb_outer_ref__ carrier column survives in the decorrelated join
+        // model. SELECT * and l1.* must not expose it, and the scalar count must still
+        // coalesce to 0 for non-matching outer rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT *
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a + 0) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tcnt
+                            1\t10\t1
+                            2\t20\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a + 0) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralAliasCollisionCountAliasedAsCorrelationColumn() throws Exception {
+        // The user aliases the scalar count with the correlation column name (x). The
+        // decorrelated sub-query carries its own hidden x-derived key column; neither
+        // wildcard shape may expose it, and the count keeps 0-for-no-match semantics.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT *
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) AS x FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tx
+                            1\t10\t1
+                            2\t20\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) AS x FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tx
+                            1\t1
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralAliasCollisionFunctionStealsCorrelationColumn() throws Exception {
+        // Inside the lateral body a function takes the correlation column's name that
+        // GROUP BY also refers to. Grouped (non-scalar) count keeps SQL
+        // NULL semantics for unmatched outer rows - a contrast to the scalar-count
+        // coalesce - and no helper columns may leak into either wildcard.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT abs(x) x, count(*) cnt FROM t2 WHERE t2.x = t0.a GROUP BY x) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tx\tcnt
+                            1\t1\t1
+                            2\tnull\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT *
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT abs(x) x, count(*) cnt FROM t2 WHERE t2.x = t0.a GROUP BY x) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tx\tcnt
+                            1\t10\t1\t1
+                            2\t20\tnull\tnull
+                            """);
+        });
+    }
+
+    // A bare (unqualified) reference to the lateral scalar-count column keeps its
+    // coalesce-to-zero compensation even when an outer projection alias steals the
+    // column name: the parser dedupes the bare ref (cnt -> cnt1), and the scalar-count
+    // marking must follow the join column the data comes from, not the same-named
+    // projection alias. See also the qualified-reference twin
+    // (testLateralAliasCollisionScalarCountVsOuterProjection) and the collision-free
+    // baseline (testLateralAliasCollisionScalarCountBareReferenceBaseline).
+    @Test
+    public void testLateralAliasCollisionScalarCountBareRefStolenAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT abs(t0.b) cnt, cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tcnt1
+                            10\t1
+                            20\t0
+                            """);
+
+            // same shape with a non-eliminable correlation
+            assertQuery("""
+                    SELECT abs(t0.b) cnt, cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a + 0) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tcnt1
+                            10\t1
+                            20\t0
+                            """);
+
+            // bare reference inside an expression, same stolen alias: the coalesced
+            // count feeds the arithmetic, so the unmatched row yields 0, not NULL
+            assertQuery("""
+                    SELECT abs(t0.b) cnt, cnt + 0 c2
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tc2
+                            10\t1
+                            20\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralAliasCollisionScalarCountBareReferenceBaseline() throws Exception {
+        // A bare (unqualified) reference to the lateral scalar-count column must carry
+        // the coalesce-to-zero semantics the same way a qualified reference does.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT cnt, abs(t0.b) cnt2
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY cnt
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tcnt2
+                            0\t20
+                            1\t10
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralAliasCollisionScalarCountVsOuterProjection() throws Exception {
+        // The outer projection declares a function column with the same alias as the
+        // lateral scalar-count column. The count reference is renamed (cnt -> cnt1) to
+        // stay unique, and must keep scalar-count semantics: 0 for a non-matching outer
+        // row, never NULL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT abs(t0.b) cnt, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tcnt1
+                            10\t1
+                            20\t0
+                            """);
+
+            // same collision with a non-eliminable correlation (expression forces the
+            // decorrelated outer-ref carrier to survive into the execution plan)
+            assertQuery("""
+                    SELECT abs(t0.b) cnt, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt FROM t2 WHERE t2.x = t0.a + 0) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tcnt1
+                            10\t1
+                            20\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralAliasCollisionUserColumnOccupiesCarrierName() throws Exception {
+        // The user declares a column whose alias matches the generated correlation
+        // carrier name. The rewriter must keep the two apart: the user column stays
+        // visible under its name, the internal carrier stays hidden, and scalar count
+        // still coalesces to 0. The compensation rebuilds the row the aggregate body
+        // yields for an empty input, so the deterministic sibling constant
+        // materializes alongside the zero count for the unmatched outer row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 42)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (SELECT count(*) cnt, 1 __qdb_outer_ref__0_a FROM t2 WHERE t2.x = t0.a) l1
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt\t__qdb_outer_ref__0_a
+                            1\t1\t1
+                            2\t0\t1
+                            """);
+        });
+    }
+
+    // A chain LIMIT on a per-side-push-eligible NON-count body must apply per
+    // outer row, not globally over the decorrelated result.
+    @Test
+    public void testLateralChainLimitPerSideShapePerOuterRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t0 (k INT, x INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (1, 11), (1, 12), (2, 20)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            // a global LIMIT 2 would keep two rows TOTAL; per outer row it keeps
+            // two rows for k=1, one for k=2, and LEFT preserves k=3
+            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT t0.x FROM t0 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t0.k "
+                    + " ORDER BY t0.x LIMIT 2) l ON true ORDER BY t1.k, l.x")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx
+                            1\t10
+                            1\t11
+                            2\t20
+                            3\tnull
+                            """);
+
+            // INNER lateral: same per-outer-row limiting, no row preservation
+            assertQuery("SELECT t1.k, l.x FROM t1 JOIN LATERAL "
+                    + "(SELECT t0.x FROM t0 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t0.k "
+                    + " ORDER BY t0.x LIMIT 2) l ON true ORDER BY t1.k, l.x")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx
+                            1\t10
+                            1\t11
+                            2\t20
+                            """);
+        });
+    }
+
+    // Chain LIMITs on the per-side-eligible shape follow the general-path
+    // contracts: provably negative values and outer-column references over a
+    // scalar count are rejected, for LEFT and INNER laterals alike.
+    @Test
+    public void testLateralChainLimitPerSideShapeRejections() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, n INT)");
+            execute("INSERT INTO t1 VALUES (1, 1), (2, 1), (3, 1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            String negativeLeft = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
+                    + " LIMIT -1) l ON true";
+            assertException(negativeLeft, negativeLeft.indexOf("-1"),
+                    "negative LIMIT is not supported in a correlated lateral sub-query");
+
+            String negativeInner = "SELECT t1.k, l.x FROM t1 JOIN LATERAL "
+                    + "(SELECT t2.k x FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
+                    + " LIMIT -1) l ON true";
+            assertException(negativeInner, negativeInner.indexOf("-1"),
+                    "negative LIMIT is not supported in a correlated lateral sub-query");
+
+            String outerColumn = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
+                    + " LIMIT t1.n) l ON true";
+            assertException(outerColumn, outerColumn.indexOf("t1.n"),
+                    "LIMIT referencing an outer column is not supported over a scalar count");
+        });
+    }
+
+    // Exercises the model-replacement flag transfer directly via a @TestOnly accessor.
+    // The same regression is also covered black-box by the LATERAL-count assertQuery
+    // tests; this pins the unit-level contract of replaceAndTransferDependents.
+    @Test
+    public void testLateralCountModelReplacementLifecycle() {
+        QueryModel oldModel = QueryModel.FACTORY.newInstance();
+        QueryModel newModel = QueryModel.FACTORY.newInstance();
+        oldModel.setLateralCountCoalesceRequired(true);
+        QueryColumn template = new QueryColumn().of("cnt", null);
+        oldModel.addLateralCountTemplate(template);
+
+        Assert.assertSame(newModel, SqlOptimiser.replaceAndTransferDependentsForTesting(oldModel, newModel));
+        Assert.assertTrue(newModel.isLateralCountCoalesceRequired());
+        Assert.assertFalse(oldModel.isLateralCountCoalesceRequired());
+        Assert.assertEquals(1, newModel.getLateralCountTemplates().size());
+        Assert.assertSame(template, newModel.getLateralCountTemplates().getQuick(0));
+        Assert.assertEquals(0, oldModel.getLateralCountTemplates().size());
+    }
+
+    // QuestDB's negative LIMIT means "last |N| rows", which compensateLimit cannot
+    // express (it emits `__lateral_rn <= limit`, a contradiction for N < 0). It used
+    // to silently empty the lateral body; it must now be rejected.
+    @Test
+    public void testLateralNegativeLimitRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            // scalar-count body
+            assertException("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                            + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true",
+                    93, "negative LIMIT is not supported in a correlated lateral sub-query");
+            // plain row body - same defect, no count involved
+            assertException("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
+                            + "(SELECT t2.k x FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true",
+                    90, "negative LIMIT is not supported in a correlated lateral sub-query");
+            // an UNCORRELATED body is not decorrelated, so negative LIMIT still works
+            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT t2.k x FROM t2 LIMIT -1) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx
+                            1\t2
+                            2\t2
+                            3\t2
+                            """);
+            // a non-lateral negative LIMIT is untouched
+            assertQuery("SELECT k FROM t2 LIMIT -1").noLeakCheck().expectSize().returns("""
+                    k
+                    2
+                    """);
         });
     }
 
@@ -271,11 +1211,794 @@ public class LateralJoinTest extends AbstractCairoTest {
             execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
 
-            assertException(
-                    "SELECT * FROM orders o JOIN LATERAL trades t",
-                    36,
-                    "LATERAL requires a subquery"
-            );
+            assertQuery("SELECT * FROM orders o JOIN LATERAL trades t")
+                    .fails(36, "LATERAL requires a subquery");
+        });
+    }
+
+    // A LIMIT BELOW the aggregate caps the counted input; it can never drop the
+    // aggregate row, so the count must degrade to 0, not NULL, and the guard
+    // must not include it.
+    @Test
+    public void testLateralScalarCountBelowAggregateLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM (SELECT k FROM t2 WHERE t2.k = t1.k LIMIT :m) z) l "
+                    + "ON true ORDER BY t1.k";
+
+            // emptied input still aggregates to a 0 row - never NULL
+            bindVariableService.setLong("m", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t0
+                    2\t0
+                    3\t0
+                    """);
+
+            bindVariableService.setLong("m", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t1
+                    2\t1
+                    3\t0
+                    """);
+
+            // compile-time constant below the aggregate folds the same way
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM (SELECT k FROM t2 WHERE t2.k = t1.k LIMIT 0) z) l "
+                    + "ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\t0
+                            2\t0
+                            3\t0
+                            """);
+
+            // an outer-column LIMIT below the aggregate needs no guard, so it is
+            // supported: each outer row caps its own counted input (k-1 rows)
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM (SELECT k FROM t2 WHERE t2.k = t1.k LIMIT t1.k - 1) z) l "
+                    + "ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\t0
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
+    // Same below-aggregate LIMIT, per-side-eligible shape: the chain LIMIT
+    // disqualifies per-side push and the fallback applies it per outer row
+    // beneath the count.
+    @Test
+    public void testLateralScalarCountBelowAggregateLimitPerSideShape() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM ("
+                    + "   SELECT t2.k FROM t2 JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k LIMIT :m"
+                    + " ) z) l ON true ORDER BY t1.k";
+
+            bindVariableService.setLong("m", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t0
+                    2\t0
+                    3\t0
+                    """);
+
+            bindVariableService.setLong("m", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t1
+                    2\t1
+                    3\t0
+                    """);
+        });
+    }
+
+    // A bind variable is only runtime-constant: a cached plan may be re-executed with a
+    // different value, so whether the aggregate row survives the LIMIT cannot be folded
+    // at compile time. It is emitted as a SQL guard and re-evaluated per execution.
+    @Test
+    public void testLateralScalarCountBindVariableLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT :lim) l ON true ORDER BY t1.k";
+
+            // row-preserving value: no-match outer row must still yield 0
+            bindVariableService.setLong("lim", 2);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+
+            // LIMIT 0 empties the body, so NULL - and this must be observed on the SAME
+            // statement, proving the decision is not baked into the compiled plan
+            bindVariableService.setLong("lim", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\tnull
+                    2\tnull
+                    3\tnull
+                    """);
+
+            // and back again, to rule out a one-way latch
+            bindVariableService.setLong("lim", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+        });
+    }
+
+    @Test
+    public void testLateralScalarCountBindVariableLimitCachedPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok(
+                    "limit keeps the aggregate row",
+                    "k\tc\n1\t2\n2\t1\n3\t0\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 2)
+            ));
+            cases.add(BindVarTuple.ok(
+                    "limit drops the aggregate row",
+                    "k\tc\n1\tnull\n2\tnull\n3\tnull\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 0)
+            ));
+            cases.add(BindVarTuple.ok(
+                    "limit keeps the aggregate row again",
+                    "k\tc\n1\t2\n2\t1\n3\t0\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 1)
+            ));
+
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT :lim) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .assertBinds(cases);
+
+            final ObjList<BindVarTuple> outerWhereCases = new ObjList<>();
+            outerWhereCases.add(BindVarTuple.ok(
+                    "outer WHERE keeps the unmatched group",
+                    "k\n3\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 2)
+            ));
+            outerWhereCases.add(BindVarTuple.ok(
+                    "outer WHERE drops NULL counts",
+                    "k\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 0)
+            ));
+            outerWhereCases.add(BindVarTuple.ok(
+                    "outer WHERE keeps the unmatched group again",
+                    "k\n3\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 1)
+            ));
+
+            assertQuery("SELECT t1.k FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT :lim) l ON true "
+                    + "WHERE l.c = 0 ORDER BY t1.k")
+                    .noLeakCheck()
+                    .assertBinds(outerWhereCases);
+        });
+    }
+
+    @Test
+    public void testLateralScalarCountBindVariableLimitNegativeRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT, v INT)");
+            execute("INSERT INTO t3 VALUES (1, 10), (1, 20), (2, 30)");
+
+            final ObjList<BindVarTuple> countCases = new ObjList<>();
+            countCases.add(BindVarTuple.ok(
+                    "positive limit keeps the aggregate row",
+                    "k\tc\n1\t2\n2\t1\n3\t0\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 2)
+            ));
+            countCases.add(BindVarTuple.fails(
+                    "negative limit is rejected at run time",
+                    "negative LIMIT is not supported in a correlated lateral sub-query",
+                    bindVariableService -> bindVariableService.setLong("lim", -1)
+            ));
+            countCases.add(BindVarTuple.ok(
+                    "the factory survives the rejection",
+                    "k\tc\n1\t2\n2\t1\n3\t0\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 1)
+            ));
+            countCases.add(BindVarTuple.ok(
+                    "null limit keeps dropping the aggregate row",
+                    "k\tc\n1\tnull\n2\tnull\n3\tnull\n",
+                    bindVariableService -> bindVariableService.setLong("lim", Numbers.LONG_NULL)
+            ));
+
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT :lim) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .assertBinds(countCases);
+
+            final ObjList<BindVarTuple> rowCases = new ObjList<>();
+            rowCases.add(BindVarTuple.ok(
+                    "positive limit keeps the first row per key",
+                    "k\tv\n1\t10\n2\t30\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 1)
+            ));
+            rowCases.add(BindVarTuple.fails(
+                    "negative limit is rejected at run time",
+                    "negative LIMIT is not supported in a correlated lateral sub-query",
+                    bindVariableService -> bindVariableService.setLong("lim", -1)
+            ));
+            rowCases.add(BindVarTuple.ok(
+                    "the factory survives the rejection",
+                    "k\tv\n1\t10\n1\t20\n2\t30\n",
+                    bindVariableService -> bindVariableService.setLong("lim", 2)
+            ));
+
+            assertQuery("SELECT t1.k, l.v FROM t1 JOIN LATERAL "
+                    + "(SELECT v FROM t3 WHERE t3.k = t1.k ORDER BY v LIMIT :lim) l ORDER BY t1.k, l.v")
+                    .noLeakCheck()
+                    .assertBinds(rowCases);
+        });
+    }
+
+    // An outer WHERE over the compensated count hoists into the carrier scope with
+    // the same run-time guard the column materializes with: when the bind-variable
+    // LIMIT empties the body, the predicate judges NULL, not an unguarded 0.
+    @Test
+    public void testLateralScalarCountBindVariableLimitOuterWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            String sql = "SELECT t1.k FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT :lim) l ON true "
+                    + "WHERE l.c = 0 ORDER BY t1.k";
+
+            bindVariableService.setLong("lim", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k
+                    3
+                    """);
+
+            // LIMIT 0 empties the body: every count is NULL and NULL = 0 keeps no row
+            bindVariableService.setLong("lim", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k
+                    """);
+
+            bindVariableService.setLong("lim", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k
+                    3
+                    """);
+        });
+    }
+
+    // The count layer's OWN LIMIT on a per-side-push-eligible body (correlation
+    // only inside a join branch, uncorrelated main chain). Per-side push cannot
+    // key the chain per outer row, so a chain LIMIT disqualifies it and the body
+    // takes the general path, which partitions the LIMIT per outer row and
+    // guards the coalesce(count, 0) compensation.
+    @Test
+    public void testLateralScalarCountChainBindVarLimitPerSideShape() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
+                    + " LIMIT :m) l ON true ORDER BY t1.k";
+
+            // row-preserving value: every outer row keeps its own count, and the
+            // no-match outer row yields 0, not NULL
+            bindVariableService.setLong("m", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+
+            // LIMIT 0 empties the body per outer row, so NULL - observed on the
+            // SAME statement, proving the guard is not baked into the cached plan
+            bindVariableService.setLong("m", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\tnull
+                    2\tnull
+                    3\tnull
+                    """);
+
+            // and back again, to rule out a one-way latch
+            bindVariableService.setLong("m", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+
+            // compile-time decidable values fold without a guard on the same shape
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
+                    + " LIMIT 1) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
+                    + " LIMIT 0) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\tnull
+                            2\tnull
+                            3\tnull
+                            """);
+        });
+    }
+
+    // Two-sided runtime LIMIT on the count layer of a per-side-push-eligible
+    // body: the guard mirrors the row_number filter at row 1, so lo >= 1 drops
+    // the single aggregate row and NULL survives.
+    @Test
+    public void testLateralScalarCountChainTwoSidedBindVarLimitPerSideShape() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
+                    + " LIMIT :lo,:hi) l ON true ORDER BY t1.k";
+
+            bindVariableService.setLong("lo", 0);
+            bindVariableService.setLong("hi", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+
+            // (lo, hi] = (1, 2] skips the single aggregate row -> NULL, on the
+            // same statement
+            bindVariableService.setLong("lo", 1);
+            bindVariableService.setLong("hi", 2);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\tnull
+                    2\tnull
+                    3\tnull
+                    """);
+
+            bindVariableService.setLong("lo", 0);
+            bindVariableService.setLong("hi", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+        });
+    }
+
+    // A LIMIT on a join branch INSIDE the lateral body never drops the aggregate
+    // row, so it must not produce an outer NULL guard. The count layer's own rows
+    // are limited by the branch, but count() over an empty join still returns 0.
+    // Per-side push path: INNER branch, uncorrelated main chain.
+    @Test
+    public void testLateralScalarCountJoinBranchBindVarLimitPerSide() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT :n) s ON s.k = t2.k"
+                    + ") l ON true ORDER BY t1.k";
+
+            bindVariableService.setLong("n", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+
+            // emptying the BRANCH empties the join, but the aggregate row survives:
+            // count() = 0, never NULL; same statement, so a leaked guard baked into
+            // the cached plan would flip the whole column here
+            bindVariableService.setLong("n", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t0
+                    2\t0
+                    3\t0
+                    """);
+        });
+    }
+
+    // Two-sided branch LIMIT with lo=1: drops the branch's first row, but the
+    // aggregate row above the join is untouched.
+    @Test
+    public void testLateralScalarCountJoinBranchTwoSidedBindVarLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (1), (2)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " LEFT JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT :lo,:hi) s ON s.k = t2.k "
+                    + " WHERE t2.k = t1.k) l ON true ORDER BY t1.k";
+
+            bindVariableService.setLong("lo", 1);
+            bindVariableService.setLong("hi", 2);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    """);
+        });
+    }
+
+    // Join-branch push path: LEFT branch plus correlated main-chain WHERE.
+    @Test
+    public void testLateralScalarCountLeftJoinBranchBindVarLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " LEFT JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT :n) s ON s.k = t2.k "
+                    + " WHERE t2.k = t1.k) l ON true ORDER BY t1.k";
+
+            // LEFT branch: emptying it must not change the count of t2 rows
+            bindVariableService.setLong("n", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+
+            bindVariableService.setLong("n", 2);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+        });
+    }
+
+    // The pinned contract in testLateralScalarCountOuterColumnLimitRejected: only a
+    // LIMIT over the scalar count itself is rejected. The same LIMIT on a NON-count
+    // join branch inside the body must stay supported.
+    @Test
+    public void testLateralScalarCountNonCountBranchOuterColumnLimitSupported() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, n INT)");
+            execute("INSERT INTO t1 VALUES (1,1), (2,1), (3,1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " LEFT JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT t1.n) s ON s.k = t2.k "
+                    + " WHERE t2.k = t1.k) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
+    // Regression: a row-preserving LIMIT must keep the coalesce(count, 0) compensation
+    // so a no-match outer row still yields 0 rather than NULL. Covers non-literal forms
+    // (1+1, abs(1)) which the head revision silently dropped the compensation for.
+    @Test
+    public void testLateralScalarCountNonLiteralPositiveLimitKeepsCoalesce() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            for (String limit : new String[]{"LIMIT 1", "LIMIT 2", "LIMIT 1+1", "LIMIT abs(1)", "LIMIT 0,1", ""}) {
+                assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                        + "(SELECT count() c FROM t2 WHERE t2.k = t1.k " + limit + ") l ON true ORDER BY t1.k")
+                        .noLeakCheck()
+                        .returns("""
+                                k\tc
+                                1\t2
+                                2\t1
+                                3\t0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testLateralScalarCountOuterColumnLimitExpressionWrapperFallsBack() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, n INT)");
+            execute("INSERT INTO t1 VALUES (1, 2), (2, 1), (3, 1), (4, 0)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2), (4)");
+
+            assertQuery("""
+                    SELECT t1.k, l.v
+                    FROM t1
+                    LEFT JOIN LATERAL (
+                        SELECT v
+                        FROM (
+                            SELECT count(*) + 2 AS v
+                            FROM t2
+                            WHERE t2.k = t1.k
+                        ) counted
+                        LIMIT t1.n
+                    ) l ON true
+                    ORDER BY t1.k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv
+                            1\t4
+                            2\t3
+                            3\tnull
+                            4\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT t1.k, l.v
+                    FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT v
+                        FROM (
+                            SELECT count(*) + 2 AS v
+                            FROM t2
+                            WHERE t2.k = t1.k
+                        ) counted
+                        LIMIT t1.n
+                    ) l
+                    ORDER BY t1.k
+                    """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv
+                            1\t4
+                            2\t3
+                            """);
+
+            assertQuery("""
+                    SELECT t1.k, l.v
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT v
+                        FROM (
+                            SELECT count(*) + 2 AS v
+                            FROM t2
+                            WHERE t2.k = t1.k
+                        ) counted
+                        LIMIT t1.n
+                    ) l ON true
+                    ORDER BY t1.k
+                    """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv
+                            1\t4
+                            2\t3
+                            """);
+        });
+    }
+
+    // A LIMIT reading an outer column cannot be guarded: the guard is evaluated in the
+    // outer projection, where the body-local rewrite of that reference does not resolve.
+    @Test
+    public void testLateralScalarCountOuterColumnLimitRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, n INT)");
+            execute("INSERT INTO t1 VALUES (1,2), (2,2), (3,2)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            assertException("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                            + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) l ON true",
+                    93, "LIMIT referencing an outer column is not supported over a scalar count");
+
+            // the same LIMIT over a NON-count body stays supported
+            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT t2.k x FROM t2 WHERE t2.k = t1.k ORDER BY t2.k LIMIT t1.n) l ON true ORDER BY t1.k, l.x")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx
+                            1\t1
+                            1\t1
+                            2\t2
+                            3\tnull
+                            """);
+        });
+    }
+
+    // The count layer's OWN LIMIT and a branch LIMIT together: the outer guard
+    // must reflect the count layer's LIMIT (:m=0 drops the aggregate row -> NULL),
+    // not be displaced by the branch-local one.
+    @Test
+    public void testLateralScalarCountOwnLimitWithJoinBranchLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " LEFT JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT :n) s ON s.k = t2.k "
+                    + " WHERE t2.k = t1.k LIMIT :m) l ON true ORDER BY t1.k";
+
+            // LIMIT 0 on the count layer drops the aggregate row: NULL for every
+            // outer row, regardless of the branch's LIMIT
+            bindVariableService.setLong("m", 0);
+            bindVariableService.setLong("n", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\tnull
+                    2\tnull
+                    3\tnull
+                    """);
+
+            bindVariableService.setLong("m", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
+        });
+    }
+
+    // A limit that provably removes the single aggregate row must NOT be
+    // compensated - NULL fill is the correct answer there.
+    @Test
+    public void testLateralScalarCountRowDroppingLimitYieldsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            for (String limit : new String[]{"LIMIT 0", "LIMIT 1-1", "LIMIT 1,2"}) {
+                assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                        + "(SELECT count() c FROM t2 WHERE t2.k = t1.k " + limit + ") l ON true ORDER BY t1.k")
+                        .noLeakCheck()
+                        .returns("""
+                                k\tc
+                                1\tnull
+                                2\tnull
+                                3\tnull
+                                """);
+            }
+        });
+    }
+
+    // Two correlated branches with independent bind-variable LIMITs. Neither guard
+    // may escape onto the outer count; the asymmetric bind sets would expose a
+    // last-branch-wins leak ((:n1,:n2)=(1,0) nulls, (0,1) coincidentally passes).
+    @Test
+    public void testLateralScalarCountTwoJoinBranchesBindVarLimitsPerSide() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t4 (k INT)");
+            execute("INSERT INTO t4 VALUES (1), (2), (3)");
+
+            String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
+                    + "(SELECT count() c FROM t2 "
+                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k LIMIT :n1) s1 ON s1.k = t2.k"
+                    + " JOIN (SELECT k FROM t4 WHERE t4.k = t1.k LIMIT :n2) s2 ON s2.k = t2.k"
+                    + ") l ON true ORDER BY t1.k";
+
+            bindVariableService.setLong("n1", 0);
+            bindVariableService.setLong("n2", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t0
+                    2\t0
+                    3\t0
+                    """);
+
+            bindVariableService.setLong("n1", 1);
+            bindVariableService.setLong("n2", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t0
+                    2\t0
+                    3\t0
+                    """);
+
+            bindVariableService.setLong("n1", 1);
+            bindVariableService.setLong("n2", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """);
         });
     }
 
@@ -292,20 +2015,18 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 2, 20.0, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    LATERAL (SELECT qty FROM trades WHERE order_id = o.id) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
                             1\t10.0
                             2\t20.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            LATERAL (SELECT qty FROM trades WHERE order_id = o.id) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -318,14 +2039,11 @@ public class LateralJoinTest extends AbstractCairoTest {
             execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z')");
             execute("INSERT INTO trades VALUES (1, 1, '2024-01-01T00:30:00.000000Z')");
 
-            assertException(
-                    """
-                            SELECT * FROM orders o
-                            RIGHT JOIN LATERAL (SELECT * FROM trades WHERE order_id = o.id) t
-                            """,
-                    34,
-                    "LATERAL is only supported with INNER, LEFT, or CROSS joins"
-            );
+            assertQuery("""
+                    SELECT * FROM orders o
+                    RIGHT JOIN LATERAL (SELECT * FROM trades WHERE order_id = o.id) t
+                    """)
+                    .fails(34, "LATERAL is only supported with INNER, LEFT, or CROSS joins");
         });
     }
 
@@ -353,25 +2071,24 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Both sides of the JOIN inside the lateral subquery have correlated references
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.val, sub.qty
+                    FROM t_outer o
+                    JOIN LATERAL (
+                        SELECT a.val, b.qty
+                        FROM (SELECT val FROM t_a WHERE t_a.oid = o.id) a
+                        CROSS JOIN (SELECT qty FROM t_b WHERE t_b.oid = o.id) b
+                    ) sub ON true
+                    ORDER BY o.id, sub.val
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tval\tqty
                             1\t10\t100
                             1\t20\t100
                             2\t30\t200
-                            """,
-                    """
-                            SELECT o.id, sub.val, sub.qty
-                            FROM t_outer o
-                            JOIN LATERAL (
-                                SELECT a.val, b.qty
-                                FROM (SELECT val FROM t_a WHERE t_a.oid = o.id) a
-                                CROSS JOIN (SELECT qty FROM t_b WHERE t_b.oid = o.id) b
-                            ) sub ON true
-                            ORDER BY o.id, sub.val
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -398,25 +2115,24 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 2, 'info_b', '2024-01-01T01:10:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.val, sub.info
+                    FROM t_outer o
+                    JOIN LATERAL (
+                        SELECT l.val, r.info
+                        FROM t_left l
+                        LEFT JOIN t_right r ON l.id = r.ref_id AND r.id = o.id
+                        WHERE l.id = o.id
+                    ) sub ON true
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tval\tinfo
                             1\t10\tinfo_a
                             2\t20\tinfo_b
-                            """,
-                    """
-                            SELECT o.id, sub.val, sub.info
-                            FROM t_outer o
-                            JOIN LATERAL (
-                                SELECT l.val, r.info
-                                FROM t_left l
-                                LEFT JOIN t_right r ON l.id = r.ref_id AND r.id = o.id
-                                WHERE l.id = o.id
-                            ) sub ON true
-                            ORDER BY o.id
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -443,8 +2159,21 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (7, 3, 30.0, '2024-01-01T02:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty, t.bucket
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty, 'small' AS bucket FROM trades
+                            WHERE order_id = o.id AND qty < 30
+                        UNION ALL
+                        SELECT qty, 'large' AS bucket FROM trades
+                            WHERE order_id = o.id AND qty >= 30
+                    ) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tbucket
                             1\t10.0\tsmall
                             1\t25.0\tsmall
@@ -453,21 +2182,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             2\t50.0\tlarge
                             3\t29.0\tsmall
                             3\t30.0\tlarge
-                            """,
-                    """
-                            SELECT o.id, t.qty, t.bucket
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty, 'small' AS bucket FROM trades
-                                    WHERE order_id = o.id AND qty < 30
-                                UNION ALL
-                                SELECT qty, 'large' AS bucket FROM trades
-                                    WHERE order_id = o.id AND qty >= 30
-                            ) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -494,26 +2209,25 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // UNION branches with LIMIT
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.val
+                    FROM t_outer o
+                    JOIN LATERAL (
+                        (SELECT val FROM t_data WHERE oid = o.id AND src = 'A' ORDER BY val LIMIT 1)
+                        UNION ALL
+                        (SELECT val FROM t_data WHERE oid = o.id AND src = 'B' ORDER BY val LIMIT 1)
+                    ) sub ON true
+                    ORDER BY o.id, sub.val
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tval
                             1\t10
                             1\t40
                             2\t60
                             2\t70
-                            """,
-                    """
-                            SELECT o.id, sub.val
-                            FROM t_outer o
-                            JOIN LATERAL (
-                                (SELECT val FROM t_data WHERE oid = o.id AND src = 'A' ORDER BY val LIMIT 1)
-                                UNION ALL
-                                (SELECT val FROM t_data WHERE oid = o.id AND src = 'B' ORDER BY val LIMIT 1)
-                            ) sub ON true
-                            ORDER BY o.id, sub.val
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -541,27 +2255,26 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 400, 'A', '2024-01-01T01:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.x, sub.val FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT a AS val FROM t2 WHERE t2.x = t1.x
+                        UNION ALL
+                        SELECT total FROM (
+                            SELECT sum(b) AS total FROM t3 WHERE t3.x = t1.x GROUP BY cat
+                        ) agg WHERE agg.total > 100
+                    ) sub
+                    ORDER BY t1.x, sub.val
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             x\tval
                             1\t10
                             1\t200
                             2\t20
                             2\t700
-                            """,
-                    """
-                            SELECT t1.x, sub.val FROM t1
-                            CROSS JOIN LATERAL (
-                                SELECT a AS val FROM t2 WHERE t2.x = t1.x
-                                UNION ALL
-                                SELECT total FROM (
-                                    SELECT sum(b) AS total FROM t3 WHERE t3.x = t1.x GROUP BY cat
-                                ) agg WHERE agg.total > 100
-                            ) sub
-                            ORDER BY t1.x, sub.val
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -590,27 +2303,26 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 300, '2024-01-01T01:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.x, sub.val FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT sum(a) AS val FROM t2 WHERE t2.x = t1.x
+                        UNION ALL
+                        SELECT s FROM (
+                            SELECT sum(b) AS s FROM t3 WHERE t3.x = t1.x
+                        ) nested_sub
+                    ) sub
+                    ORDER BY t1.x, sub.val
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             x\tval
                             1\t30
                             1\t100
                             2\t30
                             2\t500
-                            """,
-                    """
-                            SELECT t1.x, sub.val FROM t1
-                            CROSS JOIN LATERAL (
-                                SELECT sum(a) AS val FROM t2 WHERE t2.x = t1.x
-                                UNION ALL
-                                SELECT s FROM (
-                                    SELECT sum(b) AS s FROM t3 WHERE t3.x = t1.x
-                                ) nested_sub
-                            ) sub
-                            ORDER BY t1.x, sub.val
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -633,28 +2345,2032 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // UNION on a non-join layer (wrapped in a SELECT)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.val
+                    FROM t_outer o
+                    JOIN LATERAL (
+                        SELECT val FROM (
+                            SELECT val FROM t_data WHERE oid = o.id AND src = 'A'
+                            UNION ALL
+                            SELECT val FROM t_data WHERE oid = o.id AND src = 'B'
+                        )
+                    ) sub ON true
+                    ORDER BY o.id, sub.val
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tval
                             1\t10
                             1\t20
                             2\t30
                             2\t40
-                            """,
-                    """
-                            SELECT o.id, sub.val
-                            FROM t_outer o
-                            JOIN LATERAL (
-                                SELECT val FROM (
-                                    SELECT val FROM t_data WHERE oid = o.id AND src = 'A'
-                                    UNION ALL
-                                    SELECT val FROM t_data WHERE oid = o.id AND src = 'B'
-                                )
-                            ) sub ON true
-                            ORDER BY o.id, sub.val
-                            """,
-                    null, true, true
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralApproxCountDistinctZeroOnNoMatch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fills (order_id INT, venue_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO fills VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (1, 10, '2024-01-01T00:30:00.000000Z'),
+                    (2, 20, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.venues
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT approx_count_distinct(venue_id) AS venues
+                        FROM fills
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tvenues
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCoalesceSumBodyNotCompensated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // only zero-on-empty aggregates are compensated; a null-absorbing wrapper over
+            // sum() is not, so the unmatched row keeps NULL rather than coalesce(NULL, 0) = 0
+            assertQuery("""
+                    SELECT o.id, sub.s
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT coalesce(sum(qty), 0) AS s FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\ts
+                            1\t30
+                            2\t30
+                            3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 40, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            1\t4
+                            2\t3
+                            3\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.c, sub.d
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS c, count(*) + 2 AS d
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc\td
+                            1\t2\t4
+                            2\t1\t3
+                            3\t0\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic * 10 AS scaled
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY sub.arithmetic, o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tscaled
+                            3\t20
+                            2\t30
+                            1\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticAggregateOverInnerLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS v
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) AS c FROM trades WHERE order_id = o.id
+                        ) s
+                        WHERE t1.k = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t3
+                            2\t2
+                            3\t2
+                            """);
+        });
+    }
+
+    // bind variables are captured by compensation templates, so the projection
+    // remains compensated on unmatched rows
+    @Test
+    public void testLeftLateralCountArithmeticBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 2L);
+            assertQuery("""
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + $1 AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t4
+                            2\t3
+                            3\t2
+                            """);
+
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 0L);
+            assertQuery("""
+                    SELECT o.id, sub.cnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.cnt = $1
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tcnt
+                            3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticConstantColumnCompensated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'LSE', '2024-01-01T00:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.c, sub.z, sub.oid
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS c, 5 AS z, o.id AS oid FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc\tz\toid
+                            1\t1\t5\t1
+                            2\t0\t5\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticDistinctConsumer() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT DISTINCT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tarithmetic
+                            1\t4
+                            2\t3
+                            3\t2
+                            """);
+
+            assertQuery("""
+                    SELECT DISTINCT o.id, sub.cnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tcnt
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+
+            assertQuery("""
+                    SELECT DISTINCT o.id, sub.cnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT c.* FROM (
+                            SELECT count(*) AS cnt
+                            FROM trades
+                            WHERE order_id = o.id
+                        ) c
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tcnt
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticFilteredByParent() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.arithmetic = 2
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            3\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.cnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.cnt = 0
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tcnt
+                            3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticGroupByOrderByQualified() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT sub.arithmetic, count(*) AS n
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    GROUP BY sub.arithmetic
+                    ORDER BY sub.arithmetic
+                    """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            arithmetic\tn
+                            2\t1
+                            3\t1
+                            4\t1
+                            """);
+
+            assertQuery("""
+                    SELECT sub.arithmetic AS va, count(*) AS n
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    GROUP BY sub.arithmetic
+                    ORDER BY sub.arithmetic DESC
+                    """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            va\tn
+                            4\t1
+                            3\t1
+                            2\t1
+                            """);
+
+            assertQuery("""
+                    SELECT sub.cnt, count(*) AS n
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    GROUP BY sub.cnt
+                    ORDER BY sub.cnt
+                    """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            cnt\tn
+                            0\t1
+                            1\t1
+                            2\t1
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY sub.arithmetic, o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            3\t2
+                            2\t3
+                            1\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticImplicitKeyNotCompensated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'LSE', '2024-01-01T00:10:00.000000Z')
+                    """);
+
+            // the body groups by venue, so an unmatched outer row yields no inner row at all
+            assertQuery("""
+                    SELECT o.id, sub.k, sub.c
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT venue AS k, count(*) + 2 AS c FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tk\tc
+                            1\tLSE\t3
+                            2\t\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.k, sub.c
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT venue AS k, approx_count_distinct(order_id) AS c FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tk\tc
+                            1\tLSE\t1
+                            2\t\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.c
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS c FROM trades WHERE order_id = o.id SAMPLE BY 1h
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t3
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticInCte() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    WITH w AS (
+                        SELECT o.id AS id, sub.arithmetic AS v
+                        FROM orders o
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) + 2 AS arithmetic
+                            FROM trades
+                            WHERE order_id = o.id
+                        ) sub
+                    )
+                    SELECT * FROM w ORDER BY id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t4
+                            2\t3
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticMixedAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 40, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.mixed
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + sum(qty) AS mixed
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tmixed
+                            1\t32
+                            2\t41
+                            3\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.val
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT CASE WHEN count() = 0 THEN 2 ELSE sum(qty) END AS val
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tval
+                            1\t30
+                            2\t40
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticMultipleJoins() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fills (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("INSERT INTO fills VALUES (1, '2024-01-01T00:10:00.000000Z')");
+
+            assertQuery("""
+                    SELECT o.id, s1.v, s2.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS v FROM trades WHERE order_id = o.id
+                    ) s1
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 5 AS v FROM fills WHERE order_id = o.id
+                    ) s2
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\tv1
+                            1\t4\t6
+                            2\t3\t5
+                            3\t2\t5
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticNegativeGuards() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 40, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT sum(qty) + 1 AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .withPlanNotContaining("coalesce")
+                    .returns("""
+                            id\tv
+                            1\t31
+                            2\t41
+                            3\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                        LIMIT 0
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\tnull
+                            2\tnull
+                            3\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                        GROUP BY order_id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t4
+                            2\t3
+                            3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticNestedBodyDoesNotExplode() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'LSE', '2024-01-01T00:10:00.000000Z')
+                    """);
+
+            StringBuilder body = new StringBuilder("SELECT count(*) AS v0 FROM trades WHERE order_id = o.id");
+            for (int i = 1; i <= 24; i++) {
+                body.insert(0, "SELECT v" + (i - 1) + " + v" + (i - 1) + " AS v" + i + " FROM (").append(')');
+            }
+            // the template budget degrades to uncompensated NULL instead of expanding 2^24 nodes
+            assertQuery("SELECT o.id, sub.v24 FROM orders o LEFT JOIN LATERAL (" + body + ") sub ORDER BY o.id")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv24
+                            1\t16777216
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticOnRejectsRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t1.k, l.v
+                    FROM t1
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS v
+                        FROM t2
+                        WHERE t2.k = t1.k
+                    ) l ON l.v > 2
+                    ORDER BY t1.k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv
+                            1\t3
+                            2\tnull
+                            """);
+        });
+    }
+
+    // Known limitation: compensation does not reach a column referenced only in
+    // ORDER BY, so the unmatched row sorts as NULL (first) instead of as 10.
+    @Test
+    public void testLeftLateralCountArithmeticOrderByOnlyNotCompensated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT 10 - count(*) AS inv
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY sub.inv, o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id
+                            3
+                            1
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticOuterRef() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.val
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) * 10 + o.id AS val
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tval
+                            1\t21
+                            2\t12
+                            3\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticRenamed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic AS foo
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tfoo
+                            1\t4
+                            2\t3
+                            3\t2
+                            """);
+
+            assertQuery("""
+                    SELECT sub.arithmetic AS v, count(*) AS n
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    GROUP BY sub.arithmetic
+                    ORDER BY v
+                    """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            v\tn
+                            2\t1
+                            3\t1
+                            4\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticRepeatedLeaf() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + count(*) AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("values: [count(*)]")
+                    .returns("""
+                            id\tv
+                            1\t4
+                            2\t2
+                            3\t0
+                            """);
+        });
+    }
+
+    // A CROSS JOIN over a provably one-row relation above the aggregate keeps the
+    // count row; the carrier column threads through the join-layer projection.
+    @Test
+    public void testLeftLateralCountArithmeticSingleRowJoinBody() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT)");
+            execute("CREATE TABLE trades (order_id INT)");
+            execute("INSERT INTO orders VALUES (1), (3)");
+            execute("INSERT INTO trades VALUES (1)");
+
+            assertQuery("""
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT c * 2 AS v
+                        FROM (SELECT count(*) AS c FROM trades WHERE order_id = o.id) a
+                        CROSS JOIN (SELECT 1 AS one) b
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t2
+                            3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticSumWithOuterRef() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 40, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + sum(qty + o.id) AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t34
+                            2\t43
+                            3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticUnaliased() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    )
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            1\t4
+                            2\t3
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticUnionConsumer() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    UNION ALL
+                    SELECT o.id + 10, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            1\t4
+                            2\t3
+                            3\t2
+                            11\t4
+                            12\t3
+                            13\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.cnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    UNION
+                    SELECT 99, 0 FROM long_sequence(1)
+                    ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tcnt
+                            1\t2
+                            2\t1
+                            3\t0
+                            99\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticWhereAliasShadow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, x INT)");
+            execute("INSERT INTO t1 VALUES (1, 10), (2, 1), (3, 1)");
+            execute("CREATE TABLE t2 (id INT, y INT)");
+            execute("INSERT INTO t2 VALUES (1, 1), (2, 10), (3, 10)");
+            execute("CREATE TABLE t3 (id INT)");
+            execute("INSERT INTO t3 VALUES (1), (2)");
+
+            assertQuery("""
+                    SELECT t2.y AS x, sub.cnt
+                    FROM t1
+                    JOIN t2 ON t2.id = t1.id
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM t3
+                        WHERE t3.id = t1.id
+                    ) sub
+                    WHERE sub.cnt = 0 OR x > 5
+                    ORDER BY t1.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            x\tcnt
+                            1\t1
+                            10\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticWhereMemoizesCarrier() throws Exception {
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+        allowFunctionMemoization();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP)");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '1970-01-01T00:00:00.000000Z'),
+                    (2, '1970-01-01T00:00:00.000001Z'),
+                    (3, '1970-01-01T00:00:00.000002Z')
+                    """);
+            execute("CREATE TABLE trades (order_id INT)");
+
+            final String sql = """
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + test_timestamp_counter(o.ts)::long AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                        LIMIT :lim
+                    ) sub
+                    WHERE sub.v >= 0 AND sub.v >= 0
+                    ORDER BY o.id
+                    """;
+
+            bindVariableService.setLong("lim", 1);
+            assertQuery(sql).noLeakCheck().assertsPlanContaining(
+                    "Filter filter: (v>=0 and v>=0)",
+                    "memoize(case([__lateral_limit(:lim"
             );
+            try (RecordCursorFactory factory = select(sql)) {
+                TestTimestampCounterFactory.COUNTER.set(0);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor("id\tv\n1\t0\n2\t1\n3\t2\n", cursor, factory.getMetadata(), true);
+                }
+                Assert.assertEquals(3, TestTimestampCounterFactory.COUNTER.get());
+
+                bindVariableService.setLong("lim", 0);
+                TestTimestampCounterFactory.COUNTER.set(0);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor("id\tv\n", cursor, factory.getMetadata(), true);
+                }
+                Assert.assertEquals(0, TestTimestampCounterFactory.COUNTER.get());
+
+                bindVariableService.setLong("lim", 1);
+                TestTimestampCounterFactory.COUNTER.set(0);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor("id\tv\n1\t0\n2\t1\n3\t2\n", cursor, factory.getMetadata(), true);
+                }
+                Assert.assertEquals(3, TestTimestampCounterFactory.COUNTER.get());
+            }
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticWhereMixedTerms() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.arithmetic = 2 OR o.id = 1
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            1\t4
+                            3\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.arithmetic = 2 AND o.id > 1
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            3\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.arithmetic - o.id = -1
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            3\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.arithmetic - o.id = 1
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            2\t3
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.arithmetic = 2 OR o.ts > '2024-06-01'
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticWhereOnlyRef() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE sub.cnt = 0
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticWhereUnqualified() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    WHERE arithmetic = 2
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("INSERT INTO trades VALUES (1, '2024-01-01T00:10:00.000000Z')");
+
+            assertQuery("""
+                    SELECT o.id, sub.*
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            1\t3
+                            2\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticWildcardRenamed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 40, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.*
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT c.other AS v, c.*
+                        FROM (
+                            SELECT min(qty) AS other, count(*) + 2 AS v
+                            FROM trades
+                            WHERE order_id = o.id
+                        ) c
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\tother\tv1
+                            1\t10\t10\t4
+                            2\t40\t40\t3
+                            3\tnull\tnull\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.v1
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT c.other AS v, c.*
+                        FROM (
+                            SELECT min(qty) AS other, count(*) + 2 AS v
+                            FROM trades
+                            WHERE order_id = o.id
+                        ) c
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv1
+                            1\t4
+                            2\t3
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticWrapped() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT c + 2 AS arithmetic FROM (
+                            SELECT count(*) AS c
+                            FROM trades
+                            WHERE order_id = o.id
+                        )
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic
+                            1\t4
+                            2\t3
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountArithmeticWrappedSubqueryWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT o.id, sub.cnt
+                        FROM orders o
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) AS cnt
+                            FROM trades
+                            WHERE order_id = o.id
+                        ) sub
+                    ) WHERE cnt = 0
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tcnt
+                            3\t0
+                            """);
+
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT o.id, sub.arithmetic
+                        FROM orders o
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) + 2 AS arithmetic
+                            FROM trades
+                            WHERE order_id = o.id
+                        ) sub
+                    ) WHERE arithmetic = 2
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tarithmetic
+                            3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountCarrierAliasCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT)");
+            execute("CREATE TABLE trades (order_id INT)");
+            execute("INSERT INTO orders VALUES (1), (2)");
+            execute("INSERT INTO trades VALUES (1)");
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic, sub."__qdb_count_carrier__0"
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic, count(*) AS "__qdb_count_carrier__0"
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic\t__qdb_count_carrier__0
+                            1\t3\t1
+                            2\t2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.arithmetic, sub."__qdb_count_carrier__0"
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT c.arithmetic, c.cnt AS "__qdb_count_carrier__0"
+                        FROM (
+                            SELECT count(*) + 2 AS arithmetic, count(*) AS cnt
+                            FROM trades
+                            WHERE order_id = o.id
+                        ) c
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tarithmetic\t__qdb_count_carrier__0
+                            1\t3\t1
+                            2\t2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountCase() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.val
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT CASE WHEN count() = 0 THEN 7 ELSE count() END AS val
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tval
+                            1\t2
+                            2\t1
+                            3\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountCoalesceWrapped() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.v
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT coalesce(count(*), 5) AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountDistinctAndApproxCountDistinctOnRejectsRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t1.k, l.v
+                    FROM t1
+                    LEFT JOIN LATERAL (
+                        SELECT count_distinct(t2.k) AS v
+                        FROM t2
+                        WHERE t2.k = t1.k
+                    ) l ON true
+                    ORDER BY t1.k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t1.k, l.exact_v, l.approx_v
+                    FROM t1
+                    LEFT JOIN LATERAL (
+                        SELECT count_distinct(t2.k) AS exact_v, approx_count_distinct(t2.k) AS approx_v
+                        FROM t2
+                        WHERE t2.k = t1.k
+                    ) l ON l.exact_v > 0 AND l.approx_v > 0
+                    ORDER BY t1.k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            k\texact_v\tapprox_v
+                            1\t1\t1
+                            2\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountDistinctArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fills (order_id INT, venue_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO fills VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (1, 10, '2024-01-01T00:30:00.000000Z'),
+                    (2, 20, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.venues
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count_distinct(venue_id) + 1 AS venues
+                        FROM fills
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("values: [count_distinct(venue_id)]")
+                    .returns("""
+                            id\tvenues
+                            1\t3
+                            2\t2
+                            3\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountDistinctZeroOnNoMatch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fills (order_id INT, venue_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO fills VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (1, 10, '2024-01-01T00:30:00.000000Z'),
+                    (2, 20, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.venues
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count_distinct(venue_id) AS venues
+                        FROM fills
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tvenues
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.venues, sub.total
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count_distinct(venue_id) AS venues, sum(venue_id) AS total
+                        FROM fills
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tvenues\ttotal
+                            1\t2\t40
+                            2\t1\t20
+                            3\t0\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountMarkerAliasCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.*
+                        FROM (
+                            SELECT k, 100 + k AS "__qdb_count_marker__1"
+                            FROM t1
+                        ) t1
+                        LEFT JOIN LATERAL (
+                            SELECT c.*
+                            FROM (
+                                SELECT count(*) + t0.a AS val
+                                FROM t2
+                                WHERE t2.x = t0.a
+                            ) c
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a	val
+                            1	3
+                            2	2
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountMarkerAliasCollisionFromWildcardSibling() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_tab (id INT)");
+            execute("INSERT INTO outer_tab VALUES (1), (2)");
+            execute("CREATE TABLE inner_tab (id INT)");
+            execute("INSERT INTO inner_tab VALUES (1)");
+
+            String lateralJoin = """
+                    FROM outer_tab o
+                    LEFT JOIN LATERAL (
+                        SELECT *
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM inner_tab i
+                            WHERE i.id = o.id
+                        ) counted
+                        CROSS JOIN (
+                            SELECT 701 AS "__qdb_count_marker__0"
+                            FROM long_sequence(1)
+                        ) sibling
+                    ) l ON l.cnt >= 0
+                    """;
+
+            assertQuery("SELECT o.id, l.cnt\n" + lateralJoin + "ORDER BY o.id")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tcnt
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("SELECT o.id, l.\"__qdb_count_marker__0\"\n"
+                    + lateralJoin
+                    + "WHERE o.id = 1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\t__qdb_count_marker__0
+                            1\t701
+                            """);
         });
     }
 
@@ -669,60 +4385,3989 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ('2024-01-01T02:00:00.000000Z', 'GBP/USD', 1.30)
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT timestamp, t.symbol, price, c FROM fx_trades t
+                    LEFT JOIN LATERAL (
+                        SELECT count() c FROM fx_trades
+                        WHERE symbol = t.symbol AND price > (t.price * 1.01)
+                    ) u
+                    ORDER BY timestamp
+                    """)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .returns("""
                             timestamp\tsymbol\tprice\tc
                             2024-01-01T00:00:00.000000Z\tEUR/USD\t1.1\t1
                             2024-01-01T01:00:00.000000Z\tEUR/USD\t1.2\t0
                             2024-01-01T02:00:00.000000Z\tGBP/USD\t1.3\t0
-                            """,
-                    """
-                            SELECT timestamp, t.symbol, price, c FROM fx_trades t
-                            LEFT JOIN LATERAL (
-                                SELECT count() c FROM fx_trades
-                                WHERE symbol = t.symbol AND price > (t.price * 1.01)
-                            ) u
-                            ORDER BY timestamp
-                            """,
-                    "timestamp", false, false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT timestamp, t.symbol, price, c FROM fx_trades t
+                    LEFT JOIN LATERAL (
+                        SELECT count() c FROM fx_trades
+                        WHERE symbol = t.symbol AND price > (t.price * 1.01)
+                    )
+                    ORDER BY timestamp
+                    """)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .returns("""
                             timestamp\tsymbol\tprice\tc
                             2024-01-01T00:00:00.000000Z\tEUR/USD\t1.1\t1
                             2024-01-01T01:00:00.000000Z\tEUR/USD\t1.2\t0
                             2024-01-01T02:00:00.000000Z\tGBP/USD\t1.3\t0
-                            """,
-                    """
-                            SELECT timestamp, t.symbol, price, c FROM fx_trades t
-                            LEFT JOIN LATERAL (
-                                SELECT count() c FROM fx_trades
-                                WHERE symbol = t.symbol AND price > (t.price * 1.01)
-                            )
-                            ORDER BY timestamp
-                            """,
-                    "timestamp", false, false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
-                            timestamp	symbol	price	symbol1	c
-                            2024-01-01T00:00:00.000000Z	EUR/USD	1.1	EUR/USD	1
-                            2024-01-01T01:00:00.000000Z	EUR/USD	1.2		0
-                            2024-01-01T02:00:00.000000Z	GBP/USD	1.3		0
-                            """,
-                    """
-                            SELECT timestamp, t.symbol, price, u.symbol, c FROM fx_trades t
-                            LEFT JOIN LATERAL (
-                                SELECT symbol, count() c FROM fx_trades
-                                WHERE symbol = t.symbol AND price > (t.price * 1.01)
-                            ) u
-                            ORDER BY timestamp
-                            """,
-                    "timestamp", false, false
-            );
+            assertQuery("""
+                    SELECT timestamp, t.symbol, price, u.symbol, c FROM fx_trades t
+                    LEFT JOIN LATERAL (
+                        SELECT symbol, count() c FROM fx_trades
+                        WHERE symbol = t.symbol AND price > (t.price * 1.01)
+                    ) u
+                    ORDER BY timestamp
+                    """)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .returns("""
+                            timestamp\tsymbol\tprice\tsymbol1\tc
+                            2024-01-01T00:00:00.000000Z\tEUR/USD\t1.1\tEUR/USD\t1
+                            2024-01-01T01:00:00.000000Z\tEUR/USD\t1.2\t\tnull
+                            2024-01-01T02:00:00.000000Z\tGBP/USD\t1.3\t\tnull
+                            """);
         });
+    }
+
+    @Test
+    public void testLeftLateralCountQuotedDottedAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub."c.dot"
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS "c.dot"
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc.dot
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
+    // Every column of a scalar aggregate body takes its empty-group value for an
+    // unmatched outer row, not just the bare count (#7460).
+    @Test
+    public void testLeftLateralCountSiblingColumnsCompensated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT)");
+            execute("CREATE TABLE trades (order_id INT, qty LONG)");
+            execute("INSERT INTO orders VALUES (1), (3)");
+            execute("INSERT INTO trades VALUES (1, 10)");
+
+            assertQuery("""
+                    SELECT o.id, sub.cnt, sub.tag
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt, 'T' AS tag
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tcnt\ttag
+                            1\t1\tT
+                            3\t0\tT
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.tag, sub.cnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT 'T' AS tag, count(*) AS cnt
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\ttag\tcnt
+                            1\tT\t1
+                            3\tT\t0
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.cnt, sub.arith
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt, count(*) + 2 AS arith
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tcnt\tarith
+                            1\t1\t3
+                            3\t0\t2
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.cnt, sub.mx
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt, max(qty) AS mx
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tcnt\tmx
+                            1\t1\t10
+                            3\t0\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.mx, sub.tag
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT max(qty) AS mx, 'T' AS tag
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tmx\ttag
+                            1\t10\tT
+                            3\tnull\tT
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountWildcardNonTrivialOn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_tab (id INT)");
+            execute("INSERT INTO outer_tab VALUES (1), (2)");
+            execute("CREATE TABLE inner_tab (id INT)");
+            execute("INSERT INTO inner_tab VALUES (1)");
+
+            assertQuery("""
+                    SELECT o.id, x.c
+                    FROM outer_tab o
+                    LEFT JOIN LATERAL (
+                        SELECT *
+                        FROM (
+                            SELECT count(*) AS c
+                            FROM inner_tab i
+                            WHERE i.id = o.id
+                        ) counted
+                    ) x ON 1 = 1
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, x.c
+                    FROM outer_tab o
+                    LEFT JOIN LATERAL (
+                        SELECT *
+                        FROM (
+                            SELECT *
+                            FROM (
+                                SELECT count(*) AS c
+                                FROM inner_tab i
+                                WHERE i.id = o.id
+                            ) counted
+                        ) wrapped
+                    ) x ON x.c >= 0
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, x.d
+                    FROM outer_tab o
+                    LEFT JOIN LATERAL (
+                        SELECT *
+                        FROM (
+                            SELECT c AS d
+                            FROM (
+                                SELECT *
+                                FROM (
+                                    SELECT count(*) AS c
+                                    FROM inner_tab i
+                                    WHERE i.id = o.id
+                                ) counted
+                            ) passed
+                        ) renamed
+                    ) x ON 1 = 1
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\td
+                            1\t1
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountWildcardRepeatedStarLayers() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_tab (id INT)");
+            execute("INSERT INTO outer_tab VALUES (1), (2)");
+            execute("CREATE TABLE inner_tab (id INT)");
+            execute("INSERT INTO inner_tab VALUES (1)");
+
+            assertQuery("""
+                    SELECT o.id, x.c, x.c_plus_one
+                    FROM outer_tab o
+                    LEFT JOIN LATERAL (
+                        SELECT wrapped2.*, wrapped2.*
+                        FROM (
+                            SELECT wrapped1.*, wrapped1.*
+                            FROM (
+                                SELECT counted.*, counted.*
+                                FROM (
+                                    SELECT count(*) AS c, count(*) + 1 AS c_plus_one
+                                    FROM inner_tab i
+                                    WHERE i.id = o.id
+                                ) counted
+                            ) wrapped1
+                        ) wrapped2
+                    ) x ON true
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc\tc_plus_one
+                            1\t1\t2
+                            2\t0\t1
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, x.c, x.c_plus_one
+                    FROM outer_tab o
+                    LEFT JOIN LATERAL (
+                        SELECT *, *
+                        FROM (
+                            SELECT *, *
+                            FROM (
+                                SELECT *, *
+                                FROM (
+                                    SELECT count(*) AS c, count(*) + 1 AS c_plus_one
+                                    FROM inner_tab i
+                                    WHERE i.id = o.id
+                                ) counted
+                            ) wrapped1
+                        ) wrapped2
+                    ) x ON true
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc\tc_plus_one
+                            1\t1\t2
+                            2\t0\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralUnionCountBodyNotCompensated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // a correlated empty UNION-ALL branch defeats the zero-rejection proof, so the
+            // count body is not admitted for compensation and the unmatched row keeps NULL
+            assertQuery("""
+                    SELECT o.id, sub.c
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS c FROM trades WHERE order_id = o.id
+                        UNION ALL
+                        SELECT 9 AS c FROM trades WHERE order_id = o.id AND 1 = 0
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            2\t1
+                            3\tnull
+                            """);
+        });
+    }
+
+    // Window functions have no meaningful zero-on-empty value; template extraction
+    // must reject them and keep the uncompensated NULL on unmatched rows.
+    @Test
+    public void testLeftLateralWindowFunctionBodyNotCompensated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.wcnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT wcnt FROM (
+                            SELECT count(*) OVER () AS wcnt, cnt FROM (
+                                SELECT count(*) AS cnt
+                                FROM trades
+                                WHERE order_id = o.id
+                            )
+                        )
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\twcnt
+                            1\t1
+                            2\t1
+                            3\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.wv
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT wcnt + cnt AS wv FROM (
+                            SELECT row_number() OVER () AS wcnt, cnt FROM (
+                                SELECT count(*) AS cnt
+                                FROM trades
+                                WHERE order_id = o.id
+                            )
+                        )
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\twv
+                            1\t3
+                            2\t2
+                            3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountAliasLessCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (cnt INT)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        )
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\tnull
+                            2\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.cnt
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        )
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\tnull
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountAliasLessSurfaces() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        )
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.c2
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt AS c2
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        )
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tc2
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        )
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT *
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        )
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+        });
+    }
+
+    // C1 companion - the count body as the SECOND join model already compensates
+    // to 0. Pinned so the keeps-the-row fix cannot be taken by suppressing this
+    // path instead, and so a plain revert of the wrapper handling is caught here.
+    @Test
+    public void testNestedLateralLeftCountAsSecondJoinModel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT counted.cnt
+                        FROM (SELECT 1 AS z) d
+                        CROSS JOIN (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountAsSecondJoinModelOuterRefExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (3)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.val
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT counted.val
+                        FROM (SELECT 1 AS z) d
+                        CROSS JOIN (
+                            SELECT count(*) + t0.a AS val
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tval
+                            1\t2
+                            3\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountBranchArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.*
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) + 2 AS val
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tval
+                            1\t4
+                            2\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountBranchDistinctProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT DISTINCT l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountBranchMultipleSourceCounts() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 10), (1, NULL)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.*
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT counted.other AS cnt_all, counted.*
+                            FROM (
+                                SELECT min(v) AS other, count(*) AS cnt_all, count(v) AS cnt_v
+                                FROM t2
+                                WHERE t2.x = t0.a
+                            ) counted
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt_all\tother\tcnt_all1\tcnt_v
+                            1\t10\t10\t2\t1
+                            2\tnull\tnull\t0\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.*
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT counted.other AS cnt_all, counted.*
+                            FROM (
+                                SELECT min(v) AS other, count(*) AS cnt_all, count(v) AS cnt_v
+                                FROM t2
+                                WHERE t2.x = t0.a
+                            ) counted
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt_all\tother\tcnt_all1\tcnt_v
+                            1\t10\t10\t2\t1
+                            2\tnull\tnull\t0\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountBranchProjectionWildcardAliasCollisions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 10)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.*
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT counted.other AS cnt, counted.*
+                            FROM (
+                                SELECT min(v) AS other, count(*) AS cnt
+                                FROM t2
+                                WHERE t2.x = t0.a
+                            ) counted
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt\tother\tcnt1
+                            1\t10\t10\t1
+                            2\tnull\tnull\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.*
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT *
+                            FROM (
+                                SELECT counted.other AS cnt, counted.*
+                                FROM (
+                                    SELECT min(v) AS other, count(*) AS cnt
+                                    FROM t2
+                                    WHERE t2.x = t0.a
+                                ) counted
+                            ) projected
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt\tother\tcnt1
+                            1\t10\t10\t1
+                            2\tnull\tnull\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.*
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT "count.ed".other AS "c.dot", "count.ed".*
+                            FROM (
+                                SELECT min(v) AS other, count(*) AS "c.dot"
+                                FROM t2
+                                WHERE t2.x = t0.a
+                            ) "count.ed"
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tc.dot\tother\tc.dot1
+                            1\t10\t10\t1
+                            2\tnull\tnull\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountBranchProjectionWildcardAliasLessWrapper() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT *
+                            FROM (
+                                SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                            )
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountBranchProjectionWildcardDottedSourceIdentity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 10)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT "l.2".*
+                        FROM t1 l
+                        CROSS JOIN LATERAL (
+                            SELECT counted.other AS cnt, counted.*
+                            FROM (
+                                SELECT min(v) AS other, count(*) AS cnt
+                                FROM t2
+                                WHERE t2.x = t0.a
+                            ) counted
+                        ) "l.2"
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt\tother\tcnt1
+                            1\t10\t10\t1
+                            2\tnull\tnull\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountBranchProjectionWildcardInputAliasBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT, v INT, cnt INT)");
+            execute("INSERT INTO t2 VALUES (1, 10, 99)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.*
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT counted.other AS cnt, counted.*
+                            FROM (
+                                SELECT min(v) AS other, count(*) AS cnt
+                                FROM t2 counted
+                                WHERE counted.x = t0.a
+                            ) counted
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt\tother\tcnt1
+                            1\t10\t10\t1
+                            2\tnull\tnull\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountBranchProjectionWrapper() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT cnt
+                            FROM (
+                                SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                            ) counted
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.c2
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.c2
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT cnt AS c2
+                            FROM (
+                                SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                            ) counted
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tc2
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.c3, l1.c4
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.c3, l2.c4
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT wrapped.c2 AS c3, wrapped.c2 AS c4
+                            FROM (
+                                SELECT cnt AS c2
+                                FROM (
+                                    SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                                ) counted
+                            ) wrapped
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tc3\tc4
+                            1\t1\t1
+                            2\t0\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT *
+                            FROM (
+                                SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                            ) counted
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT counted.*
+                            FROM (
+                                SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                            ) counted
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountCorrelatedBranchesAligned() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (7)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+            execute("CREATE TABLE t3 (x INT, v INT)");
+            execute("INSERT INTO t3 VALUES (1, 10), (2, 20)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.v, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l3.v, l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT v FROM t3 WHERE t3.x = t0.a
+                        ) l3
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a, l1.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tv\tcnt
+                            1\t10\t1
+                            2\t20\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountCorrelatedBranchesAlignedVariants() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 11), (2, 22), (2, 22)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (7)");
+            execute("CREATE TABLE t2 (x INT, y INT)");
+            execute("INSERT INTO t2 VALUES (1, 11)");
+            execute("CREATE TABLE t3 (x INT, y INT, v INT)");
+            execute("INSERT INTO t3 VALUES (1, 11, 10), (2, 22, 20)");
+            execute("CREATE TABLE t4 (x INT, y INT, w INT)");
+            execute("INSERT INTO t4 VALUES (1, 11, 100), (2, 22, 200)");
+            execute("CREATE TABLE t5 (x INT, y INT)");
+            execute("INSERT INTO t5 VALUES (2, 22)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.v, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l3.v, l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT v FROM t3 WHERE t3.x = t0.a
+                        ) l3
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a, l1.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tv\tcnt
+                            1\t10\t1
+                            2\t20\t0
+                            2\t20\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.v, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l3.v, l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT v FROM t3 WHERE t3.x = t0.a AND v = 10
+                        ) l3
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a, l1.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tv\tcnt
+                            1\t10\t1
+                            2\tnull\tnull
+                            2\tnull\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.v, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l3.v, l2.cnt
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT v FROM t3 WHERE t3.x = t0.a AND v = 10
+                        ) l3
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a, l1.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tv\tcnt
+                            1\t10\t1
+                            2\tnull\t0
+                            2\tnull\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, t0.b, l1.v, l1.w, l1.cnt, l1.cnt2
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l3.v, l4.w, l2.cnt, l5.cnt2
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a AND t2.y = t0.b
+                        ) l2
+                        CROSS JOIN LATERAL (
+                            SELECT v
+                            FROM t3
+                            WHERE t3.x = t0.a AND t3.y = t0.b
+                        ) l3
+                        CROSS JOIN LATERAL (
+                            SELECT w
+                            FROM t4
+                            WHERE t4.x = t0.a AND t4.y = t0.b
+                        ) l4
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt2
+                            FROM t5
+                            WHERE t5.x = t0.a AND t5.y = t0.b
+                        ) l5
+                    ) l1
+                    ORDER BY t0.a, t0.b, l1.v, l1.w
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tv\tw\tcnt\tcnt2
+                            1\t11\t10\t100\t1\t0
+                            2\t22\t20\t200\t0\t1
+                            2\t22\t20\t200\t0\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountDataSourceAliasCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (7)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+            execute("CREATE TABLE t3 (v INT)");
+            execute("INSERT INTO t3 VALUES (9)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT __qdb_count_driver__1.k AS k, l2.cnt
+                        FROM t1 __qdb_count_driver__1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tcnt
+                            1\t7\t1
+                            2\t7\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.v, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            __qdb_count_driver__2.k AS k,
+                            __qdb_count_driver__1.v AS v,
+                            l2.cnt
+                        FROM t1 __qdb_count_driver__2
+                        CROSS JOIN t3 __qdb_count_driver__1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tv\tcnt
+                            1\t7\t9\t1
+                            2\t7\t9\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountDirectBodyAliasProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 10)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.c2
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt AS c2
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .returns("""
+                            a\tc2
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.c3, l1.c4
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT c2 AS c3, c2 AS c4
+                        FROM (
+                            SELECT cnt AS c2
+                            FROM (
+                                SELECT count(*) AS cnt
+                                FROM t2
+                                WHERE t2.x = t0.a
+                            ) counted
+                        ) renamed
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .returns("""
+                            a\tc3\tc4
+                            1\t1\t1
+                            2\t0\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT counted.other AS cnt_all, counted.*
+                        FROM (
+                            SELECT min(v) AS other, count(*) AS cnt_all, count(v) AS cnt_v
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .returns("""
+                            a\tcnt_all\tother\tcnt_all1\tcnt_v
+                            1\t10\t10\t1\t1
+                            2\tnull\tnull\t0\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.c2
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt AS c2
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                            LIMIT 0
+                        ) counted
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .returns("""
+                            a\tc2
+                            1\tnull
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountDirectBodyCardinality() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, NULL)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM (
+                            SELECT x FROM t2 WHERE t2.x = t0.a
+                        ) s
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM (
+                            SELECT x, count(*) AS inner_cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                            GROUP BY x
+                        ) s
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt, l1.cnt_v
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt, count(v) AS cnt_v
+                        FROM t2
+                        WHERE t2.x = t0.a
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt\tcnt_v
+                            1\t1\t0
+                            2\t0\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM t2
+                        WHERE t2.x = t0.a
+                        LIMIT 0
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\tnull
+                            2\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt > 1
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\tnull
+                            2\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM t2
+                        WHERE t2.x = t0.a
+                        GROUP BY x
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountDirectBodyExactSourceExpressions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE u (cnt INT)");
+            execute("INSERT INTO u VALUES (NULL)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, NULL)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (10)");
+            execute("CREATE TABLE empty_t1 (k INT)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*, cnt + 1 AS unrelated_plus_one
+                    FROM t0
+                    CROSS JOIN u
+                    LEFT JOIN LATERAL (
+                        SELECT cnt AS c2
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .returns("""
+                            a\tc2\tunrelated_plus_one
+                            1\t1\tnull
+                            2\t0\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.*,
+                           l1.c2 + 1 AS arithmetic,
+                           CASE WHEN l1.c2 = 0 THEN 'empty' ELSE 'matched' END AS count_case,
+                           COALESCE(l1.c2, -1) AS count_coalesced,
+                           l1.c2 + l1.c2 AS repeated
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt AS c2
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .returns("""
+                            a\tc2\tarithmetic\tcount_case\tcount_coalesced\trepeated
+                            1\t1\t2\tmatched\t1\t2
+                            2\t0\t1\tempty\t0\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.c3 + 1 AS arithmetic, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT c2 AS c3
+                        FROM (
+                            SELECT cnt AS c2
+                            FROM (
+                                SELECT count(*) AS cnt
+                                FROM t2
+                                WHERE t2.x = t0.a
+                            ) counted
+                        ) renamed
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .returns("""
+                            a\tarithmetic\tc3
+                            1\t2\t1
+                            2\t1\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, u.cnt + 1 AS unrelated,
+                           l1.cnt_all + 1 AS count_all_plus_one,
+                           l1.cnt_v + 1 AS count_v_plus_one
+                    FROM t0
+                    CROSS JOIN u
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt_all, count(v) AS cnt_v
+                        FROM t2
+                        WHERE t2.x = t0.a
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .returns("""
+                            a\tunrelated\tcount_all_plus_one\tcount_v_plus_one
+                            1\tnull\t2\t1
+                            2\tnull\t1\t1
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.c2, l1.c2 + 1 AS arithmetic
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.c2
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT cnt AS c2
+                            FROM (
+                                SELECT count(*) AS cnt
+                                FROM t2
+                                WHERE t2.x = t0.a
+                            ) counted
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .returns("""
+                            a\tc2\tarithmetic
+                            1\t1\t2
+                            2\t0\t1
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.c2, l1.c2 + 1 AS arithmetic
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.c2
+                        FROM empty_t1
+                        CROSS JOIN LATERAL (
+                            SELECT cnt AS c2
+                            FROM (
+                                SELECT count(*) AS cnt
+                                FROM t2
+                                WHERE t2.x = t0.a
+                            ) counted
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .returns("""
+                            a\tc2\tarithmetic
+                            1\tnull\tnull
+                            2\tnull\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT l1.coalesce
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS coalesce
+                        FROM t2
+                        WHERE t2.x = t0.a
+                    ) l1
+                    """)
+                    .noRandomAccess()
+                    .returns("""
+                            coalesce
+                            1
+                            0
+                            """);
+
+            assertQuery("""
+                    SELECT l1.coalesce + 1 AS arithmetic
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS coalesce
+                        FROM t2
+                        WHERE t2.x = t0.a
+                    ) l1
+                    """)
+                    .noRandomAccess()
+                    .returns("""
+                            arithmetic
+                            2
+                            1
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.coalesce, l1.coalesce + 1 AS arithmetic
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS coalesce
+                        FROM t2
+                        WHERE t2.x = t0.a
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .returns("""
+                            a\tcoalesce\tarithmetic
+                            1\t1\t2
+                            2\t0\t1
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.c2, l1.c2 + 1 AS arithmetic
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt AS c2
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                            LIMIT 0
+                        ) counted
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .returns("""
+                            a\tc2\tarithmetic
+                            1\tnull\tnull
+                            2\tnull\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.c2, l1.c2 + 1 AS arithmetic
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt AS c2
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt > 1
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .returns("""
+                            a\tc2\tarithmetic
+                            1\tnull\tnull
+                            2\tnull\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT q.a, q.c2, q.c2 + 1 AS arithmetic
+                    FROM (
+                        SELECT t0.a, l1.c2
+                        FROM t0
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) AS c2
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l1
+                    ) q
+                    ORDER BY q.a
+                    """)
+                    .returns("""
+                            a\tc2\tarithmetic
+                            1\t1\t2
+                            2\t0\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountDirectBodyMixedWildcardExpressions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*, l1.cnt + 1 AS cnt_plus_one
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM t2
+                        WHERE t2.x = t0.a
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .returns("""
+                            a\tcnt\tcnt_plus_one
+                            1\t1\t2
+                            2\t0\t1
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.*,
+                           CASE WHEN l1.cnt = 0 THEN 'empty' ELSE 'matched' END AS cnt_case,
+                           COALESCE(l1.cnt, -1) AS cnt_coalesced
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM t2
+                        WHERE t2.x = t0.a
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .returns("""
+                            a\tcnt\tcnt_case\tcnt_coalesced
+                            1\t1\tmatched\t1
+                            2\t0\tempty\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.*, l1.cnt + 1 AS cnt_plus_one
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM t2
+                        WHERE t2.x = t0.a
+                        LIMIT 0
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .returns("""
+                            a\tcnt\tcnt_plus_one
+                            1\tnull\tnull
+                            2\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountDirectBodyWindowJoinArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t0 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T00:01:00.000000Z')
+                    """);
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+            execute("CREATE TABLE q (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO q VALUES
+                    (10, '2024-01-01T00:00:00.000000Z'),
+                    (20, '2024-01-01T00:01:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.arithmetic, sum(q.v) AS window_sum
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) + 2 AS arithmetic
+                        FROM t2
+                        WHERE t2.x = t0.a
+                    ) l1
+                    WINDOW JOIN q
+                        RANGE BETWEEN 0 SECONDS PRECEDING AND CURRENT ROW
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tarithmetic\twindow_sum
+                            1\t3\t10
+                            2\t2\t20
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountDirectBodyWindowJoinExpressions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t0 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T00:01:00.000000Z')
+                    """);
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+            execute("CREATE TABLE q (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO q VALUES
+                    (10, '2024-01-01T00:00:00.000000Z'),
+                    (20, '2024-01-01T00:01:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.c2, l1.c2 + 1 AS arithmetic, sum(q.v) AS window_sum
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt AS c2
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                    ) l1
+                    WINDOW JOIN q
+                        RANGE BETWEEN 0 SECONDS PRECEDING AND CURRENT ROW
+                    ORDER BY t0.a
+                    """)
+                    .returns("""
+                            a\tc2\tarithmetic\twindow_sum
+                            1\t1\t2\t10
+                            2\t0\t1\t20
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountDriverKeyCombinedAliasAndColumnCollision() throws Exception {
+        // T5: user table alias occupies __qdb_count_driver__1, so the driver
+        // allocator skips to __qdb_count_driver__2, whose derived key collides
+        // with a physical sibling column __qdb_count_driver__2_a
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT, __qdb_count_driver__2_a INT)");
+            execute("INSERT INTO t1 VALUES (7, 70)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.w, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            __qdb_count_driver__1.k AS k,
+                            __qdb_count_driver__1.__qdb_count_driver__2_a AS w,
+                            l2.cnt
+                        FROM t1 __qdb_count_driver__1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tw\tcnt
+                            1\t7\t70\t1
+                            2\t7\t70\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountDriverKeyMultiBranchCollision() throws Exception {
+        // T7: two correlated scalar-count branches share one driver whose key
+        // name collides with a physical sibling column
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (__qdb_count_driver__1_a INT)");
+            execute("INSERT INTO t1 VALUES (7)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+            execute("CREATE TABLE t3 (y INT)");
+            execute("INSERT INTO t3 VALUES (2)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.v, l1.cnt, l1.cnt2
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.__qdb_count_driver__1_a AS v, l2.cnt, l3.cnt2
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt2 FROM t3 WHERE t3.y = t0.a
+                        ) l3
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tv\tcnt\tcnt2
+                            1\t7\t1\t0
+                            2\t7\t0\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountDriverKeyMultiKeyCollision() throws Exception {
+        // T6: two correlation keys; the physical sibling column collides with
+        // one of the two derived driver key names
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t1 (__qdb_count_driver__1_b INT)");
+            execute("INSERT INTO t1 VALUES (7)");
+            execute("CREATE TABLE t2 (x INT, y INT)");
+            execute("INSERT INTO t2 VALUES (1, 10)");
+
+            assertQuery("""
+                    SELECT t0.a, t0.b, l1.v, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.__qdb_count_driver__1_b AS v, l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a AND t2.y = t0.b
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tv\tcnt
+                            1\t10\t7\t1
+                            2\t20\t7\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountDriverKeyPhysicalColumnSibling() throws Exception {
+        // T1: a physical sibling column named exactly like the generated
+        // driver key must not make the rewritten join criteria ambiguous;
+        // the column is not projected inside the lateral body
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (__qdb_count_driver__1_a INT)");
+            execute("INSERT INTO t1 VALUES (7)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+
+            // alias-less lateral branch: the branch operand of the alignment
+            // criteria stays bare, but its clone-prefixed name cannot collide
+            // with the driver key namespace
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        )
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountDriverKeyProjectedAsUserAlias() throws Exception {
+        // T2: the v8 review repro; the physical column named like the driver
+        // key is projected under a user alias, so basename matching would
+        // silently redirect the join key to the user column
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (__qdb_count_driver__1_a INT)");
+            execute("INSERT INTO t1 VALUES (7)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.v, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.__qdb_count_driver__1_a AS v, l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tv\tcnt
+                            1\t7\t1
+                            2\t7\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountDriverKeyQuotedColumnCollision() throws Exception {
+        // T10: quoted creation and quoted references of the colliding column
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (\"__qdb_count_driver__1_a\" INT)");
+            execute("INSERT INTO t1 VALUES (7)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.v, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1."__qdb_count_driver__1_a" AS v, l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tv\tcnt
+                            1\t7\t1
+                            2\t7\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountDriverKeyUpperCaseCollision() throws Exception {
+        // T9: upper-case physical column; case-insensitive basename matching
+        // would capture it even though the spelling differs in case
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (\"__QDB_COUNT_DRIVER__1_A\" INT)");
+            execute("INSERT INTO t1 VALUES (7)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.v, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1."__QDB_COUNT_DRIVER__1_A" AS v, l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tv\tcnt
+                            1\t7\t1
+                            2\t7\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountDriverKeyWrapperLayerCollision() throws Exception {
+        // T8: an intermediate projection layer between the lateral top and the
+        // join level aliases a user column exactly like the driver key, so the
+        // inserted generated key must dedupe and the deduped alias must chain
+        // upward into the final alignment criteria
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (7)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.v, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT __qdb_count_driver__1_a AS v, cnt
+                        FROM (
+                            SELECT t1.k AS __qdb_count_driver__1_a, l2.cnt
+                            FROM t1
+                            CROSS JOIN LATERAL (
+                                SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                            ) l2
+                        ) inner1
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tv\tcnt
+                            1\t7\t1
+                            2\t7\t0
+                            """);
+
+            // bare-wildcard top over the same colliding wrapper layer: the
+            // early-out path must pass the deduped key through the wildcard
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT *
+                        FROM (
+                            SELECT t1.k AS __qdb_count_driver__1_a, l2.cnt
+                            FROM t1
+                            CROSS JOIN LATERAL (
+                                SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                            ) l2
+                        ) inner1
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\t__qdb_count_driver__1_a\tcnt
+                            1\t7\t1
+                            2\t7\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountEmptyDrivingRelation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\tnull
+                            2\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.cnt
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\tnull
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountInternalAliasWildcardVisibility() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (7)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            t1.k AS __qdb_count_driver__,
+                            t1.k AS __qdb_count_driver__user,
+                            t1.k AS __qdb_count_driver__1_a,
+                            t1.k AS __qdb_outer_ref__,
+                            t1.k AS __qdb_outer_ref__user,
+                            t1.k AS __qdb_outer_ref__0_a,
+                            l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\t__qdb_count_driver__\t__qdb_count_driver__user\t__qdb_count_driver__1_a\t__qdb_outer_ref__\t__qdb_outer_ref__user\t__qdb_outer_ref__0_a\tcnt
+                            1\t7\t7\t7\t7\t7\t7\t1
+                            2\t7\t7\t7\t7\t7\t7\t0
+                            """);
+
+            assertQuery("""
+                    SELECT *
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            t1.k AS __qdb_count_driver__,
+                            t1.k AS __qdb_count_driver__user,
+                            t1.k AS __qdb_count_driver__1_a,
+                            t1.k AS __qdb_outer_ref__,
+                            t1.k AS __qdb_outer_ref__user,
+                            t1.k AS __qdb_outer_ref__0_a,
+                            l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\t__qdb_count_driver__\t__qdb_count_driver__user\t__qdb_count_driver__1_a\t__qdb_outer_ref__\t__qdb_outer_ref__user\t__qdb_outer_ref__0_a\tcnt
+                            1\t7\t7\t7\t7\t7\t7\t1
+                            2\t7\t7\t7\t7\t7\t7\t0
+                            """);
+        });
+    }
+
+    // The intermediate body carries templates transferred by the inner lateral's
+    // decorrelation; the LIMIT rewrite must keep them on the wrapped model, where
+    // the l2 join alias is still visible.
+    @Test
+    public void testNestedLateralLeftCountLimitBody() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2), (3)");
+            execute("CREATE TABLE t1 (k INT, cnt INT)");
+            execute("INSERT INTO t1 VALUES (1, null), (2, 7)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt, l1.c2
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.cnt AS cnt, l2.cnt AS c2
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t1.k
+                        ) l2
+                        WHERE t1.k = t0.a
+                        LIMIT 5
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt\tc2
+                            1\tnull\t2
+                            2\t7\t0
+                            3\tnull\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.v
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.v
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) + 2 AS v FROM t2 WHERE t2.x = t1.k
+                        ) l2
+                        WHERE t1.k = t0.a
+                        LIMIT 5
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tv
+                            1\t4
+                            2\t2
+                            3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountLimitCardinality() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (7)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM t2
+                        WHERE t2.x = t0.a
+                        LIMIT 1
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                            LIMIT 0
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tcnt
+                            1\tnull\tnull
+                            2\tnull\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.cnt
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                            LIMIT 0
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tcnt
+                            1\t7\tnull
+                            2\t7\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tcnt
+                            1\t7\t1
+                            2\t7\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                            LIMIT 1
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tcnt
+                            1\t7\t1
+                            2\t7\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                            LIMIT 1, 2
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tcnt
+                            1\tnull\tnull
+                            2\tnull\tnull
+                            """);
+
+            // LIMIT reading an outer column (t0.a) cannot be guarded: the guard is
+            // evaluated in the outer projection, which does not carry that column.
+            // Answering NULL unconditionally would be wrong whenever the window keeps
+            // the row (a = 0 gives LIMIT 0,1, where a no-match outer row must yield 0).
+            assertException("""
+                    SELECT t0.a, l1.k, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                            LIMIT t0.a, t0.a + 1
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """, 202, "LIMIT referencing an outer column is not supported over a scalar count");
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.cnt
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT cnt
+                            FROM (
+                                SELECT count(*) AS cnt
+                                FROM t2
+                                WHERE t2.x = t0.a
+                            ) counted
+                            WHERE cnt > 1
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tcnt
+                            1\t7\tnull
+                            2\t7\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountMultipleDrivingRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (10), (20)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a, l1.k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tcnt
+                            1\t10\t1
+                            1\t20\t1
+                            2\t10\t0
+                            2\t20\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.cnt
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a, l1.k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tcnt
+                            1\t10\t1
+                            1\t20\t1
+                            2\t10\t0
+                            2\t20\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountOuterRefKeyPhysicalColumnCharacterization() throws Exception {
+        // T11 (characterization, pre-existing boundary): a physical column
+        // named like an ordinary __qdb_outer_ref__ clone key travels the same
+        // wrapper path as the driver key; the identity-tracked propagation
+        // hardens the wrapper insertion, while in-branch bare outer-ref
+        // references remain HEAD-pre-existing behavior (S1/C1 scope ruling)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (__qdb_outer_ref__0_a INT)");
+            execute("INSERT INTO t1 VALUES (7)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.v, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.__qdb_outer_ref__0_a AS v, l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tv\tcnt
+                            1\t7\t1
+                            2\t7\t0
+                            """);
+        });
+    }
+
+    // Three lateral levels: each enclosing round rewrites the template leaf it
+    // owns, so the count body's t0 reference resolves through two clone hops.
+    @Test
+    public void testNestedLateralLeftCountOuterRefThreeLevels() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t1b (m INT)");
+            execute("INSERT INTO t1b VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.val
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.val
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT l3.val
+                            FROM t1b
+                            LEFT JOIN LATERAL (
+                                SELECT count(*) + t0.a AS val
+                                FROM t2
+                                WHERE t2.x = t0.a
+                            ) l3
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tval
+                            1\t3
+                            2\t2
+                            """);
+        });
+    }
+
+    // The compensation template captures t0.a two lateral levels up; the enclosing
+    // lateral's push-down rewrites the template leaf to its outer-ref clone column,
+    // so the compensation resolves inside the receiving body.
+    @Test
+    public void testNestedLateralLeftCountOuterRefTwoLevels() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.val
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.val
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) + t0.a AS val
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tval
+                            1\t3
+                            2\t2
+                            """);
+        });
+    }
+
+    // An empty middle body yields no rows at all: the compensation inside it has
+    // nothing to apply to and the outer row keeps its LEFT JOIN NULL.
+    @Test
+    public void testNestedLateralLeftCountOuterRefTwoLevelsEmptyMiddle() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.val
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.val
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) + t0.a AS val
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tval
+                            1\tnull
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountOuterRefTwoLevelsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (NULL)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.val
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.val
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) + t0.a AS val
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a\tval
+                            null\tnull
+                            """);
+        });
+    }
+
+    // The same two-level capture through the wildcard/marker path: the rewritten
+    // template leaf resolves via marker provenance in the receiving body scope.
+    @Test
+    public void testNestedLateralLeftCountOuterRefTwoLevelsWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.*
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT c.* FROM (
+                                SELECT count(*) + t0.a AS val
+                                FROM t2
+                                WHERE t2.x = t0.a
+                            ) c
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tval
+                            1\t3
+                            2\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountQualifiedWildcardAliasCollisions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (NULL)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+            execute("CREATE TABLE t3 (k INT, cnt INT)");
+            execute("INSERT INTO t3 VALUES (NULL, NULL)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k AS cnt, l2.*
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt\tcnt1
+                            1\tnull\t1
+                            2\tnull\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t3.*, l2.*
+                        FROM t3
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tcnt\tcnt1
+                            1\tnull\tnull\t1
+                            2\tnull\tnull\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k AS cnt, t1.k AS cnt1, l2.*
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt\tcnt1\tcnt2
+                            1\tnull\tnull\t1
+                            2\tnull\tnull\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.*, t1.k AS cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt\tcnt1
+                            1\t1\tnull
+                            2\t0\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.*
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k AS cnt, l2.*
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt\tcnt1
+                            1\tnull\t1
+                            2\tnull\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountQualifiedWildcardExcludes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (NULL)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.*, t1.k AS cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        )
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\tnull
+                            2\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.*, t1.k AS cnt
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        )
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\tnull
+                            2\tnull
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.c2, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.*, l2.cnt AS c2, t1.k AS cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tc2\tcnt
+                            1\t1\tnull
+                            2\t0\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountQualifiedWildcardRepeatedProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt AS c1, l1.cnt AS c2
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.*
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tc1\tc2
+                            1\t1\t1
+                            2\t0\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountQualifiedWildcardSurfaces() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.*
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT "Count.Source".*
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) "Count.Source"
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t1
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountQuotedDottedAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1."c.dot"
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2."c.dot"
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS "c.dot" FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tc.dot
+                            1\t1
+                            2\t0
+                            """);
+        });
+    }
+
+    // Nested LEFT lateral over an intermediate CROSS lateral count: the inner
+    // count subquery always yields exactly one row, so l1 yields one row per
+    // outer row and the LEFT join must produce cnt=0, not NULL, for outer rows
+    // without a match. The count column surfaces through the intermediate
+    // lateral projection, so the coalesce compensation must trace it through
+    // the l2 branch.
+    @Test
+    public void testNestedLateralLeftCountSkipLevelQualified() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, t0.b, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tcnt
+                            1\t10\t1
+                            2\t20\t0
+                            """);
+        });
+    }
+
+    // The intermediate lateral projection renames the count column
+    // (l2.cnt AS c2); the coalesce compensation must follow the rename when
+    // wrapping the outer reference l1.c2.
+    @Test
+    public void testNestedLateralLeftCountSkipLevelRenamed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, t0.b, l1.c2
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.cnt AS c2
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tc2
+                            1\t10\t1
+                            2\t20\t0
+                            """);
+        });
+    }
+
+    // Same shape as testNestedLateralLeftCountSkipLevelQualified, but the
+    // innermost correlated reference to t0.a is unqualified, so the rewriter
+    // must recognize it through its lateralDepth tag.
+    @Test
+    public void testNestedLateralLeftCountSkipLevelUnqualified() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, t0.b, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tcnt
+                            1\t10\t1
+                            2\t20\t0
+                            """);
+        });
+    }
+
+    // C1 guards, the other direction. The compensation must stay suppressed
+    // wherever the wrapper provably rejects the zero row, so these pin NULL as
+    // the right answer and fail if the classifier ever turns permissive.
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterConjunctionDropsZeroRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            // cnt >= 0 holds at 0 but cnt > 1 does not, and FALSE AND TRUE is FALSE
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt >= 0 AND cnt > 1
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\tnull
+                            """);
+        });
+    }
+
+    // C1 - a lateral count() body under a wrapper layer that provably KEEPS the
+    // aggregate row. count() with no GROUP BY over an empty input is one implicit
+    // group, so the body emits one row holding 0 even for an unmatched outer row.
+    // Every predicate/layer below is satisfied by that zero row, so the body is
+    // non-empty and LEFT JOIN must not NULL-fill: SQL requires 0, not NULL.
+    //
+    // The existing wrapper-predicate coverage in this file is WHERE cnt > 1 at
+    // three sites, the one predicate that is FALSE at 0 - i.e. the only shape
+    // where NULL is right. These assert the complementary, keeps-the-row half.
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterDisjunctionCoversZero() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt = 0 OR cnt > 0
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterInequalityDropsZeroRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt <> 0
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterKeepsZeroRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt >= 0
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterLowerBoundAcceptsWholeDomain() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            // count() is non-negative, so cnt > -1 cannot reject anything
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt > -1
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperFilterTautology() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE 1 = 1
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperGroupByCountOutput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            // GROUP BY above the aggregate groups the single zero row by its own
+            // value: one group in, one group out. The row survives.
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        GROUP BY cnt
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperJoinKeepsZeroRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            // count body as the FIRST join model. The companion shape with the
+            // operands swapped is asserted by
+            // testNestedLateralLeftCountAsSecondJoinModel and already returns 0:
+            // the two must agree, a CROSS JOIN d and d CROSS JOIN a are the same
+            // relation.
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT counted.cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        CROSS JOIN (SELECT 1 AS z) d
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    // A filter that rejects part of the count domain cannot stay inside the body:
+    // once it removes a group, that group is indistinguishable at the outer
+    // projection from one that never existed. Such a filter is lifted into the
+    // guard, where it judges the compensated value instead, and both cells come
+    // out right - the matched row the filter rejects becomes NULL, the unmatched
+    // row the filter accepts becomes 0. Fails if the lift regresses to either
+    // half: suppressing gives NULL for the unmatched row, compensating without
+    // the lift gives a fabricated 0 for the rejected one.
+    @Test
+    public void testNestedLateralLeftCountWrapperNegatedFilterLifted() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE NOT (cnt > 1)
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\tnull
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperNonTotalFilterLifted() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            // cnt < 2 accepts the zero row but rejects a count of 2
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt < 2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\tnull
+                            2\t0
+                            """);
+        });
+    }
+
+    // A lifted wrapper filter and a bind-variable LIMIT compose into one guard:
+    // the compensated value must pass the filter AND the limit must keep row 1.
+    @Test
+    public void testNestedLateralLeftCountWrapperNonTotalFilterLiftedBindVarLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            String sql = """
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt < 1
+                        LIMIT :lim
+                    ) l1
+                    ORDER BY t0.a
+                    """;
+
+            bindVariableService.setLong("lim", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    a\tcnt
+                    1\tnull
+                    2\t0
+                    """);
+
+            bindVariableService.setLong("lim", 0);
+            assertQuery(sql).noLeakCheck().returns("""
+                    a\tcnt
+                    1\tnull
+                    2\tnull
+                    """);
+
+            bindVariableService.setLong("lim", 1);
+            assertQuery(sql).noLeakCheck().returns("""
+                    a\tcnt
+                    1\tnull
+                    2\t0
+                    """);
+        });
+    }
+
+    // Lifting a filter is only safe while the body projects nothing but the
+    // count: every other column would then be exposed to rows the filter removed,
+    // and only the count is compensated. With a second column present the filter
+    // must stay inside the body, so the row it rejects stays gone in full.
+    @Test
+    public void testNestedLateralLeftCountWrapperNonTotalFilterNotLiftedWhenBodyHasOtherColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt, l1.tag
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt, tag
+                        FROM (
+                            SELECT count(*) AS cnt, 'T' AS tag
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt < 2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt\ttag
+                            1\tnull\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperUnionAllEmptyBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            // the second branch is provably empty for every outer row, so the union
+            // contributes exactly the first branch: one row per outer row.
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        UNION ALL
+                        SELECT cnt
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted2
+                        WHERE cnt > 1000
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftCountWrapperWildcardFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT *
+                        FROM (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                        ) counted
+                        WHERE cnt >= 0
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    // LEFT lateral over an intermediate LEFT lateral count: the LEFT inner
+    // branch takes the join-branch push-down path instead of the per-side
+    // push, and must produce the same cnt=0 compensation.
+    @Test
+    public void testNestedLateralLeftOverLeftCount() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, t0.b, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.cnt
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tcnt
+                            1\t10\t1
+                            2\t20\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftOverLeftCountArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            assertQuery("""
+                    SELECT t0.a, t0.b, l1.val
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.val
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count(*) + 2 AS val FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tval
+                            1\t10\t3
+                            2\t20\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralLeftOverLeftCountDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1)");
+
+            assertQuery("""
+                    SELECT t0.a, t0.b, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT l2.cnt
+                        FROM t1
+                        LEFT JOIN LATERAL (
+                            SELECT count_distinct(x) AS cnt FROM t2 WHERE t2.x = t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tb\tcnt
+                            1\t10\t1
+                            2\t20\t0
+                            """);
+        });
+    }
+
+    // Adjacent pin: nested CROSS lateral sum with a skip-level unqualified
+    // correlated ref. Every outer row matches, so no compensation fires; the
+    // decorrelated aggregate must still evaluate per outer row.
+    @Test
+    public void testNestedLateralSkipLevelAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 100), (1, 200), (2, 300)");
+
+            assertQuery("""
+                    SELECT t0.a, t0.b, l1.s
+                    FROM t0
+                    CROSS JOIN LATERAL (
+                        SELECT l2.s
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT sum(v) AS s FROM t2 WHERE t2.x = a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb\ts
+                            1\t10\t300
+                            2\t20\t300
+                            """);
+        });
+    }
+
+    // Adjacent pin: outer WHERE on the outer table must not disturb the
+    // skip-level correlated pushdown into the nested lateral branch.
+    @Test
+    public void testNestedLateralSkipLevelWherePushdown() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, b INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 20), (3, 30)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (x INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 100), (2, 200), (3, 300)");
+
+            assertQuery("""
+                    SELECT t0.a, l1.v
+                    FROM t0
+                    CROSS JOIN LATERAL (
+                        SELECT l2.v
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT v FROM t2 WHERE t2.x = a
+                        ) l2
+                    ) l1
+                    WHERE t0.b < 30
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tv
+                            1\t100
+                            2\t200
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterRefWildcardExcludedModelLifecycle() {
+        QueryModel model = QueryModel.FACTORY.newInstance();
+        QueryModelWrapper wrapper = new QueryModelWrapper();
+        wrapper.setDelegate(model);
+
+        Assert.assertFalse(model.isLateralCountCoalesceRequired());
+        Assert.assertFalse(model.isOuterRefWildcardExcluded());
+        Assert.assertFalse(wrapper.isLateralCountCoalesceRequired());
+        Assert.assertFalse(wrapper.isOuterRefWildcardExcluded());
+        model.setLateralCountCoalesceRequired(true);
+        model.setOuterRefWildcardExcluded(true);
+        Assert.assertTrue(model.isLateralCountCoalesceRequired());
+        Assert.assertTrue(model.isOuterRefWildcardExcluded());
+        Assert.assertTrue(wrapper.isLateralCountCoalesceRequired());
+        Assert.assertTrue(wrapper.isOuterRefWildcardExcluded());
+        try {
+            wrapper.setLateralCountCoalesceRequired(false);
+            Assert.fail("QueryModelWrapper must remain read-only");
+        } catch (UnsupportedOperationException ignored) {
+        }
+        try {
+            wrapper.setOuterRefWildcardExcluded(false);
+            Assert.fail("QueryModelWrapper must remain read-only");
+        } catch (UnsupportedOperationException ignored) {
+        }
+
+        QueryColumn template = new QueryColumn().of("cnt", null);
+        try {
+            wrapper.addLateralCountTemplate(template);
+            Assert.fail("QueryModelWrapper must remain read-only");
+        } catch (UnsupportedOperationException ignored) {
+        }
+        model.addLateralCountTemplate(template);
+        Assert.assertEquals(1, model.getLateralCountTemplates().size());
+        Assert.assertSame(template, wrapper.getLateralCountTemplates().getQuick(0));
+
+        model.clear();
+        Assert.assertFalse(model.isLateralCountCoalesceRequired());
+        Assert.assertFalse(model.isOuterRefWildcardExcluded());
+        Assert.assertFalse(wrapper.isLateralCountCoalesceRequired());
+        Assert.assertFalse(wrapper.isOuterRefWildcardExcluded());
+        Assert.assertEquals(0, wrapper.getLateralCountTemplates().size());
     }
 
     @Test
@@ -748,29 +8393,28 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.category, sub.trade_total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT b.category, t.trade_total
+                        FROM base_data b
+                        INNER JOIN (
+                            SELECT sum(qty) AS trade_total, order_id
+                            FROM trades
+                            WHERE order_id = o.id
+                            GROUP BY order_id
+                        ) t ON b.order_id = t.order_id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tcategory\ttrade_total
                             1\tA\t30.0
                             2\tB\t30.0
-                            """,
-                    """
-                            SELECT o.id, sub.category, sub.trade_total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT b.category, t.trade_total
-                                FROM base_data b
-                                INNER JOIN (
-                                    SELECT sum(qty) AS trade_total, order_id
-                                    FROM trades
-                                    WHERE order_id = o.id
-                                    GROUP BY order_id
-                                ) t ON b.order_id = t.order_id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -797,35 +8441,34 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.trade_total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT s2.trade_total
+                        FROM (
+                            SELECT s1.trade_total
+                            FROM (
+                                SELECT t.trade_total
+                                FROM base_data b
+                                INNER JOIN (
+                                    SELECT sum(qty) AS trade_total, order_id
+                                    FROM trades
+                                    WHERE order_id = o.id
+                                    GROUP BY order_id
+                                ) t ON b.order_id = t.order_id
+                            ) s1
+                        ) s2
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\ttrade_total
                             1\t30.0
                             2\t30.0
-                            """,
-                    """
-                            SELECT o.id, sub.trade_total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT s2.trade_total
-                                FROM (
-                                    SELECT s1.trade_total
-                                    FROM (
-                                        SELECT t.trade_total
-                                        FROM base_data b
-                                        INNER JOIN (
-                                            SELECT sum(qty) AS trade_total, order_id
-                                            FROM trades
-                                            WHERE order_id = o.id
-                                            GROUP BY order_id
-                                        ) t ON b.order_id = t.order_id
-                                    ) s1
-                                ) s2
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -849,25 +8492,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (1, 20, '2024-01-01T00:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.id, coalesce(sub.total, 0) AS total
+                    FROM t1
+                    LEFT JOIN LATERAL (
+                        SELECT sum(val) AS total
+                        FROM t2
+                        WHERE t2.t1_id = t1.id
+                    ) sub
+                    ORDER BY t1.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\ttotal
                             1\t30
                             2\t0
                             3\t0
-                            """,
-                    """
-                            SELECT t1.id, coalesce(sub.total, 0) AS total
-                            FROM t1
-                            LEFT JOIN LATERAL (
-                                SELECT sum(val) AS total
-                                FROM t2
-                                WHERE t2.t1_id = t1.id
-                            ) sub
-                            ORDER BY t1.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -900,35 +8541,34 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 15.0, '2024-01-01T01:30:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.category, sub.trade_total, sub.return_total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT b.category, t.trade_total, r.return_total
+                        FROM base_data b
+                        INNER JOIN (
+                            SELECT sum(qty) AS trade_total, order_id
+                            FROM trades
+                            WHERE order_id = o.id
+                            GROUP BY order_id
+                        ) t ON b.order_id = t.order_id
+                        INNER JOIN (
+                            SELECT sum(qty) AS return_total, order_id
+                            FROM returns
+                            WHERE order_id = o.id
+                            GROUP BY order_id
+                        ) r ON b.order_id = r.order_id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tcategory\ttrade_total\treturn_total
                             1\tA\t30.0\t5.0
                             2\tB\t30.0\t15.0
-                            """,
-                    """
-                            SELECT o.id, sub.category, sub.trade_total, sub.return_total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT b.category, t.trade_total, r.return_total
-                                FROM base_data b
-                                INNER JOIN (
-                                    SELECT sum(qty) AS trade_total, order_id
-                                    FROM trades
-                                    WHERE order_id = o.id
-                                    GROUP BY order_id
-                                ) t ON b.order_id = t.order_id
-                                INNER JOIN (
-                                    SELECT sum(qty) AS return_total, order_id
-                                    FROM returns
-                                    WHERE order_id = o.id
-                                    GROUP BY order_id
-                                ) r ON b.order_id = r.order_id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -952,24 +8592,153 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 30, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.id, sub.total
+                    FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT sum(val) AS total
+                        FROM t2
+                        WHERE t2.t1_id = t1.id
+                    ) sub
+                    ORDER BY t1.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\ttotal
                             1\t30
                             2\t30
-                            """,
-                    """
-                            SELECT t1.id, sub.total
-                            FROM t1
-                            CROSS JOIN LATERAL (
-                                SELECT sum(val) AS total
-                                FROM t2
-                                WHERE t2.t1_id = t1.id
-                            ) sub
-                            ORDER BY t1.id
-                            """,
-                    null, true, false
-            );
+                            """);
+        });
+    }
+
+    @Test
+    public void testRepeatedLiteralProjectionSourceLookup() throws Exception {
+        assertQuery("""
+                SELECT
+                    x AS c01, x AS c02, x AS c03, x AS c04,
+                    x AS c05, x AS c06, x AS c07, x AS c08,
+                    x AS c09, x AS c10, x AS c11, x AS c12,
+                    x AS c13, x AS c14, x AS c15, x AS c16
+                FROM (SELECT 0 AS k0) s0
+                CROSS JOIN (SELECT 1 AS k1) s1
+                CROSS JOIN (SELECT 2 AS k2) s2
+                CROSS JOIN (SELECT 3 AS k3) s3
+                CROSS JOIN (SELECT 4 AS k4) s4
+                CROSS JOIN (SELECT 5 AS k5) s5
+                CROSS JOIN (SELECT 6 AS k6) s6
+                CROSS JOIN (SELECT 42 AS x) s7
+                """)
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
+                        c01\tc02\tc03\tc04\tc05\tc06\tc07\tc08\tc09\tc10\tc11\tc12\tc13\tc14\tc15\tc16
+                        42\t42\t42\t42\t42\t42\t42\t42\t42\t42\t42\t42\t42\t42\t42\t42
+                        """);
+    }
+
+    @Test
+    public void testScalarAggregateBodyExcludesWindowJoinBody() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE instruments (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (instrument_id INT, price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO instruments VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, 'A', '2024-01-01T00:01:00.000000Z'),
+                    (1, 11.0, 'A', '2024-01-01T00:02:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    (9.5, 'A', '2024-01-01T00:00:30.000000Z')
+                    """);
+
+            // the WINDOW JOIN aggregates per driving row, so instrument 2 keeps no row at all
+            assertQuery("""
+                    SELECT i.id, sub.c
+                    FROM instruments i
+                    JOIN LATERAL (
+                        SELECT count(*) AS c
+                        FROM trades t
+                        WINDOW JOIN quotes q ON tag
+                            RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                        WHERE t.instrument_id = i.id
+                    ) sub
+                    ORDER BY i.id, sub.c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testScalarCountBodyPreservesCrossLateralRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'LSE', '2024-01-01T00:10:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.cnt
+                    FROM orders o
+                    CROSS JOIN LATERAL (
+                        SELECT count(*) AS cnt FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tcnt
+                            1\t1
+                            2\t0
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.m
+                    FROM orders o
+                    CROSS JOIN LATERAL (
+                        SELECT max(ts) AS m FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tm
+                            1\t2024-01-01T00:10:00.000000Z
+                            2\t
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, sub.m
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT max(ts) AS m FROM trades WHERE order_id = o.id
+                    ) sub ON true
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tm
+                            1\t2024-01-01T00:10:00.000000Z
+                            2\t
+                            """);
         });
     }
 
@@ -978,23 +8747,21 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createOrdersAndTrades();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, o.customer, t.qty
+                    FROM orders o
+                    JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcustomer\tqty
                             1\tAlice\t10.0
                             1\tAlice\t20.0
                             2\tBob\t30.0
                             3\tCharlie\t40.0
                             3\tCharlie\t50.0
-                            """,
-                    """
-                            SELECT o.id, o.customer, t.qty
-                            FROM orders o
-                            JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1016,22 +8783,20 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 1, 20.0, '2024-01-01T00:45:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, o.customer, t.qty
+                    FROM orders o
+                    LEFT JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcustomer\tqty
                             1\tAlice\t10.0
                             1\tAlice\t20.0
                             2\tBob\tnull
                             3\tCharlie\tnull
-                            """,
-                    """
-                            SELECT o.id, o.customer, t.qty
-                            FROM orders o
-                            LEFT JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1041,21 +8806,19 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createOrdersAndTrades();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, o.customer, t.total_qty
+                    FROM orders o
+                    JOIN LATERAL (SELECT sum(qty) AS total_qty FROM trades WHERE order_id = o.id) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcustomer\ttotal_qty
                             1\tAlice\t30.0
                             2\tBob\t30.0
                             3\tCharlie\t90.0
-                            """,
-                    """
-                            SELECT o.id, o.customer, t.total_qty
-                            FROM orders o
-                            JOIN LATERAL (SELECT sum(qty) AS total_qty FROM trades WHERE order_id = o.id) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1077,21 +8840,19 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, 2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.cnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (SELECT count(*) AS cnt FROM trades WHERE order_id = o.id) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcnt
                             1\t2
                             2\t1
                             3\t0
-                            """,
-                    """
-                            SELECT o.id, t.cnt
-                            FROM orders o
-                            LEFT JOIN LATERAL (SELECT count(*) AS cnt FROM trades WHERE order_id = o.id) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1101,27 +8862,26 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createOrdersAndTrades();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty, t.running_total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty, sum(qty) OVER (ORDER BY ts) AS running_total
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) t
+                    WHERE o.id IN (1, 3)
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\trunning_total
                             1\t10.0\t10.0
                             1\t20.0\t30.0
                             3\t40.0\t40.0
                             3\t50.0\t90.0
-                            """,
-                    """
-                            SELECT o.id, t.qty, t.running_total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty, sum(qty) OVER (ORDER BY ts) AS running_total
-                                FROM trades
-                                WHERE order_id = o.id
-                            ) t
-                            WHERE o.id IN (1, 3)
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -1144,26 +8904,25 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (5, 2, 'GOOG', 400.0, '2024-01-01T01:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT m.mm_id, m.symbol, f.qty, f.running_sum
+                    FROM mm m
+                    JOIN LATERAL (
+                        SELECT qty, sum(qty) OVER (ORDER BY ts) AS running_sum
+                        FROM fills
+                        WHERE mm_id = m.mm_id AND symbol = m.symbol AND qty >= 150.0
+                    ) f
+                    ORDER BY m.mm_id, f.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             mm_id\tsymbol\tqty\trunning_sum
                             1\tAAPL\t150.0\t350.0
                             1\tAAPL\t200.0\t200.0
                             2\tGOOG\t300.0\t300.0
                             2\tGOOG\t400.0\t700.0
-                            """,
-                    """
-                            SELECT m.mm_id, m.symbol, f.qty, f.running_sum
-                            FROM mm m
-                            JOIN LATERAL (
-                                SELECT qty, sum(qty) OVER (ORDER BY ts) AS running_sum
-                                FROM fills
-                                WHERE mm_id = m.mm_id AND symbol = m.symbol AND qty >= 150.0
-                            ) f
-                            ORDER BY m.mm_id, f.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -1188,22 +8947,20 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (6, 2, 60.0, '2024-01-01T01:30:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, o.customer, t.qty
+                    FROM orders o
+                    JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id ORDER BY qty DESC LIMIT 2) t
+                    ORDER BY o.id, t.qty DESC
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcustomer\tqty
                             1\tAlice\t30.0
                             1\tAlice\t20.0
                             2\tBob\t60.0
                             2\tBob\t50.0
-                            """,
-                    """
-                            SELECT o.id, o.customer, t.qty
-                            FROM orders o
-                            JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id ORDER BY qty DESC LIMIT 2) t
-                            ORDER BY o.id, t.qty DESC
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1227,21 +8984,19 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (5, 2, 'C', '2024-01-01T01:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.category
+                    FROM orders o
+                    JOIN LATERAL (SELECT DISTINCT category FROM trades WHERE order_id = o.id) t
+                    ORDER BY o.id, t.category
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcategory
                             1\tA
                             1\tB
                             2\tC
-                            """,
-                    """
-                            SELECT o.id, t.category
-                            FROM orders o
-                            JOIN LATERAL (SELECT DISTINCT category FROM trades WHERE order_id = o.id) t
-                            ORDER BY o.id, t.category
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1256,26 +9011,25 @@ public class LateralJoinTest extends AbstractCairoTest {
             execute("INSERT INTO trades_a VALUES (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'), (2, 2, 20.0, '2024-01-01T01:10:00.000000Z')");
             execute("INSERT INTO trades_b VALUES (1, 1, 30.0, '2024-01-01T00:20:00.000000Z'), (2, 2, 40.0, '2024-01-01T01:20:00.000000Z')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades_a WHERE order_id = o.id
+                        UNION ALL
+                        SELECT qty FROM trades_b WHERE order_id = o.id
+                    ) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty
                             1\t10.0
                             1\t30.0
                             2\t20.0
                             2\t40.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades_a WHERE order_id = o.id
-                                UNION ALL
-                                SELECT qty FROM trades_b WHERE order_id = o.id
-                            ) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -1299,23 +9053,21 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // order 3 has no trades: cnt should be 0, cnt + 1 should be 1 (not NULL)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.cnt, sub.cnt + 1 AS cnt_plus_one
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcnt\tcnt_plus_one
                             1\t2\t3
                             2\t1\t2
                             3\t0\t1
-                            """,
-                    """
-                            SELECT o.id, sub.cnt, sub.cnt + 1 AS cnt_plus_one
-                            FROM orders o
-                            LEFT JOIN LATERAL (
-                                SELECT count(*) AS cnt FROM trades WHERE order_id = o.id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1346,26 +9098,25 @@ public class LateralJoinTest extends AbstractCairoTest {
             // RIGHT JOIN: adjustments is the preserved side
             // For order 1: adj(1,1.5) matches trades(1,10),(1,20) → (10,1.5),(20,1.5)
             // For order 2: adj(2,2.0) has no matching trades → (null,2.0)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.adj
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, a.adj
+                        FROM trades t
+                        RIGHT JOIN adjustments a ON a.order_id = t.order_id
+                        WHERE a.order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tadj
                             1\t10.0\t1.5
                             1\t20.0\t1.5
                             2\tnull\t2.0
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.adj
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, a.adj
-                                FROM trades t
-                                RIGHT JOIN adjustments a ON a.order_id = t.order_id
-                                WHERE a.order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -1395,26 +9146,25 @@ public class LateralJoinTest extends AbstractCairoTest {
             // FULL OUTER JOIN: both sides preserved
             // For order 1: trades match, no refunds → (10, null), (20, null)
             // For order 2: no trades, refund matches → (null, 5.0)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.amount
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, r.amount
+                        FROM trades t
+                        FULL OUTER JOIN refunds r ON r.order_id = t.order_id
+                        WHERE t.order_id = o.id OR r.order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tamount
                             1\t10.0\tnull
                             1\t20.0\tnull
                             2\tnull\t5.0
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.amount
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, r.amount
-                                FROM trades t
-                                FULL OUTER JOIN refunds r ON r.order_id = t.order_id
-                                WHERE t.order_id = o.id OR r.order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -1452,25 +9202,24 @@ public class LateralJoinTest extends AbstractCairoTest {
             //   by RIGHT JOIN (only right side is preserved)
             // For order 1: no matching discount → RIGHT JOIN drops all rows → empty
             // For order 2: trade(30) matches disc(0.8), no adj → (30, null, 0.8)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.adj, sub.disc
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, a.adj, d.disc
+                        FROM trades t
+                        LEFT JOIN adjustments a ON a.order_id = t.order_id
+                        RIGHT JOIN discounts d ON d.order_id = t.order_id
+                        WHERE t.order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tadj\tdisc
                             2\t30.0\tnull\t0.8
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.adj, sub.disc
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, a.adj, d.disc
-                                FROM trades t
-                                LEFT JOIN adjustments a ON a.order_id = t.order_id
-                                RIGHT JOIN discounts d ON d.order_id = t.order_id
-                                WHERE t.order_id = o.id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -1501,27 +9250,26 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // WINDOW JOIN inside lateral: for each instrument, compute
             // sum of (trade_price + quote_price) over a time window
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT i.id, sub.sum
+                    FROM instruments i
+                    JOIN LATERAL (
+                        SELECT sum(t.price + q.price) AS sum
+                        FROM trades t
+                        WINDOW JOIN quotes q ON tag
+                            RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                        WHERE t.instrument_id = i.id
+                    ) sub
+                    ORDER BY i.id, sub.sum
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id	sum
                             1	19.5
                             1	42.0
                             2	39.0
-                            """,
-                    """
-                            SELECT i.id, sub.sum
-                            FROM instruments i
-                            JOIN LATERAL (
-                                SELECT sum(t.price + q.price) AS sum
-                                FROM trades t
-                                WINDOW JOIN quotes q ON tag
-                                    RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
-                                WHERE t.instrument_id = i.id
-                            ) sub
-                            ORDER BY i.id, sub.sum
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -1549,30 +9297,28 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ('GOOG', 199.0, 201.0, '2024-01-01T00:02:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT i.id, sub.horizon_sec, sub.avg_mid
+                    FROM instruments i
+                    JOIN LATERAL (
+                        SELECT h.offset / 1_000_000 AS horizon_sec,
+                               avg((q.bid + q.ask) / 2) AS avg_mid
+                        FROM trades t
+                        HORIZON JOIN quotes q ON (symbol)
+                            LIST (0, 1s) AS h
+                        WHERE t.symbol = i.symbol
+                        GROUP BY horizon_sec
+                    ) sub
+                    ORDER BY i.id, sub.horizon_sec
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\thorizon_sec\tavg_mid
                             1\t0\t100.0
                             1\t1\t100.0
                             2\t0\t200.0
                             2\t1\t200.0
-                            """,
-                    """
-                            SELECT i.id, sub.horizon_sec, sub.avg_mid
-                            FROM instruments i
-                            JOIN LATERAL (
-                                SELECT h.offset / 1000000 AS horizon_sec,
-                                       avg((q.bid + q.ask) / 2) AS avg_mid
-                                FROM trades t
-                                HORIZON JOIN quotes q ON (symbol)
-                                    LIST (0, 1s) AS h
-                                WHERE t.symbol = i.symbol
-                                GROUP BY horizon_sec
-                            ) sub
-                            ORDER BY i.id, sub.horizon_sec
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1603,26 +9349,24 @@ public class LateralJoinTest extends AbstractCairoTest {
             // RANGE FROM 0s TO 0s STEP 1s = single offset at 0 (ASOF match)
             // For instrument 1: 2 trades → avg(mid) at horizon 0
             // For instrument 2: 1 trade → avg(mid) at horizon 0
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT i.id, sub.n AS count, sub.avg_mid
+                    FROM instruments i
+                    JOIN LATERAL (
+                        SELECT count() AS n, avg((q.bid + q.ask) / 2) AS avg_mid
+                        FROM trades t
+                        HORIZON JOIN quotes q ON (symbol)
+                            RANGE FROM 0s TO 0s STEP 1s AS h
+                        WHERE t.symbol = i.symbol
+                    ) sub
+                    ORDER BY i.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcount\tavg_mid
                             1\t2\t100.5
                             2\t1\t200.0
-                            """,
-                    """
-                            SELECT i.id, sub.n AS count, sub.avg_mid
-                            FROM instruments i
-                            JOIN LATERAL (
-                                SELECT count() AS n, avg((q.bid + q.ask) / 2) AS avg_mid
-                                FROM trades t
-                                HORIZON JOIN quotes q ON (symbol)
-                                    RANGE FROM 0s TO 0s STEP 1s AS h
-                                WHERE t.symbol = i.symbol
-                            ) sub
-                            ORDER BY i.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1649,28 +9393,66 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ('GOOG', 198.0, 202.0, '2024-01-01T00:00:30.000000Z')
                     """);
 
-            // MSFT has no trades → LEFT LATERAL returns NULL for sub columns
-            assertQueryNoLeakCheck(
-                    """
+            // MSFT has no trades, so scalar count returns 0 while avg remains NULL
+            assertQuery("""
+                    SELECT i.id, sub.n, sub.avg_mid
+                    FROM instruments i
+                    LEFT JOIN LATERAL (
+                        SELECT count() AS n, avg((q.bid + q.ask) / 2) AS avg_mid
+                        FROM trades t
+                        HORIZON JOIN quotes q ON (symbol)
+                            RANGE FROM 0s TO 0s STEP 1s AS h
+                        WHERE t.symbol = i.symbol
+                    ) sub ON true
+                    ORDER BY i.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id	n	avg_mid
                             1	1	100.0
                             2	1	200.0
                             3	0	null
-                            """,
-                    """
-                            SELECT i.id, sub.n, sub.avg_mid
-                            FROM instruments i
-                            LEFT JOIN LATERAL (
-                                SELECT count() AS n, avg((q.bid + q.ask) / 2) AS avg_mid
-                                FROM trades t
-                                HORIZON JOIN quotes q ON (symbol)
-                                    RANGE FROM 0s TO 0s STEP 1s AS h
-                                WHERE t.symbol = i.symbol
-                            ) sub ON true
-                            ORDER BY i.id
-                            """,
-                    null, true, false
-            );
+                            """);
+        });
+    }
+
+    @Test
+    public void testT102dLeftLateralHorizonJoinImplicitKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE instruments (id INT, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE quotes (symbol SYMBOL, bid DOUBLE, ask DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO instruments VALUES
+                    (1, 'AAPL', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'MSFT', '2024-01-01T00:00:00.000000Z')
+                    """);
+            execute("INSERT INTO trades VALUES ('AAPL', 100.0, '2024-01-01T00:01:00.000000Z')");
+            execute("""
+                    INSERT INTO quotes VALUES
+                    ('AAPL', 99.0, 101.0, '2024-01-01T00:00:30.000000Z'),
+                    ('AAPL', 100.0, 102.0, '2024-01-01T00:01:30.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT i.id, sub.horizon_sec, sub.n
+                    FROM instruments i
+                    LEFT JOIN LATERAL (
+                        SELECT h.offset / 1_000_000 AS horizon_sec, count() AS n
+                        FROM trades t
+                        HORIZON JOIN quotes q ON (symbol)
+                            LIST (0, 1s) AS h
+                        WHERE t.symbol = i.symbol
+                    ) sub ON true
+                    ORDER BY i.id, sub.horizon_sec
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\thorizon_sec\tn
+                            1\t0\t1
+                            1\t1\t1
+                            2\tnull\tnull
+                            """);
         });
     }
 
@@ -1690,22 +9472,20 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.order_id + 1 AS next_id, sub.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT order_id, qty FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tnext_id\tqty
                             1\t2\t10.0
                             2\t3\t30.0
-                            """,
-                    """
-                            SELECT o.id, sub.order_id + 1 AS next_id, sub.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT order_id, qty FROM trades WHERE order_id = o.id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1725,22 +9505,20 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, null, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, coalesce(sub.qty, sub.qty2, 0) AS result
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty, qty2 FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tresult
                             1\t10.0
                             2\t30.0
-                            """,
-                    """
-                            SELECT o.id, coalesce(sub.qty, sub.qty2, 0) AS result
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty, qty2 FROM trades WHERE order_id = o.id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1762,22 +9540,20 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // (10*2)+(10-1)=29, (30*2)+(30-1)=89
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, (sub.qty * 2) + (sub.qty - 1) AS result
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tresult
                             1\t29.0
                             2\t89.0
-                            """,
-                    """
-                            SELECT o.id, (sub.qty * 2) + (sub.qty - 1) AS result
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades WHERE order_id = o.id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1795,25 +9571,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Self-join: for each order, find child orders (where parent_id = o.id)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.child_id, sub.child_amount
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT id AS child_id, amount AS child_amount
+                        FROM orders
+                        WHERE parent_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.child_id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tchild_id\tchild_amount
                             1\t2\t50.0
                             1\t3\t30.0
                             2\t4\t20.0
-                            """,
-                    """
-                            SELECT o.id, sub.child_id, sub.child_amount
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT id AS child_id, amount AS child_amount
-                                FROM orders
-                                WHERE parent_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.child_id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1823,23 +9597,14 @@ public class LateralJoinTest extends AbstractCairoTest {
             execute("CREATE TABLE t1 (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE t2 (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
 
-            assertException(
-                    "SELECT * FROM t1 ASOF JOIN LATERAL (SELECT * FROM t2 WHERE x = t1.x) t",
-                    27,
-                    "LATERAL is only supported with INNER, LEFT, or CROSS joins"
-            );
+            assertQuery("SELECT * FROM t1 ASOF JOIN LATERAL (SELECT * FROM t2 WHERE x = t1.x) t")
+                    .fails(27, "LATERAL is only supported with INNER, LEFT, or CROSS joins");
 
-            assertException(
-                    "SELECT * FROM t1 SPLICE JOIN LATERAL (SELECT * FROM t2 WHERE x = t1.x) t",
-                    29,
-                    "LATERAL is only supported with INNER, LEFT, or CROSS joins"
-            );
+            assertQuery("SELECT * FROM t1 SPLICE JOIN LATERAL (SELECT * FROM t2 WHERE x = t1.x) t")
+                    .fails(29, "LATERAL is only supported with INNER, LEFT, or CROSS joins");
 
-            assertException(
-                    "SELECT * FROM t1 FULL OUTER JOIN LATERAL (SELECT * FROM t2 WHERE x = t1.x) t ON true",
-                    33,
-                    "LATERAL is only supported with INNER, LEFT, or CROSS joins"
-            );
+            assertQuery("SELECT * FROM t1 FULL OUTER JOIN LATERAL (SELECT * FROM t2 WHERE x = t1.x) t ON true")
+                    .fails(33, "LATERAL is only supported with INNER, LEFT, or CROSS joins");
         });
     }
 
@@ -1868,25 +9633,24 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // LEFT JOIN ON a.order_id = o.id: correlated ON
             // Order 2's trade has no matching adjustment → adj = NULL
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.adj
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, a.adj
+                        FROM trades t
+                        LEFT JOIN adjustments a ON a.order_id = o.id AND a.order_id = t.order_id
+                        WHERE t.order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tadj
                             1\t10.0\t1.5
                             2\t30.0\tnull
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.adj
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, a.adj
-                                FROM trades t
-                                LEFT JOIN adjustments a ON a.order_id = o.id AND a.order_id = t.order_id
-                                WHERE t.order_id = o.id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -1918,25 +9682,24 @@ public class LateralJoinTest extends AbstractCairoTest {
             // o.id=1: trade(10)+adj(1.5) match; adj(2.0) preserved by RIGHT
             //   but WHERE filters it (2≠1) → only (10, 1.5)
             // o.id=2: no trades; adj(2.0) preserved, WHERE passes (2=2) → (null, 2.0)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.adj
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, a.adj
+                        FROM trades t
+                        RIGHT JOIN adjustments a ON a.order_id = o.id AND a.order_id = t.order_id
+                        WHERE a.order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.adj
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tadj
                             1\t10.0\t1.5
                             2\tnull\t2.0
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.adj
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, a.adj
-                                FROM trades t
-                                RIGHT JOIN adjustments a ON a.order_id = o.id AND a.order_id = t.order_id
-                                WHERE a.order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.adj
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -1965,26 +9728,25 @@ public class LateralJoinTest extends AbstractCairoTest {
             // FULL OUTER: both sides preserved
             // o.id=1: trades match, no refunds with order_id=1 → (10, null), (20, null)
             // o.id=2: no trades with order_id=2, refund(5.0) with order_id=2 → (null, 5.0)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.amount
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, r.amount
+                        FROM trades t
+                        FULL OUTER JOIN refunds r ON r.order_id = t.order_id
+                        WHERE t.order_id = o.id OR r.order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tamount
                             1\t10.0\tnull
                             1\t20.0\tnull
                             2\tnull\t5.0
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.amount
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, r.amount
-                                FROM trades t
-                                FULL OUTER JOIN refunds r ON r.order_id = t.order_id
-                                WHERE t.order_id = o.id OR r.order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -2012,26 +9774,25 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // RIGHT JOIN with subquery branch + correlated ON.
             // Correlated ON rewritten in place, not moved to WHERE
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.adj
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, a.adj
+                        FROM trades t
+                        RIGHT JOIN (SELECT order_id, adj FROM adjustments WHERE active = 1) a
+                            ON a.order_id = o.id AND a.order_id = t.order_id
+                        WHERE a.order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tadj
                             1\t10.0\t1.5
                             2\tnull\t2.0
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.adj
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, a.adj
-                                FROM trades t
-                                RIGHT JOIN (SELECT order_id, adj FROM adjustments WHERE active = 1) a
-                                    ON a.order_id = o.id AND a.order_id = t.order_id
-                                WHERE a.order_id = o.id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -2062,26 +9823,25 @@ public class LateralJoinTest extends AbstractCairoTest {
             // LEFT JOIN ON with non-eq correlated predicate: b.bonus > o.min_qty
             // o.id=1 (min_qty=15): trades(10,20), bonus(100>15)→match → (10,100),(20,100)
             // o.id=2 (min_qty=5): trades(30), bonus(200>5)→match → (30,200)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.bonus
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, b.bonus
+                        FROM trades t
+                        LEFT JOIN bonuses b ON b.trade_order_id = t.order_id AND b.bonus > o.min_qty
+                        WHERE t.order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tbonus
                             1\t10.0\t100.0
                             1\t20.0\t100.0
                             2\t30.0\t200.0
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.bonus
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, b.bonus
-                                FROM trades t
-                                LEFT JOIN bonuses b ON b.trade_order_id = t.order_id AND b.bonus > o.min_qty
-                                WHERE t.order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -2110,25 +9870,24 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // The join with adjustments is at the SELECT level (above trades),
             // not at the data source level where terminateHere runs.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.adj
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, a.adj
+                        FROM (SELECT order_id, qty FROM trades WHERE order_id = o.id) t
+                        JOIN adjustments a ON a.order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tadj
                             1\t10.0\t1.5
                             1\t20.0\t1.5
                             2\t30.0\t2.0
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.adj
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, a.adj
-                                FROM (SELECT order_id, qty FROM trades WHERE order_id = o.id) t
-                                JOIN adjustments a ON a.order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -2155,25 +9914,24 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Both UNION branches correlated
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades WHERE order_id = o.id
+                        UNION ALL
+                        SELECT qty FROM returns WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty
                             1\t5.0
                             1\t10.0
                             2\t30.0
-                            """,
-                    """
-                            SELECT o.id, sub.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades WHERE order_id = o.id
-                                UNION ALL
-                                SELECT qty FROM returns WHERE order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -2198,23 +9956,21 @@ public class LateralJoinTest extends AbstractCairoTest {
             // WHERE has two correlations: order_id = o.id AND qty > o.min_qty
             // Both are at the table level → terminate=3 not needed, but tests
             // that non-eq correlation doesn't prevent correct results
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades
+                        WHERE order_id = o.id AND qty > o.min_qty
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
                             1\t20.0
                             2\t30.0
-                            """,
-                    """
-                            SELECT o.id, sub.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades
-                                WHERE order_id = o.id AND qty > o.min_qty
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2239,26 +9995,24 @@ public class LateralJoinTest extends AbstractCairoTest {
             // Inner FROM is a non-correlated subquery with GROUP BY.
             // Outer SELECT WHERE filters by o.id on the subquery result.
             // The GROUP BY runs once (un-multiplied); CROSS JOIN happens above it.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.category, sub.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT category, total
+                        FROM (SELECT order_id, category, sum(qty) AS total
+                              FROM trades GROUP BY order_id, category)
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.category
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcategory\ttotal
                             1\tA\t10.0
                             1\tB\t20.0
                             2\tA\t70.0
-                            """,
-                    """
-                            SELECT o.id, sub.category, sub.total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT category, total
-                                FROM (SELECT order_id, category, sum(qty) AS total
-                                      FROM trades GROUP BY order_id, category)
-                                WHERE order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.category
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2285,28 +10039,26 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // order 1: max_categories=1 → top 1 category by total
             // order 2: max_categories=2 → top 2 categories by total
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.category, sub.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT category, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        GROUP BY category
+                        ORDER BY total DESC
+                        LIMIT o.max_categories
+                    ) sub
+                    ORDER BY o.id, sub.total
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcategory\ttotal
                             1\tC\t30.0
                             2\tY\t50.0
                             2\tZ\t60.0
-                            """,
-                    """
-                            SELECT o.id, sub.category, sub.total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT category, sum(qty) AS total
-                                FROM trades
-                                WHERE order_id = o.id
-                                GROUP BY category
-                                ORDER BY total DESC
-                                LIMIT o.max_categories
-                            ) sub
-                            ORDER BY o.id, sub.total
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2337,24 +10089,23 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // order 1: trades_a {10,20} ∩ trades_b {10,30} = {10}
             // order 2: trades_a {30} ∩ trades_b {30} = {30}
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades_a WHERE order_id = o.id
+                        INTERSECT
+                        SELECT qty FROM trades_b WHERE order_id = o.id
+                    ) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty
                             1\t10.0
                             2\t30.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades_a WHERE order_id = o.id
-                                INTERSECT
-                                SELECT qty FROM trades_b WHERE order_id = o.id
-                            ) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -2378,36 +10129,36 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT count(*) AS count
+                    FROM large_orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM large_trades WHERE order_id = o.id ORDER BY qty LIMIT 3
+                    ) t
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count
                             3000
-                            """,
-                    """
-                            SELECT count(*) AS count
-                            FROM large_orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM large_trades WHERE order_id = o.id ORDER BY qty LIMIT 3
-                            ) t
-                            """,
-                    null, false, true
-            );
+                            """);
 
             // LEFT JOIN with GROUP BY: every order gets a sum
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT count(*) AS count
+                    FROM large_orders o
+                    LEFT JOIN LATERAL (
+                        SELECT sum(qty) AS total FROM large_trades WHERE order_id = o.id
+                    ) t
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count
                             1000
-                            """,
-                    """
-                            SELECT count(*) AS count
-                            FROM large_orders o
-                            LEFT JOIN LATERAL (
-                                SELECT sum(qty) AS total FROM large_trades WHERE order_id = o.id
-                            ) t
-                            """,
-                    null, false, true
-            );
+                            """);
         });
     }
 
@@ -2434,26 +10185,25 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 1.0, '2024-01-01T01:00:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.fee
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, f.fee
+                        FROM (SELECT qty, order_id FROM trades WHERE order_id = o.id) t
+                        JOIN (SELECT fee, order_id FROM fees WHERE order_id = o.id) f
+                            ON f.order_id = t.order_id
+                    ) sub
+                    ORDER BY o.id, sub.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tfee
                             1\t10.0\t0.5
                             1\t20.0\t0.5
                             2\t30.0\t1.0
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.fee
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, f.fee
-                                FROM (SELECT qty, order_id FROM trades WHERE order_id = o.id) t
-                                JOIN (SELECT fee, order_id FROM fees WHERE order_id = o.id) f
-                                    ON f.order_id = t.order_id
-                            ) sub
-                            ORDER BY o.id, sub.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -2485,27 +10235,26 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 0.2, '2024-01-01T01:00:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.fee, sub.disc
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, f.fee, d.disc
+                        FROM (SELECT qty, order_id FROM trades WHERE order_id = o.id) t
+                        JOIN (SELECT fee, order_id FROM fees WHERE order_id = o.id) f
+                            ON f.order_id = t.order_id
+                        JOIN (SELECT disc, order_id FROM discounts WHERE order_id = o.id) d
+                            ON d.order_id = t.order_id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tfee\tdisc
                             1\t10.0\t0.5\t0.1
                             2\t30.0\t1.0\t0.2
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.fee, sub.disc
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, f.fee, d.disc
-                                FROM (SELECT qty, order_id FROM trades WHERE order_id = o.id) t
-                                JOIN (SELECT fee, order_id FROM fees WHERE order_id = o.id) f
-                                    ON f.order_id = t.order_id
-                                JOIN (SELECT disc, order_id FROM discounts WHERE order_id = o.id) d
-                                    ON d.order_id = t.order_id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -2531,27 +10280,26 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 'B', 200.0, '2024-01-01T01:00:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.max_qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, l.max_qty
+                        FROM (SELECT qty, order_id FROM trades
+                              WHERE order_id = o.id) t
+                        JOIN (SELECT max_qty, order_id FROM limits
+                              WHERE order_id = o.id AND cat = o.category) l
+                            ON l.order_id = t.order_id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tmax_qty
                             1\t10.0\t100.0
                             2\t30.0\t200.0
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.max_qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, l.max_qty
-                                FROM (SELECT qty, order_id FROM trades
-                                      WHERE order_id = o.id) t
-                                JOIN (SELECT max_qty, order_id FROM limits
-                                      WHERE order_id = o.id AND cat = o.category) l
-                                    ON l.order_id = t.order_id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -2575,25 +10323,23 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // PARTITION BY order_id is the same as the correlation column
             // compensateLatestBy should detect it's already present and skip adding
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty
+                        FROM trades
+                        WHERE order_id = o.id
+                        LATEST ON ts PARTITION BY order_id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
                             1\t20.0
                             2\t40.0
-                            """,
-                    """
-                            SELECT o.id, sub.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty
-                                FROM trades
-                                WHERE order_id = o.id
-                                LATEST ON ts PARTITION BY order_id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2623,25 +10369,24 @@ public class LateralJoinTest extends AbstractCairoTest {
             // JOIN with a correlated subquery: (SELECT ... WHERE order_id = o.id) is a
             // correlated nested model, triggering decorrelateJoinModelSubqueries to
             // clone the __qdb_outer_ref__ into the subquery
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.label
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, g.label
+                        FROM trades t
+                        JOIN (SELECT id, label FROM tags WHERE order_id = o.id) g ON g.id = t.tag_id
+                        WHERE t.order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tlabel
                             1\t10.0\turgent
                             2\t30.0\tnormal
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.label
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, g.label
-                                FROM trades t
-                                JOIN (SELECT id, label FROM tags WHERE order_id = o.id) g ON g.id = t.tag_id
-                                WHERE t.order_id = o.id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -2651,23 +10396,21 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createOrdersAndTrades();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, qty
+                    FROM orders o
+                    JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id)
+                    ORDER BY o.id, qty
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
                             1\t10.0
                             1\t20.0
                             2\t30.0
                             3\t40.0
                             3\t50.0
-                            """,
-                    """
-                            SELECT o.id, qty
-                            FROM orders o
-                            JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id)
-                            ORDER BY o.id, qty
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2696,8 +10439,21 @@ public class LateralJoinTest extends AbstractCairoTest {
             // 3-branch CASE (paramCount >= 3 → uses args list)
             // order 1 (lo=10,hi=20): 5→low, 15→mid, 25→high
             // order 2 (lo=25,hi=35): 20→low, 30→mid, 40→high
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.level
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty,
+                               CASE WHEN qty < o.lo THEN 'low'
+                                    WHEN qty < o.hi THEN 'mid'
+                                    ELSE 'high' END AS level
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty\tlevel
                             1\t5.0\tlow
                             1\t15.0\tmid
@@ -2705,22 +10461,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             2\t20.0\tlow
                             2\t30.0\tmid
                             2\t40.0\thigh
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.level
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty,
-                                       CASE WHEN qty < o.lo THEN 'low'
-                                            WHEN qty < o.hi THEN 'mid'
-                                            ELSE 'high' END AS level
-                                FROM trades
-                                WHERE order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.qty
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2745,30 +10486,28 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // LEFT lateral + count(*): order 3 has no trades → count should be 0
             // CASE wrapping count(*) tests the args path in wrapCountRefsWithCoalesce
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.cnt,
+                           CASE
+                               WHEN sub.cnt > 1 THEN 'multi'
+                               WHEN sub.cnt = 1 THEN 'single'
+                               ELSE 'none'
+                           END AS label
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcnt\tlabel
                             1\t2\tmulti
                             2\t1\tsingle
                             3\t0\tnone
-                            """,
-                    """
-                            SELECT o.id, sub.cnt,
-                                   CASE
-                                       WHEN sub.cnt > 1 THEN 'multi'
-                                       WHEN sub.cnt = 1 THEN 'single'
-                                       ELSE 'none'
-                                   END AS label
-                            FROM orders o
-                            LEFT JOIN LATERAL (
-                                SELECT count(*) AS cnt
-                                FROM trades
-                                WHERE order_id = o.id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2792,26 +10531,25 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // row_number() OVER (PARTITION BY o.category) — correlated PARTITION BY
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.rn
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty,
+                               row_number() OVER (PARTITION BY o.category ORDER BY ts) AS rn
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\trn
                             1\t10.0\t1
                             1\t20.0\t2
                             2\t30.0\t1
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.rn
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty,
-                                       row_number() OVER (PARTITION BY o.category ORDER BY ts) AS rn
-                                FROM trades
-                                WHERE order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -2834,25 +10572,24 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 2, 19.99, '2024-01-01T01:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.name, t.price
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT p.name, pr.price
+                        FROM products p
+                        JOIN prices pr ON pr.product_id = p.id
+                        WHERE p.order_id = o.id
+                    ) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tname\tprice
                             1\tWidget\t9.99
                             2\tGadget\t19.99
-                            """,
-                    """
-                            SELECT o.id, t.name, t.price
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT p.name, pr.price
-                                FROM products p
-                                JOIN prices pr ON pr.product_id = p.id
-                                WHERE p.order_id = o.id
-                            ) t
-                            ORDER BY o.id
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -2874,26 +10611,24 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // LATEST BY category per order — latest trade in each category per order
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.category, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT category, qty FROM trades
+                        WHERE order_id = o.id
+                        LATEST ON ts PARTITION BY category
+                    ) t
+                    ORDER BY o.id, t.category
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcategory\tqty
                             1\tA\t20.0
                             1\tB\t30.0
                             2\tA\t40.0
                             2\tB\t60.0
-                            """,
-                    """
-                            SELECT o.id, t.category, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT category, qty FROM trades
-                                WHERE order_id = o.id
-                                LATEST ON ts PARTITION BY category
-                            ) t
-                            ORDER BY o.id, t.category
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2916,24 +10651,22 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (5, 2, 30.0, '2024-01-01T01:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades
+                        WHERE order_id = o.id AND qty > o.min_qty
+                    ) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
                             1\t20.0
                             1\t30.0
                             2\t30.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades
-                                WHERE order_id = o.id AND qty > o.min_qty
-                            ) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2956,24 +10689,22 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, 2, 'GOOG', 300.0, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT m.mm_id, m.symbol, t.total
+                    FROM master m
+                    LEFT JOIN LATERAL (
+                        SELECT sum(qty) AS total FROM detail
+                        WHERE mm_id = m.mm_id AND symbol = m.symbol
+                    ) t
+                    ORDER BY m.mm_id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             mm_id\tsymbol\ttotal
                             1\tAAPL\t300.0
                             2\tGOOG\t300.0
                             3\tMSFT\tnull
-                            """,
-                    """
-                            SELECT m.mm_id, m.symbol, t.total
-                            FROM master m
-                            LEFT JOIN LATERAL (
-                                SELECT sum(qty) AS total FROM detail
-                                WHERE mm_id = m.mm_id AND symbol = m.symbol
-                            ) t
-                            ORDER BY m.mm_id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2990,20 +10721,18 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
             // no trades at all
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    LEFT JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
                             1\tnull
                             2\tnull
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            LEFT JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3028,29 +10757,27 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Window function + LIMIT — LEFT JOIN so order 3 gets NULLs
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty, t.running_sum
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT qty, sum(qty) OVER (ORDER BY qty DESC) AS running_sum
+                        FROM trades
+                        WHERE order_id = o.id
+                        ORDER BY qty DESC
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.qty DESC
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty\trunning_sum
                             1\t30.0\t30.0
                             1\t20.0\t50.0
                             2\t50.0\t50.0
                             2\t40.0\t90.0
                             3\tnull\tnull
-                            """,
-                    """
-                            SELECT o.id, t.qty, t.running_sum
-                            FROM orders o
-                            LEFT JOIN LATERAL (
-                                SELECT qty, sum(qty) OVER (ORDER BY qty DESC) AS running_sum
-                                FROM trades
-                                WHERE order_id = o.id
-                                ORDER BY qty DESC
-                                LIMIT 2
-                            ) t
-                            ORDER BY o.id, t.qty DESC
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3072,20 +10799,18 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // QuestDB Hash Join is NULL-safe: NULL = NULL matches
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
                             null\t20.0
                             1\t10.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3108,21 +10833,19 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // LEFT JOIN: order 2 has no trades → NULL fill
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    LEFT JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
                             null\t20.0
                             1\t10.0
                             2\tnull
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            LEFT JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3143,22 +10866,21 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 20.0, '2024-01-01T01:30:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    LATERAL (SELECT qty FROM trades) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty
                             1\t10.0
                             1\t20.0
                             2\t10.0
                             2\t20.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            LATERAL (SELECT qty FROM trades) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -3183,21 +10905,19 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Correlated LIMIT: order 1 gets 2 rows, order 2 gets 1 row
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id ORDER BY qty LIMIT o.n) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
                             1\t10.0
                             1\t20.0
                             2\t40.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id ORDER BY qty LIMIT o.n) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3221,22 +10941,20 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Correlated offset: order 1 skips 1 row (gets rows 2-3), order 2 skips 0 (gets rows 1-3)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id ORDER BY qty LIMIT o.n, 5) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
                             1\t20.0
                             1\t30.0
                             2\t40.0
                             2\t50.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id ORDER BY qty LIMIT o.n, 5) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3250,24 +10968,24 @@ public class LateralJoinTest extends AbstractCairoTest {
             execute("INSERT INTO t2 VALUES (1, 1, '2024-01-01T00:30:00.000000Z')");
             execute("INSERT INTO t3 VALUES (1, 1, '2024-01-01T01:00:00.000000Z')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.id, sub1.*
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT t2.id AS id1, t2.t1_id, t2.ts AS ts1,
+                               sub2.id AS id2, sub2.t2_id, sub2.ts AS ts2
+                        FROM t2
+                        JOIN LATERAL (SELECT * FROM t3 WHERE t3.t2_id = t2.id) sub2 ON 1 = 1
+                        WHERE t2.t1_id = t1.id
+                    ) sub1
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             id\tid1\tt1_id\tts1\tid2\tt2_id\tts2
                             1\t1\t1\t2024-01-01T00:30:00.000000Z\t1\t1\t2024-01-01T01:00:00.000000Z
-                            """,
-                    """
-                            SELECT t1.id, sub1.*
-                            FROM t1
-                            JOIN LATERAL (
-                                SELECT t2.id AS id1, t2.t1_id, t2.ts AS ts1,
-                                       sub2.id AS id2, sub2.t2_id, sub2.ts AS ts2
-                                FROM t2
-                                JOIN LATERAL (SELECT * FROM t3 WHERE t3.t2_id = t2.id) sub2 ON 1 = 1
-                                WHERE t2.t1_id = t1.id
-                            ) sub1
-                            """,
-                    null, false, true
-            );
+                            """);
         });
     }
 
@@ -3288,28 +11006,26 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // SAMPLE BY is rewritten to GROUP BY before LATERAL decorrelation
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.ts, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tts\ttotal
                             1\t2024-01-01T00:00:00.000000Z\t10.0
                             1\t2024-01-01T00:30:00.000000Z\t20.0
                             1\t2024-01-01T01:00:00.000000Z\t30.0
                             2\t2024-01-01T01:00:00.000000Z\t40.0
                             2\t2024-01-01T01:30:00.000000Z\t50.0
-                            """,
-                    """
-                            SELECT o.id, t.ts, t.total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT ts, sum(qty) AS total
-                                FROM trades
-                                WHERE order_id = o.id
-                                SAMPLE BY 30m
-                            ) t
-                            ORDER BY o.id, t.ts
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3327,8 +11043,20 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (4, 2, 'A', 40.0, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.category, t.ts, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT category, ts, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m FILL(PREV)
+                    ) t
+                    ORDER BY o.id, t.category, t.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id	category	ts	total
                             1	A	2024-01-01T00:00:00.000000Z	10.0
                             1	A	2024-01-01T00:30:00.000000Z	30.0
@@ -3339,20 +11067,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             2	A	2024-01-01T00:00:00.000000Z	null
                             2	A	2024-01-01T00:30:00.000000Z	null
                             2	A	2024-01-01T01:00:00.000000Z	40.0
-                            """,
-                    """
-                            SELECT o.id, t.category, t.ts, t.total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT category, ts, sum(qty) AS total
-                                FROM trades
-                                WHERE order_id = o.id
-                                SAMPLE BY 30m FILL(PREV)
-                            ) t
-                            ORDER BY o.id, t.category, t.ts
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -3382,25 +11097,24 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // order 1: trades_a {10} ∪ trades_b {10,30} = {10,30} (10 deduped)
             // order 2: trades_a {20} ∪ trades_b {20} = {20} (20 deduped)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades_a WHERE order_id = o.id
+                        UNION
+                        SELECT qty FROM trades_b WHERE order_id = o.id
+                    ) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty
                             1\t10.0
                             1\t30.0
                             2\t20.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades_a WHERE order_id = o.id
-                                UNION
-                                SELECT qty FROM trades_b WHERE order_id = o.id
-                            ) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -3419,24 +11133,22 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Inner subquery wraps the correlated query in another layer — only outer correlation, no nesting
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.max_qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT max(qty) AS max_qty
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tmax_qty
                             1\t20.0
                             2\t30.0
-                            """,
-                    """
-                            SELECT o.id, t.max_qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT max(qty) AS max_qty
-                                FROM trades
-                                WHERE order_id = o.id
-                            ) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3457,22 +11169,20 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 2, 20.0, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades WHERE order_id = o.id
+                    ) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
                             1\t10.0
                             2\t20.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades WHERE order_id = o.id
-                            ) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3494,25 +11204,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // GROUP BY includes outer ref o.category — rewriteGroupByExpressions rewrites it
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.cat, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT o.category AS cat, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        GROUP BY o.category
+                    ) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id	cat	total
                             1	X	30.0
                             2	Y	30.0
-                            """,
-                    """
-                            SELECT o.id, t.cat, t.total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT o.category AS cat, sum(qty) AS total
-                                FROM trades
-                                WHERE order_id = o.id
-                                GROUP BY o.category
-                            ) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3532,27 +11240,25 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // PIVOT is rewritten before LATERAL decorrelation
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.buy, t.sell
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT * FROM (
+                            SELECT side, sum(qty) AS total
+                            FROM trades
+                            WHERE order_id = o.id
+                            GROUP BY side
+                        ) PIVOT (sum(total) FOR side IN ('buy', 'sell'))
+                    ) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tbuy\tsell
                             1\t40.0\t20.0
                             2\tnull\t40.0
-                            """,
-                    """
-                            SELECT o.id, t.buy, t.sell
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT * FROM (
-                                    SELECT side, sum(qty) AS total
-                                    FROM trades
-                                    WHERE order_id = o.id
-                                    GROUP BY side
-                                ) PIVOT (sum(total) FOR side IN ('buy', 'sell'))
-                            ) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3576,28 +11282,26 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // order 3 has no trades → LEFT fills NULLs
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.buy, t.sell
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT * FROM (
+                            SELECT side, sum(qty) AS total
+                            FROM trades
+                            WHERE order_id = o.id
+                            GROUP BY side
+                        ) PIVOT (sum(total) FOR side IN ('buy', 'sell'))
+                    ) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tbuy\tsell
                             1\t10.0\t20.0
                             2\t30.0\tnull
                             3\tnull\tnull
-                            """,
-                    """
-                            SELECT o.id, t.buy, t.sell
-                            FROM orders o
-                            LEFT JOIN LATERAL (
-                                SELECT * FROM (
-                                    SELECT side, sum(qty) AS total
-                                    FROM trades
-                                    WHERE order_id = o.id
-                                    GROUP BY side
-                                ) PIVOT (sum(total) FOR side IN ('buy', 'sell'))
-                            ) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3619,28 +11323,27 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, 2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            // SAMPLE BY with count: order 3 has no trades → LEFT JOIN fills count with 0
-            assertQueryNoLeakCheck(
-                    """
+            // a SAMPLE BY body is keyed, so order 3 produces no row at all and the
+            // LEFT JOIN null-extends every column rather than compensating cnt to 0
+            assertQuery("""
+                    SELECT o.id, t.ts, t.cnt, t.total
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT ts, count(*) AS cnt, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tts\tcnt\ttotal
                             1\t2024-01-01T00:00:00.000000Z\t1\t10.0
                             1\t2024-01-01T00:30:00.000000Z\t1\t20.0
                             2\t2024-01-01T01:00:00.000000Z\t1\t30.0
-                            3\t\t0\tnull
-                            """,
-                    """
-                            SELECT o.id, t.ts, t.cnt, t.total
-                            FROM orders o
-                            LEFT JOIN LATERAL (
-                                SELECT ts, count(*) AS cnt, sum(qty) AS total
-                                FROM trades
-                                WHERE order_id = o.id
-                                SAMPLE BY 30m
-                            ) t
-                            ORDER BY o.id, t.ts
-                            """,
-                    null, true, false
-            );
+                            3\t\tnull\tnull
+                            """);
         });
     }
 
@@ -3664,27 +11367,25 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // SAMPLE BY rewritten to GROUP BY; order 3 has no trades → LEFT fills NULLs
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.ts, t.total
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT ts, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id	ts	total
                             1	2024-01-01T00:00:00.000000Z	10.0
                             1	2024-01-01T00:30:00.000000Z	20.0
                             2	2024-01-01T01:00:00.000000Z	30.0
                             3		null
-                            """,
-                    """
-                            SELECT o.id, t.ts, t.total
-                            FROM orders o
-                            LEFT JOIN LATERAL (
-                                SELECT ts, sum(qty) AS total
-                                FROM trades
-                                WHERE order_id = o.id
-                                SAMPLE BY 30m
-                            ) t
-                            ORDER BY o.id, t.ts
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3702,27 +11403,26 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (4, 2, 40.0, '2024-01-01T01:42:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.ts, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m ALIGN TO FIRST OBSERVATION
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id	ts	total
                             1	2024-01-01T00:05:00.000000Z	10.0
                             1	2024-01-01T00:35:00.000000Z	20.0
                             2	2024-01-01T01:05:00.000000Z	30.0
                             2	2024-01-01T01:35:00.000000Z	40.0
-                            """,
-                    """
-                            SELECT o.id, t.ts, t.total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT ts, sum(qty) AS total
-                                FROM trades
-                                WHERE order_id = o.id
-                                SAMPLE BY 30m ALIGN TO FIRST OBSERVATION
-                            ) t
-                            ORDER BY o.id, t.ts
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -3743,8 +11443,19 @@ public class LateralJoinTest extends AbstractCairoTest {
             // FILL(LINEAR): fills missing buckets with linear interpolation
             // order 1: [00:00]=10, [00:30]=20(filled), [01:00]=30
             // order 2: [01:00]=100, [01:30]=150(filled), [02:00]=200
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.ts, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m FILL(LINEAR)
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id	ts	total
                             1	2024-01-01T00:00:00.000000Z	10.0
                             1	2024-01-01T00:30:00.000000Z	20.0
@@ -3756,20 +11467,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             2	2024-01-01T01:00:00.000000Z	100.0
                             2	2024-01-01T01:30:00.000000Z	150.0
                             2	2024-01-01T02:00:00.000000Z	200.0
-                            """,
-                    """
-                            SELECT o.id, t.ts, t.total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT ts, sum(qty) AS total
-                                FROM trades
-                                WHERE order_id = o.id
-                                SAMPLE BY 30m FILL(LINEAR)
-                            ) t
-                            ORDER BY o.id, t.ts
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3791,28 +11489,26 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // SAMPLE BY + LIMIT 2: take the first 2 time buckets per order
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.ts, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tts\ttotal
                             1\t2024-01-01T00:00:00.000000Z\t10.0
                             1\t2024-01-01T00:30:00.000000Z\t20.0
                             2\t2024-01-01T01:00:00.000000Z\t40.0
                             2\t2024-01-01T01:30:00.000000Z\t50.0
-                            """,
-                    """
-                            SELECT o.id, t.ts, t.total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT ts, sum(qty) AS total
-                                FROM trades
-                                WHERE order_id = o.id
-                                SAMPLE BY 30m
-                                LIMIT 2
-                            ) t
-                            ORDER BY o.id, t.ts
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3834,27 +11530,25 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // ORDER BY abs(qty - 25) triggers moveOrderByFunctionsIntoOuterSelect
             // which wraps the inner model with a SELECT * wrapper
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades
+                        WHERE order_id = o.id
+                        ORDER BY abs(qty - 25) DESC
+                    ) t
+                    ORDER BY o.id, t.qty DESC
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
                             1\t30.0
                             1\t20.0
                             1\t10.0
                             2\t50.0
                             2\t40.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades
-                                WHERE order_id = o.id
-                                ORDER BY abs(qty - 25) DESC
-                            ) t
-                            ORDER BY o.id, t.qty DESC
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3877,27 +11571,25 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Two equality correlation columns: mm_id AND symbol
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT m.mm_id, m.symbol, t.buy, t.sell
+                    FROM master m
+                    JOIN LATERAL (
+                        SELECT * FROM (
+                            SELECT side, sum(qty) AS total
+                            FROM fills
+                            WHERE mm_id = m.mm_id AND symbol = m.symbol
+                            GROUP BY side
+                        ) PIVOT (sum(total) FOR side IN ('buy', 'sell'))
+                    ) t
+                    ORDER BY m.mm_id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             mm_id\tsymbol\tbuy\tsell
                             1\tAAPL\t100.0\t50.0
                             2\tGOOG\t200.0\t300.0
-                            """,
-                    """
-                            SELECT m.mm_id, m.symbol, t.buy, t.sell
-                            FROM master m
-                            JOIN LATERAL (
-                                SELECT * FROM (
-                                    SELECT side, sum(qty) AS total
-                                    FROM fills
-                                    WHERE mm_id = m.mm_id AND symbol = m.symbol
-                                    GROUP BY side
-                                ) PIVOT (sum(total) FOR side IN ('buy', 'sell'))
-                            ) t
-                            ORDER BY m.mm_id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3919,53 +11611,49 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // GROUP BY category + LIMIT 2: top 2 categories by total per order
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.category, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT category, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        GROUP BY category
+                        ORDER BY total DESC
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.total DESC
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcategory\ttotal
                             1\tB\t30.0
                             1\tA\t30.0
                             2\tZ\t70.0
                             2\tY\t60.0
-                            """,
-                    """
-                            SELECT o.id, t.category, t.total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT category, sum(qty) AS total
-                                FROM trades
-                                WHERE order_id = o.id
-                                GROUP BY category
-                                ORDER BY total DESC
-                                LIMIT 2
-                            ) t
-                            ORDER BY o.id, t.total DESC
-                            """,
-                    null, true, false
-            );
+                            """);
 
             // implicit aggregation
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.category, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT category, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        ORDER BY total DESC
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.total DESC
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcategory\ttotal
                             1\tB\t30.0
                             1\tA\t30.0
                             2\tZ\t70.0
                             2\tY\t60.0
-                            """,
-                    """
-                            SELECT o.id, t.category, t.total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT category, sum(qty) AS total
-                                FROM trades
-                                WHERE order_id = o.id
-                                ORDER BY total DESC
-                                LIMIT 2
-                            ) t
-                            ORDER BY o.id, t.total DESC
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3987,27 +11675,25 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // DISTINCT + LIMIT 2: first 2 distinct categories per order
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.category
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT DISTINCT category FROM trades
+                        WHERE order_id = o.id
+                        ORDER BY category
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.category
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcategory
                             1\tA
                             1\tB
                             2\tX
                             2\tY
-                            """,
-                    """
-                            SELECT o.id, t.category
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT DISTINCT category FROM trades
-                                WHERE order_id = o.id
-                                ORDER BY category
-                                LIMIT 2
-                            ) t
-                            ORDER BY o.id, t.category
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -4024,25 +11710,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, 2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        WITH matched AS (
+                            SELECT qty FROM trades WHERE order_id = o.id
+                        )
+                        SELECT sum(qty) AS total FROM matched
+                    ) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\ttotal
                             1\t30.0
                             2\t30.0
-                            """,
-                    """
-                            SELECT o.id, t.total
-                            FROM orders o
-                            JOIN LATERAL (
-                                WITH matched AS (
-                                    SELECT qty FROM trades WHERE order_id = o.id
-                                )
-                                SELECT sum(qty) AS total FROM matched
-                            ) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -4065,21 +11749,20 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, 2, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            // order 3 has no trades → INNER JOIN drops it
-            assertQueryNoLeakCheck(
-                    """
+            // the body is a scalar aggregate, so it yields one row per outer row
+            assertQuery("""
+                    SELECT o.id, t.cnt
+                    FROM orders o
+                    JOIN LATERAL (SELECT count(*) AS cnt FROM trades WHERE order_id = o.id) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcnt
                             1\t2
                             2\t1
-                            """,
-                    """
-                            SELECT o.id, t.cnt
-                            FROM orders o
-                            JOIN LATERAL (SELECT count(*) AS cnt FROM trades WHERE order_id = o.id) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            3\t0
+                            """);
         });
     }
 
@@ -4101,21 +11784,19 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 1, '2024-01-01T00:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.cnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (SELECT count(*) AS cnt FROM trades WHERE order_id = o.id) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcnt
                             1\t2
                             2\t0
                             3\t0
-                            """,
-                    """
-                            SELECT o.id, t.cnt
-                            FROM orders o
-                            LEFT JOIN LATERAL (SELECT count(*) AS cnt FROM trades WHERE order_id = o.id) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -4137,21 +11818,19 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 1, 20.0, '2024-01-01T00:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.total
+                    FROM orders o
+                    LEFT JOIN LATERAL (SELECT sum(qty) AS total FROM trades WHERE order_id = o.id) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\ttotal
                             1\t30.0
                             2\tnull
                             3\tnull
-                            """,
-                    """
-                            SELECT o.id, t.total
-                            FROM orders o
-                            LEFT JOIN LATERAL (SELECT sum(qty) AS total FROM trades WHERE order_id = o.id) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -4177,24 +11856,22 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // o.start_ts is not in eq map (only o.id is)
             // No aggregate → simple scan path → postJoinWhereClause
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty, ts AS trade_ts FROM trades
+                        WHERE order_id = o.id AND ts > o.start_ts
+                    ) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
                             1\t20.0
                             1\t30.0
                             2\t50.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty, ts AS trade_ts FROM trades
-                                WHERE order_id = o.id AND ts > o.start_ts
-                            ) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -4217,23 +11894,22 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // group_id = o.id / 10 → outer side is expression
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades WHERE group_id = o.id / 10
+                    ) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty
                             10\t100.0
                             10\t300.0
                             20\t200.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades WHERE group_id = o.id / 10
-                            ) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -4253,24 +11929,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Correlation is only in the inner JOIN ON clause: t2.order_id = o.id
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.val
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t1.val
+                        FROM t1
+                        JOIN t2 ON t2.t1_id = t1.id AND t2.order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tval
                             1\tX
                             2\tY
-                            """,
-                    """
-                            SELECT o.id, sub.val
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t1.val
-                                FROM t1
-                                JOIN t2 ON t2.t1_id = t1.id AND t2.order_id = o.id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -4298,23 +11973,21 @@ public class LateralJoinTest extends AbstractCairoTest {
             // eq: order_id = o.id; non-eq: qty > o.min_qty (rewritable since o.id maps min_qty too)
             // Well actually o.min_qty is NOT in the alias map, but it's a simple scan + aggregate scenario
             // with non-rewritable non-eq → Delim Scan path
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT sum(qty) AS total FROM trades
+                        WHERE order_id = o.id AND qty > o.min_qty
+                    ) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\ttotal
                             1\t50.0
                             2\t70.0
-                            """,
-                    """
-                            SELECT o.id, t.total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT sum(qty) AS total FROM trades
-                                WHERE order_id = o.id AND qty > o.min_qty
-                            ) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -4324,26 +11997,25 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createOrdersAndTrades();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, o.customer, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades
+                        WHERE order_id = o.id OR (qty > 100.0 AND order_id = o.id)
+                    ) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tcustomer\tqty
                             1\tAlice\t10.0
                             1\tAlice\t20.0
                             2\tBob\t30.0
                             3\tCharlie\t40.0
                             3\tCharlie\t50.0
-                            """,
-                    """
-                            SELECT o.id, o.customer, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades
-                                WHERE order_id = o.id OR (qty > 100.0 AND order_id = o.id)
-                            ) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -4353,26 +12025,24 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createOrdersAndTrades();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty_plus_id
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty + o.id AS qty_plus_id FROM trades
+                        WHERE order_id = o.id
+                    ) t
+                    ORDER BY o.id, t.qty_plus_id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty_plus_id
                             1\t11.0
                             1\t21.0
                             2\t32.0
                             3\t43.0
                             3\t53.0
-                            """,
-                    """
-                            SELECT o.id, t.qty_plus_id
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty + o.id AS qty_plus_id FROM trades
-                                WHERE order_id = o.id
-                            ) t
-                            ORDER BY o.id, t.qty_plus_id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -4382,24 +12052,22 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createOrdersAndTrades();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.total_plus_id
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT sum(qty) + o.id AS total_plus_id FROM trades
+                        WHERE order_id = o.id
+                    ) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\ttotal_plus_id
                             1\t31.0
                             2\t32.0
                             3\t93.0
-                            """,
-                    """
-                            SELECT o.id, t.total_plus_id
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT sum(qty) + o.id AS total_plus_id FROM trades
-                                WHERE order_id = o.id
-                            ) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -4424,23 +12092,21 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // Only non-eq correlated pred: value > s.threshold AND sensor_id = s.id
             // sensor_id = s.id is eq, value > s.threshold is non-eq
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT s.id, r.value
+                    FROM sensors s
+                    JOIN LATERAL (
+                        SELECT value FROM readings
+                        WHERE sensor_id = s.id AND value > s.threshold
+                    ) r
+                    ORDER BY s.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tvalue
                             1\t60.0
                             2\t35.0
-                            """,
-                    """
-                            SELECT s.id, r.value
-                            FROM sensors s
-                            JOIN LATERAL (
-                                SELECT value FROM readings
-                                WHERE sensor_id = s.id AND value > s.threshold
-                            ) r
-                            ORDER BY s.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -4468,29 +12134,28 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // inner LATERAL SELECT references t1.a (outer-outer) and t2.b (direct outer)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, x.b, x.result
+                    FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT t2.b, y.result
+                        FROM t2
+                        CROSS JOIN LATERAL (
+                            SELECT t1.a + t2.b + t3.c AS result FROM t3
+                            LIMIT 1
+                        ) y
+                    ) x
+                    ORDER BY t1.a, x.b
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tb\tresult
                             1\t10\t111
                             1\t20\t121
                             2\t10\t112
                             2\t20\t122
-                            """,
-                    """
-                            SELECT t1.a, x.b, x.result
-                            FROM t1
-                            CROSS JOIN LATERAL (
-                                SELECT t2.b, y.result
-                                FROM t2
-                                CROSS JOIN LATERAL (
-                                    SELECT t1.a + t2.b + t3.c AS result FROM t3
-                                    LIMIT 1
-                                ) y
-                            ) x
-                            ORDER BY t1.a, x.b
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -4519,29 +12184,28 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Inner LATERAL WHERE uses dept_id = d.id (outer-outer ref)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT d.id, x.name, x.priority
+                    FROM departments d
+                    JOIN LATERAL (
+                        SELECT e.name, t.priority
+                        FROM employees e
+                        JOIN LATERAL (
+                            SELECT priority FROM tasks
+                            WHERE emp_name = e.name AND dept_id = d.id
+                        ) t ON 1 = 1
+                        WHERE e.dept_id = d.id
+                    ) x
+                    ORDER BY d.id, x.name
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tname\tpriority
                             1\tAlice\t5
                             1\tBob\t3
                             2\tCharlie\t7
-                            """,
-                    """
-                            SELECT d.id, x.name, x.priority
-                            FROM departments d
-                            JOIN LATERAL (
-                                SELECT e.name, t.priority
-                                FROM employees e
-                                JOIN LATERAL (
-                                    SELECT priority FROM tasks
-                                    WHERE emp_name = e.name AND dept_id = d.id
-                                ) t ON 1 = 1
-                                WHERE e.dept_id = d.id
-                            ) x
-                            ORDER BY d.id, x.name
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -4571,29 +12235,28 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ('Doohickey', 300.0, '2024-01-01T01:30:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT c.id, x.name, x.total
+                    FROM categories c
+                    JOIN LATERAL (
+                        SELECT p.name, s.total
+                        FROM products p
+                        JOIN LATERAL (
+                            SELECT sum(amount) AS total FROM sales
+                            WHERE product_name = p.name
+                        ) s ON 1 = 1
+                        WHERE p.cat_id = c.id
+                    ) x
+                    ORDER BY c.id, x.name
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tname\ttotal
                             1\tGadget\t200.0
                             1\tWidget\t250.0
                             2\tDoohickey\t300.0
-                            """,
-                    """
-                            SELECT c.id, x.name, x.total
-                            FROM categories c
-                            JOIN LATERAL (
-                                SELECT p.name, s.total
-                                FROM products p
-                                JOIN LATERAL (
-                                    SELECT sum(amount) AS total FROM sales
-                                    WHERE product_name = p.name
-                                ) s ON 1 = 1
-                                WHERE p.cat_id = c.id
-                            ) x
-                            ORDER BY c.id, x.name
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -4615,28 +12278,27 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Inner LATERAL's SELECT references t1.a (outer-outer) without any WHERE correlation
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, x.b, x.result
+                    FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT t2.b, y.result
+                        FROM t2
+                        CROSS JOIN LATERAL (
+                            SELECT t1.a + t2.b AS result
+                        ) y
+                    ) x
+                    ORDER BY t1.a, x.b
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tb\tresult
                             10\t1\t11
                             10\t2\t12
                             20\t1\t21
                             20\t2\t22
-                            """,
-                    """
-                            SELECT t1.a, x.b, x.result
-                            FROM t1
-                            CROSS JOIN LATERAL (
-                                SELECT t2.b, y.result
-                                FROM t2
-                                CROSS JOIN LATERAL (
-                                    SELECT t1.a + t2.b AS result
-                                ) y
-                            ) x
-                            ORDER BY t1.a, x.b
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -4667,24 +12329,23 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // order 1: trades_a {10,20} \ trades_b {10} = {20}
             // order 2: trades_a {30,40} \ trades_b {30} = {40}
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades_a WHERE order_id = o.id
+                        EXCEPT
+                        SELECT qty FROM trades_b WHERE order_id = o.id
+                    ) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty
                             1\t20.0
                             2\t40.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades_a WHERE order_id = o.id
-                                EXCEPT
-                                SELECT qty FROM trades_b WHERE order_id = o.id
-                            ) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -4713,24 +12374,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // order 1: trades_a {10,10,20} INTERSECT ALL trades_b {10,10,10} = {10,10}
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades_a WHERE order_id = o.id
+                        INTERSECT ALL
+                        SELECT qty FROM trades_b WHERE order_id = o.id
+                    ) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty
                             1\t10.0
                             1\t10.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades_a WHERE order_id = o.id
-                                INTERSECT ALL
-                                SELECT qty FROM trades_b WHERE order_id = o.id
-                            ) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -4756,23 +12416,22 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (1, 1, 10.0, '2024-01-01T00:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades_a WHERE order_id = o.id
+                        EXCEPT ALL
+                        SELECT qty FROM trades_b WHERE order_id = o.id
+                    ) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty
                             1\t20.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades_a WHERE order_id = o.id
-                                EXCEPT ALL
-                                SELECT qty FROM trades_b WHERE order_id = o.id
-                            ) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -4804,25 +12463,23 @@ public class LateralJoinTest extends AbstractCairoTest {
             // order 1: trades_a {10,20} \ trades_b {10} = {20}
             // order 2: trades_a {30} \ trades_b {30} = {} → LEFT fills NaN
             // order 3: no trades → LEFT fills NaN
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT qty FROM trades_a WHERE order_id = o.id
+                        EXCEPT
+                        SELECT qty FROM trades_b WHERE order_id = o.id
+                    ) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
                             1\t20.0
                             2\tnull
                             3\tnull
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            LEFT JOIN LATERAL (
-                                SELECT qty FROM trades_a WHERE order_id = o.id
-                                EXCEPT
-                                SELECT qty FROM trades_b WHERE order_id = o.id
-                            ) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -4856,25 +12513,24 @@ public class LateralJoinTest extends AbstractCairoTest {
             // order 2: {10} ∪ {} = {10}
             // order 3: {} ∪ {10} = {10}
             // All three orders produce qty=10, but they must NOT be deduped across groups
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades_a WHERE order_id = o.id
+                        UNION
+                        SELECT qty FROM trades_b WHERE order_id = o.id
+                    ) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty
                             1\t10.0
                             2\t10.0
                             3\t10.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades_a WHERE order_id = o.id
-                                UNION
-                                SELECT qty FROM trades_b WHERE order_id = o.id
-                            ) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -4896,26 +12552,24 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, 20, 3, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, x.result
+                    FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT val + t1.b AS result
+                        FROM (
+                            SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                        )
+                    ) x
+                    ORDER BY t1.a, x.result
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a\tresult
                             10\t101
                             10\t102
                             20\t203
-                            """,
-                    """
-                            SELECT t1.a, x.result
-                            FROM t1
-                            CROSS JOIN LATERAL (
-                                SELECT val + t1.b AS result
-                                FROM (
-                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
-                                )
-                            ) x
-                            ORDER BY t1.a, x.result
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -4939,25 +12593,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Wrapper WHERE references t1.threshold (outer), content WHERE has equality t2.t1_id = t1.a
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, x.val
+                    FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT val FROM (
+                            SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                        )
+                        WHERE val > t1.threshold
+                    ) x
+                    ORDER BY t1.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a\tval
                             1\t10
                             2\t30
-                            """,
-                    """
-                            SELECT t1.a, x.val
-                            FROM t1
-                            CROSS JOIN LATERAL (
-                                SELECT val FROM (
-                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
-                                )
-                                WHERE val > t1.threshold
-                            ) x
-                            ORDER BY t1.a
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -4979,111 +12631,101 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 30, '2024-01-01T01:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, x.result
+                    FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT val + t1.b AS result
+                        FROM (
+                            SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                        )
+                        WHERE val > t1.threshold
+                    ) x
+                    ORDER BY t1.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a\tresult
                             1\t110
                             2\t230
-                            """,
-                    """
-                            SELECT t1.a, x.result
-                            FROM t1
-                            CROSS JOIN LATERAL (
-                                SELECT val + t1.b AS result
-                                FROM (
-                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
-                                )
-                                WHERE val > t1.threshold
-                            ) x
-                            ORDER BY t1.a
-                            """,
-                    null, true, false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, x.result1, x.result
+                    FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT val + t1.b AS result, val + t1.b + 1 AS result1
+                        FROM (
+                            SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                        )
+                        WHERE val > t1.threshold
+                    ) x
+                    ORDER BY t1.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a	result1	result
                             1	111	110
                             2	231	230
-                            """,
-                    """
-                            SELECT t1.a, x.result1, x.result
-                            FROM t1
-                            CROSS JOIN LATERAL (
-                                SELECT val + t1.b AS result, val + t1.b + 1 AS result1
-                                FROM (
-                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
-                                )
-                                WHERE val > t1.threshold
-                            ) x
-                            ORDER BY t1.a
-                            """,
-                    null, true, false
-            );
+                            """);
 
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, x.result1 - x.result
+                    FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT val + t1.b AS result, val + t1.b + 1 AS result1
+                        FROM (
+                            SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                        )
+                        WHERE val > t1.threshold
+                    ) x
+                    ORDER BY t1.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a	column
                             1	1
                             2	1
-                            """,
-                    """
-                            SELECT t1.a, x.result1 - x.result
-                            FROM t1
-                            CROSS JOIN LATERAL (
-                                SELECT val + t1.b AS result, val + t1.b + 1 AS result1
-                                FROM (
-                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
-                                )
-                                WHERE val > t1.threshold
-                            ) x
-                            ORDER BY t1.a
-                            """,
-                    null, true, false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, x.result + 1
+                    FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT val + t1.b AS result, val + t1.b + 1 AS result1
+                        FROM (
+                            SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                        )
+                        WHERE val > t1.threshold and val > 10
+                    ) x
+                    ORDER BY t1.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a	column
                             2	231
-                            """,
-                    """
-                            SELECT t1.a, x.result + 1
-                            FROM t1
-                            CROSS JOIN LATERAL (
-                                SELECT val + t1.b AS result, val + t1.b + 1 AS result1
-                                FROM (
-                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
-                                )
-                                WHERE val > t1.threshold and val > 10
-                            ) x
-                            ORDER BY t1.a
-                            """,
-                    null, true, false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, x.b
+                    FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT t1.b as b
+                        FROM (
+                            SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                        )
+                        WHERE val > t1.threshold or val < 10
+                    ) x
+                    ORDER BY t1.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a	b
                             1	100
                             1	100
                             2	200
-                            """,
-                    """
-                            SELECT t1.a, x.b
-                            FROM t1
-                            CROSS JOIN LATERAL (
-                                SELECT t1.b as b
-                                FROM (
-                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
-                                )
-                                WHERE val > t1.threshold or val < 10
-                            ) x
-                            ORDER BY t1.a
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -5107,25 +12749,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Wrapper SELECT references t1.multiplier, content has aggregate SUM + equality
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, x.result
+                    FROM t1
+                    CROSS JOIN LATERAL (
+                        SELECT total * t1.multiplier AS result
+                        FROM (
+                            SELECT SUM(val) AS total FROM t2 WHERE t2.t1_id = t1.a
+                        )
+                    ) x
+                    ORDER BY t1.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a\tresult
                             1\t100
                             2\t400
-                            """,
-                    """
-                            SELECT t1.a, x.result
-                            FROM t1
-                            CROSS JOIN LATERAL (
-                                SELECT total * t1.multiplier AS result
-                                FROM (
-                                    SELECT SUM(val) AS total FROM t2 WHERE t2.t1_id = t1.a
-                                )
-                            ) x
-                            ORDER BY t1.a
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -5154,23 +12794,21 @@ public class LateralJoinTest extends AbstractCairoTest {
             // Non-equality correlation: items.price > o.total.
             // __outer_ref must preserve the WHERE — without it, order 2's total=100
             // would leak into __outer_ref and produce wrong results.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.price
+                    FROM (SELECT * FROM orders WHERE status = 'active') o
+                    CROSS JOIN LATERAL (
+                        SELECT price FROM items
+                        WHERE order_id = o.id AND price > o.total
+                    ) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tprice
                             1\t60.0
                             3\t250.0
-                            """,
-                    """
-                            SELECT o.id, t.price
-                            FROM (SELECT * FROM orders WHERE status = 'active') o
-                            CROSS JOIN LATERAL (
-                                SELECT price FROM items
-                                WHERE order_id = o.id AND price > o.total
-                            ) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -5192,23 +12830,21 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 30, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT *
+                    FROM t1
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt FROM t2 WHERE t2.t1_id = t1.a
+                    ) t ON true
+                    ORDER BY t1.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a	ts	cnt
                             1	2024-01-01T00:00:00.000000Z	2
                             2	2024-01-01T01:00:00.000000Z	1
                             3	2024-01-01T02:00:00.000000Z	0
-                            """,
-                    """
-                            SELECT *
-                            FROM t1
-                            LEFT JOIN LATERAL (
-                                SELECT count(*) AS cnt FROM t2 WHERE t2.t1_id = t1.a
-                            ) t ON true
-                            ORDER BY t1.a
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -5231,27 +12867,25 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 30, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT *
+                    FROM t1
+                    LEFT JOIN LATERAL (
+                        SELECT ts, count(*) AS cnt, sum(val) AS total
+                        FROM t2
+                        WHERE t2.t1_id = t1.a
+                        SAMPLE BY 30m
+                    ) t ON true
+                    ORDER BY t1.a, t.ts
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a\tts\tts1\tcnt\ttotal
                             1\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1\t10
                             1\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:30:00.000000Z\t1\t20
                             2\t2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t1\t30
-                            3\t2024-01-01T02:00:00.000000Z\t\t0\tnull
-                            """,
-                    """
-                            SELECT *
-                            FROM t1
-                            LEFT JOIN LATERAL (
-                                SELECT ts, count(*) AS cnt, sum(val) AS total
-                                FROM t2
-                                WHERE t2.t1_id = t1.a
-                                SAMPLE BY 30m
-                            ) t ON true
-                            ORDER BY t1.a, t.ts
-                            """,
-                    null, true, false
-            );
+                            3\t2024-01-01T02:00:00.000000Z\t\tnull\tnull
+                            """);
         });
     }
 
@@ -5279,25 +12913,24 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // LEFT JOIN inside LATERAL: tags.order_id = o.id is correlated and in ON clause.
             // It must stay there so that items without matching tags get NULL fill.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.name, sub.tag
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT i.name, t.tag
+                        FROM items i
+                        LEFT JOIN tags t ON t.item_id = i.id AND t.order_id = o.id
+                        WHERE i.order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tname\ttag
                             1\tWidget\tpremium
                             2\tGadget\t
-                            """,
-                    """
-                            SELECT o.id, sub.name, sub.tag
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT i.name, t.tag
-                                FROM items i
-                                LEFT JOIN tags t ON t.item_id = i.id AND t.order_id = o.id
-                                WHERE i.order_id = o.id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -5325,27 +12958,25 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // ORDER BY abs(val - 5) triggers moveOrderByFunctionsIntoOuterSelect.
             // Per-group LIMIT 2: for each t1 row, take 2 vals closest to 5.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, sub.val
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT val FROM t2
+                        WHERE t2.t1_id = t1.a
+                        ORDER BY abs(val - 5)
+                        LIMIT 2
+                    ) sub
+                    ORDER BY t1.a, sub.val
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a\tval
                             1\t3
                             1\t7
                             2\t4
                             2\t8
-                            """,
-                    """
-                            SELECT t1.a, sub.val
-                            FROM t1
-                            JOIN LATERAL (
-                                SELECT val FROM t2
-                                WHERE t2.t1_id = t1.a
-                                ORDER BY abs(val - 5)
-                                LIMIT 2
-                            ) sub
-                            ORDER BY t1.a, sub.val
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -5370,27 +13001,25 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // t1.a=3 has no matching t2 rows → NULL fill from LEFT JOIN
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, sub.val
+                    FROM t1
+                    LEFT JOIN LATERAL (
+                        SELECT val FROM t2
+                        WHERE t2.t1_id = t1.a
+                        ORDER BY val DESC
+                        LIMIT 2
+                    ) sub
+                    ORDER BY t1.a, sub.val DESC
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a\tval
                             1\t30
                             1\t20
                             2\t40
                             3\tnull
-                            """,
-                    """
-                            SELECT t1.a, sub.val
-                            FROM t1
-                            LEFT JOIN LATERAL (
-                                SELECT val FROM t2
-                                WHERE t2.t1_id = t1.a
-                                ORDER BY val DESC
-                                LIMIT 2
-                            ) sub
-                            ORDER BY t1.a, sub.val DESC
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -5418,25 +13047,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // LIMIT 1, 2: rows in [1, 2) — skip 1 row, take 1 row per group (ORDER BY val DESC)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, sub.val
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT val FROM t2
+                        WHERE t2.t1_id = t1.a
+                        ORDER BY val DESC
+                        LIMIT 1, 2
+                    ) sub
+                    ORDER BY t1.a, sub.val DESC
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a\tval
                             1\t30
                             2\t70
-                            """,
-                    """
-                            SELECT t1.a, sub.val
-                            FROM t1
-                            JOIN LATERAL (
-                                SELECT val FROM t2
-                                WHERE t2.t1_id = t1.a
-                                ORDER BY val DESC
-                                LIMIT 1, 2
-                            ) sub
-                            ORDER BY t1.a, sub.val DESC
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -5465,25 +13092,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, 2, 300.0, '2024-01-01T01:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.trade_cnt, f.fill_cnt
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT count(*) AS trade_cnt FROM trades WHERE order_id = o.id
+                    ) t
+                    JOIN LATERAL (
+                        SELECT count(*) AS fill_cnt FROM fills WHERE order_id = o.id
+                    ) f
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\ttrade_cnt\tfill_cnt
                             1\t2\t1
                             2\t1\t2
-                            """,
-                    """
-                            SELECT o.id, t.trade_cnt, f.fill_cnt
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT count(*) AS trade_cnt FROM trades WHERE order_id = o.id
-                            ) t
-                            JOIN LATERAL (
-                                SELECT count(*) AS fill_cnt FROM fills WHERE order_id = o.id
-                            ) f
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -5510,27 +13135,25 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 10, 7, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT c.id, p.id, s.total_qty
+                    FROM customers c
+                    CROSS JOIN products p
+                    LEFT JOIN LATERAL (
+                        SELECT sum(qty)::INT AS total_qty
+                        FROM sales
+                        WHERE customer_id = c.id AND product_id = p.id
+                    ) s
+                    ORDER BY c.id, p.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tid1\ttotal_qty
                             1\t10\t5
                             1\t20\t3
                             2\t10\t7
                             2\t20\tnull
-                            """,
-                    """
-                            SELECT c.id, p.id, s.total_qty
-                            FROM customers c
-                            CROSS JOIN products p
-                            LEFT JOIN LATERAL (
-                                SELECT sum(qty)::INT AS total_qty
-                                FROM sales
-                                WHERE customer_id = c.id AND product_id = p.id
-                            ) s
-                            ORDER BY c.id, p.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -5558,27 +13181,25 @@ public class LateralJoinTest extends AbstractCairoTest {
             // t1.n controls how many rows from t2 to keep via ON rn <= t1.n
             // id=1, n=2 → keep rows with rn<=2 → val 10, 20
             // id=2, n=3 → keep rows with rn<=3 → val 40, 50, 60
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.id, sub.val, sub.rn
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT val, row_number() OVER (ORDER BY ts) AS rn
+                        FROM t2
+                        WHERE t2.t1_id = t1.id
+                    ) sub ON sub.rn <= t1.n
+                    ORDER BY t1.id, sub.rn
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tval\trn
                             1\t10\t1
                             1\t20\t2
                             2\t40\t1
                             2\t50\t2
                             2\t60\t3
-                            """,
-                    """
-                            SELECT t1.id, sub.val, sub.rn
-                            FROM t1
-                            JOIN LATERAL (
-                                SELECT val, row_number() OVER (ORDER BY ts) AS rn
-                                FROM t2
-                                WHERE t2.t1_id = t1.id
-                            ) sub ON sub.rn <= t1.n
-                            ORDER BY t1.id, sub.rn
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -5607,26 +13228,24 @@ public class LateralJoinTest extends AbstractCairoTest {
             // id=1, n=2: rows with rn<=2 → val 10,20
             // id=2, n=1: rows with rn<=1 → val 40
             // id=3, n=5: no trades for t1_id=3 → NULL
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.id, sub.val, sub.rn
+                    FROM t1
+                    LEFT JOIN LATERAL (
+                        SELECT val, row_number() OVER (ORDER BY ts) AS rn
+                        FROM t2
+                        WHERE t2.t1_id = t1.id
+                    ) sub ON sub.rn <= t1.n
+                    ORDER BY t1.id, sub.rn
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tval\trn
                             1\t10\t1
                             1\t20\t2
                             2\t40\t1
                             3\tnull\tnull
-                            """,
-                    """
-                            SELECT t1.id, sub.val, sub.rn
-                            FROM t1
-                            LEFT JOIN LATERAL (
-                                SELECT val, row_number() OVER (ORDER BY ts) AS rn
-                                FROM t2
-                                WHERE t2.t1_id = t1.id
-                            ) sub ON sub.rn <= t1.n
-                            ORDER BY t1.id, sub.rn
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -5656,27 +13275,25 @@ public class LateralJoinTest extends AbstractCairoTest {
             // ON has equality (sub.cat = t1.cat) + non-equality (sub.rn <= t1.n)
             // id=1, cat=A, n=2: cat filter excludes val=99(cat=X), rn filter keeps val 10,20
             // id=2, cat=B, n=3: rn filter keeps val 40,50,60
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.id, sub.val, sub.rn
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT val, cat, row_number() OVER (ORDER BY ts) AS rn
+                        FROM t2
+                        WHERE t2.t1_id = t1.id
+                    ) sub ON sub.cat = t1.cat AND sub.rn <= t1.n
+                    ORDER BY t1.id, sub.rn
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tval\trn
                             1\t10\t1
                             1\t20\t2
                             2\t40\t1
                             2\t50\t2
                             2\t60\t3
-                            """,
-                    """
-                            SELECT t1.id, sub.val, sub.rn
-                            FROM t1
-                            JOIN LATERAL (
-                                SELECT val, cat, row_number() OVER (ORDER BY ts) AS rn
-                                FROM t2
-                                WHERE t2.t1_id = t1.id
-                            ) sub ON sub.cat = t1.cat AND sub.rn <= t1.n
-                            ORDER BY t1.id, sub.rn
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -5700,25 +13317,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 'Z', 88, '2024-01-01T01:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.id, sub.val
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT val, cat
+                        FROM t2
+                        WHERE t2.t1_id = t1.id
+                    ) sub ON sub.cat = t1.cat
+                    ORDER BY t1.id, sub.val
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
                             1\t10
                             1\t20
                             2\t30
-                            """,
-                    """
-                            SELECT t1.id, sub.val
-                            FROM t1
-                            JOIN LATERAL (
-                                SELECT val, cat
-                                FROM t2
-                                WHERE t2.t1_id = t1.id
-                            ) sub ON sub.cat = t1.cat
-                            ORDER BY t1.id, sub.val
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -5767,8 +13382,99 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ('mm6', 'GOOG', 6, 100.0, 0.05,  'Pct', '2024-01-01T00:00:05.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                     WITH
+                      side_totals AS (
+                        SELECT mm_id, symbol, side, sum(qty) AS total_qty
+                        FROM mm_book
+                        WHERE qty > 0
+                        GROUP BY mm_id, symbol, side
+                      ),
+                      both_sides AS (
+                        SELECT mm_id, symbol,
+                               coalesce(sum(CASE WHEN side = 'BID' THEN total_qty END), 0) AS qty_buy,
+                               coalesce(sum(CASE WHEN side = 'ASK' THEN total_qty END), 0) AS qty_sell
+                        FROM side_totals
+                        GROUP BY mm_id, symbol
+                      ),
+                      with_obligations AS (
+                        SELECT b.mm_id, b.symbol, b.qty_buy, b.qty_sell,
+                               o.obligation_id, o.min_qty, o.max_spread, o.spread_type
+                        FROM both_sides b
+                        JOIN mm_obligations o ON b.mm_id = o.mm_id AND b.symbol = o.symbol
+                      ),
+                      pre_check AS (
+                        SELECT *,
+                               CASE
+                                 WHEN qty_buy = 0 AND qty_sell = 0 THEN 'NoOrders'
+                                 WHEN qty_buy = 0               THEN 'BuyQuantity'
+                                 WHEN qty_sell = 0              THEN 'SellQuantity'
+                                 WHEN qty_buy < min_qty AND qty_sell < min_qty THEN 'Quantity'
+                                 WHEN qty_buy < min_qty         THEN 'BuyQuantity'
+                                 WHEN qty_sell < min_qty        THEN 'SellQuantity'
+                                 ELSE NULL
+                               END AS early_fail
+                        FROM with_obligations
+                      ),
+                      bid_sweep AS (
+                        SELECT p.mm_id, p.symbol, p.obligation_id, p.min_qty,
+                               sum(bk.price * LEAST(bk.qty,
+                                   GREATEST(0, p.min_qty - (bk.cum_qty - bk.qty)))
+                               ) / p.min_qty AS avg_price_buy
+                        FROM pre_check p
+                        JOIN LATERAL (
+                          SELECT price, qty,
+                                 sum(qty) OVER (ORDER BY price DESC) AS cum_qty
+                          FROM mm_book
+                          WHERE mm_id = p.mm_id AND symbol = p.symbol
+                            AND side = 'BID' AND qty > 0
+                        ) bk ON bk.cum_qty - bk.qty < p.min_qty
+                        WHERE p.early_fail IS NULL
+                        GROUP BY p.mm_id, p.symbol, p.obligation_id, p.min_qty
+                      ),
+                      ask_sweep AS (
+                        SELECT p.mm_id, p.symbol, p.obligation_id, p.min_qty,
+                               sum(bk.price * LEAST(bk.qty,
+                                   GREATEST(0, p.min_qty - (bk.cum_qty - bk.qty)))
+                               ) / p.min_qty AS avg_price_sell
+                        FROM pre_check p
+                        JOIN LATERAL (
+                          SELECT price, qty,
+                                 sum(qty) OVER (ORDER BY price ASC) AS cum_qty
+                          FROM mm_book
+                          WHERE mm_id = p.mm_id AND symbol = p.symbol
+                            AND side = 'ASK' AND qty > 0
+                        ) bk ON bk.cum_qty - bk.qty < p.min_qty
+                        WHERE p.early_fail IS NULL
+                        GROUP BY p.mm_id, p.symbol, p.obligation_id, p.min_qty
+                      )
+                    SELECT
+                      p.mm_id, p.symbol, p.obligation_id,
+                      CASE
+                        WHEN p.early_fail IS NOT NULL THEN p.early_fail
+                        WHEN p.spread_type = 'Pct'
+                          AND (a.avg_price_sell / b.avg_price_buy) - 1 > p.max_spread THEN 'Spread'
+                        WHEN p.spread_type = 'Abs'
+                          AND a.avg_price_sell - b.avg_price_buy > p.max_spread THEN 'Spread'
+                        ELSE 'None'
+                      END AS non_compliance_reason,
+                      b.avg_price_buy,
+                      a.avg_price_sell,
+                      p.qty_buy,
+                      p.qty_sell,
+                      CASE WHEN p.spread_type = 'Pct'
+                        THEN (a.avg_price_sell / b.avg_price_buy) - 1
+                        ELSE a.avg_price_sell - b.avg_price_buy
+                      END AS spread
+                    FROM pre_check p
+                    LEFT JOIN bid_sweep b ON p.mm_id = b.mm_id AND p.symbol = b.symbol
+                      AND p.obligation_id = b.obligation_id
+                    LEFT JOIN ask_sweep a ON p.mm_id = a.mm_id AND p.symbol = a.symbol
+                      AND p.obligation_id = a.obligation_id
+                    ORDER BY p.mm_id, p.symbol
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             mm_id\tsymbol\tobligation_id\tnon_compliance_reason\tavg_price_buy\tavg_price_sell\tqty_buy\tqty_sell\tspread
                             mm1\tAAPL\t1\tNone\t100.0\t102.0\t300.0\t300.0\t0.020000000000000018
                             mm2\tAAPL\t2\tSellQuantity\tnull\tnull\t100.0\t0.0\tnull
@@ -5776,100 +13482,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             mm4\tMSFT\t4\tNone\t50.0\t51.0\t200.0\t200.0\t1.0
                             mm5\tGOOG\t5\tQuantity\tnull\tnull\t30.0\t30.0\tnull
                             mm6\tGOOG\t6\tBuyQuantity\tnull\tnull\t0.0\t200.0\tnull
-                            """,
-                    """
-                             WITH
-                              side_totals AS (
-                                SELECT mm_id, symbol, side, sum(qty) AS total_qty
-                                FROM mm_book
-                                WHERE qty > 0
-                                GROUP BY mm_id, symbol, side
-                              ),
-                              both_sides AS (
-                                SELECT mm_id, symbol,
-                                       coalesce(sum(CASE WHEN side = 'BID' THEN total_qty END), 0) AS qty_buy,
-                                       coalesce(sum(CASE WHEN side = 'ASK' THEN total_qty END), 0) AS qty_sell
-                                FROM side_totals
-                                GROUP BY mm_id, symbol
-                              ),
-                              with_obligations AS (
-                                SELECT b.mm_id, b.symbol, b.qty_buy, b.qty_sell,
-                                       o.obligation_id, o.min_qty, o.max_spread, o.spread_type
-                                FROM both_sides b
-                                JOIN mm_obligations o ON b.mm_id = o.mm_id AND b.symbol = o.symbol
-                              ),
-                              pre_check AS (
-                                SELECT *,
-                                       CASE
-                                         WHEN qty_buy = 0 AND qty_sell = 0 THEN 'NoOrders'
-                                         WHEN qty_buy = 0               THEN 'BuyQuantity'
-                                         WHEN qty_sell = 0              THEN 'SellQuantity'
-                                         WHEN qty_buy < min_qty AND qty_sell < min_qty THEN 'Quantity'
-                                         WHEN qty_buy < min_qty         THEN 'BuyQuantity'
-                                         WHEN qty_sell < min_qty        THEN 'SellQuantity'
-                                         ELSE NULL
-                                       END AS early_fail
-                                FROM with_obligations
-                              ),
-                              bid_sweep AS (
-                                SELECT p.mm_id, p.symbol, p.obligation_id, p.min_qty,
-                                       sum(bk.price * LEAST(bk.qty,
-                                           GREATEST(0, p.min_qty - (bk.cum_qty - bk.qty)))
-                                       ) / p.min_qty AS avg_price_buy
-                                FROM pre_check p
-                                JOIN LATERAL (
-                                  SELECT price, qty,
-                                         sum(qty) OVER (ORDER BY price DESC) AS cum_qty
-                                  FROM mm_book
-                                  WHERE mm_id = p.mm_id AND symbol = p.symbol
-                                    AND side = 'BID' AND qty > 0
-                                ) bk ON bk.cum_qty - bk.qty < p.min_qty
-                                WHERE p.early_fail IS NULL
-                                GROUP BY p.mm_id, p.symbol, p.obligation_id, p.min_qty
-                              ),
-                              ask_sweep AS (
-                                SELECT p.mm_id, p.symbol, p.obligation_id, p.min_qty,
-                                       sum(bk.price * LEAST(bk.qty,
-                                           GREATEST(0, p.min_qty - (bk.cum_qty - bk.qty)))
-                                       ) / p.min_qty AS avg_price_sell
-                                FROM pre_check p
-                                JOIN LATERAL (
-                                  SELECT price, qty,
-                                         sum(qty) OVER (ORDER BY price ASC) AS cum_qty
-                                  FROM mm_book
-                                  WHERE mm_id = p.mm_id AND symbol = p.symbol
-                                    AND side = 'ASK' AND qty > 0
-                                ) bk ON bk.cum_qty - bk.qty < p.min_qty
-                                WHERE p.early_fail IS NULL
-                                GROUP BY p.mm_id, p.symbol, p.obligation_id, p.min_qty
-                              )
-                            SELECT
-                              p.mm_id, p.symbol, p.obligation_id,
-                              CASE
-                                WHEN p.early_fail IS NOT NULL THEN p.early_fail
-                                WHEN p.spread_type = 'Pct'
-                                  AND (a.avg_price_sell / b.avg_price_buy) - 1 > p.max_spread THEN 'Spread'
-                                WHEN p.spread_type = 'Abs'
-                                  AND a.avg_price_sell - b.avg_price_buy > p.max_spread THEN 'Spread'
-                                ELSE 'None'
-                              END AS non_compliance_reason,
-                              b.avg_price_buy,
-                              a.avg_price_sell,
-                              p.qty_buy,
-                              p.qty_sell,
-                              CASE WHEN p.spread_type = 'Pct'
-                                THEN (a.avg_price_sell / b.avg_price_buy) - 1
-                                ELSE a.avg_price_sell - b.avg_price_buy
-                              END AS spread
-                            FROM pre_check p
-                            LEFT JOIN bid_sweep b ON p.mm_id = b.mm_id AND p.symbol = b.symbol
-                              AND p.obligation_id = b.obligation_id
-                            LEFT JOIN ask_sweep a ON p.mm_id = a.mm_id AND p.symbol = a.symbol
-                              AND p.obligation_id = a.obligation_id
-                            ORDER BY p.mm_id, p.symbol
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -6000,15 +13613,13 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
             drainWalAndMatViewQueues();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM mm_compliance ORDER BY mm_id, symbol")
+                    .noLeakCheck()
+                    .returns("""
                             mm_id\tsymbol\tobligation_id\tnon_compliance_reason\tavg_price_buy\tavg_price_sell\tqty_buy\tqty_sell\tspread
                             mm1\tAAPL\t1\tNone\t100.0\t102.0\t200.0\t200.0\t0.020000000000000018
                             mm2\tAAPL\t2\tSellQuantity\tnull\tnull\t100.0\t0.0\tnull
-                            """,
-                    "SELECT * FROM mm_compliance ORDER BY mm_id, symbol",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -6044,27 +13655,25 @@ public class LateralJoinTest extends AbstractCairoTest {
             // order 1: total_qty=30 → fees with threshold < 30: 15(0.5), 25(1.0)
             // order 2: total_qty=30 → fees with threshold < 30: 10(0.3)
             // order 3: no trades → dropped by INNER
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, a.total_qty, b.fee
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT sum(qty) AS total_qty FROM trades WHERE order_id = o.id
+                    ) a
+                    JOIN LATERAL (
+                        SELECT fee FROM fees
+                        WHERE order_id = o.id AND qty_threshold < a.total_qty
+                    ) b
+                    ORDER BY o.id, b.fee
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\ttotal_qty\tfee
                             1\t30.0\t0.5
                             1\t30.0\t1.0
                             2\t30.0\t0.3
-                            """,
-                    """
-                            SELECT o.id, a.total_qty, b.fee
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT sum(qty) AS total_qty FROM trades WHERE order_id = o.id
-                            ) a
-                            JOIN LATERAL (
-                                SELECT fee FROM fees
-                                WHERE order_id = o.id AND qty_threshold < a.total_qty
-                            ) b
-                            ORDER BY o.id, b.fee
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -6102,32 +13711,30 @@ public class LateralJoinTest extends AbstractCairoTest {
             // Lateral B: references A's rank to find matching bonuses
             // order 1: top trade qty=30 rank=1 → bonuses with min_rank <= 1: bonus=100
             // order 2: top trade qty=50 rank=1 → bonuses with min_rank <= 1: bonus=100
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, a.qty, a.rank, b.bonus
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty, rank FROM (
+                            SELECT qty, row_number() OVER (ORDER BY qty DESC) AS rank
+                            FROM trades
+                            WHERE order_id = o.id
+                        ) WHERE rank = 1
+                    ) a
+                    JOIN LATERAL (
+                        SELECT bonus FROM bonuses
+                        WHERE min_rank <= a.rank
+                        ORDER BY bonus DESC
+                        LIMIT 1
+                    ) b
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty\trank\tbonus
                             1\t30.0\t1\t100.0
                             2\t50.0\t1\t100.0
-                            """,
-                    """
-                            SELECT o.id, a.qty, a.rank, b.bonus
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty, rank FROM (
-                                    SELECT qty, row_number() OVER (ORDER BY qty DESC) AS rank
-                                    FROM trades
-                                    WHERE order_id = o.id
-                                ) WHERE rank = 1
-                            ) a
-                            JOIN LATERAL (
-                                SELECT bonus FROM bonuses
-                                WHERE min_rank <= a.rank
-                                ORDER BY bonus DESC
-                                LIMIT 1
-                            ) b
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -6144,30 +13751,30 @@ public class LateralJoinTest extends AbstractCairoTest {
             execute("INSERT INTO t3 VALUES (100, 10, '2024-01-01T00:20:00.000000Z')");
             execute("INSERT INTO t4 VALUES (1000, 100, '2024-01-01T00:30:00.000000Z')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, s1.b, s1.c, s1.d
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT t2.b, s2.c, s2.d
+                        FROM t2
+                        JOIN LATERAL (
+                            SELECT t3.c, s3.d
+                            FROM t3
+                            JOIN LATERAL (
+                                SELECT d FROM t4 WHERE t4.t3_c = t3.c
+                            ) s3
+                            WHERE t3.t2_b = t2.b
+                        ) s2
+                        WHERE t2.t1_a = t1.a
+                    ) s1
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             a\tb\tc\td
                             1\t10\t100\t1000
-                            """,
-                    """
-                            SELECT t1.a, s1.b, s1.c, s1.d
-                            FROM t1
-                            JOIN LATERAL (
-                                SELECT t2.b, s2.c, s2.d
-                                FROM t2
-                                JOIN LATERAL (
-                                    SELECT t3.c, s3.d
-                                    FROM t3
-                                    JOIN LATERAL (
-                                        SELECT d FROM t4 WHERE t4.t3_c = t3.c
-                                    ) s3
-                                    WHERE t3.t2_b = t2.b
-                                ) s2
-                                WHERE t2.t1_a = t1.a
-                            ) s1
-                            """,
-                    null, false, true
-            );
+                            """);
         });
     }
 
@@ -6188,28 +13795,27 @@ public class LateralJoinTest extends AbstractCairoTest {
             execute("INSERT INTO trades_b VALUES (1, 20, '2024-01-01T00:20:00.000000Z'), (2, 30, '2024-01-01T01:10:00.000000Z')");
             execute("INSERT INTO trades_c VALUES (2, 40, '2024-01-01T01:20:00.000000Z')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades_a WHERE order_id = o.id
+                        UNION ALL
+                        SELECT qty FROM trades_b WHERE order_id = o.id
+                        UNION ALL
+                        SELECT qty FROM trades_c WHERE order_id = o.id
+                    ) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty
                             1\t10
                             1\t20
                             2\t30
                             2\t40
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades_a WHERE order_id = o.id
-                                UNION ALL
-                                SELECT qty FROM trades_b WHERE order_id = o.id
-                                UNION ALL
-                                SELECT qty FROM trades_c WHERE order_id = o.id
-                            ) t
-                            ORDER BY o.id, t.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -6234,27 +13840,26 @@ public class LateralJoinTest extends AbstractCairoTest {
             // Branch 1: aggregate (sum), Branch 2: scan (individual rows)
             // order 1: sum=30 + rows 10,20 → 10,20,30
             // order 2: sum=30 + row 30 → 30,30 (duplicate value from two branches)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.val
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT sum(qty) AS val FROM trades WHERE order_id = o.id
+                        UNION ALL
+                        SELECT qty AS val FROM trades WHERE order_id = o.id
+                    ) t
+                    ORDER BY o.id, t.val
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tval
                             1\t10.0
                             1\t20.0
                             1\t30.0
                             2\t30.0
                             2\t30.0
-                            """,
-                    """
-                            SELECT o.id, t.val
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT sum(qty) AS val FROM trades WHERE order_id = o.id
-                                UNION ALL
-                                SELECT qty AS val FROM trades WHERE order_id = o.id
-                            ) t
-                            ORDER BY o.id, t.val
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -6281,28 +13886,27 @@ public class LateralJoinTest extends AbstractCairoTest {
             // Inner lateral references both t2 (immediate parent) and t1 (grandparent)
             // t1.a=1, t2.b=10: t3 where t1_a=1 AND t2_b=10 → c=100
             // t1.a=2, t2.b=20: t3 where t1_a=2 AND t2_b=20 → c=200
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, s1.b, s1.c
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT t2.b, s2.c
+                        FROM t2
+                        JOIN LATERAL (
+                            SELECT c FROM t3
+                            WHERE t3.t1_a = t1.a AND t3.t2_b = t2.b
+                        ) s2
+                        WHERE t2.t1_a = t1.a
+                    ) s1
+                    ORDER BY t1.a
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             a\tb\tc
                             1\t10\t100
                             2\t20\t200
-                            """,
-                    """
-                            SELECT t1.a, s1.b, s1.c
-                            FROM t1
-                            JOIN LATERAL (
-                                SELECT t2.b, s2.c
-                                FROM t2
-                                JOIN LATERAL (
-                                    SELECT c FROM t3
-                                    WHERE t3.t1_a = t1.a AND t3.t2_b = t2.b
-                                ) s2
-                                WHERE t2.t1_a = t1.a
-                            ) s1
-                            ORDER BY t1.a
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -6335,27 +13939,25 @@ public class LateralJoinTest extends AbstractCairoTest {
             // order 1: qty=100 → discounts 50(0.1), 80(0.2)
             // order 2: qty=20 → no discount match → null
             // order 3: no trades → null total_qty → null
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, a.total_qty, b.rate
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT sum(qty) AS total_qty FROM trades WHERE order_id = o.id
+                    ) a
+                    LEFT JOIN LATERAL (
+                        SELECT rate FROM discounts WHERE min_qty <= a.total_qty
+                    ) b
+                    ORDER BY o.id, b.rate
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\ttotal_qty\trate
                             1\t100.0\t0.1
                             1\t100.0\t0.2
                             2\t20.0\tnull
                             3\tnull\tnull
-                            """,
-                    """
-                            SELECT o.id, a.total_qty, b.rate
-                            FROM orders o
-                            LEFT JOIN LATERAL (
-                                SELECT sum(qty) AS total_qty FROM trades WHERE order_id = o.id
-                            ) a
-                            LEFT JOIN LATERAL (
-                                SELECT rate FROM discounts WHERE min_qty <= a.total_qty
-                            ) b
-                            ORDER BY o.id, b.rate
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -6385,24 +13987,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Inside the lateral: CROSS JOIN of two subqueries, BOTH correlated to outer o.id
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.item_cnt, sub.total_paid
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ic.item_cnt, ps.total_paid
+                        FROM (SELECT count(*)::INT AS item_cnt FROM items WHERE order_id = o.id) ic
+                        CROSS JOIN (SELECT sum(amount) AS total_paid FROM payments WHERE order_id = o.id) ps
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\titem_cnt\ttotal_paid
                             1\t2\t50.0
                             2\t1\t50.0
-                            """,
-                    """
-                            SELECT o.id, sub.item_cnt, sub.total_paid
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT ic.item_cnt, ps.total_paid
-                                FROM (SELECT count(*)::INT AS item_cnt FROM items WHERE order_id = o.id) ic
-                                CROSS JOIN (SELECT sum(amount) AS total_paid FROM payments WHERE order_id = o.id) ps
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -6430,28 +14031,26 @@ public class LateralJoinTest extends AbstractCairoTest {
             // Post-join WHERE t.total > 20 further filters results
             // order 1: cat X total=20 (passes inner, fails post-join), cat Y total=3 (fails inner)
             // order 2: cat X total=25 (passes both), cat Y total=30 (passes both)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.category, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT category, total FROM (
+                            SELECT category, sum(qty) AS total
+                            FROM trades
+                            WHERE order_id = o.id
+                            GROUP BY category
+                        ) WHERE total > 10
+                    ) t
+                    WHERE t.total > 20
+                    ORDER BY o.id, t.category
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcategory\ttotal
                             2\tX\t25.0
                             2\tY\t30.0
-                            """,
-                    """
-                            SELECT o.id, t.category, t.total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT category, total FROM (
-                                    SELECT category, sum(qty) AS total
-                                    FROM trades
-                                    WHERE order_id = o.id
-                                    GROUP BY category
-                                ) WHERE total > 10
-                            ) t
-                            WHERE t.total > 20
-                            ORDER BY o.id, t.category
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -6472,22 +14071,20 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Non-constant LIMIT expression: abs(2) = 2
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.id, sub.val
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT val FROM t2 WHERE t2.t1_id = t1.id ORDER BY val LIMIT abs(2)
+                    ) sub
+                    ORDER BY t1.id, sub.val
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
                             1\t10
                             1\t20
-                            """,
-                    """
-                            SELECT t1.id, sub.val
-                            FROM t1
-                            JOIN LATERAL (
-                                SELECT val FROM t2 WHERE t2.t1_id = t1.id ORDER BY val LIMIT abs(2)
-                            ) sub
-                            ORDER BY t1.id, sub.val
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -6510,26 +14107,25 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 40, '2024-01-01T01:20:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.id, sub.val, sub.doubled_running
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT val, (sum(val) OVER (ORDER BY ts)) * 2 AS doubled_running
+                        FROM t2
+                        WHERE t2.t1_id = t1.id
+                    ) sub
+                    ORDER BY t1.id, sub.val
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id	val	doubled_running
                             1	10	20.0
                             1	20	60.0
                             2	30	60.0
                             2	40	140.0
-                            """,
-                    """
-                            SELECT t1.id, sub.val, sub.doubled_running
-                            FROM t1
-                            JOIN LATERAL (
-                                SELECT val, (sum(val) OVER (ORDER BY ts)) * 2 AS doubled_running
-                                FROM t2
-                                WHERE t2.t1_id = t1.id
-                            ) sub
-                            ORDER BY t1.id, sub.val
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -6557,30 +14153,29 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Each UNION branch has its own row_number() window function
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.id, sub.val, sub.rn
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT val, row_number() OVER (ORDER BY ts) AS rn
+                        FROM t2
+                        WHERE t2.t1_id = t1.id
+                        UNION ALL
+                        SELECT val, row_number() OVER (ORDER BY ts) AS rn
+                        FROM t3
+                        WHERE t3.t1_id = t1.id
+                    ) sub
+                    ORDER BY t1.id, sub.val
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tval\trn
                             1\t10\t1
                             1\t20\t2
                             2\t30\t1
                             2\t40\t2
-                            """,
-                    """
-                            SELECT t1.id, sub.val, sub.rn
-                            FROM t1
-                            JOIN LATERAL (
-                                SELECT val, row_number() OVER (ORDER BY ts) AS rn
-                                FROM t2
-                                WHERE t2.t1_id = t1.id
-                                UNION ALL
-                                SELECT val, row_number() OVER (ORDER BY ts) AS rn
-                                FROM t3
-                                WHERE t3.t1_id = t1.id
-                            ) sub
-                            ORDER BY t1.id, sub.val
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -6603,23 +14198,21 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // SELECT * must not expose __qdb_outer_ref__ columns
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT *
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT val, ts FROM t2 WHERE t2.t1_a = t1.a
+                    ) sub
+                    ORDER BY t1.a, sub.val
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a\tts\tval\tts1
                             1\t2024-01-01T00:00:00.000000Z\t10\t2024-01-01T00:10:00.000000Z
                             1\t2024-01-01T00:00:00.000000Z\t20\t2024-01-01T00:20:00.000000Z
                             2\t2024-01-01T01:00:00.000000Z\t30\t2024-01-01T01:10:00.000000Z
-                            """,
-                    """
-                            SELECT *
-                            FROM t1
-                            JOIN LATERAL (
-                                SELECT val, ts FROM t2 WHERE t2.t1_a = t1.a
-                            ) sub
-                            ORDER BY t1.a, sub.val
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -6651,27 +14244,26 @@ public class LateralJoinTest extends AbstractCairoTest {
             // Branch 2: non-equality correlation t3.threshold < t1.id (blocks elimination)
             // id=1: t2 val=10; t3 threshold<1 → threshold=0(val=100)
             // id=2: t2 val=20; t3 threshold<2 → threshold=0(val=100), threshold=1(val=200)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.id, sub.val
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT val FROM t2 WHERE t2.t1_id = t1.id
+                        UNION ALL
+                        SELECT val FROM t3 WHERE t3.threshold < t1.id
+                    ) sub
+                    ORDER BY t1.id, sub.val
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tval
                             1\t10
                             1\t100
                             2\t20
                             2\t100
                             2\t200
-                            """,
-                    """
-                            SELECT t1.id, sub.val
-                            FROM t1
-                            JOIN LATERAL (
-                                SELECT val FROM t2 WHERE t2.t1_id = t1.id
-                                UNION ALL
-                                SELECT val FROM t3 WHERE t3.threshold < t1.id
-                            ) sub
-                            ORDER BY t1.id, sub.val
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -6701,30 +14293,29 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // LATEST BY inside each UNION branch: keeps last row per category
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.category, sub.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT category, qty FROM trades_a
+                        WHERE order_id = o.id
+                        LATEST ON ts PARTITION BY category
+                        UNION ALL
+                        SELECT category, qty FROM trades_b
+                        WHERE order_id = o.id
+                        LATEST ON ts PARTITION BY category
+                    ) sub
+                    ORDER BY o.id, sub.category
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tcategory\tqty
                             1\tX\t15.0
                             1\tY\t5.0
                             2\tX\t20.0
                             2\tY\t30.0
-                            """,
-                    """
-                            SELECT o.id, sub.category, sub.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT category, qty FROM trades_a
-                                WHERE order_id = o.id
-                                LATEST ON ts PARTITION BY category
-                                UNION ALL
-                                SELECT category, qty FROM trades_b
-                                WHERE order_id = o.id
-                                LATEST ON ts PARTITION BY category
-                            ) sub
-                            ORDER BY o.id, sub.category
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -6751,26 +14342,24 @@ public class LateralJoinTest extends AbstractCairoTest {
             // order 1: latest A=20, latest B=30
             // order 2: latest A=40
             // order 3: no trades → NULL fill
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.category, t.qty
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT category, qty FROM trades
+                        WHERE order_id = o.id
+                        LATEST ON ts PARTITION BY category
+                    ) t
+                    ORDER BY o.id, t.category
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcategory\tqty
                             1\tA\t20.0
                             1\tB\t30.0
                             2\tA\t40.0
                             3\t\tnull
-                            """,
-                    """
-                            SELECT o.id, t.category, t.qty
-                            FROM orders o
-                            LEFT JOIN LATERAL (
-                                SELECT category, qty FROM trades
-                                WHERE order_id = o.id
-                                LATEST ON ts PARTITION BY category
-                            ) t
-                            ORDER BY o.id, t.category
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -6798,26 +14387,24 @@ public class LateralJoinTest extends AbstractCairoTest {
             // Two correlation columns: mm_id + symbol
             // mm1/AAPL: latest BID=100, latest ASK=101
             // mm2/AAPL: latest BID=98, latest ASK=103
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT m.mm_id, m.symbol, q.side, q.price
+                    FROM markets m
+                    JOIN LATERAL (
+                        SELECT side, price FROM quotes
+                        WHERE mm_id = m.mm_id AND symbol = m.symbol
+                        LATEST ON ts PARTITION BY side
+                    ) q
+                    ORDER BY m.mm_id, q.side
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             mm_id\tsymbol\tside\tprice
                             mm1\tAAPL\tASK\t101.0
                             mm1\tAAPL\tBID\t100.0
                             mm2\tAAPL\tASK\t103.0
                             mm2\tAAPL\tBID\t98.0
-                            """,
-                    """
-                            SELECT m.mm_id, m.symbol, q.side, q.price
-                            FROM markets m
-                            JOIN LATERAL (
-                                SELECT side, price FROM quotes
-                                WHERE mm_id = m.mm_id AND symbol = m.symbol
-                                LATEST ON ts PARTITION BY side
-                            ) q
-                            ORDER BY m.mm_id, q.side
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -6846,26 +14433,46 @@ public class LateralJoinTest extends AbstractCairoTest {
             //   latest per category: A=20, B=30
             // order 2 (start_ts=01:00): trades after 01:00 → A@01:10(40), B@01:20(50)
             //   latest per category: A=40, B=50
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.category, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT category, qty FROM trades
+                        WHERE ts > o.start_ts
+                        LATEST ON ts PARTITION BY category
+                    ) t
+                    ORDER BY o.id, t.category
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id	category	qty
                             1	A	40.0
                             1	B	50.0
                             2	A	40.0
                             2	B	50.0
-                            """,
-                    """
-                            SELECT o.id, t.category, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT category, qty FROM trades
-                                WHERE ts > o.start_ts
-                                LATEST ON ts PARTITION BY category
-                            ) t
-                            ORDER BY o.id, t.category
-                            """,
-                    null, true, false
-            );
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, t.*
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT category, qty
+                        FROM (
+                            SELECT category, qty FROM trades
+                            WHERE ts > o.start_ts
+                            LATEST ON ts PARTITION BY category
+                        ) latest_trade
+                    ) t
+                    ORDER BY o.id, t.category
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tcategory\tqty
+                            1\tA\t40.0
+                            1\tB\t50.0
+                            2\tA\t40.0
+                            2\tB\t50.0
+                            """);
         });
     }
 
@@ -6893,23 +14500,21 @@ public class LateralJoinTest extends AbstractCairoTest {
             // Since o.id is constant per lateral execution, each order gets the latest trade overall
             // order 1: latest of ALL trades = qty=30 (ts=01:10)
             // order 2: latest of ALL trades = qty=30 (ts=01:10)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades
+                        LATEST ON ts PARTITION BY id
+                    ) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
                             1\t30.0
                             2\t30.0
-                            """,
-                    """
-                            SELECT o.id, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades
-                                LATEST ON ts PARTITION BY id
-                            ) t
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -6940,26 +14545,24 @@ public class LateralJoinTest extends AbstractCairoTest {
             //   latest per category: A=20, B=30
             // order 2 (min_ts=01:15): trades with order_id=2 AND ts>01:15 → A@01:20(50), B@01:30(60)
             //   latest per category: A=50, B=60
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.category, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT category, qty FROM trades
+                        WHERE order_id = o.id AND ts > o.min_ts
+                        LATEST ON ts PARTITION BY category
+                    ) t
+                    ORDER BY o.id, t.category
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcategory\tqty
                             1\tA\t20.0
                             1\tB\t30.0
                             2\tA\t50.0
                             2\tB\t60.0
-                            """,
-                    """
-                            SELECT o.id, t.category, t.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT category, qty FROM trades
-                                WHERE order_id = o.id AND ts > o.min_ts
-                                LATEST ON ts PARTITION BY category
-                            ) t
-                            ORDER BY o.id, t.category
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -6983,25 +14586,23 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // order 1 (start_ts=00:15): trades after 00:15 → A=20, B=30
             // order 2 (start_ts=23:00): no trades after 23:00 → NULL
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, t.category, t.qty
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT category, qty FROM trades
+                        WHERE ts > o.start_ts
+                        LATEST ON ts PARTITION BY category
+                    ) t
+                    ORDER BY o.id, t.category
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcategory\tqty
                             1\tA\t20.0
                             1\tB\t30.0
                             2\t\tnull
-                            """,
-                    """
-                            SELECT o.id, t.category, t.qty
-                            FROM orders o
-                            LEFT JOIN LATERAL (
-                                SELECT category, qty FROM trades
-                                WHERE ts > o.start_ts
-                                LATEST ON ts PARTITION BY category
-                            ) t
-                            ORDER BY o.id, t.category
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -7014,32 +14615,28 @@ public class LateralJoinTest extends AbstractCairoTest {
             execute("INSERT INTO t2 VALUES (1, 10, '2024-01-01T00:10:00.000000Z')");
 
             // Empty outer with INNER → 0 rows
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.id, sub.val
+                    FROM t1
+                    JOIN LATERAL (SELECT val FROM t2 WHERE t2.t1_id = t1.id) sub
+                    ORDER BY t1.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
-                            """,
-                    """
-                            SELECT t1.id, sub.val
-                            FROM t1
-                            JOIN LATERAL (SELECT val FROM t2 WHERE t2.t1_id = t1.id) sub
-                            ORDER BY t1.id
-                            """,
-                    null, true, false
-            );
+                            """);
 
             // Empty outer with LEFT → 0 rows (LEFT doesn't create rows from nothing)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.id, sub.val
+                    FROM t1
+                    LEFT JOIN LATERAL (SELECT val FROM t2 WHERE t2.t1_id = t1.id) sub
+                    ORDER BY t1.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
-                            """,
-                    """
-                            SELECT t1.id, sub.val
-                            FROM t1
-                            LEFT JOIN LATERAL (SELECT val FROM t2 WHERE t2.t1_id = t1.id) sub
-                            ORDER BY t1.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -7065,25 +14662,24 @@ public class LateralJoinTest extends AbstractCairoTest {
             // ORDER BY uses outer column in expression: val * t1.sort_dir
             // id=1 sort_dir=1: order by val*1 ASC → 10, 20
             // id=2 sort_dir=-1: order by val*(-1) ASC → 40, 30 (since -40 < -30)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.id, sub.val
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT val FROM t2
+                        WHERE t2.t1_id = t1.id
+                        ORDER BY val * t1.sort_dir
+                    ) sub
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             id	val
                             1	20
                             1	10
                             2	30
                             2	40
-                            """,
-                    """
-                            SELECT t1.id, sub.val
-                            FROM t1
-                            JOIN LATERAL (
-                                SELECT val FROM t2
-                                WHERE t2.t1_id = t1.id
-                                ORDER BY val * t1.sort_dir
-                            ) sub
-                            """,
-                    null, false, false
-            );
+                            """);
         });
     }
 
@@ -7109,29 +14705,27 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // Two window functions with different ORDER BY inside lateral
             // rn_ts: rank by timestamp, rn_qty: rank by qty DESC
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.rn_ts, sub.rn_qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty,
+                               row_number() OVER (ORDER BY ts) AS rn_ts,
+                               row_number() OVER (ORDER BY qty DESC) AS rn_qty
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.rn_ts
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty\trn_ts\trn_qty
                             1\t10.0\t1\t3
                             1\t30.0\t2\t1
                             1\t20.0\t3\t2
                             2\t50.0\t1\t1
                             2\t40.0\t2\t2
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.rn_ts, sub.rn_qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty,
-                                       row_number() OVER (ORDER BY ts) AS rn_ts,
-                                       row_number() OVER (ORDER BY qty DESC) AS rn_qty
-                                FROM trades
-                                WHERE order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.rn_ts
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -7161,8 +14755,23 @@ public class LateralJoinTest extends AbstractCairoTest {
             // prev_price: lag(price, 1) — previous trade's price (null for first)
             // price_rank: dense_rank by price DESC
             // avg_qty: running average of qty
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.price, sub.running_qty,
+                           sub.prev_price, sub.price_rank, sub.avg_qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty, price,
+                               sum(qty) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_qty,
+                               lag(price, 1) OVER (ORDER BY ts) AS prev_price,
+                               dense_rank() OVER (ORDER BY price DESC) AS price_rank,
+                               avg(qty) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS avg_qty
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty\tprice\trunning_qty\tprev_price\tprice_rank\tavg_qty
                             1\t10.0\t100.0\t10.0\tnull\t3\t10.0
                             1\t20.0\t200.0\t30.0\t100.0\t1\t15.0
@@ -7170,24 +14779,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             2\t40.0\t300.0\t40.0\tnull\t2\t40.0
                             2\t50.0\t250.0\t90.0\t300.0\t3\t45.0
                             2\t60.0\t350.0\t150.0\t250.0\t1\t50.0
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.price, sub.running_qty,
-                                   sub.prev_price, sub.price_rank, sub.avg_qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty, price,
-                                       sum(qty) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_qty,
-                                       lag(price, 1) OVER (ORDER BY ts) AS prev_price,
-                                       dense_rank() OVER (ORDER BY price DESC) AS price_rank,
-                                       avg(qty) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS avg_qty
-                                FROM trades
-                                WHERE order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.qty
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -7215,29 +14807,28 @@ public class LateralJoinTest extends AbstractCairoTest {
             // add outer ref grouping cols to PARTITION BY alongside the user's column
             // rn: row_number per side within each order
             // side_total: running sum per side within each order
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.side, sub.qty, sub.rn, sub.side_total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT side, qty,
+                               row_number() OVER (PARTITION BY side ORDER BY ts) AS rn,
+                               sum(qty) OVER (PARTITION BY side ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS side_total
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.side, sub.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tside\tqty\trn\tside_total
                             1\tBUY\t10.0\t1\t10.0
                             1\tBUY\t30.0\t2\t40.0
                             1\tSELL\t20.0\t1\t20.0
                             2\tBUY\t40.0\t1\t40.0
                             2\tBUY\t50.0\t2\t90.0
-                            """,
-                    """
-                            SELECT o.id, sub.side, sub.qty, sub.rn, sub.side_total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT side, qty,
-                                       row_number() OVER (PARTITION BY side ORDER BY ts) AS rn,
-                                       sum(qty) OVER (PARTITION BY side ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS side_total
-                                FROM trades
-                                WHERE order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.side, sub.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -7272,31 +14863,30 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // UNION branch 1: trades JOIN labels (both correlated)
             // UNION branch 2: refunds JOIN labels (both correlated)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.val, sub.label
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty AS val, l.label
+                        FROM trades t
+                        JOIN labels l ON l.order_id = t.order_id AND l.label = 'trade'
+                        WHERE t.order_id = o.id
+                        UNION ALL
+                        SELECT r.amount AS val, l.label
+                        FROM refunds r
+                        JOIN labels l ON l.order_id = r.order_id AND l.label = 'refund'
+                        WHERE r.order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.val DESC
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tval\tlabel
                             1\t10.0\ttrade
                             1\t5.0\trefund
                             2\t20.0\ttrade
-                            """,
-                    """
-                            SELECT o.id, sub.val, sub.label
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty AS val, l.label
-                                FROM trades t
-                                JOIN labels l ON l.order_id = t.order_id AND l.label = 'trade'
-                                WHERE t.order_id = o.id
-                                UNION ALL
-                                SELECT r.amount AS val, l.label
-                                FROM refunds r
-                                JOIN labels l ON l.order_id = r.order_id AND l.label = 'refund'
-                                WHERE r.order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.val DESC
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -7322,30 +14912,29 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Inner UNION (trades_a + trades_b) cross joined with tags — both correlated to outer
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.total_qty, sub.tag
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT u.total_qty, tg.tag
+                        FROM (
+                            SELECT sum(qty) AS total_qty FROM (
+                                SELECT qty FROM trades_a WHERE order_id = o.id
+                                UNION ALL
+                                SELECT qty FROM trades_b WHERE order_id = o.id
+                            )
+                        ) u
+                        CROSS JOIN (SELECT tag FROM tags WHERE order_id = o.id) tg
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\ttotal_qty\ttag
                             1\t30.0\tVIP
                             2\t30.0\tSTD
-                            """,
-                    """
-                            SELECT o.id, sub.total_qty, sub.tag
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT u.total_qty, tg.tag
-                                FROM (
-                                    SELECT sum(qty) AS total_qty FROM (
-                                        SELECT qty FROM trades_a WHERE order_id = o.id
-                                        UNION ALL
-                                        SELECT qty FROM trades_b WHERE order_id = o.id
-                                    )
-                                ) u
-                                CROSS JOIN (SELECT tag FROM tags WHERE order_id = o.id) tg
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -7375,26 +14964,25 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // trades: correlated (order_id = o.id)
             // products: NOT correlated (joined to trades, not to outer)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.name, sub.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT p.name, t.qty
+                        FROM trades t
+                        JOIN products p ON p.id = t.product_id
+                        WHERE t.order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.name
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tname\tqty
                             1\tApple\t10.0
                             1\tBanana\t20.0
                             2\tApple\t30.0
-                            """,
-                    """
-                            SELECT o.id, sub.name, sub.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT p.name, t.qty
-                                FROM trades t
-                                JOIN products p ON p.id = t.product_id
-                                WHERE t.order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.name
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -7417,26 +15005,25 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // Branch 1: correlated (order_id = o.id)
             // Branch 2: uncorrelated constant row
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.val
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty AS val FROM trades WHERE order_id = o.id
+                        UNION ALL
+                        SELECT 0 AS val FROM long_sequence(1)
+                    ) sub
+                    ORDER BY o.id, sub.val
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tval
                             1\t0.0
                             1\t10.0
                             2\t0.0
                             2\t20.0
-                            """,
-                    """
-                            SELECT o.id, sub.val
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty AS val FROM trades WHERE order_id = o.id
-                                UNION ALL
-                                SELECT 0 AS val FROM long_sequence(1)
-                            ) sub
-                            ORDER BY o.id, sub.val
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -7469,47 +15056,44 @@ public class LateralJoinTest extends AbstractCairoTest {
             // trade(qty=10,ts=00:10) asof prices → price=100 (at 00:05)
             // trade(qty=20,ts=00:30) asof prices → price=101 (at 00:15)
             // trade(qty=30,ts=01:10) asof prices → price=102 (at 01:05)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.price
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, p.price
+                        FROM trades t
+                        ASOF JOIN prices p
+                        WHERE t.order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tprice
                             1\t10.0\t100.0
                             1\t20.0\t101.0
                             2\t30.0\t102.0
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.price
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, p.price
-                                FROM trades t
-                                ASOF JOIN prices p
-                                WHERE t.order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.qty
-                            """,
-                    null, true, true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.price, sub.rn
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, p.price, row_number() OVER (ORDER BY p.ts DESC) AS rn
+                        FROM trades t
+                        ASOF JOIN prices p
+                        WHERE t.order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id	qty	price	rn
                             1	10.0	100.0	2
                             1	20.0	101.0	1
                             2	30.0	102.0	1
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.price, sub.rn
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, p.price, row_number() OVER (ORDER BY p.ts DESC) AS rn
-                                FROM trades t
-                                ASOF JOIN prices p
-                                WHERE t.order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.qty
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -7539,26 +15123,25 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // JOIN ON has correlation (o.category) but both branches (trades, limits) are uncorrelated
             // Only the JOIN condition references the outer table
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.max_qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, l.max_qty
+                        FROM trades t
+                        JOIN limits l ON l.category = t.category
+                        WHERE t.category = o.category
+                    ) sub
+                    ORDER BY o.id, sub.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tmax_qty
                             1\t10.0\t15.0
                             1\t20.0\t15.0
                             2\t30.0\t50.0
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.max_qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, l.max_qty
-                                FROM trades t
-                                JOIN limits l ON l.category = t.category
-                                WHERE t.category = o.category
-                            ) sub
-                            ORDER BY o.id, sub.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -7591,43 +15174,40 @@ public class LateralJoinTest extends AbstractCairoTest {
             // WHERE has both eq correlation (order_id) and non-eq correlation (qty > min_qty)
             // order 1 (min_qty=15): only qty=20 passes ON condition, factor=1.5, result=30
             // order 2 (min_qty=5): only qty=30 passes ON condition, factor=2.0, result=60
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.adjusted_qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty * f.factor AS adjusted_qty
+                        FROM trades t
+                        JOIN factors f ON f.trade_order_id = t.order_id
+                        WHERE t.order_id = o.id AND t.qty > o.min_qty
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tadjusted_qty
                             1\t30.0
                             2\t60.0
-                            """,
-                    """
-                            SELECT o.id, sub.adjusted_qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty * f.factor AS adjusted_qty
-                                FROM trades t
-                                JOIN factors f ON f.trade_order_id = t.order_id
-                                WHERE t.order_id = o.id AND t.qty > o.min_qty
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
     @Test
     public void testT87bCommaLateral() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                """
+        assertQuery("""
+                SELECT ss1.x, ss2.y, ss3.z FROM
+                  (SELECT 1 AS x) ss1
+                  LEFT JOIN (SELECT 2 AS y) ss2 ON (true),
+                  LATERAL (SELECT ss2.y AS z FROM long_sequence(1) LIMIT 1) ss3
+                """)
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         x\ty\tz
                         1\t2\t2
-                        """,
-                """
-                        SELECT ss1.x, ss2.y, ss3.z FROM
-                          (SELECT 1 AS x) ss1
-                          LEFT JOIN (SELECT 2 AS y) ss2 ON (true),
-                          LATERAL (SELECT ss2.y AS z FROM long_sequence(1) LIMIT 1) ss3
-                        """,
-                null, false, true
-        ));
+                        """);
     }
 
     // T88: Unqualified correlated ref — exercises rewriteOuterRefs no-dot fallback
@@ -7644,22 +15224,20 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // 'a' in WHERE is unqualified — resolves to t1.a via no-dot fallback
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.a, sub.val
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT val FROM t2 WHERE t1_a = a
+                    ) sub
+                    ORDER BY t1.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             a\tval
                             1\t10
                             2\t20
-                            """,
-                    """
-                            SELECT t1.a, sub.val
-                            FROM t1
-                            JOIN LATERAL (
-                                SELECT val FROM t2 WHERE t1_a = a
-                            ) sub
-                            ORDER BY t1.a
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -7689,28 +15267,27 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // UNION: branch 1 has GROUP BY, branch 2 has GROUP BY
             // Both need groupingCols added to their GROUP BY
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.category, sub.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT category, sum(qty) AS total FROM trades
+                        WHERE order_id = o.id GROUP BY category
+                        UNION ALL
+                        SELECT category, sum(amt) AS total FROM refunds
+                        WHERE order_id = o.id GROUP BY category
+                    ) sub
+                    ORDER BY o.id, sub.total DESC
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tcategory\ttotal
                             1\tX\t30.0
                             1\tX\t5.0
                             2\tY\t30.0
                             2\tY\t8.0
-                            """,
-                    """
-                            SELECT o.id, sub.category, sub.total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT category, sum(qty) AS total FROM trades
-                                WHERE order_id = o.id GROUP BY category
-                                UNION ALL
-                                SELECT category, sum(amt) AS total FROM refunds
-                                WHERE order_id = o.id GROUP BY category
-                            ) sub
-                            ORDER BY o.id, sub.total DESC
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -7738,28 +15315,26 @@ public class LateralJoinTest extends AbstractCairoTest {
             // GROUP BY + ORDER BY total DESC + LIMIT 1, 2 (skip top-1, take next 2)
             // order 1: A=10, B=20, C=30 → sorted DESC: C(30), B(20), A(10) → skip 1, take 2: B(20), A(10)
             // order 2: A=40, B=50, C=60 → sorted DESC: C(60), B(50), A(40) → skip 1, take 2: B(50), A(40)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.category, sub.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT category, sum(qty) AS total
+                        FROM trades WHERE order_id = o.id
+                        GROUP BY category
+                        ORDER BY total DESC
+                        LIMIT 1, 3
+                    ) sub
+                    ORDER BY o.id, sub.total
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcategory\ttotal
                             1\tA\t10.0
                             1\tB\t20.0
                             2\tA\t40.0
                             2\tB\t50.0
-                            """,
-                    """
-                            SELECT o.id, sub.category, sub.total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT category, sum(qty) AS total
-                                FROM trades WHERE order_id = o.id
-                                GROUP BY category
-                                ORDER BY total DESC
-                                LIMIT 1, 3
-                            ) sub
-                            ORDER BY o.id, sub.total
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -7784,22 +15359,20 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // Outer is a subquery (not a bare table) — createOuterRefBase
             // takes the nestedModel path and deep-clones it
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.total
+                    FROM (SELECT id, ts FROM orders WHERE status = 'active') o
+                    JOIN LATERAL (
+                        SELECT sum(qty) AS total FROM trades WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\ttotal
                             1\t30.0
                             3\t30.0
-                            """,
-                    """
-                            SELECT o.id, sub.total
-                            FROM (SELECT id, ts FROM orders WHERE status = 'active') o
-                            JOIN LATERAL (
-                                SELECT sum(qty) AS total FROM trades WHERE order_id = o.id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -7826,24 +15399,22 @@ public class LateralJoinTest extends AbstractCairoTest {
             // id=1, threshold=15: val>15 → val=20
             // id=2, threshold=25: val>25 → val=30, val=40
             // __qdb_outer_ref__ columns must NOT appear in output
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT *
+                    FROM t1
+                    JOIN LATERAL (
+                        SELECT val, ts FROM t2
+                        WHERE t2.t1_id = t1.id AND t2.val > t1.threshold
+                    ) sub
+                    ORDER BY t1.id, sub.val
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tthreshold\tts\tval\tts1
                             1\t15\t2024-01-01T00:00:00.000000Z\t20\t2024-01-01T00:20:00.000000Z
                             2\t25\t2024-01-01T01:00:00.000000Z\t30\t2024-01-01T01:10:00.000000Z
                             2\t25\t2024-01-01T01:00:00.000000Z\t40\t2024-01-01T01:20:00.000000Z
-                            """,
-                    """
-                            SELECT *
-                            FROM t1
-                            JOIN LATERAL (
-                                SELECT val, ts FROM t2
-                                WHERE t2.t1_id = t1.id AND t2.val > t1.threshold
-                            ) sub
-                            ORDER BY t1.id, sub.val
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -7872,20 +15443,17 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, '2024-01-01T02:00:00.000000Z')
                     """);
 
-            assertException(
-                    """
-                            SELECT o.id, sub.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades
-                                WHERE order_id = o.id
-                                  AND order_id IN (SELECT order_id FROM valid_orders)
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    126,
-                    "cannot compare LONG with type CURSOR"
-            );
+            assertQuery("""
+                    SELECT o.id, sub.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades
+                        WHERE order_id = o.id
+                          AND order_id IN (SELECT order_id FROM valid_orders)
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .fails(126, "cannot compare LONG with type CURSOR");
         });
     }
 
@@ -7909,31 +15477,30 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // DISTINCT on top of GROUP BY — both compensations must add groupingCols
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.category, sub.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT DISTINCT category, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        GROUP BY category
+                    ) sub
+                    ORDER BY o.id, sub.category
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tcategory\ttotal
                             1\tA\t20.0
                             1\tB\t20.0
                             2\tA\t30.0
-                            """,
-                    """
-                            SELECT o.id, sub.category, sub.total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT DISTINCT category, sum(qty) AS total
-                                FROM trades
-                                WHERE order_id = o.id
-                                GROUP BY category
-                            ) sub
-                            ORDER BY o.id, sub.category
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
     // T95: LEFT LATERAL count — outer table has column with same name as count alias
-    // applyLateralCountCoalesce must NOT wrap t1.cnt with coalesce
+    // Scalar-count identity must NOT wrap t1.cnt with coalesce
     @Test
     public void testT95LeftCountAliasClashWithOuterColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -7954,23 +15521,21 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // t1.cnt is a regular column (100, 200, 300), sub.cnt is count(*)
             // Only sub.cnt should become coalesce(sub.cnt, 0) for the LEFT unmatched row
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.cnt, sub.cnt
+                    FROM t1
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt FROM t2 WHERE t2.t1_id = t1.id
+                    ) sub ON true
+                    ORDER BY t1.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             cnt\tcnt1
                             100\t2
                             200\t1
                             300\t0
-                            """,
-                    """
-                            SELECT t1.cnt, sub.cnt
-                            FROM t1
-                            LEFT JOIN LATERAL (
-                                SELECT count(*) AS cnt FROM t2 WHERE t2.t1_id = t1.id
-                            ) sub ON true
-                            ORDER BY t1.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -7995,23 +15560,21 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // With SELECT *, wildcard expansion may rename sub.cnt to cnt1
             // Only the lateral count column should get coalesce, not t1.cnt
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT *
+                    FROM t1
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt FROM t2 WHERE t2.t1_id = t1.id
+                    ) sub ON true
+                    ORDER BY t1.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcnt\tts\tcnt1
                             1\t100\t2024-01-01T00:00:00.000000Z\t2
                             2\t200\t2024-01-01T01:00:00.000000Z\t1
                             3\t300\t2024-01-01T02:00:00.000000Z\t0
-                            """,
-                    """
-                            SELECT *
-                            FROM t1
-                            LEFT JOIN LATERAL (
-                                SELECT count(*) AS cnt FROM t2 WHERE t2.t1_id = t1.id
-                            ) sub ON true
-                            ORDER BY t1.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -8034,27 +15597,25 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 'B', 30, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            // Two count aggregates: cnt_all and cnt_cat. Both must be 0 for unmatched row.
-            assertQueryNoLeakCheck(
-                    """
+            // GROUP BY can remove the aggregate row. Both counts must remain NULL for an unmatched group.
+            assertQuery("""
+                    SELECT *
+                    FROM t1
+                    LEFT JOIN LATERAL (
+                        SELECT category, count(*) AS cnt_all, count(category) AS cnt_cat
+                        FROM t2
+                        WHERE t2.t1_id = t1.id
+                        GROUP BY category
+                    ) sub ON true
+                    ORDER BY t1.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tts\tcategory\tcnt_all\tcnt_cat
                             1\t2024-01-01T00:00:00.000000Z\tA\t2\t2
                             2\t2024-01-01T01:00:00.000000Z\tB\t1\t1
-                            3\t2024-01-01T02:00:00.000000Z\t\t0\t0
-                            """,
-                    """
-                            SELECT *
-                            FROM t1
-                            LEFT JOIN LATERAL (
-                                SELECT category, count(*) AS cnt_all, count(category) AS cnt_cat
-                                FROM t2
-                                WHERE t2.t1_id = t1.id
-                                GROUP BY category
-                            ) sub ON true
-                            ORDER BY t1.id
-                            """,
-                    null, true, false
-            );
+                            3\t2024-01-01T02:00:00.000000Z\t\tnull\tnull
+                            """);
         });
     }
 
@@ -8078,25 +15639,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Non-wildcard: explicit t1.id and sub.cnt columns
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT t1.id, sub.cnt, sub.total
+                    FROM t1
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt, sum(val) AS total
+                        FROM t2
+                        WHERE t2.t1_id = t1.id
+                    ) sub ON true
+                    ORDER BY t1.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcnt\ttotal
                             1\t2\t30
                             2\t1\t30
                             3\t0\tnull
-                            """,
-                    """
-                            SELECT t1.id, sub.cnt, sub.total
-                            FROM t1
-                            LEFT JOIN LATERAL (
-                                SELECT count(*) AS cnt, sum(val) AS total
-                                FROM t2
-                                WHERE t2.t1_id = t1.id
-                            ) sub ON true
-                            ORDER BY t1.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -8120,25 +15679,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // count(*) should be 0 for unmatched, sum should be null
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT *
+                    FROM t1
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt, sum(val) AS total
+                        FROM t2
+                        WHERE t2.t1_id = t1.id
+                    ) sub ON true
+                    ORDER BY t1.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tts\tcnt\ttotal
                             1\t2024-01-01T00:00:00.000000Z\t2\t30
                             2\t2024-01-01T01:00:00.000000Z\t1\t30
                             3\t2024-01-01T02:00:00.000000Z\t0\tnull
-                            """,
-                    """
-                            SELECT *
-                            FROM t1
-                            LEFT JOIN LATERAL (
-                                SELECT count(*) AS cnt, sum(val) AS total
-                                FROM t2
-                                WHERE t2.t1_id = t1.id
-                            ) sub ON true
-                            ORDER BY t1.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -8160,23 +15717,21 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // LIMIT 0 should produce zero rows → INNER join produces empty result
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades
+                        WHERE order_id = o.id
+                        ORDER BY qty
+                        LIMIT 0
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
-                            """,
-                    """
-                            SELECT o.id, sub.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades
-                                WHERE order_id = o.id
-                                ORDER BY qty
-                                LIMIT 0
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -8199,22 +15754,20 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // NULL threshold: qty > NULL is false, so order 2 matches no trades
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty FROM trades
+                        WHERE order_id = o.id AND qty > o.threshold
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tqty
                             1\t20.0
-                            """,
-                    """
-                            SELECT o.id, sub.qty
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT qty FROM trades
-                                WHERE order_id = o.id AND qty > o.threshold
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -8241,26 +15794,24 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // Non-equality correlation (order_id > o.id) prevents elimination
             // Only ACTIVE orders are included
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.cnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM trades
+                        WHERE order_id >= o.id AND order_id < o.id + 1
+                    ) sub ON true
+                    WHERE o.status = 'ACTIVE'
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
                             id\tcnt
                             1\t2
                             3\t1
                             4\t0
-                            """,
-                    """
-                            SELECT o.id, sub.cnt
-                            FROM orders o
-                            LEFT JOIN LATERAL (
-                                SELECT count(*) AS cnt
-                                FROM trades
-                                WHERE order_id >= o.id AND order_id < o.id + 1
-                            ) sub ON true
-                            WHERE o.status = 'ACTIVE'
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -8285,13 +15836,18 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Unqualified 'status' (no alias prefix) — must still be pushed down
-            assertQueryAndPlan(
-                    """
-                            id\tcnt
-                            1\t2
-                            3\t0
-                            """,
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.cnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM trades
+                        WHERE order_id >= o.id AND order_id < o.id + 1
+                    ) sub ON true
+                    WHERE status = 'ACTIVE'
+                    ORDER BY o.id
+                    """)
+                    .withPlan("""
                             Encode sort
                               keys: [id]
                                 VirtualRecord
@@ -8320,20 +15876,12 @@ public class LateralJoinTest extends AbstractCairoTest {
                                                                 PageFrame
                                                                     Row forward scan
                                                                     Frame forward scan on: orders
-                            """,
-                    """
-                            SELECT o.id, sub.cnt
-                            FROM orders o
-                            LEFT JOIN LATERAL (
-                                SELECT count(*) AS cnt
-                                FROM trades
-                                WHERE order_id >= o.id AND order_id < o.id + 1
-                            ) sub ON true
-                            WHERE status = 'ACTIVE'
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """)
+                    .returns("""
+                            id\tcnt
+                            1\t2
+                            3\t0
+                            """);
         });
     }
 
@@ -8357,13 +15905,18 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Function expression: abs(o.id) > 1 filters orders 2 and 3
-            assertQueryAndPlan(
-                    """
-                            id\tcnt
-                            2\t1
-                            3\t1
-                            """,
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.cnt
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM trades
+                        WHERE order_id >= o.id AND order_id < o.id + 1
+                    ) sub ON true
+                    WHERE abs(o.id) > 1
+                    ORDER BY o.id
+                    """)
+                    .withPlan("""
                             Encode sort
                               keys: [id]
                                 VirtualRecord
@@ -8392,20 +15945,12 @@ public class LateralJoinTest extends AbstractCairoTest {
                                                                 PageFrame
                                                                     Row forward scan
                                                                     Frame forward scan on: orders
-                            """,
-                    """
-                            SELECT o.id, sub.cnt
-                            FROM orders o
-                            LEFT JOIN LATERAL (
-                                SELECT count(*) AS cnt
-                                FROM trades
-                                WHERE order_id >= o.id AND order_id < o.id + 1
-                            ) sub ON true
-                            WHERE abs(o.id) > 1
-                            ORDER BY o.id
-                            """,
-                    null, true, false
-            );
+                            """)
+                    .returns("""
+                            id\tcnt
+                            2\t1
+                            3\t1
+                            """);
         });
     }
 
@@ -8437,72 +15982,71 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // Correlates with both t1 and t2; WHERE filters only t1
-            assertQueryAndPlan(
-                    """
+            assertQuery("""
+                    SELECT t1.id, t2.category, sub.cnt
+                    FROM t1
+                    JOIN t2 ON t1.id = t2.t1_id
+                    JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM t3
+                        WHERE t3.a >= t1.id AND t3.a < t1.id + 1
+                          AND t3.b = t2.category
+                    ) sub ON true
+                    WHERE t1.status = 'ACTIVE'
+                    ORDER BY t1.id
+                    """)
+                    .withPlan("""
+                            Encode sort
+                              keys: [id]
+                                VirtualRecord
+                                  functions: [id,category,coalesce(cnt,0)]
+                                    SelectedRecord
+                                        Hash Left Outer Join Light
+                                          condition: sub.__qdb_outer_ref__0_category=t2.category and sub.__qdb_outer_ref__0_id=t1.id
+                                          symbolKeyJoin: true
+                                            Hash Join Light
+                                              condition: t2.t1_id=t1.id
+                                                Async JIT Filter workers: 1
+                                                  filter: status='ACTIVE'
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t1
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                                            Hash
+                                                GroupBy vectorized: false
+                                                  keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
+                                                  values: [count(*)]
+                                                    Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                        Hash Join Light
+                                                          condition: __qdb_outer_ref__0_category=t3.b
+                                                          symbolKeyJoin: true
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: t3
+                                                            Hash
+                                                                GroupBy vectorized: false
+                                                                  keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
+                                                                    SelectedRecord
+                                                                        Hash Join Light
+                                                                          condition: t2.t1_id=t1.id
+                                                                            Async JIT Filter workers: 1
+                                                                              filter: status='ACTIVE'
+                                                                                PageFrame
+                                                                                    Row forward scan
+                                                                                    Frame forward scan on: t1
+                                                                            Hash
+                                                                                PageFrame
+                                                                                    Row forward scan
+                                                                                    Frame forward scan on: t2
+                            """)
+                    .returns("""
                             id\tcategory\tcnt
                             1\tX\t2
                             3\tX\t1
-                            """,
-                    """
-                            Encode sort
-                              keys: [id]
-                                SelectedRecord
-                                    Hash Join Light
-                                      condition: sub.__qdb_outer_ref__0_category=t2.category and sub.__qdb_outer_ref__0_id=t1.id
-                                      symbolKeyJoin: true
-                                        Hash Join Light
-                                          condition: t2.t1_id=t1.id
-                                            Async JIT Filter workers: 1
-                                              filter: status='ACTIVE'
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t1
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t2
-                                        Hash
-                                            GroupBy vectorized: false
-                                              keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
-                                              values: [count(*)]
-                                                Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
-                                                    Hash Join Light
-                                                      condition: __qdb_outer_ref__0_category=t3.b
-                                                      symbolKeyJoin: true
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: t3
-                                                        Hash
-                                                            GroupBy vectorized: false
-                                                              keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
-                                                                SelectedRecord
-                                                                    Hash Join Light
-                                                                      condition: t2.t1_id=t1.id
-                                                                        Async JIT Filter workers: 1
-                                                                          filter: status='ACTIVE'
-                                                                            PageFrame
-                                                                                Row forward scan
-                                                                                Frame forward scan on: t1
-                                                                        Hash
-                                                                            PageFrame
-                                                                                Row forward scan
-                                                                                Frame forward scan on: t2
-                            """,
-                    """
-                            SELECT t1.id, t2.category, sub.cnt
-                            FROM t1
-                            JOIN t2 ON t1.id = t2.t1_id
-                            JOIN LATERAL (
-                                SELECT count(*) AS cnt
-                                FROM t3
-                                WHERE t3.a >= t1.id AND t3.a < t1.id + 1
-                                  AND t3.b = t2.category
-                            ) sub ON true
-                            WHERE t1.status = 'ACTIVE'
-                            ORDER BY t1.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -8534,67 +16078,66 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // WHERE t1.val > t2.val spans both sources — cannot be pushed to either base
-            assertQueryAndPlan(
-                    """
+            assertQuery("""
+                    SELECT t1.id, t2.val AS t2_val, sub.cnt
+                    FROM t1
+                    JOIN t2 ON t1.id = t2.t1_id
+                    JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM t3
+                        WHERE t3.a >= t1.id AND t3.a < t1.id + 1
+                          AND t3.b = t2.val
+                    ) sub ON true
+                    WHERE t1.val > t2.val
+                    ORDER BY t1.id
+                    """)
+                    .withPlan("""
+                            Encode sort
+                              keys: [id]
+                                VirtualRecord
+                                  functions: [id,t2_val,coalesce(cnt,0)]
+                                    SelectedRecord
+                                        Hash Left Outer Join Light
+                                          condition: sub.__qdb_outer_ref__0_val=t2.val and sub.__qdb_outer_ref__0_id=t1.id
+                                            Filter filter: t2.val<t1.val
+                                                Hash Join Light
+                                                  condition: t2.t1_id=t1.id
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t1
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: t2
+                                            Hash
+                                                GroupBy vectorized: false
+                                                  keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
+                                                  values: [count(*)]
+                                                    Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                        Hash Join Light
+                                                          condition: __qdb_outer_ref__0_val=t3.b
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: t3
+                                                            Hash
+                                                                GroupBy vectorized: false
+                                                                  keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
+                                                                    SelectedRecord
+                                                                        Hash Join Light
+                                                                          condition: t2.t1_id=t1.id
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: t1
+                                                                            Hash
+                                                                                PageFrame
+                                                                                    Row forward scan
+                                                                                    Frame forward scan on: t2
+                            """)
+                    .returns("""
                             id\tt2_val\tcnt
                             1\t5\t1
                             3\t15\t1
-                            """,
-                    """
-                            Encode sort
-                              keys: [id]
-                                SelectedRecord
-                                    Hash Join Light
-                                      condition: sub.__qdb_outer_ref__0_val=t2.val and sub.__qdb_outer_ref__0_id=t1.id
-                                        Filter filter: t2.val<t1.val
-                                            Hash Join Light
-                                              condition: t2.t1_id=t1.id
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t1
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: t2
-                                        Hash
-                                            GroupBy vectorized: false
-                                              keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
-                                              values: [count(*)]
-                                                Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
-                                                    Hash Join Light
-                                                      condition: __qdb_outer_ref__0_val=t3.b
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: t3
-                                                        Hash
-                                                            GroupBy vectorized: false
-                                                              keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
-                                                                SelectedRecord
-                                                                    Hash Join Light
-                                                                      condition: t2.t1_id=t1.id
-                                                                        PageFrame
-                                                                            Row forward scan
-                                                                            Frame forward scan on: t1
-                                                                        Hash
-                                                                            PageFrame
-                                                                                Row forward scan
-                                                                                Frame forward scan on: t2
-                            """,
-                    """
-                            SELECT t1.id, t2.val AS t2_val, sub.cnt
-                            FROM t1
-                            JOIN t2 ON t1.id = t2.t1_id
-                            JOIN LATERAL (
-                                SELECT count(*) AS cnt
-                                FROM t3
-                                WHERE t3.a >= t1.id AND t3.a < t1.id + 1
-                                  AND t3.b = t2.val
-                            ) sub ON true
-                            WHERE t1.val > t2.val
-                            ORDER BY t1.id
-                            """,
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -8617,24 +16160,23 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (40, '2024-01-01T02:30:00.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT w.id, sub.val
+                    FROM windows w
+                    JOIN LATERAL (
+                        SELECT val FROM events
+                        WHERE ts >= w.start_ts AND ts < w.end_ts
+                    ) sub
+                    ORDER BY w.id, sub.val
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tval
                             1\t10
                             1\t20
                             2\t40
-                            """,
-                    """
-                            SELECT w.id, sub.val
-                            FROM windows w
-                            JOIN LATERAL (
-                                SELECT val FROM events
-                                WHERE ts >= w.start_ts AND ts < w.end_ts
-                            ) sub
-                            ORDER BY w.id, sub.val
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -8667,26 +16209,25 @@ public class LateralJoinTest extends AbstractCairoTest {
             // Main chain (trades): correlated WHERE order_id = o.id
             // Join branch (adjustments): correlated ON order_id = o.id
             // Both branches get independent __qdb_outer_ref__ clones
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.adj
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, a.adj
+                        FROM trades t
+                        JOIN adjustments a ON a.order_id = o.id
+                        WHERE t.order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tadj
                             1\t10.0\t1.5
                             1\t20.0\t1.5
                             2\t30.0\t2.0
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.adj
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, a.adj
-                                FROM trades t
-                                JOIN adjustments a ON a.order_id = o.id
-                                WHERE t.order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -8717,26 +16258,25 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // LEFT JOIN: order 2 trades should still appear with NULL adj
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.adj
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, a.adj
+                        FROM trades t
+                        LEFT JOIN adjustments a ON a.order_id = o.id
+                        WHERE t.order_id = o.id
+                    ) sub
+                    ORDER BY o.id, sub.qty
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tadj
                             1\t10.0\t1.5
                             1\t20.0\t1.5
                             2\t30.0\tnull
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.adj
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, a.adj
-                                FROM trades t
-                                LEFT JOIN adjustments a ON a.order_id = o.id
-                                WHERE t.order_id = o.id
-                            ) sub
-                            ORDER BY o.id, sub.qty
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -8772,27 +16312,59 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             // Three branches: trades (WHERE), adjustments (ON), discounts (ON)
             // Each correlated branch gets its own cloned __qdb_outer_ref__
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT o.id, sub.qty, sub.adj, sub.disc
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT t.qty, a.adj, d.disc
+                        FROM trades t
+                        JOIN adjustments a ON a.order_id = o.id
+                        JOIN discounts d ON d.order_id = o.id
+                        WHERE t.order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tqty\tadj\tdisc
                             1\t10.0\t1.5\t0.9
                             2\t30.0\t2.0\t0.8
-                            """,
-                    """
-                            SELECT o.id, sub.qty, sub.adj, sub.disc
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT t.qty, a.adj, d.disc
-                                FROM trades t
-                                JOIN adjustments a ON a.order_id = o.id
-                                JOIN discounts d ON d.order_id = o.id
-                                WHERE t.order_id = o.id
-                            ) sub
-                            ORDER BY o.id
-                            """,
-                    null, true, true
-            );
+                            """);
         });
+    }
+
+    private void assertPlainScalarAggregateRuntimeLimit(
+            CharSequence sql,
+            String expectedAtOne,
+            String expectedAtZero
+    ) throws Exception {
+        execute("CREATE TABLE t1 (k INT)");
+        execute("INSERT INTO t1 VALUES (1), (2)");
+        execute("CREATE TABLE t2 (k INT, v INT)");
+        execute("INSERT INTO t2 VALUES (1, 10), (1, 20), (2, 30)");
+
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
+                "limit keeps the plain aggregate row",
+                expectedAtOne,
+                bindVariableService -> bindVariableService.setLong("lim", 1)
+        ));
+        cases.add(BindVarTuple.ok(
+                "limit drops the plain aggregate row",
+                expectedAtZero,
+                bindVariableService -> bindVariableService.setLong("lim", 0)
+        ));
+        cases.add(BindVarTuple.ok(
+                "limit keeps the plain aggregate row again",
+                expectedAtOne,
+                bindVariableService -> bindVariableService.setLong("lim", 1)
+        ));
+
+        assertQuery(sql)
+                .noLeakCheck()
+                .sizeMayVary()
+                .assertBinds(cases);
     }
 
     private void createOrdersAndTrades() throws Exception {

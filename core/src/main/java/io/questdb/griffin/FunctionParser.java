@@ -36,8 +36,11 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.RuntimeConstFunction;
+import io.questdb.griffin.engine.functions.ScalarSubQueryBoundRefFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
@@ -118,6 +121,8 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.ScalarSubQueryCompileCache;
+import io.questdb.griffin.model.ScalarTimestampBoundHolder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -158,6 +163,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private final IntStack positionStack = new IntStack();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final IntList undefinedVariables = new IntList();
+    private boolean cursorFunctionInstantiated;
+    private String lastFunctionFactorySignature;
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
     private SqlExecutionContext sqlExecutionContext;
@@ -173,7 +180,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             CharSequence name,
             RecordMetadata metadata
     ) throws SqlException {
-        final int index = metadata.getColumnIndexQuiet(name);
+        final int index = SqlUtil.getColumnIndexQuiet(metadata, name);
 
         if (index == -1) {
             throw SqlException.invalidColumn(position, name);
@@ -223,7 +230,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     public void clear() {
         this.positionStack.clear();
         this.functionStack.clear();
+        this.lastFunctionFactorySignature = null;
         this.sqlExecutionContext = null;
+        this.cursorFunctionInstantiated = false;
+    }
+
+    /**
+     * Signature of the factory that produced the most recent top-level parsed
+     * function. Consumed immediately by the SQL code generator for checkpoint
+     * identity, so the selected overload is not inferred from a runtime class.
+     */
+    public String getLastFunctionFactorySignature() {
+        return lastFunctionFactorySignature;
     }
 
     public Function createBindVariable(SqlExecutionContext sqlExecutionContext, int position, CharSequence name, int expressionType) throws SqlException {
@@ -274,6 +292,40 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     /**
+     * Whether a function factory has produced a CURSOR-typed function since the last
+     * {@link #resetCursorFunctionInstantiated()}. The flag is raised on the <em>instantiated</em>
+     * function rather than on the factory or the name, because the same name can be either: the
+     * {@code sleep} factory yields a cursor in one signature and a plain boolean in another, and only
+     * the boolean one is legal in a WAL {@code UPDATE}. It is also raised wherever the function
+     * stands - a FROM source, a projected column or a predicate operand all reach
+     * {@code checkAndCreateFunction} - which is what makes the WAL {@code UPDATE} check that reads it
+     * position-independent.
+     * <p>
+     * A sub-query written as {@code (SELECT ...)} does not raise it: that is an
+     * {@link ExpressionNode#QUERY} node, not a factory call, and the tables it names are visible in
+     * the model tree and checked there.
+     *
+     * @see SqlCompilerImpl#generateUpdate
+     * @see #markCursorFunctionInstantiated()
+     */
+    public boolean isCursorFunctionInstantiated() {
+        return cursorFunctionInstantiated;
+    }
+
+    /**
+     * Raises the same flag {@link #isCursorFunctionInstantiated()} reports for a cursor the compiler
+     * builds without going through a function factory. {@code SHOW} is the case that exists:
+     * {@code SqlOptimiser#parseFunctionAndEnumerateColumns} constructs the factory for it directly
+     * and hands it to {@code IQueryModel#setTableNameFunction}, so nothing here would ever see it.
+     * The invariant the flag stands for is "the compiler materialised a cursor for this statement",
+     * not "a function factory was called", and this keeps the two construction paths on the same
+     * side of it.
+     */
+    public void markCursorFunctionInstantiated() {
+        cursorFunctionInstantiated = true;
+    }
+
+    /**
      * Creates function instance. When node type is {@link ExpressionNode#LITERAL} a column or parameter
      * function is returned. We will be using the supplied {@link #metadata} to resolve type of column. When node token
      * begins with ':' parameter is looked up from the supplied bindVariableService.
@@ -306,6 +358,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             SqlExecutionContext executionContext
     ) throws SqlException {
         this.sqlExecutionContext = executionContext;
+        this.lastFunctionFactorySignature = null;
 
         if (this.metadata != null) {
             metadataStack.push(this.metadata);
@@ -318,9 +371,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             try {
                 traverseAlgo.traverse(node, this);
             } catch (Exception e) {
-                // release parsed functions
+                // Release parsed functions best-effort: keep closing the rest even if one close()
+                // throws, and fold close failures into e as suppressed instead of masking it.
                 for (int i = functionStack.size(); i > 0; i--) {
-                    Misc.free(functionStack.poll());
+                    Misc.free(functionStack.poll(), e);
                 }
                 positionStack.clear();
                 throw e;
@@ -340,6 +394,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 this.metadata = metadataStack.poll();
             }
         }
+    }
+
+    public void resetCursorFunctionInstantiated() {
+        cursorFunctionInstantiated = false;
     }
 
     public void setSqlCodeGenerator(SqlCodeGenerator sqlCodeGenerator) {
@@ -376,6 +434,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             mutableArgs.setPos(argCount);
             mutableArgPositions.clear();
             mutableArgPositions.setPos(argCount);
+            // The function about to be created is runtime constant iff every arg is constant or
+            // runtime constant and at least one is runtime constant (mirrors the function base
+            // classes). Used below to fold runtime-constant subtrees at boundaries only.
+            boolean allConstOrRuntimeConst = true;
+            boolean anyRuntimeConst = false;
             for (int n = 0; n < argCount; n++) {
                 Function arg = functionStack.poll();
                 final int pos = positionStack.pop();
@@ -385,8 +448,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         arg = functionToConstant(arg);
                     }
                 } catch (Throwable th) {
-                    // these args were already popped from functionStack
-                    Misc.freeObjList(mutableArgs);
+                    // these args were already popped from functionStack.
+                    // Best-effort cleanup: fold any close() failure into th as suppressed instead
+                    // of masking it, and keep closing later args even if one close() throws.
+                    Misc.freeObjList(mutableArgs, th);
                     throw th;
                 }
 
@@ -394,13 +459,43 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 mutableArgPositions.setQuick(n, pos);
 
                 if (arg instanceof GroupByFunction) {
-                    Misc.freeObjList(mutableArgs);
-                    throw SqlException.position(pos).put("Aggregate function cannot be passed as an argument");
+                    final SqlException ex = SqlException.position(pos).put("Aggregate function cannot be passed as an argument");
+                    Misc.freeObjList(mutableArgs, ex);
+                    throw ex;
+                }
+
+                final boolean argRuntimeConst = arg != null && arg.isRuntimeConstant();
+                if (arg == null || (!argRuntimeConst && !arg.isConstant())) {
+                    allConstOrRuntimeConst = false;
+                } else if (argRuntimeConst) {
+                    // a function is never both constant and runtime constant (see Function.isRuntimeConstant)
+                    anyRuntimeConst = true;
+                }
+            }
+            // At a boundary (the new function is not runtime constant), each runtime-constant arg is
+            // a maximal runtime-constant subtree: wrap it so it evaluates once per cursor, not per
+            // row. Skipped when the parent is runtime constant, so only the topmost node is wrapped.
+            if (!(allConstOrRuntimeConst && anyRuntimeConst)) {
+                for (int n = 0; n < argCount; n++) {
+                    final Function arg = mutableArgs.getQuick(n);
+                    if (RuntimeConstFunction.isFoldable(arg)) {
+                        mutableArgs.setQuick(n, RuntimeConstFunction.newInstance(arg));
+                    }
                 }
             }
             functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
         }
         positionStack.push(node.position);
+    }
+
+    private static int countWindowOverloads(ObjList<FunctionFactoryDescriptor> overload) {
+        int count = 0;
+        for (int i = 0, n = overload.size(); i < n; i++) {
+            if (overload.getQuick(i).getFactory().isWindow()) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private static void handleExpectedAndActual(@Transient IntList argPositions, SqlException ex, int i, int expectedType, int actualType) {
@@ -473,7 +568,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         }
                     }
                 }
-                Misc.freeObjList(args);
+                Misc.freeObjList(args, ex);
                 return ex;
             }
 
@@ -514,7 +609,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             } else {
                 ex.put("function `").put(node.token).put("` requires arguments");
             }
-            Misc.freeObjList(args);
+            Misc.freeObjList(args, ex);
             return ex;
         }
 
@@ -527,7 +622,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             ex.put(node.token);
             ex.put(' ');
             putArgType(args, 1, ex);
-            Misc.freeObjList(args);
+            Misc.freeObjList(args, ex);
             return ex;
         }
 
@@ -537,15 +632,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         // function, not an operator, is not found
         ex.put("there is no matching operator `").put(node.token).put("` with the argument type: ");
         putArgType(args, 0, ex);
-        Misc.freeObjList(args);
+        Misc.freeObjList(args, ex);
         return ex;
     }
 
     private static SqlException invalidFunction(ExpressionNode node, ObjList<Function> args) {
         if (isUnnestKeyword(node.token)) {
-            Misc.freeObjList(args);
-            return SqlException.position(node.position)
+            final SqlException ex = SqlException.position(node.position)
                     .put("UNNEST cannot be used as an expression; use it in the FROM clause");
+            Misc.freeObjList(args, ex);
+            return ex;
         }
         SqlException ex = SqlException.position(node.position);
         ex.put("unknown function name");
@@ -561,7 +657,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
         ex.put(')');
-        Misc.freeObjList(args);
+        Misc.freeObjList(args, ex);
         return ex;
     }
 
@@ -594,12 +690,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     .I$();
             function = factory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
         } catch (SqlException | ImplicitCastException e) {
-            Misc.freeObjList(args);
+            // Best-effort cleanup: keep closing args even if one close() throws, and fold any
+            // close failure into the original error as suppressed instead of masking it.
+            Misc.freeObjList(args, e);
             throw e;
         } catch (Throwable e) {
             LOG.error().$("exception in function factory: ").$(e).$();
-            Misc.freeObjList(args);
-            throw SqlException.position(position).put("exception in function factory: ").put(e.getMessage());
+            final SqlException ex = SqlException.position(position).put("exception in function factory: ").put(e.getMessage());
+            Misc.freeObjList(args, ex);
+            throw ex;
         }
 
         if (function == null) {
@@ -607,15 +706,35 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     .$(" [signature=").$safe(factory.getSignature())
                     .$(", class=").$safe(factory.getClass().getName())
                     .I$();
-            Misc.freeObjList(args);
-            throw SqlException.position(position).put("bad function factory (NULL), check log");
+            final SqlException ex = SqlException.position(position).put("bad function factory (NULL), check log");
+            Misc.freeObjList(args, ex);
+            throw ex;
         } else if (!sqlExecutionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
-            Misc.freeObjList(args);
-            throw SqlException.nonDeterministicColumn(node.position, node.token);
+            // The same guard is armed for both a materialized view and a live view
+            // SELECT; name the kind actually being compiled so the reject reads right.
+            final SqlException exception = SqlException.nonDeterministicColumn(
+                    node.position,
+                    node.token,
+                    sqlExecutionContext.isLiveViewCompile() ? "live view" : "materialized view"
+            );
+            // Construction succeeded, so the function has taken ownership of args (see the args.clear()
+            // below on the success path). Close the function itself - not just its argument list - so
+            // any native resource it allocated beyond its arguments (e.g. an IN-value set) is released
+            // instead of leaked. Closing the function also frees the args it owns, so do not free them
+            // separately. Preserve the rejection exception if close() were to throw.
+            if (args != null) {
+                args.clear(); // newInstance() transferred argument ownership to function
+            }
+            Misc.free(function, exception);
+            throw exception;
         }
         if (args != null) {
             args.clear(); // To enforce that args are not used after this point
         }
+        if (ColumnType.isCursor(function.getType())) {
+            cursorFunctionInstantiated = true;
+        }
+        lastFunctionFactorySignature = factory.getSignature();
         return function;
     }
 
@@ -733,10 +852,49 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
+        final ScalarTimestampBoundHolder scalarBoundHolder = node.scalarBoundHolder;
+        if (scalarBoundHolder != null) {
+            // This sub-query was already compiled and evaluated once as a designated-timestamp
+            // pruning bound (WhereClauseParser). Re-opening it here for the residual filter could
+            // observe a different commit than the pruning open and drop qualifying rows, so read the
+            // pruning bound's single frozen value instead.
+            return new ScalarSubQueryBoundRefFunction(scalarBoundHolder);
+        }
+        final ScalarSubQueryCompileCache compileCache = node.scalarBoundCompileCache;
+        if (compileCache != null) {
+            // This sub-query was already compiled as a speculative pruning bound that was then
+            // declined. Nothing froze its value - the bound was not provably stable - so reuse the
+            // compiled function itself and evaluate it here, exactly as a fresh generation would,
+            // instead of generating the identical sub-query a second time. An empty slot (a later
+            // per-worker clone, or a parser that already released it) falls through and compiles.
+            final Function reused = compileCache.take();
+            if (reused != null) {
+                return reused;
+            }
+        }
         // Make sure to override timestamp required flag from base query.
         sqlExecutionContext.pushTimestampRequiredFlag(false);
         try {
-            return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
+            final CursorFunction function = new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
+            // Reject only sub-queries reading a source outside the database. Genuinely
+            // non-deterministic functions (now(), sysdate(), rnd_*) inside the sub-query are already
+            // rejected while the sub-query is generated, by the guard above, which names the offending
+            // function. Do NOT consult isNonDeterministic() here: it is a fail-safe optimizer hint that
+            // defaults to true, so 97 of 114 factories would make legal SQL illegal by accident.
+            if (!sqlExecutionContext.allowNonDeterministicFunctions() && function.getRecordCursorFactory().usesExternalDataSource()) {
+                final SqlException exception = SqlException.nonDeterministicColumn(
+                        node.position,
+                        "sub-query",
+                        sqlExecutionContext.isLiveViewCompile() ? "live view" : "materialized view"
+                );
+                try {
+                    function.close();
+                } catch (Throwable cleanupFailure) {
+                    exception.addSuppressed(cleanupFailure);
+                }
+                throw exception;
+            }
+            return function;
         } finally {
             sqlExecutionContext.popTimestampRequiredFlag();
         }
@@ -1127,7 +1285,23 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         if (candidate == null) {
-            // no signature match — find the best descriptor for a helpful error message
+            // no signature match. A CURSOR argument may be a scalar boolean sub-query used in
+            // boolean context (e.g. "a and (select b from x)"); coerce such arguments to
+            // BOOLEAN and retry once. Coerced arguments are no longer CURSOR-typed, so the
+            // retry cannot recurse further.
+            boolean coerced = false;
+            for (int i = 0; i < argCount; i++) {
+                final Function wrapped = BooleanSubQueryFunction.maybeWrap(args.getQuick(i), argPositions.getQuick(i));
+                if (wrapped != null) {
+                    args.setQuick(i, wrapped);
+                    coerced = true;
+                }
+            }
+            if (coerced) {
+                return createFunction(node, args, argPositions);
+            }
+
+            // find the best descriptor for a helpful error message
             if (overload.size() == 1) {
                 candidateDescriptor = overload.getQuick(0);
             } else {
@@ -1152,8 +1326,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             for (int k = candidateSigArgCount; k < argCount; k++) {
                 Function func = args.getQuick(k);
                 if (!(func.isConstant() || func.isRuntimeConstant())) {
-                    Misc.freeObjList(args);
-                    throw SqlException.$(argPositions.getQuick(k), "constant expected");
+                    final SqlException ex = SqlException.$(argPositions.getQuick(k), "constant expected");
+                    Misc.freeObjList(args, ex);
+                    throw ex;
                 }
             }
         }
@@ -1208,6 +1383,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 }
             } else if (argTypeTag == ColumnType.UUID && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));
+            } else if (argTypeTag == ColumnType.IPv4 && sigArgTypeTag == ColumnType.STRING) {
+                args.setQuick(k, new CastIPv4ToStrFunctionFactory.Func(arg));
             } else if (argTypeTag == ColumnType.INTERVAL && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastIntervalToStrFunctionFactory.Func(arg));
             } else if (argTypeTag == ColumnType.INT && sigArgTypeTag == ColumnType.DECIMAL) {
@@ -1219,6 +1396,22 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             } else if (argTypeTag == ColumnType.BYTE && sigArgTypeTag == ColumnType.DECIMAL) {
                 args.setQuick(k, CastByteToDecimalFunctionFactory.newInstance(argPositions.getQuick(k), arg, sqlExecutionContext));
             }
+        }
+        // An untyped NULL literal as the value argument of a polymorphic window function (lead, min,
+        // sum, nth_value, ...) is ambiguous: it ties across every typed variant (NULL to any type has
+        // zero overload distance), so the winner - and the resulting behaviour - depends on classpath
+        // scan order. Different winners give different observable behaviour: a clean rejection on one
+        // platform, a "not yet implemented for NULL" factory error on another, or even silent acceptance
+        // returning NULLs. Reject it deterministically here, before any factory runs, so the user gets
+        // the same clear "cast it" error everywhere. Window functions with a single overload (e.g. ntile,
+        // whose argument is a bucket count rather than a value) resolve deterministically and keep their
+        // own argument validation.
+        if (isWindowContext && candidate.isWindow() && argCount > 0
+                && ColumnType.tagOf(args.getQuick(0).getType()) == ColumnType.NULL
+                && countWindowOverloads(overload) > 1) {
+            final SqlException ex = SqlException.$(node.position, "window function ").put(node.token).put(" does not support an untyped NULL argument; cast it to a concrete type, e.g. null::double");
+            Misc.freeObjList(args, ex);
+            throw ex;
         }
         return checkAndCreateFunction(candidate, args, argPositions, node, configuration);
     }
@@ -1263,6 +1456,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.CHAR:
                 if (toType == ColumnType.SYMBOL) {
                     return new CastCharToSymbolFunctionFactory.Func(function);
+                } else if (ColumnType.isDecimal(toType)) {
+                    return CastStrToDecimalFunctionFactory.newInstance(sqlExecutionContext.getDecimal256(), position, toType, function);
                 }
                 break;
             case ColumnType.IPv4:
@@ -1369,13 +1564,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof IntConstant) {
                     return function;
                 } else {
-                    int intConst = function.getInt(null);
-                    long longConst = function.getLong(null);
-                    if (intConst == Numbers.INT_NULL || intConst == longConst) {
-                        return IntConstant.newInstance(intConst);
-                    } else {
-                        return new LongConstant(longConst);
-                    }
+                    final int intConst = function.getInt(null);
+                    return intConst == Numbers.INT_NULL ? IntConstant.NULL : IntConstant.newInstance(intConst);
                 }
             case ColumnType.BOOLEAN:
                 if (function instanceof BooleanConstant) {
@@ -1623,7 +1813,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private int mergeWithExactMatch(int match) {
         return match == MATCH_NO_MATCH ? MATCH_EXACT_MATCH
                 : match == MATCH_FUZZY_MATCH ? MATCH_PARTIAL_MATCH
-                : match;
+                  : match;
     }
 
     private Function parseIndexedParameter(int position, CharSequence name) throws SqlException {

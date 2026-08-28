@@ -11,23 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/questdb/questdb">English</a> |
-  简体中文 |
-  <a href="./README.zh-hk.md">繁體中文</a> |
-  <a href="./README.ar-dz.md">العربية</a> |
-  <a href="./README.it-it.md">Italiano</a> |
-  <a href="./README.ua-ua.md">Українська</a> |
-  <a href="./README.es-es.md">Español</a> |
-  <a href="./README.pt.md">Português</a> |
-  <a href="./README.fr-fr.md">Français</a> |
-  <a href="./README.de-de.md">Deutsch</a> |
-  <a href="./README.ja-ja.md">日本語</a> |
-  <a href="./README.ko-kr.md">한국어</a> |
-  <a href="./README.he-il.md">עברית</a> |
-  <a href="./README.nl-nl.md">Nederlands</a> |
-  <a href="./README.tr-tr.md">Türkçe</a> |
-  <a href="./README.hn-in.md">हिंदी</a> |
-  <a href="./README.vi-vn.md">Tiếng Việt</a> |
-  <a href="./README.ms-my.md">Bahasa Melayu</a>
+  简体中文
 </p>
 
 ---
@@ -46,7 +30,7 @@ QuestDB 是一个高性能开源时序数据库，提供**低延迟、高吞吐�
 
 <div align="center">
   <a href="https://demo.questdb.com/">
-    <img alt="QuestDB Web Console showing a SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
+    <img alt="QuestDB Web Console showing a SQL statement and query result" src="../.github/console.webp" width="900" />
   </a>
   <p><em>QuestDB Web 控制台 - 点击启动演示</em></p>
 </div>
@@ -58,21 +42,22 @@ QuestDB 是一个高性能开源时序数据库，提供**低延迟、高吞吐�
 核心功能亮点：
 
 - 低延迟、高吞吐数据写入 — 支持从单条数据到每秒百万条的处理能力
-- 具备时序扩展功能的高效 SQL 查询方言（ASOF JOIN、SAMPLE BY、LATEST ON）
+- 具备时序扩展功能的高效 SQL 查询方言（ASOF JOIN、WINDOW JOIN、HORIZON JOIN、SAMPLE BY、LATEST ON）
 - SIMD 指令加速的并行执行引擎，在普通硬件上也能实现亚毫秒级查询响应时间
 - 多层存储架构：WAL → 原生列式存储 → Parquet（支持时间分区与时间排序）
 - Postgres 协议（PGwire）和 REST API 接入
 - 物化视图和 n 维数组（含适用于订单簿的二维数组）
 - 用于查询与数据管理的 Web 控制台
 - Apache 2.0 开源协议与开放格式——杜绝供应商绑定
-- 支持多种 [金融函数](https://questdb.com/docs/reference/function/finance/)
-  和 [订单簿分析](https://questdb.com/docs/guides/order-book/)
+- 支持多种 [金融函数](https://questdb.com/docs/query/functions/finance/)
+  和 [订单簿分析](https://questdb.com/docs/tutorials/order-book/)
 
 QuestDB 尤其擅长处理：
 
 - 金融市场数据（Tick 数据、交易、订单簿、OHLC 数据）
 - 具有高基数特征的传感器/遥测数据
 - 实时仪表盘与监控场景
+- [AI 编程智能体](https://questdb.com/agents/)自动化数据管道与分析
 
 为什么要使用时序数据库？
 
@@ -93,7 +78,7 @@ QuestDB 尤其擅长处理：
 - 外汇订单簿：带有外汇交易对订单簿的实时图表
 - 出行数据：纽约市 10 年出租车行程记录，共 16 亿行数据
 
-我们还通过 [原生 Grafana](https://questdb.com/docs/third-party-tools/grafana/) 插件构建了一些公开的实时演示看板：
+我们还通过 [原生 Grafana](https://questdb.com/docs/integrations/visualization/grafana/) 插件构建了一些公开的实时演示看板：
 
 - [实时加密货币交易看板：](https://questdb.com/dashboards/crypto/)实时展示OKX交易所20余种资产的成交情况
 - [外汇订单簿看板：](https://questdb.com/dashboards/FX-orderbook/)主流外汇交易对的实时深度/不平衡图表
@@ -112,7 +97,19 @@ QuestDB 尤其擅长处理：
 我们推荐您亲自运行基准测试以获得最直观的性能体验。
 
 <div align="center">
-  <img alt="比较 QuestDB、InfluxDB 和 TimescaleDB 摄取速率的图表。" src="../.github/readme-benchmark.png" width="600"/>
+  <img alt="比较 QuestDB、InfluxDB 和 TimescaleDB 摄取速率的图表。" src="../.github/readme-benchmark.webp" width="600"/>
+</div>
+
+## AI 编程智能体
+
+QuestDB 开箱即用地支持 AI 编程智能体。安装
+[QuestDB 智能体技能](https://questdb.com/agents/)，60 秒内即可从提示词到生产环境：
+流式数据写入、物化视图和实时分析，无需手动编写代码。
+
+<div align="center">
+  <a href="https://questdb.com/agents/">
+    <img alt="AI 编程智能体将外汇数据流式写入 QuestDB 并分析流动性" src="../.github/agents-demo.jpg" width="600"/>
+  </a>
 </div>
 
 ## 快速开始
@@ -135,44 +132,55 @@ questdb start
 questdb stop
 ```
 
-若需完整入门指引，建议从我们的简洁版 [快速入门指南](https://questdb.com/docs/quick-start/)开始。
+若需完整入门指引，建议从我们的简洁版 [快速入门指南](https://questdb.com/docs/getting-started/quick-start/)开始。
 
-### 原生数据写入客户端
+### 官方客户端
 
-支持通过 InfluxDB Line Protocol（以下简称 ILP 协议） 进行数据写入的 QuestDB 客户端：
+支持通过 QuestDB Wire Protocol 进行数据写入和查询的 QuestDB 客户端：
 
-- [Python](https://questdb.com/docs/clients/ingest-python/)
-- [.NET](https://questdb.com/docs/clients/ingest-dotnet/)
-- [C/C++](https://questdb.com/docs/clients/ingest-c-and-cpp/)
-- [Go](https://questdb.com/docs/clients/ingest-go/)
-- [Java](https://questdb.com/docs/clients/java_ilp/)
-- [NodeJS](https://questdb.com/docs/clients/ingest-node/)
-- [Rust](https://questdb.com/docs/clients/ingest-rust/)
+- [Python](https://questdb.com/docs/connect/clients/python/)
+- [.NET](https://questdb.com/docs/connect/clients/dotnet/)
+- [C/C++](https://questdb.com/docs/connect/clients/c-and-cpp/)
+- [Go](https://questdb.com/docs/connect/clients/go/)
+- [Java](https://questdb.com/docs/connect/clients/java/)
+- [NodeJS](https://questdb.com/docs/connect/clients/nodejs/)
+- [Rust](https://questdb.com/docs/connect/clients/rust/)
 
 ### 连接 QuestDB
 
-提供多种方式与 QuestDB 交互：
+完整介绍请参阅[连接概览](https://questdb.com/docs/connect/overview/)。
 
-- [Web 控制台](https://questdb.com/docs/web-console/) 提供交互式 SQL 编辑器和 CSV 导入功能
-- [InfluxDB Line Protocol](https://questdb.com/docs/reference/api/ilp/overview/) 支持 ILP 协议格式的流式数据写入
-- [PostgreSQL Wire Protocol](https://questdb.com/docs/reference/api/postgres/) 兼容 PG 协议，可使用任意 PG 的客户端对
-  QuestDB 进行连接
-- [REST API](https://questdb.com/docs/reference/api/rest/) 支持通过 HTTP(S) 进行 CSV 导入和运行 SQL 查询
+**QuestDB Wire Protocol（QWP）** 是 QuestDB 的原生协议，也是推荐的连接方式。它采用
+二进制格式，在端口 `9000` 上通过单个连接实现双向流式传输，并用同一个连接字符串同时
+覆盖数据写入和查询。上面列出的官方客户端均使用该协议。
+
+QuestDB 同时支持以下兼容协议，现有工具链无需改动即可接入：
+
+- [InfluxDB Line Protocol](https://questdb.com/docs/connect/compatibility/ilp/overview/)
+  适用于已经输出 ILP 格式的采集器和数据管道，端口 `9000`
+- [PostgreSQL Wire Protocol](https://questdb.com/docs/connect/compatibility/pgwire/overview/)
+  适用于 PG 客户端、BI 工具和 ORM，端口 `8812`
+- [REST API](https://questdb.com/docs/connect/compatibility/rest-api/)
+  适用于 HTTP 脚本、cURL 和 CSV 导入，端口 `9000`
+
+如需交互式操作，
+[Web 控制台](https://questdb.com/docs/getting-started/web-console/overview/)
+在端口 `9000` 上提供 SQL 编辑器、图表和 CSV 导入功能。
 
 ### 常用第三方工具
 
 可与 QuestDB 集成的流行工具包括：
 
-- [Kafka](https://questdb.com/docs/third-party-tools/kafka/)
-- [Redpanda](https://questdb.com/docs/third-party-tools/redpanda/)
-- [Grafana](https://questdb.com/docs/third-party-tools/grafana/)
-- [Polars](https://questdb.com/docs/third-party-tools/polars/)
-- [Pandas](https://questdb.com/docs/third-party-tools/pandas/)
-- [PowerBI](https://questdb.com/docs/third-party-tools/powerbi/)
-- [Superset](https://questdb.com/docs/third-party-tools/superset/)
-- [Apache Flink](https://questdb.com/docs/third-party-tools/flink/)
-- [Telegraf](https://questdb.com/docs/third-party-tools/telegraf/)
-- [MindsDB](https://questdb.com/docs/third-party-tools/mindsdb/)
+- [Kafka](https://questdb.com/docs/connect/message-brokers/kafka/)
+- [Redpanda](https://questdb.com/docs/connect/message-brokers/redpanda/)
+- [Grafana](https://questdb.com/docs/integrations/visualization/grafana/)
+- [Polars](https://questdb.com/docs/integrations/data-processing/polars/)
+- [Pandas](https://questdb.com/docs/integrations/data-processing/pandas/)
+- [PowerBI](https://questdb.com/docs/integrations/visualization/powerbi/)
+- [Superset](https://questdb.com/docs/integrations/visualization/superset/)
+- [Apache Flink](https://questdb.com/docs/connect/message-brokers/flink/)
+- [Telegraf](https://questdb.com/docs/connect/message-brokers/telegraf/)
+- [MindsDB](https://questdb.com/docs/integrations/other/mindsdb/)
 
 ### 端到端代码示例
 
@@ -180,7 +188,7 @@ questdb stop
 
 ### 生产环境配置指南
 
-查阅我们的[容量规划推荐](https://questdb.com/docs/deployment/capacity-planning/) 针对生产环境负载优化 QuestDB 配置。
+查阅我们的[容量规划推荐](https://questdb.com/docs/getting-started/capacity-planning/) 针对生产环境负载优化 QuestDB 配置。
 
 ### QuestDB 企业版
 
@@ -215,11 +223,15 @@ questdb stop
 
 ### 🚢 部署 QuestDB
 
-- [AWS AMI 镜像](https://questdb.com/docs/guides/aws-official-ami)
-- [Google Cloud Platform](https://questdb.com/docs/guides/google-cloud-platform)
-- [官方 Docker 镜像](https://questdb.com/docs/get-started/docker)
-- [DigitalOcean 云服务器](https://questdb.com/docs/guides/digitalocean)
-- [Kubernetes Helm 图表](https://questdb.com/docs/guides/kubernetes)
+- [官方 Docker 镜像](https://questdb.com/docs/deployment/docker/)
+- [Kubernetes Helm 图表](https://questdb.com/docs/deployment/kubernetes/)
+- [systemd](https://questdb.com/docs/deployment/systemd/)
+- [AWS](https://questdb.com/docs/deployment/aws/)
+- [Azure](https://questdb.com/docs/deployment/azure/)
+- [Google Cloud Platform](https://questdb.com/docs/deployment/gcp/)
+- [DigitalOcean](https://questdb.com/docs/deployment/digital-ocean/)
+- [Hetzner](https://questdb.com/docs/deployment/hetzner/)
+- [ZFS 压缩](https://questdb.com/docs/deployment/compression-zfs/)
 
 ## 参与贡献
 

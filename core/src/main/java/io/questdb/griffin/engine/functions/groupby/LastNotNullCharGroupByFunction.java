@@ -47,11 +47,11 @@ public class LastNotNullCharGroupByFunction extends FirstCharGroupByFunction {
             long hi = dataAddr + (rowCount - 1) * 2L;
             long offset = rowCount - 1;
             for (; hi >= dataAddr; hi -= 2L) {
-                char value = Unsafe.getUnsafe().getChar(hi);
+                char value = Unsafe.getChar(hi);
                 if (value != CharConstant.ZERO.getChar(null)) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
-                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getChar(valueIndex + 1) == CharConstant.ZERO.getChar(null)) {
                         mapValue.putLong(valueIndex, rowId);
                         mapValue.putChar(valueIndex + 1, value);
                     }
@@ -80,25 +80,28 @@ public class LastNotNullCharGroupByFunction extends FirstCharGroupByFunction {
         // Zero page address means a column top; fall through to the record-based path.
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
-            for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            // Backwards: last-wins, so a forward scan would rewrite a key's entry for every later
+            // non-null row. See GroupByFunction.computeKeyedBatch().
+            for (long i = rowCount - 1; i >= 0; i--) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final char value = Unsafe.getUnsafe().getChar(argAddr + (rowIndex << 1));
+                final char value = Unsafe.getChar(argAddr + (rowIndex << 1));
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
                 if (value != Numbers.CHAR_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
-                    final char existingValue = Unsafe.getUnsafe().getChar(entryBase + valueColumnOffset);
-                    if (existingValue == Numbers.CHAR_NULL || rowId > Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
-                        Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
-                        Unsafe.getUnsafe().putChar(entryBase + valueColumnOffset, value);
+                    final char existingValue = Unsafe.getChar(entryBase + valueColumnOffset);
+                    if (existingValue == Numbers.CHAR_NULL || rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
+                        Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                        Unsafe.putChar(entryBase + valueColumnOffset, value);
                     }
                 }
             }
         } else {
-            for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            // Backwards for the same last-wins reason as the direct-column path above.
+            for (long i = rowCount - 1; i >= 0; i--) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 record.setRowIndex(rowIndex);
                 final char value = arg.getChar(record);
@@ -107,10 +110,10 @@ public class LastNotNullCharGroupByFunction extends FirstCharGroupByFunction {
                 if (value != Numbers.CHAR_NULL || Map.isNewBatchEntry(encoded)) {
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
-                    final char existingValue = Unsafe.getUnsafe().getChar(entryBase + valueColumnOffset);
-                    if (existingValue == Numbers.CHAR_NULL || rowId > Unsafe.getUnsafe().getLong(entryBase + rowIdOffset)) {
-                        Unsafe.getUnsafe().putLong(entryBase + rowIdOffset, rowId);
-                        Unsafe.getUnsafe().putChar(entryBase + valueColumnOffset, value);
+                    final char existingValue = Unsafe.getChar(entryBase + valueColumnOffset);
+                    if (existingValue == Numbers.CHAR_NULL || rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
+                        Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                        Unsafe.putChar(entryBase + valueColumnOffset, value);
                     }
                 }
             }
@@ -139,7 +142,7 @@ public class LastNotNullCharGroupByFunction extends FirstCharGroupByFunction {
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId) {
+        if (srcRowId > destRowId || destValue.getChar(valueIndex + 1) == CharConstant.ZERO.getChar(null)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putChar(valueIndex + 1, srcVal);
         }

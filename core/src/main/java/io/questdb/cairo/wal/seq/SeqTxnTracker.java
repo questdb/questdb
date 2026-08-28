@@ -28,19 +28,51 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.TableWriterPressureControl;
+import io.questdb.mp.CountedConcurrentQueue;
+import io.questdb.mp.ValueHolder;
+import io.questdb.mp.continuation.TxnWaiter;
+import io.questdb.std.CarrierLocal;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
 
 public class SeqTxnTracker {
     public static final long UNINITIALIZED_TXN = -1;
+    private static final CarrierLocal<WaiterHolder> HOLDER = CarrierLocal.withInitial(WaiterHolder::new);
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
+    private static final long WAITER_REGISTRATION_COUNT_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "waiterRegistrationCount");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
     private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
+    private final CountedConcurrentQueue<WaiterHolder> waiters = CountedConcurrentQueue.create(WaiterHolder::new);
+    // Live-view dedup-base signal. The apply
+    // worker is the single writer per table, so plain volatile suffices (no CAS). A
+    // coupled dedup-base live view reads these to decide whether an applied seqTxn range
+    // matches its raw WAL stream (so it can raw-WAL route instead of the applied-reader
+    // path). Ordering discipline: recordApplied writes divergence and trackedFrom BEFORE
+    // covered, and the consumer reads covered first, so observing covered >= to also
+    // observes the paired divergence/trackedFrom.
+    //
+    // Highest applied seqTxn recorded this process; the range the signal vouches for is
+    // [trackedFrom, covered]. Benignly jumps over structural / non-DATA seqTxns.
+    private volatile long dedupSignalCoveredSeqTxn = Numbers.LONG_NULL;
+    // Highest seqTxn <= covered whose applied state diverges from the raw WAL stream
+    // (dedup removed rows, a skipped DATA commit, or a data-shaped non-DATA op). LONG_NULL
+    // if none. Monotone, so a consumer reading it later than covered only over-reports.
+    private volatile long dedupSignalDivergenceSeqTxn = Numbers.LONG_NULL;
+    // The from seqTxn of the first batch recorded this process; set once, never decreases.
+    // A range whose lower bound sits below this is not vouched for (cold signal).
+    private volatile long dedupSignalTrackedFromSeqTxn = Numbers.LONG_NULL;
     private volatile long dirtyWriterTxn;
-    private boolean dropped;
+    // Volatile because fireWaiters() and registerWaiter() can race. See comments there
+    private volatile boolean dropped;
     private volatile String errorMessage = "";
+    // Hard-suspend flag: when set, the table is excluded from WAL apply and (when
+    // cairo.wal.apply.suspended.write.denied is enabled) denied WAL writes. Set by
+    // ALTER TABLE ... SUSPEND WAL, cleared by ALTER TABLE ... RESUME WAL. The reloadable
+    // cairo.wal.apply.suspended.tables config list is an additional source checked by the engine.
+    private volatile boolean hardSuspended;
     private volatile ErrorTag errorTag = ErrorTag.NONE;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = UNINITIALIZED_TXN;
@@ -48,11 +80,25 @@ public class SeqTxnTracker {
     // 0 unknown
     // 1 not suspended
     private volatile int suspendedState = 0;
+    @SuppressWarnings("FieldMayBeFinal")
+    private volatile long waiterRegistrationCount;
     private volatile long writerTxn = UNINITIALIZED_TXN;
 
     public SeqTxnTracker(CairoConfiguration configuration) {
         this.pressureControl = new TableWriterPressureControlImpl(configuration);
         this.metrics = configuration.getMetrics();
+    }
+
+    public long getDedupSignalCoveredSeqTxn() {
+        return dedupSignalCoveredSeqTxn;
+    }
+
+    public long getDedupSignalDivergenceSeqTxn() {
+        return dedupSignalDivergenceSeqTxn;
+    }
+
+    public long getDedupSignalTrackedFromSeqTxn() {
+        return dedupSignalTrackedFromSeqTxn;
     }
 
     public String getErrorMessage() {
@@ -71,12 +117,15 @@ public class SeqTxnTracker {
         return pressureControl;
     }
 
-    @TestOnly
     public long getSeqTxn() {
         return seqTxn;
     }
 
     @TestOnly
+    public long getWaiterRegistrationCount() {
+        return waiterRegistrationCount;
+    }
+
     public long getWriterTxn() {
         return writerTxn;
     }
@@ -97,6 +146,14 @@ public class SeqTxnTracker {
         }
         metrics.walMetrics().addWriterTxn(newWriterTxn - Math.max(0, wtxn));
         return seqTxn > 0 && seqTxn > writerTxn;
+    }
+
+    public boolean isDropped() {
+        return dropped;
+    }
+
+    public boolean isHardSuspended() {
+        return hardSuspended;
     }
 
     public boolean isInitialised() {
@@ -135,13 +192,66 @@ public class SeqTxnTracker {
         return (stxn < 1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
     }
 
-    public synchronized void notifyOnDrop() {
-        if (dropped) {
-            return;
+    public void notifyOnDrop() {
+        synchronized (this) {
+            if (dropped) {
+                return;
+            }
+            dropped = true;
         }
-        dropped = true;
         metrics.walMetrics().addSeqTxn(-seqTxn);
         metrics.walMetrics().addWriterTxn(-writerTxn);
+        fireWaiters();
+    }
+
+    /**
+     * Records an applied WAL seqTxn range for the live-view dedup-base signal.
+     * Called once per applied batch/op by the
+     * apply worker, which is the single writer per table -- plain volatile writes, no CAS.
+     * <p>
+     * Ordering discipline: divergence and trackedFrom are written BEFORE covered, so a
+     * consumer that reads covered first (and observes {@code covered >= to}) is guaranteed
+     * to also observe the paired divergence/trackedFrom.
+     *
+     * @param fromSeqTxn    the first seqTxn of the applied batch/op
+     * @param coveredSeqTxn the highest seqTxn now applied by this batch/op
+     * @param diverged      true if the applied state differs from the raw WAL stream for
+     *                      this range: dedup removed rows, a DATA commit was skipped, or a
+     *                      data-shaped non-DATA op (TRUNCATE / DROP PARTITION / TTL /
+     *                      REPLACE_RANGE) removed or replaced rows
+     */
+    public void recordApplied(long fromSeqTxn, long coveredSeqTxn, boolean diverged) {
+        if (dedupSignalTrackedFromSeqTxn == Numbers.LONG_NULL) {
+            dedupSignalTrackedFromSeqTxn = fromSeqTxn;
+        }
+        if (diverged && coveredSeqTxn > dedupSignalDivergenceSeqTxn) {
+            dedupSignalDivergenceSeqTxn = coveredSeqTxn;
+        }
+        // covered LAST: release-store pairing divergence/trackedFrom with the covered read.
+        if (coveredSeqTxn > dedupSignalCoveredSeqTxn) {
+            dedupSignalCoveredSeqTxn = coveredSeqTxn;
+        }
+    }
+
+    /**
+     * Registers a parked waiter to be resumed when writerTxn reaches target, the table
+     * goes suspended/dropped, or the deadline elapses. Fires immediately if the condition
+     * is already met. The eager fire can race the body before it reaches suspend(); the
+     * dequeuing peer worker spins on ISE or drops the phantom via parkRefused if pinned.
+     */
+    public void registerWaiter(TxnWaiter waiter) {
+        enqueueHolder(HOLDER.get(), waiter);
+        Unsafe.getAndAddLong(this, WAITER_REGISTRATION_COUNT_OFFSET, 1);
+        // Race: a concurrent fireWaiters can read a stale queue length and miss our
+        // enqueue. Closed by dropped / suspendedState / writerTxn being volatile -- the
+        // read below pairs with their volatile writes to order our enqueue first.
+        if (writerTxn >= waiter.getTargetWriterTxn() || isSuspended() || dropped) {
+            fireWaiters();
+        }
+    }
+
+    public void setHardSuspended(boolean hardSuspended) {
+        this.hardSuspended = hardSuspended;
     }
 
     public void setSuspended(ErrorTag errorTag, String errorMessage) {
@@ -153,6 +263,7 @@ public class SeqTxnTracker {
         this.suspendedState = -1;
 
         metrics.tableWriterMetrics().incSuspendedTables();
+        fireWaiters();
     }
 
     public void setUnsuspended() {
@@ -173,21 +284,86 @@ public class SeqTxnTracker {
      * @param dirtyWriterTxn txn that is in flight that is not yet fully written
      * @return true if ApplyWal2Tables job should be notified
      */
-    public synchronized boolean updateWriterTxns(long writerTxn, long dirtyWriterTxn) {
-        if (dropped) {
-            return false;
+    public boolean updateWriterTxns(long writerTxn, long dirtyWriterTxn) {
+        boolean progressMade = false;
+        synchronized (this) {
+            if (dropped) {
+                return false;
+            }
+            long prevWriterTxn = this.writerTxn;
+            long prevDirtyWriterTxn = this.dirtyWriterTxn;
+            this.writerTxn = writerTxn;
+            this.dirtyWriterTxn = dirtyWriterTxn;
+            // Progress made means table is not suspended
+            if (writerTxn > prevWriterTxn) {
+                suspendedState = 1;
+                metrics.walMetrics().addWriterTxn(writerTxn - prevWriterTxn);
+                progressMade = true;
+            } else if (dirtyWriterTxn > prevDirtyWriterTxn) {
+                suspendedState = 1;
+            }
         }
-        long prevWriterTxn = this.writerTxn;
-        long prevDirtyWriterTxn = this.dirtyWriterTxn;
-        this.writerTxn = writerTxn;
-        this.dirtyWriterTxn = dirtyWriterTxn;
-        // Progress made means table is not suspended
-        if (writerTxn > prevWriterTxn) {
-            suspendedState = 1;
-            metrics.walMetrics().addWriterTxn(writerTxn - prevWriterTxn);
-        } else if (dirtyWriterTxn > prevDirtyWriterTxn) {
-            suspendedState = 1;
+        if (progressMade) {
+            fireWaiters();
         }
         return writerTxn < seqTxn;
+    }
+
+    private void enqueueHolder(WaiterHolder holder, TxnWaiter waiter) {
+        holder.waiter = waiter;
+        waiters.enqueue(holder);
+        holder.waiter = null;
+    }
+
+    /**
+     * Drains the waiter queue, firing any waiter whose target writerTxn has been met or
+     * whose table has become suspended/dropped. Non-ready waiters are re-enqueued. Fired
+     * waiters are CAS'd PENDING -> FIRED and the winning thread enqueues the continuation
+     * on the waiter's resume job.
+     * <p>
+     * Race: {@code waiters.sizeDirty()} can lag a concurrent registerWaiter and miss
+     * its enqueue. Closed by dropped / suspendedState / writerTxn being volatile --
+     * callers must write one of these before calling here, which orders the enqueue.
+     */
+    private void fireWaiters() {
+        int size = waiters.sizeDirty();
+        if (size == 0) {
+            // Fast path on the WAL commit hot path: HOLDER.get() goes through a
+            // CarrierLocal FFI downcall; skipping it when there is nothing to
+            // fire keeps updateWriterTxns -> fireWaiters allocation- and FFI-free.
+            // A racing registerWaiter that we miss here will fire its own enqueue.
+            return;
+        }
+        long wtxn = this.writerTxn;
+        boolean terminal = isSuspended() || dropped;
+        WaiterHolder holder = HOLDER.get();
+        for (int i = 0; i < size && waiters.tryDequeue(holder); i++) {
+            TxnWaiter w = holder.waiter;
+            holder.waiter = null;
+            if (w == null) {
+                continue;
+            }
+            if (terminal || wtxn >= w.getTargetWriterTxn()) {
+                w.tryFire();
+            } else {
+                if (w.getState() != TxnWaiter.STATE_CANCELLED) {
+                    enqueueHolder(holder, w);
+                }
+            }
+        }
+    }
+
+    private static final class WaiterHolder implements ValueHolder<WaiterHolder> {
+        TxnWaiter waiter;
+
+        @Override
+        public void clear() {
+            waiter = null;
+        }
+
+        @Override
+        public void copyTo(WaiterHolder dest) {
+            dest.waiter = waiter;
+        }
     }
 }

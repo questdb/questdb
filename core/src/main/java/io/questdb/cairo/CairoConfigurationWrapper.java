@@ -32,8 +32,11 @@ import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -322,6 +325,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public byte getDefaultSymbolIndexType() {
+        return getDelegate().getDefaultSymbolIndexType();
+    }
+
+    @Override
     public int getDetachedMkDirMode() {
         return getDelegate().getDetachedMkDirMode();
     }
@@ -477,6 +485,91 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewCheckpointCompactionInterval() {
+        return getDelegate().getLiveViewCheckpointCompactionInterval();
+    }
+
+    @Override
+    public long getLiveViewCheckpointMaxDurationMicros() {
+        return getDelegate().getLiveViewCheckpointMaxDurationMicros();
+    }
+
+    @Override
+    public long getLiveViewCheckpointPurgeInterval() {
+        return getDelegate().getLiveViewCheckpointPurgeInterval();
+    }
+
+    @Override
+    public long getLiveViewCheckpointRepairReplayMaxRows() {
+        return getDelegate().getLiveViewCheckpointRepairReplayMaxRows();
+    }
+
+    @Override
+    public long getLiveViewCheckpointRepairScanMaxKeys() {
+        return getDelegate().getLiveViewCheckpointRepairScanMaxKeys();
+    }
+
+    @Override
+    public long getLiveViewCheckpointRepairScanMaxRows() {
+        return getDelegate().getLiveViewCheckpointRepairScanMaxRows();
+    }
+
+    @Override
+    public long getLiveViewCheckpointRows() {
+        return getDelegate().getLiveViewCheckpointRows();
+    }
+
+    @Override
+    public int getLiveViewFlushRetryMax() {
+        return getDelegate().getLiveViewFlushRetryMax();
+    }
+
+    @Override
+    public long getLiveViewFlushRetryMaxDurationMicros() {
+        return getDelegate().getLiveViewFlushRetryMaxDurationMicros();
+    }
+
+    @Override
+    public long getLiveViewInMemoryBufferGrowthBytes() {
+        return getDelegate().getLiveViewInMemoryBufferGrowthBytes();
+    }
+
+    @Override
+    public long getLiveViewInMemoryBufferInitialBytes() {
+        return getDelegate().getLiveViewInMemoryBufferInitialBytes();
+    }
+
+    @Override
+    public long getLiveViewInMemoryMaxMicros() {
+        return getDelegate().getLiveViewInMemoryMaxMicros();
+    }
+
+    @Override
+    public int getLiveViewPartitionCompactThreshold() {
+        return getDelegate().getLiveViewPartitionCompactThreshold();
+    }
+
+    @Override
+    public long getLiveViewRefreshMemoryLimitBytes() {
+        return getDelegate().getLiveViewRefreshMemoryLimitBytes();
+    }
+
+    @Override
+    public int getLiveViewRefreshTurnMaxCommits() {
+        return getDelegate().getLiveViewRefreshTurnMaxCommits();
+    }
+
+    @Override
+    public long getLiveViewRefreshTurnMaxDurationMicros() {
+        return getDelegate().getLiveViewRefreshTurnMaxDurationMicros();
+    }
+
+    @Override
+    public int getLiveViewRefreshWorkerCount() {
+        return getDelegate().getLiveViewRefreshWorkerCount();
+    }
+
+    @Override
     public boolean getLogLevelVerbose() {
         return getDelegate().getLogLevelVerbose();
     }
@@ -527,13 +620,28 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewRefreshBusyRetryLimit() {
+        return getDelegate().getMatViewRefreshBusyRetryLimit();
+    }
+
+    @Override
+    public long getMatViewRefreshBusyRetryTimeout() {
+        return getDelegate().getMatViewRefreshBusyRetryTimeout();
+    }
+
+    @Override
     public long getMatViewRefreshIntervalsUpdatePeriod() {
         return getDelegate().getMatViewRefreshIntervalsUpdatePeriod();
     }
 
     @Override
-    public long getMatViewRefreshOomRetryTimeout() {
-        return getDelegate().getMatViewRefreshOomRetryTimeout();
+    public int getMatViewRefreshMaxClusters() {
+        return getDelegate().getMatViewRefreshMaxClusters();
+    }
+
+    @Override
+    public long getMatViewRefreshMemoryLimitBytes() {
+        return getDelegate().getMatViewRefreshMemoryLimitBytes();
     }
 
     @Override
@@ -797,6 +905,26 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPostingIndexAdaptiveDeltaAtOrAbove() {
+        return getDelegate().getPostingIndexAdaptiveDeltaAtOrAbove();
+    }
+
+    @Override
+    public long getPostingIndexerSpillBytesMax() {
+        return getDelegate().getPostingIndexerSpillBytesMax();
+    }
+
+    @Override
+    public int getPostingSealGenThreshold() {
+        return getDelegate().getPostingSealGenThreshold();
+    }
+
+    @Override
+    public int getPostingSealPurgeOutboxMax() {
+        return getDelegate().getPostingSealPurgeOutboxMax();
+    }
+
+    @Override
     public int getPreferencesStringPoolCapacity() {
         return getDelegate().getPreferencesStringPoolCapacity();
     }
@@ -807,8 +935,28 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getQueryContinuationWakeIntervalMillis() {
+        return getDelegate().getQueryContinuationWakeIntervalMillis();
+    }
+
+    @Override
+    public long getQueryMemoryLimitBytes() {
+        return getDelegate().getQueryMemoryLimitBytes();
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return getDelegate().getQueryRegistryPoolSize();
+    }
+
+    @Override
+    public int getQwpEgressForcedZstdLevel() {
+        return getDelegate().getQwpEgressForcedZstdLevel();
+    }
+
+    @Override
+    public @NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
+        return getDelegate().getQwpServerInfoProvider();
     }
 
     @Override
@@ -849,6 +997,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean getSampleByDefaultAlignmentCalendar() {
         return getDelegate().getSampleByDefaultAlignmentCalendar();
+    }
+
+    @Override
+    public int getSampleByFillSortStrategy() {
+        return getDelegate().getSampleByFillSortStrategy();
     }
 
     @Override
@@ -1127,8 +1280,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlParquetFrameCacheCapacity() {
-        return getDelegate().getSqlParquetFrameCacheCapacity();
+    public long getSqlParquetCacheMemorySize() {
+        return getDelegate().getSqlParquetCacheMemorySize();
     }
 
     @Override
@@ -1167,8 +1320,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSortKeyMaxPages() {
-        return getDelegate().getSqlSortKeyMaxPages();
+    public long getSqlSortKeyMaxBytes() {
+        return getDelegate().getSqlSortKeyMaxBytes();
     }
 
     @Override
@@ -1177,8 +1330,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSortLightValueMaxPages() {
-        return getDelegate().getSqlSortLightValueMaxPages();
+    public long getSqlSortLightValueMaxBytes() {
+        return getDelegate().getSqlSortLightValueMaxBytes();
     }
 
     @Override
@@ -1187,8 +1340,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSortValueMaxPages() {
-        return getDelegate().getSqlSortValueMaxPages();
+    public long getSqlSortValueMaxBytes() {
+        return getDelegate().getSqlSortValueMaxBytes();
     }
 
     @Override
@@ -1202,6 +1355,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlWindowCacheMaxBytes() {
+        return getDelegate().getSqlWindowCacheMaxBytes();
+    }
+
+    @Override
+    public String getSqlWindowCacheMaxPagesConfigKey() {
+        return getDelegate().getSqlWindowCacheMaxPagesConfigKey();
+    }
+
+    @Override
+    public int getSqlWindowCacheMaxPagesResolved() {
+        return getDelegate().getSqlWindowCacheMaxPagesResolved();
+    }
+
+    @Override
     public int getSqlWindowInitialRangeBufferSize() {
         return getDelegate().getSqlWindowInitialRangeBufferSize();
     }
@@ -1212,8 +1380,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlWindowRowIdMaxPages() {
-        return getDelegate().getSqlWindowRowIdMaxPages();
+    public long getSqlWindowRowIdMaxBytes() {
+        return getDelegate().getSqlWindowRowIdMaxBytes();
     }
 
     @Override
@@ -1232,8 +1400,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlWindowTreeKeyMaxPages() {
-        return getDelegate().getSqlWindowTreeKeyMaxPages();
+    public long getSqlWindowTreeKeyMaxBytes() {
+        return getDelegate().getSqlWindowTreeKeyMaxBytes();
     }
 
     @Override
@@ -1307,6 +1475,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getTimerShardCount() {
+        return getDelegate().getTimerShardCount();
+    }
+
+    @Override
     public int getTxnScoreboardEntryCount() {
         return getDelegate().getTxnScoreboardEntryCount();
     }
@@ -1339,6 +1512,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWalApplyLookAheadTransactionCount() {
         return getDelegate().getWalApplyLookAheadTransactionCount();
+    }
+
+    @Override
+    public long getWalApplyMemoryLimitBytes() {
+        return getDelegate().getWalApplyMemoryLimitBytes();
+    }
+
+    @Override
+    public ObjHashSet<String> getWalApplySuspendedTables() {
+        return getDelegate().getWalApplySuspendedTables();
+    }
+
+    @Override
+    public boolean isWalApplySuspendedWriteDenied() {
+        return getDelegate().isWalApplySuspendedWriteDenied();
     }
 
     @Override
@@ -1477,6 +1665,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCairoSqlLegacyUnionColumnPropagation() {
+        return getDelegate().isCairoSqlLegacyUnionColumnPropagation();
+    }
+
+    @Override
     public boolean isCheckpointRecoveryEnabled() {
         return getDelegate().isCheckpointRecoveryEnabled();
     }
@@ -1507,6 +1700,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isLiveViewEnabled() {
+        return getDelegate().isLiveViewEnabled();
+    }
+
+    @Override
+    public boolean isMatViewCoveringIndexEnabled() {
+        return getDelegate().isMatViewCoveringIndexEnabled();
+    }
+
+    @Override
     public boolean isMatViewEnabled() {
         return getDelegate().isMatViewEnabled();
     }
@@ -1514,6 +1717,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isMatViewParallelSqlEnabled() {
         return getDelegate().isMatViewParallelSqlEnabled();
+    }
+
+    @Override
+    public boolean isMatViewRefreshBlocked(CharSequence viewName) {
+        return getDelegate().isMatViewRefreshBlocked(viewName);
     }
 
     @Override
@@ -1562,6 +1770,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isPostingIndexAutoIncludeTimestamp() {
+        return getDelegate().isPostingIndexAutoIncludeTimestamp();
+    }
+
+    @Override
     public boolean isQueryTracingEnabled() {
         return getDelegate().isQueryTracingEnabled();
     }
@@ -1569,6 +1782,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isReadOnlyInstance() {
         return getDelegate().isReadOnlyInstance();
+    }
+
+    @Override
+    public boolean isSqlDistinctGroupByRewriteEnabled() {
+        return getDelegate().isSqlDistinctGroupByRewriteEnabled();
     }
 
     @Override
@@ -1617,6 +1835,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlWindowCachedLightEnabled() {
+        return getDelegate().isSqlWindowCachedLightEnabled();
+    }
+
+    @Override
+    public boolean isSqlWindowMapFusionEnabled() {
+        return getDelegate().isSqlWindowMapFusionEnabled();
+    }
+
+    @Override
     public boolean isTableTypeConversionEnabled() {
         return getDelegate().isTableTypeConversionEnabled();
     }
@@ -1653,6 +1881,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int maxArrayElementCount() {
         return getDelegate().maxArrayElementCount();
+    }
+
+    @Override
+    public ParquetPartitionDecoder newParquetPartitionDecoder() {
+        return getDelegate().newParquetPartitionDecoder();
     }
 
     public void setDelegate(CairoConfiguration delegate) {

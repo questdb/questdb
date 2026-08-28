@@ -45,7 +45,7 @@ public class OooCppBenchmarkSetMemoryVanilla {
     }
 
     public void mallocBuffer() {
-        buffer = Unsafe.getUnsafe().allocateMemory(BUFFER_MAX_SIZE);
+        buffer = Unsafe.allocateMemory(BUFFER_MAX_SIZE);
     }
 
     private static double runDoubleKs(int iterations, int i) {

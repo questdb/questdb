@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
@@ -37,6 +38,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinFunction;
@@ -105,9 +107,11 @@ import io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -116,6 +120,8 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assume;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.ColumnType.OVERLOAD_NONE;
 import static org.junit.Assert.*;
@@ -822,7 +828,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testFunctionDoesNotExist() {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("c", ColumnType.SYMBOL, false, 0, false, null));
+        metadata.add(new TableColumnMetadata("c", ColumnType.SYMBOL, IndexType.NONE, 0, false, null));
         assertFail(5, "unknown function name: xyz(BOOLEAN,SYMBOL)", "a or xyz(a,c)", metadata);
     }
 
@@ -858,6 +864,115 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         assertFail(0, "bad function factory (NULL), check log", "x()", metadata);
+    }
+
+    // The next three tests pin the cleanup contract of FunctionParser.checkAndCreateFunction():
+    // when a factory fails to construct (throwing SqlException, throwing a generic exception, or
+    // returning null), every already-parsed argument must be closed and the intended validation
+    // error must survive. Functions can allocate native memory, so a fail-fast cleanup that
+    // strands later arguments on a throwing close() would both leak memory and replace the real
+    // error with the cleanup failure.
+
+    @Test
+    public void testFactoryGenericExceptionClosesAllArgsAndKeepsError() {
+        assertFactoryFailureClosesAllArgs(
+                new FunctionFactory() {
+                    @Override
+                    public String getSignature() {
+                        return "parent(TT)";
+                    }
+
+                    @Override
+                    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+                        throw new RuntimeException("oops");
+                    }
+                },
+                0,
+                "exception in function factory"
+        );
+    }
+
+    @Test
+    public void testFactoryNullFunctionClosesAllArgsAndKeepsError() {
+        assertFactoryFailureClosesAllArgs(
+                new FunctionFactory() {
+                    @Override
+                    public String getSignature() {
+                        return "parent(TT)";
+                    }
+
+                    @Override
+                    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+                        return null;
+                    }
+                },
+                0,
+                "bad function factory (NULL), check log"
+        );
+    }
+
+    @Test
+    public void testFactorySqlExceptionClosesAllArgsAndKeepsError() {
+        assertFactoryFailureClosesAllArgs(
+                new FunctionFactory() {
+                    @Override
+                    public String getSignature() {
+                        return "parent(TT)";
+                    }
+
+                    @Override
+                    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+                        throw SqlException.position(position).put("boom from factory");
+                    }
+                },
+                0,
+                "boom from factory"
+        );
+    }
+
+    // The next three tests cover the sibling cleanup paths in FunctionParser that reject arguments
+    // during resolution/validation (before any factory runs): invalidFunction(), invalidArgument(),
+    // and the constant var-arg check in createFunction(). Each must close every already-parsed
+    // argument (best-effort, no stranding) and keep the real error instead of a masking close()
+    // failure.
+
+    @Test
+    public void testUnknownFunctionClosesArgsAndKeepsError() {
+        // invalidFunction(): the function name has no overloads at all.
+        assertResolutionFailureClosesArgs(2, "unknown function name", "nonexistent(bad_arg(), bad_arg())", null);
+    }
+
+    @Test
+    public void testArgCountMismatchClosesArgsAndKeepsError() {
+        // invalidArgument(): the function exists but no overload matches the argument count.
+        assertResolutionFailureClosesArgs(2, "wrong number of arguments", "parent(bad_arg(), bad_arg())", neverInvokedFactory("parent(TTT)"));
+    }
+
+    @Test
+    public void testConstVarArgViolationClosesArgsAndKeepsError() {
+        // createFunction(): a constant var-arg signature fed non-constant args.
+        assertResolutionFailureClosesArgs(2, "constant expected", "parent(bad_arg(), bad_arg())", neverInvokedFactory("parent(v)"));
+    }
+
+    @Test
+    public void testParseCleanupClosesStackedFunctionsAndKeepsError() {
+        // parseFunction()'s catch block drains functions still on the parser stack. Traversal descends
+        // the rhs first, so bad_arg() (rhs) builds and is left on the stack, then boom() (lhs) fails to
+        // construct; bad_arg() is released by that catch block. Its throwing close() must neither mask
+        // boom()'s error nor be lost.
+        final AtomicInteger closeCount = addThrowingArgFactory();
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "boom()";
+            }
+
+            @Override
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+                throw new RuntimeException("kaboom");
+            }
+        });
+        assertParseClosesArgsWithoutMasking("boom() or bad_arg()", 1, -1, "exception in function factory", closeCount);
     }
 
     @Test
@@ -1478,7 +1593,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testInvalidConstant() {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("c", ColumnType.SYMBOL, false, 0, true, null));
+        metadata.add(new TableColumnMetadata("c", ColumnType.SYMBOL, IndexType.NONE, 0, true, null));
         assertFail(4, "invalid constant: 1c", "a + 1c", metadata);
     }
 
@@ -1525,11 +1640,109 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testNonDeterministicRejectionFreesFunctionNativeMemory() throws Exception {
+        // A context that forbids non-deterministic functions (e.g. materialized-view validation)
+        // rejects such a function AFTER it is successfully constructed. The rejection must close the
+        // returned function - not merely free its argument list - so a function that owns native
+        // memory it allocated during construction (over and above its arguments) does not leak.
+        //
+        // No production function currently reaches this exact path: rnd_* functions allocate lazily
+        // in init() (rejected before init), and the diff's InLongConstFunction derives its
+        // non-determinism from its key, which is rejected at the key node before the IN function is
+        // ever built. This test therefore uses a synthetic function that both allocates native memory
+        // in its constructor and reports isNonDeterministic()==true, exercising the FunctionParser
+        // rejection path directly and guarding it against future functions with that shape.
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "nondet_alloc()";
+            }
+
+            @Override
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+                return new NonDeterministicAllocatingFunction();
+            }
+        });
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        assertMemoryLeak(() -> {
+            final FunctionParser functionParser = createFunctionParser();
+            final boolean allowed = sqlExecutionContext.allowNonDeterministicFunctions();
+            sqlExecutionContext.setAllowNonDeterministicFunction(false);
+            try {
+                parseFunction("nondet_alloc()", metadata, functionParser);
+                fail("expected non-deterministic rejection");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "non-deterministic function cannot be used in materialized view");
+            } finally {
+                sqlExecutionContext.setAllowNonDeterministicFunction(allowed);
+            }
+        });
+    }
+
+    @Test
+    public void testNonDeterministicFunctionIsClosedWhenRejected() throws Exception {
+        final AtomicInteger closeCount = new AtomicInteger();
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "test_non_deterministic()";
+            }
+
+            @Override
+            public Function newInstance(
+                    int position,
+                    ObjList<Function> args,
+                    IntList argPositions,
+                    CairoConfiguration configuration,
+                    SqlExecutionContext sqlExecutionContext
+            ) {
+                return new BooleanFunction() {
+                    @Override
+                    public void close() {
+                        closeCount.incrementAndGet();
+                    }
+
+                    @Override
+                    public boolean getBool(Record rec) {
+                        return true;
+                    }
+
+                    @Override
+                    public boolean isNonDeterministic() {
+                        return true;
+                    }
+                };
+            }
+        });
+
+        final boolean isAllowed = sqlExecutionContext.allowNonDeterministicFunctions();
+        sqlExecutionContext.setAllowNonDeterministicFunction(false);
+        try {
+            try {
+                parseFunction("test_non_deterministic()", new GenericRecordMetadata(), createFunctionParser());
+                fail("expected non-deterministic function rejection");
+            } catch (SqlException e) {
+                assertEquals(0, e.getPosition());
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "non-deterministic function cannot be used in materialized view: test_non_deterministic"
+                );
+            }
+            assertEquals(1, closeCount.get());
+        } finally {
+            sqlExecutionContext.setAllowNonDeterministicFunction(isAllowed);
+        }
+    }
+
+    @Test
     public void testOverloadBetweenNullAndAnyType() {
         for (short type = ColumnType.BOOLEAN; type < ColumnType.NULL; type++) {
             String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
             if (type == ColumnType.STRING || type == ColumnType.SYMBOL) {
                 assertEquals(msg, -1, ColumnType.overloadDistance(ColumnType.NULL, type));
+            } else if (type == ColumnType.CURSOR) {
+                // a NULL literal is a scalar, never a cursor (scalar sub-query), so it must not overload to CURSOR
+                assertEquals(msg, OVERLOAD_NONE, ColumnType.overloadDistance(ColumnType.NULL, type));
             } else {
                 assertEquals(msg, 0, ColumnType.overloadDistance(ColumnType.NULL, type));
             }
@@ -1657,7 +1870,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("b", ColumnType.SYMBOL, false, 0, false, null));
+        metadata.add(new TableColumnMetadata("b", ColumnType.SYMBOL, IndexType.NONE, 0, false, null));
 
         final Function function = parseFunction("length(b) - length(a)",
                 metadata,
@@ -1995,6 +2208,92 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         assertEquals(expected, function.getLong(record));
     }
 
+    // Registers a bad_arg() factory whose function's close() throws, simulating an
+    // allocating/cursor argument that fails to release cleanly, and returns the shared close counter.
+    private static AtomicInteger addThrowingArgFactory() {
+        final AtomicInteger closeCount = new AtomicInteger();
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "bad_arg()";
+            }
+
+            @Override
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+                return new BooleanFunction() {
+                    @Override
+                    public void close() {
+                        closeCount.incrementAndGet();
+                        throw new RuntimeException("arg close boom");
+                    }
+
+                    @Override
+                    public boolean getBool(Record rec) {
+                        return false;
+                    }
+                };
+            }
+        });
+        return closeCount;
+    }
+
+    // A parent factory that matches on signature but must never have newInstance() invoked, used for
+    // resolution/validation failures that reject arguments before the factory ever runs.
+    private static FunctionFactory neverInvokedFactory(String signature) {
+        return new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return signature;
+            }
+
+            @Override
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+                throw new AssertionError("newInstance() must not be called on a resolution-failure path");
+            }
+        };
+    }
+
+    // Shared assertion: parsing the expression must fail with expectedMessage (never replaced by an
+    // arg close() failure), close exactly expectedCloses args (best-effort cleanup does not strand
+    // later args), and preserve the close failure as a suppressed exception.
+    private void assertParseClosesArgsWithoutMasking(String expression, int expectedCloses, int expectedPos, String expectedMessage, AtomicInteger closeCount) {
+        try {
+            parseFunction(expression, new GenericRecordMetadata(), createFunctionParser());
+            fail("expected parse failure");
+        } catch (SqlException e) {
+            // the intended validation error survived rather than being replaced by the arg close() failure
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+            if (expectedPos >= 0) {
+                assertEquals(expectedPos, e.getPosition());
+            }
+            // best-effort cleanup closed ALL args; a fail-fast cleanup would strand (leak) later ones
+            assertEquals("all args must be closed", expectedCloses, closeCount.get());
+            // the close() failure is preserved as a suppressed exception rather than lost
+            boolean suppressedFound = false;
+            for (Throwable suppressed : e.getSuppressed()) {
+                if (suppressed.getMessage() != null && suppressed.getMessage().contains("arg close boom")) {
+                    suppressedFound = true;
+                    break;
+                }
+            }
+            assertTrue("arg close failure must be preserved as suppressed on the primary error", suppressedFound);
+        }
+    }
+
+    private void assertFactoryFailureClosesAllArgs(FunctionFactory parentFactory, int expectedPos, String expectedMessage) {
+        final AtomicInteger closeCount = addThrowingArgFactory();
+        functions.add(parentFactory);
+        assertParseClosesArgsWithoutMasking("parent(bad_arg(), bad_arg())", 2, expectedPos, expectedMessage, closeCount);
+    }
+
+    private void assertResolutionFailureClosesArgs(int expectedCloses, String expectedMessage, String expression, FunctionFactory parentFactory) {
+        final AtomicInteger closeCount = addThrowingArgFactory();
+        if (parentFactory != null) {
+            functions.add(parentFactory);
+        }
+        assertParseClosesArgsWithoutMasking(expression, expectedCloses, -1, expectedMessage, closeCount);
+    }
+
     private void assertFail(int expectedPos, String expectedMessage, String expression, GenericRecordMetadata metadata) {
         FunctionParser functionParser = createFunctionParser();
         try {
@@ -2084,5 +2383,37 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
         });
         assertSame(constant, parseFunction("x()", new GenericRecordMetadata(), createFunctionParser()));
+    }
+
+    /**
+     * A non-deterministic function that allocates tracked native memory in its constructor and frees
+     * it in {@link #close()}. Used to prove that FunctionParser closes the returned function when it
+     * rejects a non-deterministic function, rather than leaking the memory the function owns.
+     */
+    private static class NonDeterministicAllocatingFunction extends LongFunction {
+        private static final long ALLOC_BYTES = 1024;
+        private long addr = Unsafe.malloc(ALLOC_BYTES, MemoryTag.NATIVE_DEFAULT);
+
+        @Override
+        public void close() {
+            if (addr != 0) {
+                addr = Unsafe.free(addr, ALLOC_BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return 42;
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("nondet_alloc()");
+        }
     }
 }

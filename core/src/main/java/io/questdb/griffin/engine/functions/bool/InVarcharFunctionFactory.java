@@ -123,7 +123,8 @@ public class InVarcharFunctionFactory implements FunctionFactory {
                     set.add(Utf8s.toUtf8String(func.getVarcharA(null)));
                     break;
                 case ColumnType.CHAR:
-                    set.add(new Utf8String(func.getChar(null)));
+                    char c = func.getChar(null);
+                    set.add(c != 0 ? new Utf8String(c) : null);
                     break;
                 default:
                     throw SqlException.position(argPositions.getQuick(i)).put("cannot compare VARCHAR with type ").put(ColumnType.nameOf(func.getType()));

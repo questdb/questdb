@@ -26,13 +26,14 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.ObjList;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -43,7 +44,7 @@ import static io.questdb.std.datetime.CommonUtils.TIMESTAMP_UNIT_NANOS;
 
 public class TableStructureAdapter implements TableStructure {
     private static final String DEFAULT_TIMESTAMP_FIELD = "timestamp";
-    private static final ThreadLocal<StringSink> tempSink = new ThreadLocal<>(StringSink::new);
+    private static final CarrierLocal<StringSink> tempSink = new CarrierLocal<>(StringSink::new);
     private final CairoConfiguration cairoConfiguration;
     private final DefaultColumnTypes defaultColumnTypes;
     private final int defaultPartitionBy;
@@ -155,12 +156,12 @@ public class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public boolean isDedupKey(int columnIndex) {
-        return false;
+    public byte getIndexType(int columnIndex) {
+        return IndexType.NONE;
     }
 
     @Override
-    public boolean isIndexed(int columnIndex) {
+    public boolean isDedupKey(int columnIndex) {
         return false;
     }
 

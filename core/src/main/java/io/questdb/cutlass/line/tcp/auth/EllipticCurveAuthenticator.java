@@ -33,7 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.Socket;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8s;
@@ -44,7 +44,7 @@ import java.security.SecureRandom;
 public class EllipticCurveAuthenticator implements SocketAuthenticator {
     private static final Log LOG = LogFactory.getLog(EllipticCurveAuthenticator.class);
 
-    private static final ThreadLocal<SecureRandom> tlSrand = new ThreadLocal<>(SecureRandom::new);
+    private static final CarrierLocal<SecureRandom> tlSrand = new CarrierLocal<>(SecureRandom::new);
     private final ChallengeResponseMatcher challengeResponseMatcher;
     private final DirectUtf8String userNameFlyweight = new DirectUtf8String();
     protected long recvBufPseudoStart;
@@ -139,7 +139,7 @@ public class EllipticCurveAuthenticator implements SocketAuthenticator {
         int n = 0;
         int lineEnd = -1;
         while (n < len) {
-            byte b = Unsafe.getUnsafe().getByte(recvBufStart + n);
+            byte b = Unsafe.getByte(recvBufStart + n);
             if (b == (byte) '\n') {
                 lineEnd = n;
                 break;
@@ -163,8 +163,14 @@ public class EllipticCurveAuthenticator implements SocketAuthenticator {
         int lineEnd = findLineEnd();
         if (lineEnd != -1) {
             userNameFlyweight.of(recvBufStart, recvBufStart + lineEnd);
+            if (Utf8s.validateUtf8(userNameFlyweight) < 0) {
+                // The client is not speaking our protocol, treat it as an authentication failure.
+                LOG.error().$('[').$(socket.getFd()).$("] authentication failed, key id is not valid UTF-8 [keyId=")
+                        .$safe(userNameFlyweight).I$();
+                throw AuthenticatorException.INSTANCE;
+            }
             principal = Utf8s.toString(userNameFlyweight);
-            LOG.info().$('[').$(socket.getFd()).$("] authentication read key id [keyId=").$(userNameFlyweight).I$();
+            LOG.info().$('[').$(socket.getFd()).$("] authentication read key id [keyId=").$safe(userNameFlyweight).I$();
             recvBufPos = recvBufStart;
             // Generate a challenge with printable ASCII characters 0x20 to 0x7e
             int n = 0;
@@ -172,11 +178,11 @@ public class EllipticCurveAuthenticator implements SocketAuthenticator {
             while (n < AuthUtils.CHALLENGE_LEN) {
                 assert recvBufStart + n < recvBufEnd;
                 int r = (int) (srand.nextDouble() * 0x5f) + 0x20;
-                Unsafe.getUnsafe().putByte(recvBufStart + n, (byte) r);
-                Unsafe.getUnsafe().putByte(challengePtr + n, (byte) r);
+                Unsafe.putByte(recvBufStart + n, (byte) r);
+                Unsafe.putByte(challengePtr + n, (byte) r);
                 n++;
             }
-            Unsafe.getUnsafe().putByte(recvBufStart + n, (byte) '\n');
+            Unsafe.putByte(recvBufStart + n, (byte) '\n');
             authState = AuthState.SENDING_CHALLENGE;
         }
     }

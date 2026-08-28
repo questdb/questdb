@@ -51,7 +51,7 @@ public final class QwpNullBitmapTestUtil {
 
         // Check full bytes (all bits should be 1)
         for (int i = 0; i < fullBytes; i++) {
-            byte b = Unsafe.getUnsafe().getByte(address + i);
+            byte b = Unsafe.getByte(address + i);
             if ((b & 0xFF) != 0xFF) {
                 return false;
             }
@@ -59,7 +59,7 @@ public final class QwpNullBitmapTestUtil {
 
         // Check remaining bits
         if (remainingBits > 0) {
-            byte b = Unsafe.getUnsafe().getByte(address + fullBytes);
+            byte b = Unsafe.getByte(address + fullBytes);
             int mask = (1 << remainingBits) - 1;
             return (b & mask) == mask;
         }
@@ -77,9 +77,9 @@ public final class QwpNullBitmapTestUtil {
         int byteIndex = rowIndex >>> 3;
         int bitIndex = rowIndex & 7;
         long addr = address + byteIndex;
-        byte b = Unsafe.getUnsafe().getByte(addr);
+        byte b = Unsafe.getByte(addr);
         b &= (byte) ~(1 << bitIndex);
-        Unsafe.getUnsafe().putByte(addr, b);
+        Unsafe.putByte(addr, b);
     }
 
     /**
@@ -133,13 +133,13 @@ public final class QwpNullBitmapTestUtil {
 
         // Fill full bytes with all 1s
         for (int i = 0; i < fullBytes; i++) {
-            Unsafe.getUnsafe().putByte(address + i, (byte) 0xFF);
+            Unsafe.putByte(address + i, (byte) 0xFF);
         }
 
         // Set remaining bits in last byte
         if (remainingBits > 0) {
             byte mask = (byte) ((1 << remainingBits) - 1);
-            Unsafe.getUnsafe().putByte(address + fullBytes, mask);
+            Unsafe.putByte(address + fullBytes, mask);
         }
     }
 
@@ -152,7 +152,7 @@ public final class QwpNullBitmapTestUtil {
     public static void fillNoneNull(long address, int rowCount) {
         int sizeBytes = QwpNullBitmap.sizeInBytes(rowCount);
         for (int i = 0; i < sizeBytes; i++) {
-            Unsafe.getUnsafe().putByte(address + i, (byte) 0);
+            Unsafe.putByte(address + i, (byte) 0);
         }
     }
 
@@ -195,7 +195,7 @@ public final class QwpNullBitmapTestUtil {
 
         // Check full bytes
         for (int i = 0; i < fullBytes; i++) {
-            byte b = Unsafe.getUnsafe().getByte(address + i);
+            byte b = Unsafe.getByte(address + i);
             if (b != 0) {
                 return false;
             }
@@ -203,7 +203,7 @@ public final class QwpNullBitmapTestUtil {
 
         // Check remaining bits
         if (remainingBits > 0) {
-            byte b = Unsafe.getUnsafe().getByte(address + fullBytes);
+            byte b = Unsafe.getByte(address + fullBytes);
             int mask = (1 << remainingBits) - 1;
             return (b & mask) == 0;
         }

@@ -77,6 +77,7 @@ enum class opcodes : int32_t {
     Or_Sc = 19,  // Short-circuit OR: if true, jump to label[payload.lo] (0 = next_row)
     Begin_Sc = 20, // Create label at index payload.lo
     End_Sc = 21,   // Bind label at index payload.lo
+    Sx_I64 = 22,   // Sign-extend top of stack to i64
 };
 
 struct instruction_t {
@@ -349,6 +350,21 @@ struct ColumnValueCache {
         count = 0;
     }
 
+    // Snapshots the current entry count so the cache can be rolled back via
+    // truncate(). Used to drop entries added inside a BEGIN_SC/END_SC block,
+    // where an OR_SC forward jump may skip the loads that populated them.
+    size_t size() const {
+        return count;
+    }
+
+    // Drops all entries past the given count. Pair with size() to restore the
+    // cache to a snapshot taken earlier in the IR stream.
+    void truncate(size_t new_count) {
+        if (new_count < count) {
+            count = new_count;
+        }
+    }
+
 private:
     size_t count;
     int32_t column_idxs[MAX_VALUES];
@@ -401,6 +417,21 @@ private:
         count = 0;
     }
 
+    // Snapshots the current entry count so the cache can be rolled back via
+    // truncate(). Used to drop entries added inside a BEGIN_SC/END_SC block,
+    // where an OR_SC forward jump may skip the loads that populated them.
+    size_t size() const {
+        return count;
+    }
+
+    // Drops all entries past the given count. Pair with size() to restore the
+    // cache to a snapshot taken earlier in the IR stream.
+    void truncate(size_t new_count) {
+        if (new_count < count) {
+            count = new_count;
+        }
+    }
+
 private:
     size_t count;
     int32_t column_idxs[MAX_VALUES];
@@ -419,9 +450,9 @@ struct ConstantCacheYmm {
     ConstantCacheYmm() : count(0) {}
 
     // Find an integer constant and return its YMM register
-    bool findInt(int64_t value, asmjit::x86::Vec &out_reg) const {
+    bool findInt(int64_t value, data_type_t type, asmjit::x86::Vec &out_reg) const {
         for (size_t i = 0; i < count; ++i) {
-            if (!is_float[i] && int_values[i] == value) {
+            if (!is_float[i] && int_values[i] == value && int_types[i] == type) {
                 out_reg = ymm_regs[i];
                 return true;
             }
@@ -441,10 +472,11 @@ struct ConstantCacheYmm {
     }
 
     // Add an integer constant
-    void addInt(int64_t value, asmjit::x86::Vec reg) {
+    void addInt(int64_t value, data_type_t type, asmjit::x86::Vec reg) {
         if (count < MAX_CONSTANTS) {
             is_float[count] = false;
             int_values[count] = value;
+            int_types[count] = type;
             ymm_regs[count] = reg;
             count++;
         }
@@ -465,6 +497,7 @@ private:
     size_t count;
     bool is_float[MAX_CONSTANTS];
     int64_t int_values[MAX_CONSTANTS];
+    data_type_t int_types[MAX_CONSTANTS];
     double float_values[MAX_CONSTANTS];
     data_type_t float_types[MAX_CONSTANTS];
     asmjit::x86::Vec ymm_regs[MAX_CONSTANTS];

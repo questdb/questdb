@@ -31,169 +31,141 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
 
     @Test
     public void testLargeNegScale() throws Exception {
-        assertQuery(
-                "round\n" +
-                        "null\n",
-                "select round(14.7778, -18) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round(14.7778, -18) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round
+                        null
+                        """);
     }
 
     @Test
     public void testLargePosScale() throws Exception {
-        assertQuery(
-                "round\n" +
-                        "null\n",
-                "select round(14.7778, 17) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round(14.7778, 17) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round
+                        null
+                        """);
     }
 
     @Test
     public void testNegScaleHigherThanNumber() throws Exception {
-        assertQuery(
-                "round\n" +
-                        "-0.0\n",
-                "select round(-14.778, -5) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round(-14.778, -5) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round
+                        -0.0
+                        """);
     }
 
     @Test
     public void testNegScaleNegValue() throws Exception {
-        assertQuery(
-                "round\n" +
-                        "-100.0\n",
-                "select round(-104.9, -1) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round(-104.9, -1) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round
+                        -100.0
+                        """);
     }
 
     @Test
     public void testNegScaleNegValue2() throws Exception {
-        assertQuery(
-                "round\n" +
-                        "-110.0\n",
-                "select round(-106.1, -1) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round(-106.1, -1) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round
+                        -110.0
+                        """);
     }
 
     @Test
     public void testNegScalePosValue() throws Exception {
-        assertQuery(
-                "round\n" +
-                        "100.0\n",
-                "select round(104.90, -1) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round(104.90, -1) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round
+                        100.0
+                        """);
     }
 
     @Test
     public void testNegScalePosValue2() throws Exception {
-        assertQuery(
-                "round\n" +
-                        "110.0\n",
-                "select round(106.1, -1) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round(106.1, -1) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round
+                        110.0
+                        """);
     }
 
     @Test
     public void testOKNegScale() throws Exception {
-        assertQuery(
-                "round\n" +
-                        "0.0\n",
-                "select round(14.7778, -13) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round(14.7778, -13) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round
+                        0.0
+                        """);
     }
 
     @Test
     public void testOKPosScale() throws Exception {
-        assertQuery(
-                "round\n" +
-                        "14.7778\n",
-                "select round(14.7778, 11) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round(14.7778, 11) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round
+                        14.7778
+                        """);
     }
 
     @Test
     public void testPosScaleHigherThanNumber() throws Exception {
-        assertQuery(
-                "round\n" +
-                        "-14.777999999999999\n",
-                "select round(-14.778, 7) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round(-14.778, 7) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round
+                        -14.777999999999999
+                        """);
     }
 
     @Test
     public void testPosScaleNegValue() throws Exception {
-        assertQuery(
-                "round\n" +
-                        "-100.5\n",
-                "select round(-100.54, 1) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round(-100.54, 1) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round
+                        -100.5
+                        """);
     }
 
     @Test
     public void testPosScaleNegValue2() throws Exception {
-        assertQuery(
-                "round\n" +
-                        "-100.60000000000001\n",
-                "select round(-100.56, 1) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round(-100.56, 1) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round
+                        -100.60000000000001
+                        """);
     }
 
     @Test
     public void testPosScalePosValue() throws Exception {
-        assertQuery(
-                "round\n" +
-                        "100.4\n",
-                "select round(100.44, 1) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round(100.44, 1) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round
+                        100.4
+                        """);
     }
 
     @Test
     public void testPosScalePosValue2() throws Exception {
-        assertQuery(
-                "round\n" +
-                        "100.5\n",
-                "select round(100.45, 1) from long_sequence(1)",
-                null,
-                true,
-                true
-        );
+        assertQuery("select round(100.45, 1) from long_sequence(1)")
+                .expectSize()
+                .returns("""
+                        round
+                        100.5
+                        """);
     }
 }

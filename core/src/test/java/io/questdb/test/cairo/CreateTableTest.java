@@ -24,11 +24,15 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -36,22 +40,295 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.CreateTableOperationFuture;
 import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.log.Log;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assume;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.*;
 
 @SuppressWarnings("SameParameterValue")
 public class CreateTableTest extends AbstractCairoTest {
+
+    @Override
+    public void setUp() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
+        super.setUp();
+    }
+
+    @Test
+    public void testAlterTableAddColumnWithPostingIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE tab ADD COLUMN s SYMBOL INDEX TYPE POSTING");
+            try (TableReader r = engine.getReader("tab")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingCapacityFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertException(
+                    "ALTER TABLE tab ALTER COLUMN s ADD INDEX TYPE POSTING CAPACITY 256",
+                    54,
+                    "CAPACITY is only supported for BITMAP index type"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingDelta() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE tab ALTER COLUMN s ADD INDEX TYPE POSTING DELTA");
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING_DELTA, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexUnknownTypeFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertException(
+                    "ALTER TABLE tab ALTER COLUMN s ADD INDEX TYPE FOOBAR",
+                    46,
+                    "unknown index type"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterTableAddPostingIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE tab ALTER COLUMN s ADD INDEX TYPE POSTING");
+            try (TableReader r = engine.getReader("tab")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateCleanupFailureDoesNotMaskOriginalError() throws Exception {
+        final String tableName = "x_cleanup_fail";
+        final AtomicBoolean failNextMetaOpen = new AtomicBoolean(false);
+        final AtomicBoolean failNextUnlinkOrRemove = new AtomicBoolean(false);
+
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (failNextMetaOpen.get()
+                        && Utf8s.containsAscii(name, tableName)
+                        && Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
+                    failNextMetaOpen.set(false);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public boolean unlinkOrRemove(Path path, Log LOG) {
+                if (failNextUnlinkOrRemove.get() && Utf8s.containsAscii(path, tableName)) {
+                    failNextUnlinkOrRemove.set(false);
+                    return false;
+                }
+                return super.unlinkOrRemove(path, LOG);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            failNextMetaOpen.set(true);
+            failNextUnlinkOrRemove.set(true);
+            try {
+                execute("CREATE TABLE " + tableName +
+                        " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                fail("expected CREATE to fail on injected _meta openRO failure");
+            } catch (CairoException | SqlException e) {
+                // The original openRO error must propagate even when the best-effort
+                // cleanup also fails. The cleanup error is logged and swallowed.
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+            }
+        });
+    }
+
+    @Test
+    public void testCreateInVolumeCleansUpOnRegisterNameHydrateFailure() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        final String tableName = "x_orphan_vol";
+        final AtomicBoolean failNextMetaOpen = new AtomicBoolean(false);
+
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (failNextMetaOpen.get()
+                        && Utf8s.containsAscii(name, tableName)
+                        && Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
+                    failNextMetaOpen.set(false);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final File volume = temp.newFolder("volume_orphan");
+            final String volumeAlias = "orphan_vol";
+            final String volumePath = volume.getAbsolutePath();
+            try (Path p = new Path()) {
+                configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, p, root);
+            }
+            try {
+                failNextMetaOpen.set(true);
+                try {
+                    execute("CREATE TABLE " + tableName +
+                            " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL IN VOLUME '" + volumeAlias + "'");
+                    fail("expected CREATE to fail on injected _meta openRO failure");
+                } catch (CairoException | SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                }
+
+                execute("CREATE TABLE " + tableName +
+                        " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL IN VOLUME '" + volumeAlias + "'");
+            } finally {
+                configuration.getVolumeDefinitions().clear();
+            }
+        });
+    }
+
+    @Test
+    public void testCreateInVolumeReadLinkFailureDoesNotMaskOriginalError() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        final String tableName = "x_orphan_readlink";
+        final AtomicBoolean failNextMetaOpen = new AtomicBoolean(false);
+        final AtomicBoolean failNextReadLink = new AtomicBoolean(false);
+
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (failNextMetaOpen.get()
+                        && Utf8s.containsAscii(name, tableName)
+                        && Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
+                    failNextMetaOpen.set(false);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public boolean readLink(Path softLink, Path readTo) {
+                if (failNextReadLink.get() && Utf8s.containsAscii(softLink, tableName)) {
+                    failNextReadLink.set(false);
+                    return false;
+                }
+                return super.readLink(softLink, readTo);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final File volume = temp.newFolder("volume_readlink");
+            final String volumeAlias = "vol_readlink";
+            try (Path p = new Path()) {
+                configuration.getVolumeDefinitions().of(volumeAlias + "->" + volume.getAbsolutePath(), p, root);
+            }
+            try {
+                failNextMetaOpen.set(true);
+                failNextReadLink.set(true);
+                try {
+                    execute("CREATE TABLE " + tableName +
+                            " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL IN VOLUME '" + volumeAlias + "'");
+                    fail("expected CREATE to fail on injected _meta openRO failure");
+                } catch (CairoException | SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                }
+            } finally {
+                configuration.getVolumeDefinitions().clear();
+            }
+        });
+    }
+
+    @Test
+    public void testCreateInVolumeTargetUnlinkFailureDoesNotMaskOriginalError() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        final String tableName = "x_orphan_volunlink";
+        final String volumeFolder = "volume_target_unlink";
+        final AtomicBoolean failNextMetaOpen = new AtomicBoolean(false);
+        final AtomicBoolean failNextVolumeUnlink = new AtomicBoolean(false);
+
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (failNextMetaOpen.get()
+                        && Utf8s.containsAscii(name, tableName)
+                        && Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
+                    failNextMetaOpen.set(false);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public boolean unlinkOrRemove(Path path, Log LOG) {
+                // Match only the volume-side call: the dbRoot arm never contains the
+                // volume folder name, so the dbRoot unlink is left to succeed.
+                if (failNextVolumeUnlink.get()
+                        && Utf8s.containsAscii(path, volumeFolder)
+                        && Utf8s.containsAscii(path, tableName)) {
+                    failNextVolumeUnlink.set(false);
+                    return false;
+                }
+                return super.unlinkOrRemove(path, LOG);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final File volume = temp.newFolder(volumeFolder);
+            final String volumeAlias = "vol_target_unlink";
+            try (Path p = new Path()) {
+                configuration.getVolumeDefinitions().of(volumeAlias + "->" + volume.getAbsolutePath(), p, root);
+            }
+            try {
+                failNextMetaOpen.set(true);
+                failNextVolumeUnlink.set(true);
+                try {
+                    execute("CREATE TABLE " + tableName +
+                            " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL IN VOLUME '" + volumeAlias + "'");
+                    fail("expected CREATE to fail on injected _meta openRO failure");
+                } catch (CairoException | SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                }
+            } finally {
+                configuration.getVolumeDefinitions().clear();
+            }
+        });
+    }
 
     @Test
     public void testCreateNaNColumn() throws Exception {
@@ -60,6 +337,50 @@ public class CreateTableTest extends AbstractCairoTest {
                 0,
                 "cannot create NULL-type column, please use type cast, e.g. x::type"
         );
+    }
+
+    @Test
+    public void testCreateNonWalLeavesOrphanDirWhenRegisterNameHydrateFails() throws Exception {
+        final String tableName = "x_orphan";
+        final AtomicBoolean failNextMetaOpen = new AtomicBoolean(false);
+
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (failNextMetaOpen.get()
+                        && Utf8s.containsAscii(name, tableName)
+                        && Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
+                    failNextMetaOpen.set(false);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE " + tableName +
+                    " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("DROP TABLE " + tableName);
+
+            // Fail the openRO(_meta) performed by
+            // TableNameRegistryRW.registerName -> MetadataCache.hydrateTableStartup,
+            // which runs after createTableOrViewOrMatViewUnsafe has already written
+            // the directory and _meta to disk.
+            failNextMetaOpen.set(true);
+            try {
+                execute("CREATE TABLE " + tableName +
+                        " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                fail("expected CREATE to fail on injected _meta openRO failure");
+            } catch (CairoException | SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+            }
+
+            // Once the engine rolls back the on-disk state on registerName failure,
+            // retrying CREATE under the same name must succeed. Today it fails
+            // with "name is reserved" from CairoEngine.createTableOrViewOrMatViewUnsafe.
+            execute("CREATE TABLE " + tableName +
+                    " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        });
     }
 
     @Test
@@ -83,36 +404,28 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectIndexSupportedColumnTypeAfterCast() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from tab")
+                .ddl("CREATE TABLE tab AS (" +
+                        "SELECT CAST(x as SYMBOL) AS x FROM long_sequence(1)" +
+                        "), INDEX(x)")
+                .expectSize()
+                .returns("""
                         x
                         1
-                        """,
-                "select * from tab",
-                "CREATE TABLE tab AS (" +
-                        "SELECT CAST(x as SYMBOL) AS x FROM long_sequence(1)" +
-                        "), INDEX(x)",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testCreateTableAsSelectIndexSupportedColumnTypeAfterCast2() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select * from tab")
+                .ddl("CREATE TABLE tab AS (" +
+                        "SELECT CAST(x as STRING) AS x FROM long_sequence(1)" +
+                        "), CAST(x as SYMBOL), INDEX(x)")
+                .expectSize()
+                .returns("""
                         x
                         1
-                        """,
-                "select * from tab",
-                "CREATE TABLE tab AS (" +
-                        "SELECT CAST(x as STRING) AS x FROM long_sequence(1)" +
-                        "), CAST(x as SYMBOL), INDEX(x)",
-                null,
-                true,
-                true
-        );
+                        """);
     }
 
     @Test
@@ -149,10 +462,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectInheritsColumnIndex() throws Exception {
         execute("create table old(s string,sym symbol index, ts timestamp)");
         execute("create table new as (select * from old), index(s), cast(s as symbol), cast(ts as date)");
-        assertSql(
-                "s\tsym\tts\n",
-                "select * from new"
-        );
+        assertQuery("select * from new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tsym\tts\n");
 
         assertColumnsIndexed("new", "s");
     }
@@ -161,7 +474,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithCastAndIndexOnTheSameColumn() throws Exception {
         execute("create table old(s string,l long, ts timestamp)");
         execute("create table new as (select * from old), cast(s as symbol), index(s)");
-        assertSql("s\tl\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tl\tts\n");
         assertColumnsIndexed("new", "s");
     }
 
@@ -169,7 +485,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithCastAndIndexOnTheSameColumnV2() throws Exception {
         execute("create table old(s string,l long, ts timestamp)");
         execute("create table new as (select * from old), index(s), cast(s as symbol)");
-        assertSql("s\tl\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tl\tts\n");
         assertColumnsIndexed("new", "s");
     }
 
@@ -177,7 +496,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithCastAndIndexOnTheSameColumnV3() throws Exception {
         execute("create table old(s string,l long, ts timestamp)");
         execute("create table new as (select * from old), cast(s as symbol), index(s)");
-        assertSql("s\tl\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tl\tts\n");
         assertColumnsIndexed("new", "s");
     }
 
@@ -185,7 +507,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithCastAndIndex_v2() throws Exception {
         execute("create table old(s symbol,l long, ts timestamp)");
         execute("create table new as (select * from old), index(s), cast(l as int)");
-        assertSql("s\tl\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tl\tts\n");
         assertColumnsIndexed("new", "s");
     }
 
@@ -193,7 +518,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithCastAndSeparateIndex() throws Exception {
         execute("create table old(s symbol,l long, ts timestamp)");
         execute("create table new as (select * from old), cast(l as int), index(s)");
-        assertSql("s\tl\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tl\tts\n");
         assertColumnsIndexed("new", "s");
     }
 
@@ -201,28 +529,40 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithCastSymbolToStringAndIndexOnIt() throws Exception {
         execute("create table old(s symbol,l long, ts timestamp)");
         execute("create table new as (select * from old), index(s), cast(s as string)");
-        assertSql("s\tl\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tl\tts\n");
     }
 
     @Test(expected = SqlException.class)
     public void testCreateTableAsSelectWithIndexOnSymbolCastedToString() throws Exception {
         execute("create table old(s symbol,l long, ts timestamp)");
         execute("create table new as (select * from old), cast(s as string), index(s)");
-        assertSql("s\tl\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tl\tts\n");
     }
 
     @Test
     public void testCreateTableAsSelectWithMultipleCasts() throws Exception {
         execute("create table old(s symbol,l long, ts timestamp)");
         execute("create table new as (select * from old), cast(s as string), cast(l as long), cast(ts as date)");
-        assertSql("s\tl\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tl\tts\n");
     }
 
     @Test
     public void testCreateTableAsSelectWithMultipleIndexes() throws Exception {
         execute("create table old(s1 symbol,s2 symbol, s3 symbol)");
         execute("create table new as (select * from old), index(s1), index(s2), index(s3)");
-        assertSql("s1\ts2\ts3\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s1\ts2\ts3\n");
         assertColumnsIndexed("new", "s1", "s2", "s3");
     }
 
@@ -230,7 +570,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithMultipleInterleavedCastAndIndexes() throws Exception {
         execute("create table old(s string,sym symbol, ts timestamp)");
         execute("create table new as (select * from old), cast(s as symbol), index(s), cast(ts as date), index(sym), cast(sym as symbol)");
-        assertSql("s\tsym\tts\n", "new");
+        assertQuery("new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tsym\tts\n");
         assertColumnsIndexed("new", "s", "sym");
     }
 
@@ -238,7 +581,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithMultipleInterleavedCastAndIndexesV2() throws Exception {
         execute("create table old(s string,sym symbol, ts timestamp)");
         execute("create table new as (select * from old), cast(s as symbol), index(s), cast(ts as date), index(sym), cast(sym as symbol)");
-        assertSql("s\tsym\tts\n", "select * from new");
+        assertQuery("select * from new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tsym\tts\n");
         assertColumnsIndexed("new", "s", "sym");
     }
 
@@ -246,7 +592,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithMultipleInterleavedCastAndIndexesV3() throws Exception {
         execute("create table old(s string,sym symbol, ts timestamp)");
         execute("create table new as (select * from old), index(s), cast(s as symbol), cast(ts as date), index(sym), cast(sym as symbol)");
-        assertSql("s\tsym\tts\n", "select * from new");
+        assertQuery("select * from new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\tsym\tts\n");
         assertColumnsIndexed("new", "s", "sym");
     }
 
@@ -254,21 +603,30 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithNoIndex() throws Exception {
         execute("create table old(s1 symbol)");
         execute("create table new as (select * from old)");
-        assertSql("s1\n", "select * from new");
+        assertQuery("select * from new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s1\n");
     }
 
     @Test
     public void testCreateTableAsSelectWithOneCast() throws Exception {
         execute("create table old(s1 symbol,s2 symbol, s3 symbol)");
         execute("create table new as (select * from old), cast(s1 as string)");
-        assertSql("s1\ts2\ts3\n", "select * from new");
+        assertQuery("select * from new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s1\ts2\ts3\n");
     }
 
     @Test
     public void testCreateTableAsSelectWithOneIndex() throws Exception {
         execute("create table old(s1 symbol,s2 symbol, s3 symbol)");
         execute("create table new as (select * from old), index(s1)");
-        assertSql("s1\ts2\ts3\n", "select * from new");
+        assertQuery("select * from new")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s1\ts2\ts3\n");
         assertColumnsIndexed("new", "s1");
     }
 
@@ -276,7 +634,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableFromLikeTableWithIndex() throws Exception {
         execute("create table tab (s symbol), index(s)");
         execute("create table x (like tab)");
-        assertSql("s\n", "select * from x");
+        assertQuery("select * from x")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\n");
         assertColumnsIndexed("x", "s");
     }
 
@@ -284,7 +645,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableFromLikeTableWithMultipleIndices() throws Exception {
         execute("create table tab (s1 symbol, s2 symbol, s3 symbol), index(s1), index(s2), index(s3)");
         execute("create table x(like tab)");
-        assertSql("s1\ts2\ts3\n", "select * from x");
+        assertQuery("select * from x")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s1\ts2\ts3\n");
         assertColumnsIndexed("x", "s1", "s2", "s3");
     }
 
@@ -292,7 +656,10 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableFromLikeTableWithNoIndex() throws Exception {
         execute("create table y (s1 symbol)");
         execute("create table tab (like y)");
-        assertSql("s1\n", "select * from tab");
+        assertQuery("select * from tab")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s1\n");
     }
 
     @Test
@@ -303,7 +670,11 @@ public class CreateTableTest extends AbstractCairoTest {
                         "t timestamp) timestamp(t) partition by MONTH"
         );
         execute("create table tab (like x)");
-        assertSql("a\tt\n", "select * from tab");
+        assertQuery("select * from tab")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("t")
+                .returns("a\tt\n");
         assertPartitionAndTimestamp();
     }
 
@@ -400,14 +771,78 @@ public class CreateTableTest extends AbstractCairoTest {
         execute("create table x (s1 symbol)");
         execute("create table y (s2 symbol)");
         execute("create table if not exists x (like y)");
-        assertSql("s1\n", "select * from x");
+        assertQuery("select * from x")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s1\n");
     }
 
     @Test
     public void testCreateTableIfNotExistsExistingLikeTable() throws Exception {
         execute("create table y (s2 symbol)");
         execute("create table if not exists x (like y)");
-        assertSql("s2\n", "select * from x");
+        assertQuery("select * from x")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s2\n");
+    }
+
+    @Test
+    public void testCreateTableInlinePostingIndexWithInclude() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tab (
+                        ts TIMESTAMP,
+                        s SYMBOL INDEX TYPE POSTING INCLUDE (v),
+                        v DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableInlinePostingIndexWithIncludeEmptyList() throws Exception {
+        // Regression: SqlParser must reject `INCLUDE ()` with a clear error.
+        // The ALTER TABLE path at SqlCompilerImpl:2381-2383 explicitly throws
+        // "at least one column name expected in INCLUDE"; the CREATE TABLE
+        // path in SqlParser silently consumes ')' as a column name and
+        // produces a confusing downstream error.
+        assertMemoryLeak(() -> assertException(
+                "CREATE TABLE tab (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (), v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                69,
+                "at least one column name expected in INCLUDE"
+        ));
+    }
+
+    @Test
+    public void testCreateTableInlinePostingIndexWithIncludeQuotedIdentifier() throws Exception {
+        // Regression: SqlParser must unquote column names in `INCLUDE (...)`,
+        // mirroring SqlCompilerImpl:2389 which calls unquote(tok). The bug
+        // stores the raw token "v" (with quotes), then
+        // CreateTableOperationImpl.resolveCoveringColumnIndices fails its
+        // name lookup against the unquoted column map and reports a
+        // misleading "INCLUDE column doesn't exist" error.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tab (
+                        ts TIMESTAMP,
+                        s SYMBOL INDEX TYPE POSTING INCLUDE ("v"),
+                        v DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING, r.getMetadata().getColumnIndexType(colIndex));
+                IntList covering = r.getMetadata().getColumnMetadata(colIndex).getCoveringColumnIndices();
+                assertNotNull("INCLUDE list missing after CREATE TABLE with quoted identifier", covering);
+                assertTrue("quoted INCLUDE column 'v' did not resolve",
+                        covering.contains(r.getMetadata().getColumnIndex("v")));
+            }
+        });
     }
 
     @Test
@@ -434,7 +869,10 @@ public class CreateTableTest extends AbstractCairoTest {
 
         execute("create table x (" + getColumnDefinitions(columnTypes) + ")");
         execute("create table tab (like x)");
-        assertSql("a\tb\tc\td\te\tf\tg\th\tt\tn\tx\tz\ty\tl\tu\tgh1\tgh2\n", "tab");
+        assertQuery("tab")
+                .noLeakCheck()
+                .expectSize()
+                .returns("a\tb\tc\td\te\tf\tg\th\tt\tn\tx\tz\ty\tl\tu\tgh1\tgh2\n");
         assertColumnTypes(columnTypes);
     }
 
@@ -465,13 +903,15 @@ public class CreateTableTest extends AbstractCairoTest {
                         "DEDUP UPSERT KEYS(ts, a)"
         );
         execute("create table foo_clone ( like foo)");
-        assertSql(
-                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n" +
-                        "a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\n" +
-                        "b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
-                "SHOW COLUMNS FROM foo_clone"
-        );
+        assertQuery("SHOW COLUMNS FROM foo_clone")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                        ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
+                        a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t
+                        b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                        """);
     }
 
     @Test
@@ -485,7 +925,11 @@ public class CreateTableTest extends AbstractCairoTest {
         );
         execute("create table tab ( like x)");
 
-        assertSql("a\ty\tt\n", "tab");
+        assertQuery("tab")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("t")
+                .returns("a\ty\tt\n");
         assertSymbolParameters(new SymbolParameters(null, false, true, indexBlockCapacity));
     }
 
@@ -498,7 +942,11 @@ public class CreateTableTest extends AbstractCairoTest {
                         " PARTITION BY DAY" +
                         " WITH maxUncommittedRows = " + maxUncommittedRows + ", o3MaxLag = " + o3MaxLag + "us");
         execute("create table x (like y)");
-        assertSql("s2\tts\n", "select * from x");
+        assertQuery("select * from x")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("s2\tts\n");
         assertWithClauseParameters(maxUncommittedRows, o3MaxLag);
     }
 
@@ -518,7 +966,11 @@ public class CreateTableTest extends AbstractCairoTest {
                         "t timestamp) timestamp(t) partition by MONTH"
         );
         execute("create table tab ( like x)");
-        assertSql("a\ty\tt\n", "select * from tab");
+        assertQuery("select * from tab")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("t")
+                .returns("a\ty\tt\n");
         assertSymbolParameters(new SymbolParameters(symbolCapacity, false, false, null));
     }
 
@@ -530,6 +982,50 @@ public class CreateTableTest extends AbstractCairoTest {
     @Test
     public void testCreateTableLikeTableWithWALEnabled() throws Exception {
         createTableLike(true);
+    }
+
+    @Test
+    public void testCreateTableOutOfLinePostingCapacityFails() throws Exception {
+        assertException(
+                "CREATE TABLE tab (s SYMBOL, ts TIMESTAMP), INDEX(s TYPE POSTING CAPACITY 64) TIMESTAMP(ts) PARTITION BY DAY",
+                64,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testCreateTableOutOfLinePostingDelta() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP), INDEX(s TYPE POSTING DELTA) TIMESTAMP(ts) PARTITION BY DAY");
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING_DELTA, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableOutOfLinePostingEf() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP), INDEX(s TYPE POSTING EF) TIMESTAMP(ts) PARTITION BY DAY");
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING_EF, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableOutOfLinePostingIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP), INDEX(s TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY");
+            try (TableReader r = engine.getReader("tab")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(colIndex));
+            }
+        });
     }
 
     @Test
@@ -612,23 +1108,106 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTablePostingDelta() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL INDEX TYPE POSTING DELTA, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING_DELTA, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTablePostingEf() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL INDEX TYPE POSTING EF, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING_EF, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTablePostingIndexCapacityFails() throws Exception {
+        assertException(
+                "CREATE TABLE tab (s SYMBOL INDEX TYPE POSTING CAPACITY 64, ts TIMESTAMP) TIMESTAMP(ts)",
+                46,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testCreateTablePostingIndexShowCreate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL INDEX TYPE POSTING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // A bare INDEX TYPE POSTING (no INCLUDE) is non-covering, so SHOW
+            // CREATE TABLE renders no INCLUDE clause. The timestamp auto-include
+            // only rounds out an explicit INCLUDE set.
+            assertQuery("SHOW CREATE TABLE tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE TABLE 'tab' (\s
+                            \ts SYMBOL INDEX TYPE POSTING,
+                            \tts TIMESTAMP
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """);
+        });
+    }
+
+    @Test
+    public void testCreateTableUnknownIndexTypeFails() throws Exception {
+        assertException(
+                "CREATE TABLE tab (s SYMBOL INDEX TYPE FOOBAR, ts TIMESTAMP) TIMESTAMP(ts)",
+                38,
+                "unknown index type"
+        );
+    }
+
+    @Test
     public void testCreateTableWithArrayColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (arr double[]);");
-            assertSql("""
+            assertQuery("show create table x;")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'x' (\s
                             \tarr DOUBLE[]
                             );
-                            """,
-                    "show create table x;");
+                            """);
+        });
+    }
+
+    @Test
+    public void testCreateTableWithDefaultIndexType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (s symbol index, ts timestamp) timestamp(ts)");
+            assertQuery("select * from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("s\tts\n");
+            try (TableReader r = engine.getReader("tab")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(configuration.getDefaultSymbolIndexType(), metadata.getColumnIndexType(colIndex));
+            }
         });
     }
 
     @Test
     public void testCreateTableWithIndex() throws Exception {
         execute("create table tab (s symbol), index(s)");
-        assertSql("s\n", "select * from tab");
+        assertQuery("select * from tab")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\n");
         assertColumnsIndexed("tab", "s");
     }
 
@@ -640,49 +1219,115 @@ public class CreateTableTest extends AbstractCairoTest {
     @Test
     public void testCreateTableWithMultipleIndexes() throws Exception {
         execute("create table tab (s1 symbol, s2 symbol, s3 symbol), index(s1), index(s2), index(s3)");
-        assertSql("s1\ts2\ts3\n", "select * from tab");
+        assertQuery("select * from tab")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s1\ts2\ts3\n");
         assertColumnsIndexed("tab", "s1", "s2", "s3");
     }
 
     @Test
     public void testCreateTableWithNoIndex() throws Exception {
         execute("create table tab (s symbol) ");
-        assertSql("s\n", "select * from tab");
+        assertQuery("select * from tab")
+                .noLeakCheck()
+                .expectSize()
+                .returns("s\n");
+    }
+
+    @Test
+    public void testCreateTableWithPostingIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL INDEX TYPE POSTING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try (TableReader r = engine.getReader("tab")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableWithPostingIndexType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (s symbol index type posting, ts timestamp) timestamp(ts)");
+            assertQuery("select * from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("s\tts\n");
+            try (TableReader r = engine.getReader("tab")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableWithSymbolIndexType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (s symbol index type bitmap, ts timestamp) timestamp(ts)");
+            assertQuery("select * from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("s\tts\n");
+            try (TableReader r = engine.getReader("tab")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.BITMAP, metadata.getColumnIndexType(colIndex));
+            }
+        });
     }
 
     @Test
     public void testCreateTableWithTimestampNSColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ns timestamp_ns, s symbol) timestamp(ns) partition by DAY WAL;");
-            assertSql("""
+            assertQuery("show create table x;")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'x' (\s
                             \tns TIMESTAMP_NS,
                             \ts SYMBOL
                             ) timestamp(ns) PARTITION BY DAY;
-                            """,
-                    "show create table x;");
+                            """);
             execute("create table y (like x);");
-            assertSql("ns\ts\n", "select * from x");
+            assertQuery("select * from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ns")
+                    .returns("ns\ts\n");
 
             try (TableReader reader = engine.getReader("x")) {
                 assertEquals(PartitionBy.DAY, reader.getPartitionedBy());
                 assertEquals(0, reader.getMetadata().getTimestampIndex());
             }
 
-            assertSql("ddl\n" +
-                            "CREATE TABLE 'y' ( \n" +
-                            "\tns TIMESTAMP_NS,\n" +
-                            "\ts SYMBOL\n" +
-                            ") timestamp(ns) PARTITION BY DAY;\n",
-                    "show create table y;");
-            assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ns\tTIMESTAMP_NS\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\n"
-                    ,
-                    "SHOW COLUMNS FROM y"
-            );
+            assertQuery("show create table y;")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE TABLE 'y' (\s
+                            \tns TIMESTAMP_NS,
+                            \ts SYMBOL
+                            ) timestamp(ns) PARTITION BY DAY;
+                            """);
+            assertQuery("SHOW COLUMNS FROM y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ns\tTIMESTAMP_NS\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
+                            """);
 
             execute(
                     "CREATE TABLE z (" +
@@ -693,14 +1338,18 @@ public class CreateTableTest extends AbstractCairoTest {
                             "TIMESTAMP(ns) PARTITION BY DAY WAL " +
                             "DEDUP UPSERT KEYS(ns, a)"
             );
-            assertSql("ddl\n" +
-                            "CREATE TABLE 'z' ( \n" +
-                            "\tns TIMESTAMP_NS,\n" +
-                            "\ta INT,\n" +
-                            "\tb STRING\n" +
-                            ") timestamp(ns) PARTITION BY DAY\n" +
-                            "DEDUP UPSERT KEYS(ns,a);\n",
-                    "show create table z;");
+            assertQuery("show create table z;")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE TABLE 'z' (\s
+                            \tns TIMESTAMP_NS,
+                            \ta INT,
+                            \tb STRING
+                            ) timestamp(ns) PARTITION BY DAY
+                            DEDUP UPSERT KEYS(ns,a);
+                            """);
         });
     }
 
@@ -766,6 +1415,204 @@ public class CreateTableTest extends AbstractCairoTest {
             if (ref.get() != null) {
                 throw new RuntimeException(ref.get());
             }
+        });
+    }
+
+    @Test
+    public void testDropIndexPosting() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 'A'),
+                    ('2024-01-01T01:00:00', 'B'),
+                    ('2024-01-01T02:00:00', 'A')
+                    """);
+
+            try (TableReader r = engine.getReader("t")) {
+                assertTrue(r.getMetadata().isColumnIndexed(r.getMetadata().getColumnIndex("s")));
+                assertEquals(IndexType.POSTING, r.getMetadata().getColumnIndexType(r.getMetadata().getColumnIndex("s")));
+            }
+
+            execute("ALTER TABLE t ALTER COLUMN s DROP INDEX");
+
+            try (TableReader r = engine.getReader("t")) {
+                assertFalse(r.getMetadata().isColumnIndexed(r.getMetadata().getColumnIndex("s")));
+            }
+
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts
+                            2024-01-01T00:00:00.000000Z\tA
+                            2024-01-01T01:00:00.000000Z\tB
+                            2024-01-01T02:00:00.000000Z\tA
+                            """);
+        });
+    }
+
+    @Test
+    public void testIndexPostingWithoutTypeKeywordFails() throws Exception {
+        assertException(
+                "CREATE TABLE tab (s SYMBOL INDEX POSTING, ts TIMESTAMP) TIMESTAMP(ts)",
+                33,
+                "capacity"
+        );
+    }
+
+    @Test
+    public void testPostingIndexInsertAndQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 'A'),
+                    ('2024-01-01T01:00:00', 'B'),
+                    ('2024-01-01T02:00:00', 'A'),
+                    ('2024-01-01T03:00:00', 'C'),
+                    ('2024-01-01T04:00:00', 'B'),
+                    ('2024-01-01T05:00:00', 'A')
+                    """);
+            drainWalQueue();
+
+            try (TableReader r = engine.getReader("t")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(colIndex));
+            }
+
+            // Verify all rows are readable
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            6
+                            """);
+        });
+    }
+
+    @Test
+    public void testPostingIndexWhereFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 'A'),
+                    ('2024-01-01T01:00:00', 'B'),
+                    ('2024-01-01T02:00:00', 'A'),
+                    ('2024-01-01T03:00:00', 'C'),
+                    ('2024-01-01T04:00:00', 'B'),
+                    ('2024-01-01T05:00:00', 'A')
+                    """);
+            drainWalQueue();
+
+            // Query BEFORE releaseAllWriters (unsealed sparse gens). A bare
+            // INDEX TYPE POSTING is non-covering, so SELECT * takes the plain
+            // posting-filter cursor: it supports random access and reports a
+            // lazy size (size() == -1), unlike the covering cursor.
+            assertQuery("SELECT * FROM t WHERE s = 'A'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts
+                            2024-01-01T00:00:00.000000Z\tA
+                            2024-01-01T02:00:00.000000Z\tA
+                            2024-01-01T05:00:00.000000Z\tA
+                            """);
+
+            // Release writers (triggers seal)
+            engine.releaseAllWriters();
+
+            // Query AFTER seal (dense gen, stride-indexed)
+            assertQuery("SELECT * FROM t WHERE s = 'A'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts
+                            2024-01-01T00:00:00.000000Z\tA
+                            2024-01-01T02:00:00.000000Z\tA
+                            2024-01-01T05:00:00.000000Z\tA
+                            """);
+
+            assertQuery("SELECT * FROM t WHERE s = 'B'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts
+                            2024-01-01T01:00:00.000000Z\tB
+                            2024-01-01T04:00:00.000000Z\tB
+                            """);
+
+            assertQuery("SELECT * FROM t WHERE s = 'C'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts
+                            2024-01-01T03:00:00.000000Z\tC
+                            """);
+
+            // Non-existent symbol returns no rows
+            assertQuery("SELECT * FROM t WHERE s = 'Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts
+                            """);
+        });
+    }
+
+    @Test
+    public void testPostingIndexWhereFilterBeforeWriterRelease() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 'A'),
+                    ('2024-01-01T01:00:00', 'B'),
+                    ('2024-01-01T02:00:00', 'A'),
+                    ('2024-01-01T03:00:00', 'C'),
+                    ('2024-01-01T04:00:00', 'B'),
+                    ('2024-01-01T05:00:00', 'A')
+                    """);
+            drainWalQueue();
+            // Do NOT call engine.releaseAllWriters() — the writer is still open.
+            // PostingIndexWriter must flush pending data during commit so that
+            // readers can see it without waiting for close/seal.
+            assertQuery("SELECT * FROM t WHERE s = 'A'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts
+                            2024-01-01T00:00:00.000000Z\tA
+                            2024-01-01T02:00:00.000000Z\tA
+                            2024-01-01T05:00:00.000000Z\tA
+                            """);
+        });
+    }
+
+    @Test
+    public void testShowColumnsKeepsLegacyOrdinals() throws Exception {
+        // Regression test: SHOW COLUMNS must preserve the column ordering
+        // that existed before the posting-index feature, so that JDBC
+        // clients reading by ordinal (ResultSet.getString(1), etc.) keep
+        // working on upgrade. The two new columns ("indexType" and
+        // "indexInclude") must land AFTER the legacy columns, not between
+        // them.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_show_ord (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts)");
+            assertQuery("SHOW COLUMNS FROM t_show_ord")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
+                            """);
         });
     }
 
@@ -870,7 +1717,11 @@ public class CreateTableTest extends AbstractCairoTest {
         String walParameterValue = isWalEnabled ? "WAL" : "BYPASS WAL";
         execute("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY " + walParameterValue);
         execute("create table x (like y)");
-        assertSql("s2\tts\n", "select * from x");
+        assertQuery("select * from x")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("s2\tts\n");
         assertWalEnabled(isWalEnabled);
     }
 
@@ -893,22 +1744,16 @@ public class CreateTableTest extends AbstractCairoTest {
                         "t timestamp) timestamp(t) partition by MONTH"
         );
         execute("create table tab ( like x)");
-        assertSql("a\ty\tt\n", "select * from tab");
+        assertQuery("select * from tab")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("t")
+                .returns("a\ty\tt\n");
         SymbolParameters parameters = new SymbolParameters(null, isSymbolCached, false, null);
         assertSymbolParameters(parameters);
     }
 
-    private static class SymbolParameters {
-        private final Integer indexBlockCapacity;
-        private final boolean isCached;
-        private final boolean isIndexed;
-        private final Integer symbolCapacity;
-
-        SymbolParameters(Integer symbolCapacity, boolean isCached, boolean isIndexed, Integer indexBlockCapacity) {
-            this.symbolCapacity = symbolCapacity;
-            this.isCached = isCached;
-            this.isIndexed = isIndexed;
-            this.indexBlockCapacity = indexBlockCapacity;
-        }
+    private record SymbolParameters(Integer symbolCapacity, boolean isCached, boolean isIndexed,
+                                    Integer indexBlockCapacity) {
     }
 }

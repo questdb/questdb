@@ -21,7 +21,7 @@ use questdbr::parquet_read::ColumnChunkBuffers;
 use questdbr::parquet_write::bench::{
     array_to_raw_page, binary_to_page, boolean_to_page, bytes_to_page, int_slice_to_page_notnull,
     int_slice_to_page_nullable, slice_to_page_simd, string_to_page, symbol_to_pages,
-    varchar_to_dict_pages, varchar_to_page, WriteOptions,
+    varchar_to_page, WriteOptions,
 };
 use questdbr::parquet_write::schema::column_type_to_parquet_type;
 use questdbr::parquet_write::Nullable;
@@ -133,7 +133,7 @@ impl BenchAllocator {
     fn new() -> Self {
         let mem_tracking = Box::new(MemTracking::new());
         let tagged_used = Box::new(AtomicUsize::new(0));
-        let allocator = QdbAllocator::new(&*mem_tracking, &*tagged_used, 65);
+        let allocator = QdbAllocator::new(&*mem_tracking, std::ptr::null(), &*tagged_used, 65);
         Self {
             _mem_tracking: mem_tracking,
             _tagged_used: tagged_used,
@@ -195,6 +195,21 @@ fn primitive_type_for(column_type: ColumnType) -> PrimitiveType {
     }
 }
 
+// Like `primitive_type_for`, but forces `Repetition::Required`. Used by the
+// notnull encoder paths (`int_slice_to_page_notnull`), which assert that the
+// parquet schema has Required repetition. Byte/Short/Char are now declared
+// Optional at the schema level, so we override here just for the bench.
+fn required_primitive_type_for(column_type: ColumnType) -> PrimitiveType {
+    let raw_array_encoding = column_type.tag() == ColumnTypeTag::Array;
+    let parquet_type = column_type_to_parquet_type(0, "col", column_type, true, raw_array_encoding)
+        .expect("parquet type");
+
+    match parquet_type {
+        ParquetType::PrimitiveType(prim) => prim,
+        ParquetType::GroupType { .. } => panic!("expected primitive type"),
+    }
+}
+
 fn data_page_from(page: Page) -> DataPage {
     match page {
         Page::Data(page) => page,
@@ -242,6 +257,7 @@ fn build_case_ascii(
             column_top: 0,
             format,
             ascii,
+            id: None,
         },
         row_count,
     }
@@ -1316,7 +1332,7 @@ macro_rules! int_notnull_cases {
             for &$np in null_pcts(false) {
                 let data: Vec<$T> = $data;
                 let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
-                let pt = primitive_type_for(ct);
+                let pt = required_primitive_type_for(ct);
                 let page = data_page_from(
                     int_slice_to_page_notnull::<$T, $U>(
                         &data,
@@ -1889,69 +1905,6 @@ fn build_cases() -> Vec<BenchCase> {
                 format!("varchar_slice_delta_len_s{str_len}_n{null_pct}"),
                 page,
                 None,
-                column_type,
-                None,
-                Some(true),
-                ROW_COUNT,
-            ));
-        }
-    }
-
-    // Varchar — RLE dictionary encoded
-    for &str_len in &[2usize, 200] {
-        for &null_pct in null_pcts(true) {
-            let data = make_varchar_data_sized(ROW_COUNT, null_pct, str_len);
-            let column_type = ColumnType::new(ColumnTypeTag::Varchar, 0);
-            let primitive_type = primitive_type_for(column_type);
-            let mut dict = None;
-            let mut data_page = None;
-            let iter =
-                varchar_to_dict_pages(&data.aux, &data.data, 0, options, primitive_type, None)
-                    .expect("varchar dict pages");
-            for page in iter {
-                let page = page.expect("page");
-                match page {
-                    Page::Dict(p) => dict = Some(p),
-                    Page::Data(p) => {
-                        assert!(data_page.is_none(), "multiple data pages");
-                        data_page = Some(p)
-                    }
-                }
-            }
-            cases.push(build_case(
-                format!("varchar_dict_s{str_len}_n{null_pct}"),
-                data_page.expect("data page"),
-                dict,
-                column_type,
-                None,
-                ROW_COUNT,
-            ));
-        }
-    }
-
-    // VarcharSlice — RLE dictionary encoded
-    for &str_len in &[2usize, 200] {
-        for &null_pct in null_pcts(true) {
-            let data = make_varchar_data_sized(ROW_COUNT, null_pct, str_len);
-            let varchar_type = ColumnType::new(ColumnTypeTag::Varchar, 0);
-            let primitive_type = primitive_type_for(varchar_type);
-            let mut dict = None;
-            let mut data_page = None;
-            let iter =
-                varchar_to_dict_pages(&data.aux, &data.data, 0, options, primitive_type, None)
-                    .expect("varchar dict pages");
-            for page in iter {
-                let page = page.expect("page");
-                match page {
-                    Page::Dict(p) => dict = Some(p),
-                    Page::Data(p) => data_page = Some(p),
-                }
-            }
-            let column_type = ColumnType::new(ColumnTypeTag::VarcharSlice, 0);
-            cases.push(build_case_ascii(
-                format!("varchar_slice_dict_s{str_len}_n{null_pct}"),
-                data_page.expect("data page"),
-                dict,
                 column_type,
                 None,
                 Some(true),

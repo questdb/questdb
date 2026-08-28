@@ -53,11 +53,7 @@ public class BitXorLongGroupByFunction extends LongFunction implements GroupByFu
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NULL) {
-            mapValue.putLong(valueIndex, value);
-        } else {
-            mapValue.putLong(valueIndex, Numbers.LONG_NULL);
-        }
+        mapValue.putLong(valueIndex, value);
     }
 
     @Override
@@ -75,24 +71,24 @@ public class BitXorLongGroupByFunction extends LongFunction implements GroupByFu
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final long value = Unsafe.getUnsafe().getLong(argAddr + (rowIndex << 3));
+                final long value = Unsafe.getLong(argAddr + (rowIndex << 3));
                 if (value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                    final long current = Unsafe.getUnsafe().getLong(addr);
-                    Unsafe.getUnsafe().putLong(addr, current != Numbers.LONG_NULL ? current ^ value : value);
+                    final long current = Unsafe.getLong(addr);
+                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? current ^ value : value);
                 }
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final long value = arg.getLong(record);
                 if (value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                    final long current = Unsafe.getUnsafe().getLong(addr);
-                    Unsafe.getUnsafe().putLong(addr, current != Numbers.LONG_NULL ? current ^ value : value);
+                    final long current = Unsafe.getLong(addr);
+                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? current ^ value : value);
                 }
             }
         }

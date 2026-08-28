@@ -287,7 +287,9 @@ namespace questdb::avx2 {
         c.vpand(lhs_copy, lhs_copy, sign_mask); // abs(lhs - rhs)
         float eps[8] = {FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON};
         Mem epsilon = c.new_const(ConstPoolScope::kLocal, &eps, 32);
-        c.vcmpps(dst, lhs_copy, epsilon, CmpImm::kLT);
+        // kLE is the ordered "abs(lhs - rhs) <= FLOAT_EPSILON", inclusive to match Numbers.equals().
+        // Ordered, so a NaN difference stays false here and the nans mask below decides it.
+        c.vcmpps(dst, lhs_copy, epsilon, CmpImm::kLE);
         c.vpor(dst, dst, nans);
         return dst;
     }
@@ -304,7 +306,9 @@ namespace questdb::avx2 {
         c.vpand(lhs_copy, lhs_copy, sign_mask); // abs(lhs - rhs)
         double eps[4] = {DOUBLE_EPSILON, DOUBLE_EPSILON, DOUBLE_EPSILON, DOUBLE_EPSILON};
         Mem epsilon = c.new_const(ConstPoolScope::kLocal, &eps, 32);
-        c.vcmppd(dst, lhs_copy, epsilon, CmpImm::kLT);
+        // kLE is the ordered "abs(lhs - rhs) <= DOUBLE_EPSILON", inclusive to match Numbers.equals().
+        // Ordered, so a NaN difference stays false here and the nans mask below decides it.
+        c.vcmppd(dst, lhs_copy, epsilon, CmpImm::kLE);
         c.vpor(dst, dst, nans);
         return dst;
     }
@@ -470,6 +474,17 @@ namespace questdb::avx2 {
         return select_bytes(c, nulls_msk, t, nulls_const);
     }
 
+    // Folds every non-finite lane onto NaN. QuestDB reads a non-finite floating point value as
+    // NULL (Numbers#isNull is an exponent-bits test covering +/-Infinity as well as NaN), and
+    // DivFloatFunctionFactory / DivDoubleFunctionFactory fold a non-finite quotient to NaN so the
+    // comparison treats it as NULL instead of as a very large number. is_nan() computes x - x and
+    // tests UNORD, which is 0 only for a finite x, so it already IS the non-finite test.
+    inline Vec fold_non_finite(Compiler &c, data_type_t type, const Vec &x) {
+        Vec non_finite = is_nan(c, type, x);
+        Mem nan_const = (type == data_type_t::f32) ? vec_float_null(c) : vec_double_null(c);
+        return select_bytes(c, non_finite, x, nan_const);
+    }
+
     inline Vec add(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
         if(!is_check_for_null(type, null_check)) {
             return add(c, type, lhs, rhs);
@@ -561,6 +576,10 @@ namespace questdb::avx2 {
                 //            __m256i prod    = _mm256_add_epdata_type_t::i64(prodll,prodlh3);    // a0Lb0L+(a0Lb0H+a0Hb0L)<<32, a1Lb1L+(a1Lb1H+a1Hb1L)<<32
                 //            return  prod;
             {
+                // Must not mutate lhs/rhs: the outer mul() passes both into
+                // blend_with_nulls() to detect LONG_NULL inputs and force the
+                // result to LONG_NULL. Clobbering lhs hides nulls and the
+                // result is an arithmetic value instead of LONG_NULL.
                 Vec t = c.new_ymm();
                 c.vpshufd(t, rhs, 0xB1);
                 c.vpmulld(t, t, lhs);
@@ -568,8 +587,9 @@ namespace questdb::avx2 {
                 c.vpxor(z, z, z);
                 c.vphaddd(t, t, z);
                 c.vpshufd(t, t, 0x73);
-                c.vpmuludq(lhs, lhs, rhs);
-                c.vpaddq(dst, t, lhs);
+                Vec ll = c.new_ymm();
+                c.vpmuludq(ll, lhs, rhs);
+                c.vpaddq(dst, t, ll);
             }
                 break;
             case data_type_t::f32:
@@ -700,10 +720,12 @@ namespace questdb::avx2 {
                 break;
             case data_type_t::f32:
                 c.vdivps(dst, lhs, rhs);
-                break;
+                // Only division folds; mul/add/sub deliberately do not fold in the Java
+                // factories either, so an overflow there already agrees on both paths.
+                return fold_non_finite(c, type, dst);
             case data_type_t::f64:
                 c.vdivpd(dst, lhs, rhs);
-                break;
+                return fold_non_finite(c, type, dst);
             default:
                 __builtin_unreachable();
         }
@@ -746,6 +768,33 @@ namespace questdb::avx2 {
             Vec int_nulls_mask = cmp_eq_null(c, data_type_t::i32, rhs);
             Vec nans = c.new_ymm();
             c.vmovups(nans, vec_float_null(c));
+            return select_bytes(c, int_nulls_mask, dst, nans);
+        }
+        return dst;
+    }
+
+    inline Vec cvt_ftod(Compiler &c, const Vec &rhs) {
+        Vec dst = c.new_ymm();
+        c.vcvtps2pd(dst, rhs.xmm());
+        return dst;
+    }
+
+    // i32 -> f64. Reads the FOUR i32 lanes in the low 128 bits, so it is correct at four lanes and
+    // only at four lanes - the same restriction cvt_ftod already carries. convert() gates the arms
+    // that call it on the loop's lane count, so every caller runs a four-lane loop: the WIDE_LANE
+    // loop, which compiler.cpp pins to step 4, and the SINGLE_SIZE loop over eight-byte columns,
+    // whose step is also 4.
+    inline Vec cvt_itod(Compiler &c, const Vec &rhs, bool null_check) {
+        Vec dst = c.new_ymm();
+        c.vcvtdq2pd(dst, rhs.xmm());
+        if (null_check) {
+            // The equality mask comes out in 32-bit lanes; widen it to the 64-bit lanes the
+            // converted value now occupies before blending the NaNs in.
+            Vec int_nulls_mask32 = cmp_eq_null(c, data_type_t::i32, rhs);
+            Vec int_nulls_mask = c.new_ymm();
+            c.vpmovsxdq(int_nulls_mask, int_nulls_mask32.xmm());
+            Vec nans = c.new_ymm();
+            c.vmovups(nans, vec_double_null(c));
             return select_bytes(c, int_nulls_mask, dst, nans);
         }
         return dst;

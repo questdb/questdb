@@ -155,7 +155,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     try {
                         int resolvedPartitionBy = partitionBy == -1 ? PartitionBy.NONE : partitionBy;
                         if (resolvedPartitionBy == PartitionBy.NONE) {
-                            exportMode = ParquetExportMode.determineExportMode(rcf, false);
+                            exportMode = ParquetExportMode.determineExportMode(rcf, false, executionContext);
                         } else {
                             // Re-partitioning always requires a temp table
                             exportMode = ParquetExportMode.TEMP_TABLE;
@@ -270,6 +270,9 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             }
             // Entry is now owned by the task
             entry = null;
+            // The export task is already published (the background job is launched) at this point, so
+            // keep this ack cursor on the no-op breaker: a CANCEL QUERY or a tripped deadline must not
+            // suppress the export-id row while the data-movement operation keeps running.
             cursor.toTop();
             return cursor;
         } catch (SqlException | CairoException ex) {

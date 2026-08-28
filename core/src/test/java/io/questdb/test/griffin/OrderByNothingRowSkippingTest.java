@@ -38,91 +38,108 @@ public class OrderByNothingRowSkippingTest extends AbstractCairoTest {
     @Test
     public void testSelectAll() throws Exception {
         prepare_unordered_noTs_table();
-        assertQuery(
-                "l\n1\n4\n7\n9\n3\n6\n10\n8\n2\n5\n",
-                "select l from tab",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select l from tab")
+                .expectSize()
+                .returns("l\n1\n4\n7\n9\n3\n6\n10\n8\n2\n5\n");
     }
 
     @Test
     public void testSelectFirstN() throws Exception {
         prepare_unordered_noTs_table();
 
-        assertQuery("l\n1\n4\n7\n", "select l from tab limit 3", true);
+        assertQuery("select l from tab limit 3")
+                .expectSize()
+                .returns("l\n1\n4\n7\n");
     }
 
     @Test
     public void testSelectFirstNwithSameLoHiReturnsNoRows() throws Exception {
         prepare_unordered_noTs_table();
 
-        assertQuery("l\n", "select l from tab limit 8,8", true);
+        assertQuery("select l from tab limit 8,8")
+                .expectSize()
+                .returns("l\n");
     }
 
     @Test
     public void testSelectLastN() throws Exception {
         prepare_unordered_noTs_table();
 
-        assertQuery("l\n8\n2\n5\n", "select l from tab limit -3", true);
+        assertQuery("select l from tab limit -3")
+                .expectSize()
+                .returns("l\n8\n2\n5\n");
     }
 
     @Test
     public void testSelectLastNwithSameLoHiReturnsNoRows() throws Exception {
         prepare_unordered_noTs_table();
 
-        assertQuery("l\n", "select l from tab limit -8,-8", true);
+        assertQuery("select l from tab limit -8,-8")
+                .expectSize()
+                .returns("l\n");
     }
 
     @Test
     public void testSelectMiddleNfromBothDirections() throws Exception {
         prepare_unordered_noTs_table();
 
-        assertQuery("l\n3\n6\n", "select l from tab limit 4,-4", true);
+        assertQuery("select l from tab limit 4,-4")
+                .expectSize()
+                .returns("l\n3\n6\n");
     }
 
     @Test
     public void testSelectMiddleNfromEnd() throws Exception {
         prepare_unordered_noTs_table();
 
-        assertQuery("l\n7\n9\n3\n", "select l from tab limit -8,-5", true);
+        assertQuery("select l from tab limit -8,-5")
+                .expectSize()
+                .returns("l\n7\n9\n3\n");
     }
 
     @Test
     public void testSelectMiddleNfromStart() throws Exception {
         prepare_unordered_noTs_table();
 
-        assertQuery("l\n6\n10\n8\n", "select l from tab limit 5,8", true);
+        assertQuery("select l from tab limit 5,8")
+                .expectSize()
+                .returns("l\n6\n10\n8\n");
     }
 
     @Test
     public void testSelectNbeforeStartReturnsEmptyResult() throws Exception {
         prepare_unordered_noTs_table();
 
-        assertQuery("l\n", "select l from tab limit -11,-15", true);
+        assertQuery("select l from tab limit -11,-15")
+                .expectSize()
+                .returns("l\n");
     }
 
     @Test
     public void testSelectNbeyondEndreturnsEmptyResult() throws Exception {
         prepare_unordered_noTs_table();
 
-        assertQuery("l\n", "select l from tab limit 11,12", true);
+        assertQuery("select l from tab limit 11,12")
+                .expectSize()
+                .returns("l\n");
     }
 
     @Test
     public void testSelectNintersectingEnd() throws Exception {
         prepare_unordered_noTs_table();
 
-        assertQuery("l\n2\n5\n", "select l from tab limit 8,12", true);
+        assertQuery("select l from tab limit 8,12")
+                .expectSize()
+                .returns("l\n2\n5\n");
     }
 
     @Test
     public void testSelectNintersectingStart() throws Exception {
         prepare_unordered_noTs_table();
 
-        assertQuery("l\n1\n4\n", "select l from tab limit -12,-8", true);
+        assertQuery("select l from tab limit -12,-8")
+                .expectSize()
+                .returns("l\n1\n4\n");
     }
 
     // table with x reflecting timestamp position  in descending order

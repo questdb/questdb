@@ -395,7 +395,7 @@ public class BinarySearchTest extends AbstractCairoTest {
         try {
             for (int i = 0; i < distinctValueCount; i++) {
                 for (int j = 0; j < repeatCount; j++) {
-                    Unsafe.getUnsafe().putLong(mem + (i * repeatCount + j) * 16, i);
+                    Unsafe.putLong(mem + (i * repeatCount + j) * 16, i);
                 }
             }
 
@@ -404,11 +404,11 @@ public class BinarySearchTest extends AbstractCairoTest {
             if (searchValue > distinctValueCount - 1) {
                 Assert.assertEquals(max, index);
             } else {
-                Assert.assertEquals(searchValue, Unsafe.getUnsafe().getLong(mem + index * 16));
+                Assert.assertEquals(searchValue, Unsafe.getLong(mem + index * 16));
                 if (scanDirection == BIN_SEARCH_SCAN_DOWN) {
-                    Assert.assertTrue(index == max || searchValue < Unsafe.getUnsafe().getLong(mem + (index + 1) * 16));
+                    Assert.assertTrue(index == max || searchValue < Unsafe.getLong(mem + (index + 1) * 16));
                 } else {
-                    Assert.assertTrue(index == 0 || searchValue > Unsafe.getUnsafe().getLong(mem + (index - 1) * 16));
+                    Assert.assertTrue(index == 0 || searchValue > Unsafe.getLong(mem + (index - 1) * 16));
                 }
             }
         } finally {

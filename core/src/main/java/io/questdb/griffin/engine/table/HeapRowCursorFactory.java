@@ -24,10 +24,15 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 /**
@@ -51,7 +56,23 @@ public class HeapRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
+    public void close() {
+        // Free the row cursors directly off the factory's own list. getCursor()
+        // builds them into `cursors` and only later hands the list to the
+        // HeapRowCursor via cursor.of(); if getCursor() throws after building
+        // some cursors but before that hand-off (e.g. an OOM mid-build on the
+        // very first page frame), HeapRowCursor.cursors is still null and
+        // Misc.free(cursor) would never reach them. Draining `cursors` here
+        // reclaims those stranded cursors; once cursor.of() has run it shares
+        // this same list, so the HeapRowCursor's own close() drains it to empty
+        // and this call is a no-op.
+        Misc.freeObjListAndClear(cursors);
+        Misc.free(cursor);
+    }
+
+    @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
+        Misc.freeObjListAndClear(cursors);
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {
             cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
         }
