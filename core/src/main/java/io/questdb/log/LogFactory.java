@@ -105,6 +105,7 @@ public class LogFactory implements Closeable {
     private boolean isThreadHaltStarted;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
+    private long workerPoolHaltTimeoutNanos = WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS;
 
     public LogFactory() {
         this(MicrosecondClockImpl.INSTANCE);
@@ -387,6 +388,14 @@ public class LogFactory implements Closeable {
         startThread();
     }
 
+    @TestOnly
+    public void setWorkerPoolHaltTimeoutForTesting(long timeoutNanos) {
+        if (timeoutNanos < 0) {
+            throw new IllegalArgumentException("timeoutNanos must be non-negative");
+        }
+        workerPoolHaltTimeoutNanos = timeoutNanos;
+    }
+
     public void startThread() {
         assert !closed.get();
         if (isThreadHaltStarted) {
@@ -560,7 +569,9 @@ public class LogFactory implements Closeable {
             return;
         }
         try {
-            haltThread();
+            if (!haltThread()) {
+                throw new IllegalStateException("logging worker pool did not halt within timeout");
+            }
         } catch (Throwable th) {
             closed.set(false);
             throw th;
@@ -726,13 +737,14 @@ public class LogFactory implements Closeable {
         return scopeConfigMap.get(k);
     }
 
-    private void haltThread() {
+    private boolean haltThread() {
         if (isThreadHaltComplete) {
-            return;
+            return true;
         }
         isThreadHaltStarted = true;
         running.set(false);
-        isThreadHaltComplete = loggingWorkerPool.haltWithin(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+        isThreadHaltComplete = loggingWorkerPool.haltWithin(workerPoolHaltTimeoutNanos);
+        return isThreadHaltComplete;
     }
 
     @TestOnly
