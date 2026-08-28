@@ -207,6 +207,39 @@ indistinguishable from good news.
 Closing this means reducing per-cursor bind cost, not traversal cost -- the same
 per-mapping cost the high-cardinality point reads pay, seen from another angle.
 
+### Arm B: a packed payload (in progress)
+
+The gap above is width, not code, so the fix is to stop storing `row_id` as PLAIN
+int64. `_im` already reserves `PAYLOAD_KIND 1` for a second on-disk arm, and the
+foundations for it are now in place:
+
+| piece | state |
+| --- | --- |
+| REQUIRED page for a var-size column | **done** -- without it a blob column always carries definition levels, and `plain_column_data_offset` refuses those, so the blob could never be read without decoding |
+| `ROW_ID_BLOB_COLUMN` in `_im` | **done** -- spent from the RESERVED area, biased by one so zero still means absent; header stays 128 bytes and arm N files are byte-identical |
+| `BitpackUtils.packAllValues` | **done** -- the inverse of three existing unpackers, which had no public producer outside `PostingIndexWriter` |
+| `PostingIndexUtils.encodeFlatBlob` | **done** -- emits the native FLAT stride layout, which the existing reader already understands |
+| seal writes the arm B layout | **not started** |
+| arm B reader cursor | **not started** |
+
+The remaining work is one integration: per planned row group, derive
+`baseValue`/`bitWidth` from the group's row-id range, call `encodeFlatBlob`, and
+emit the result as a REQUIRED PLAIN BINARY column with one parquet row per row
+group. The obstacle is that the seal's row model is currently "one parquet row
+per posting", which `planRowGroups`, the key directory and the chunk-statistics
+key-alignment check all assume.
+
+Two design decisions are worth carrying forward:
+
+- **Flat mode, not delta.** Delta compresses better above ~10 values per key, but
+  its per-key blocks must be walked; flat mode shares one base and one bitWidth
+  across the stride and gives O(1) access to any key's slice, which is what a
+  random-access reader needs.
+- **One blob row per ROW GROUP, not per key.** A per-key blob needs a byte offset
+  per key -- a new `_im` section and a format version bump. Per row group, key
+  *k* sits at bit offset `posting_index * bitWidth` and `KEY_ROW_OFFSET` already
+  stores that index, so neither is needed.
+
 ### Mechanisms tried and rejected
 
 Recorded so they are not retried. Each was fully implemented and measured, not
