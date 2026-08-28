@@ -51,7 +51,9 @@ import java.util.regex.Pattern;
  *     <li>an ordering comparison over UUID, which crashed the JVM while
  *     compiling the filter (issue 7546);</li>
  *     <li>an ordering comparison over IPv4, which returned the wrong rows for
- *     every address at or above 128.0.0.0 (issue 7547);</li>
+ *     every address at or above 128.0.0.0 (issue 7547). Both of those pins
+ *     demand TWO DISTINCT columns, which is why the fixture carries a second
+ *     IPv4 and a second UUID column -- see {@link #orderingOverColumns};</li>
  *     <li>a SYMBOL column against a number spelled without quotes, whose sign
  *     the constant serializer dropped (issue 7548);</li>
  *     <li>a CHAR literal in the half of the code space a signed 16-bit lane
@@ -70,6 +72,10 @@ import java.util.regex.Pattern;
  */
 public class FilterShapeCoverageTest {
     private static final int CORPUS_SIZE = 20_000;
+    // A bare quoted IPv4 address, in the spelling the filter compiler reads as
+    // an i32 immediate. 'x.x.x.x'::IPv4 is a function node it declines, so the
+    // negative lookahead keeps the cast form out.
+    private static final String IPV4_LITERAL = "'\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}'(?!::)";
     // One comparison in parentheses -- the operand shape PredicateGenerator's
     // nested production emits. Both operands must carry no parentheses of their
     // own, which leaves out an operand that is itself a cast or a function call;
@@ -94,6 +100,9 @@ public class FilterShapeCoverageTest {
             "BOOLEAN", "BYTE", "SHORT", "CHAR", "INT", "LONG", "FLOAT", "DOUBLE",
             "DATE", "TIMESTAMP", "STRING", "VARCHAR", "SYMBOL", "LONG256", "UUID", "IPv4"
     };
+    // 8-4-4-4-12, the spelling UuidType.randomLiteral emits.
+    private static final String UUID_LITERAL =
+            "'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'";
 
     @Test
     public void testCharComparesAgainstHighCodePointLiteral() {
@@ -183,7 +192,14 @@ public class FilterShapeCoverageTest {
 
     @Test
     public void testIPv4ComparesWithOrderingOperator() {
-        assertCorpusMatches("IPv4 ordering comparison", orderingOver("c_ip"));
+        // ipv4Col < ipv4Col2 is the shape issue 7547 reported, and the two
+        // operands have to be DISTINCT columns for the corpus to hold it --
+        // see orderingOverColumns for why a self-comparison is worth nothing.
+        assertCorpusMatches("IPv4 ordering over two columns", orderingOverColumns("c_ip", "c_ip2"));
+        // The other operand shape: a literal reaches the serializer as an i32
+        // immediate rather than a column load, and both halves of the ordering
+        // expansion re-traverse whatever they are given.
+        assertCorpusMatches("IPv4 ordering against a literal", orderingAgainstLiteral("c_ip", IPV4_LITERAL));
     }
 
     @Test
@@ -191,10 +207,7 @@ public class FilterShapeCoverageTest {
         // 'x.x.x.x' reaches the filter compiler as an i32 immediate;
         // 'x.x.x.x'::IPv4 is a function node it declines, so a corpus of only
         // the cast form would never compile an IPv4 predicate at all.
-        assertCorpusMatches(
-                "bare quoted IPv4 literal",
-                Pattern.compile("'\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}'(?!::)")
-        );
+        assertCorpusMatches("bare quoted IPv4 literal", Pattern.compile(IPV4_LITERAL));
     }
 
     @Test
@@ -245,7 +258,9 @@ public class FilterShapeCoverageTest {
 
     @Test
     public void testUuidComparesWithOrderingOperator() {
-        assertCorpusMatches("UUID ordering comparison", orderingOver("c_uuid"));
+        // uuidCol > uuidCol2 is the shape issue 7546 crashed the JVM on.
+        assertCorpusMatches("UUID ordering over two columns", orderingOverColumns("c_uuid", "c_uuid2"));
+        assertCorpusMatches("UUID ordering against a literal", orderingAgainstLiteral("c_uuid", UUID_LITERAL));
     }
 
     private static void assertCorpusMatches(String what, Pattern pattern) {
@@ -261,8 +276,17 @@ public class FilterShapeCoverageTest {
         columns.add(new FuzzColumn("sym", SymbolType.INSTANCE));
         columns.add(new FuzzColumn("c_char", CharType.INSTANCE));
         columns.add(new FuzzColumn("c_bool", BooleanType.INSTANCE));
+        // Two IPv4 and two UUID columns, because the ordering defects these
+        // pins stand for are both two-column shapes and one column per type
+        // cannot spell them. Adding a column reweights every draw the generator
+        // makes, so the whole corpus shifts, but every other pin in this class
+        // keeps a wide margin at the new distribution; the thinnest is "nested
+        // comparison under NOT" at 176 matches over the 20_000-predicate
+        // corpus.
         columns.add(new FuzzColumn("c_ip", IPv4Type.INSTANCE));
+        columns.add(new FuzzColumn("c_ip2", IPv4Type.INSTANCE));
         columns.add(new FuzzColumn("c_uuid", UuidType.INSTANCE));
+        columns.add(new FuzzColumn("c_uuid2", UuidType.INSTANCE));
         columns.add(new FuzzColumn("c_l256", Long256Type.INSTANCE));
         columns.add(new FuzzColumn("c_int", IntType.INSTANCE));
         columns.add(new FuzzColumn("ts", TimestampType.INSTANCE));
@@ -292,7 +316,57 @@ public class FilterShapeCoverageTest {
         return Pattern.compile(inner + " (?:=|!=) |(?:=|!=) " + inner);
     }
 
-    private static Pattern orderingOver(String column) {
-        return Pattern.compile(column + " (<=|>=|<|>) |(<=|>=|<|>) " + column);
+    /**
+     * Matches an ordering comparison between {@code column} and {@code literal},
+     * in either operand order. A constant operand reaches the filter compiler as
+     * an immediate rather than a column load, which is the other half of the
+     * serializer's ordering expansion and needs its own pin now that
+     * {@link #orderingOverColumns} demands two columns.
+     */
+    private static Pattern orderingAgainstLiteral(String column, String literal) {
+        return Pattern.compile(
+                "(?:" + column + " (?:<=|>=|<|>) " + literal
+                        + "|" + literal + " (?:<=|>=|<|>) " + column + "\\b)"
+        );
+    }
+
+    /**
+     * Matches an ordering comparison between the two DISTINCT columns named, in
+     * either operand order.
+     * <p>
+     * Distinct operands are the whole point. The predecessor of this helper
+     * matched {@code c_ip (<=|>=|<|>) } on its own, which a SELF-comparison
+     * satisfies -- and a self-comparison stands for nothing here. Measured on a
+     * two-row IPv4 table:
+     * <ul>
+     *     <li>{@code WHERE c_ip < c_ip} plans as "Empty table".
+     *     {@code WhereClauseParser.analyzeLess} finds
+     *     {@code nodesEqual(lhs, rhs)} on a STRICT operator, sets the model's
+     *     intrinsic value to FALSE, and no filter is compiled at all -- with or
+     *     without a sibling conjunct beside it;</li>
+     *     <li>{@code WHERE c_ip <= c_ip} does reach the compiled filter. The
+     *     non-strict arm records a tautology and leaves the node in the
+     *     residual. So does a self-comparison under an OR, or one nested inside
+     *     another comparison.</li>
+     * </ul>
+     * What every surviving case has in common is that it is constant-valued for
+     * every row: {@code c < c} is false and {@code c <= c} is true whatever the
+     * address holds, so it separates a correct unsigned comparison from a signed
+     * one exactly nowhere. And
+     * {@code CompiledFilterIRSerializer.serializeIPv4Ordering} re-traverses each
+     * operand up to six times, which one column on both sides cannot tell apart
+     * from a left/right mix-up. Both defects this pin stands for -- issues 7546
+     * and 7547 -- were reported as {@code col <op> col2}.
+     * <p>
+     * The trailing {@code \b} carries weight: without it {@code c_ip2 < c_ip2}
+     * would pass, because "{@code < c_ip}" matches a prefix of
+     * "{@code < c_ip2}".
+     */
+    private static Pattern orderingOverColumns(String a, String b) {
+        return Pattern.compile(
+                "(?:" + a + " (?:<=|>=|<|>) " + b
+                        + "|" + b + " (?:<=|>=|<|>) " + a
+                        + ")\\b"
+        );
     }
 }

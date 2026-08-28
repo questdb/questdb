@@ -2263,6 +2263,91 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testCharOrderingBindVariableEmitsOneVarSlot() throws Exception {
+        // The CHAR ordering expansion re-traverses each operand four times. serializeBindVariable()
+        // used to append a fresh bindVarFunctions entry per occurrence, so one textual :cv reached
+        // the backend as four DISTINCT VAR indices - four 16-byte vars slots, four link functions,
+        // and four broadcasts per vectorized loop body that ValueCacheYmm (jit/common.h) could not
+        // collapse, because it keys the bind-variable half of its cache on exactly that index.
+        bindVariableService.clear();
+        bindVariableService.setChar("cv", 'a');
+
+        serialize("achar < :cv");
+        assertIR(
+                "(i16 0L)(i16 achar)(<>)(i16 0L)(i16 :0)(<>)(&&)" +
+                        "(i16 0L)(i16 achar)(>=)(i16 0L)(i16 :0)(<)(&&)" +
+                        "(i16 0L)(i16 achar)(<)(i16 0L)(i16 :0)(<)(=)" +
+                        "(i16 :0)(i16 achar)(<)(&&)(||)(&&)(ret)"
+        );
+        Assert.assertEquals(1, bindVarFunctions.size());
+        Assert.assertEquals(ColumnType.CHAR, bindVarFunctions.get(0).getType());
+    }
+
+    @Test
+    public void testIPv4OrderingBindVariableEmitsOneVarSlot() throws Exception {
+        // The IPv4 twin of testCharOrderingBindVariableEmitsOneVarSlot. The non-strict expansion
+        // re-traverses each operand SIX times (five for the strict one), so this was the widest
+        // duplication of the two.
+        bindVariableService.clear();
+        bindVariableService.setIPv4(0, "10.0.0.5");
+
+        serialize("anipv4 <= $1");
+        assertIR(
+                "(i32 0L)(i32 anipv4)(<>)(i32 0L)(i32 :0)(<>)(&&)" +
+                        "(i32 -2147483648L)(i32 anipv4)(=)(i32 -2147483648L)(i32 :0)(<>)(&&)" +
+                        "(i32 :0)(i32 anipv4)(<)(||)" +
+                        "(i32 0L)(i32 anipv4)(<)(i32 -2147483648L)(i32 anipv4)(=)(||)" +
+                        "(i32 0L)(i32 :0)(<)(i32 -2147483648L)(i32 :0)(=)(||)" +
+                        "(<>)(<>)(&&)" +
+                        "(i32 :0)(i32 anipv4)(=)(||)(ret)"
+        );
+        Assert.assertEquals(1, bindVarFunctions.size());
+        Assert.assertEquals(ColumnType.IPv4, bindVarFunctions.get(0).getType());
+    }
+
+    @Test
+    public void testCharOrderingBindVariableSlotsSurviveRewind() throws Exception {
+        // The vars-slot memo has to move with the rewind serializeCharOrdering() runs over
+        // bindVarFunctions. A sibling numbered BELOW the ordering node's watermark keeps its slot,
+        // the ordering node's own variable is renumbered by the rewind, and a memo entry left
+        // pointing above the watermark would emit a VAR index past the end of the vars block the
+        // backend reads. The memo is also per OCCURRENCE, not per name: two ordering nodes over the
+        // same textual :mid take one slot each.
+        bindVariableService.clear();
+        bindVariableService.setChar("mid", 'b');
+        bindVariableService.setChar("eq", 'q');
+
+        // PostOrderTreeTraversalAlgo descends node.rhs first, so :eq claims slot 0 and the ordering
+        // expansion on the left rewinds down to - and re-emits from - slot 1.
+        serialize("(achar < :mid) = (achar = :eq)");
+        assertIRStackBalanced();
+        assertIR(
+                "(i16 :0)(i16 achar)(=)" +
+                        "(i16 0L)(i16 achar)(<>)(i16 0L)(i16 :1)(<>)(&&)" +
+                        "(i16 0L)(i16 achar)(>=)(i16 0L)(i16 :1)(<)(&&)" +
+                        "(i16 0L)(i16 achar)(<)(i16 0L)(i16 :1)(<)(=)" +
+                        "(i16 :1)(i16 achar)(<)(&&)(||)(&&)(=)(ret)"
+        );
+        Assert.assertEquals(2, bindVarFunctions.size());
+
+        // Two ordering expansions over one textual name: each rewinds over its own watermark, and
+        // each occurrence keeps a slot of its own.
+        serialize("(achar < :mid) = (achar < :mid)");
+        assertIRStackBalanced();
+        assertIR(
+                "(i16 0L)(i16 achar)(<>)(i16 0L)(i16 :0)(<>)(&&)" +
+                        "(i16 0L)(i16 achar)(>=)(i16 0L)(i16 :0)(<)(&&)" +
+                        "(i16 0L)(i16 achar)(<)(i16 0L)(i16 :0)(<)(=)" +
+                        "(i16 :0)(i16 achar)(<)(&&)(||)(&&)" +
+                        "(i16 0L)(i16 achar)(<>)(i16 0L)(i16 :1)(<>)(&&)" +
+                        "(i16 0L)(i16 achar)(>=)(i16 0L)(i16 :1)(<)(&&)" +
+                        "(i16 0L)(i16 achar)(<)(i16 0L)(i16 :1)(<)(=)" +
+                        "(i16 :1)(i16 achar)(<)(&&)(||)(&&)(=)(ret)"
+        );
+        Assert.assertEquals(2, bindVarFunctions.size());
+    }
+
+    @Test
     public void testCharOrderingNestedInPredicate() throws Exception {
         // https://github.com/questdb/questdb/issues/7549
         // The CHAR ordering expansion re-traverses its operands, so it first discards the IR the
@@ -3940,6 +4025,19 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
      * a debug build, so a release JVM underflows the vector and reads out of bounds. A truncated
      * stream reaches the user as a SIGSEGV in {@code questdb::avx2::emit_bin_op}, never as a JIT
      * decline, which is why the well-formedness assertion belongs at this level.
+     * <p>
+     * Precondition: the stream carries no short-circuit opcode. The per-opcode model below is right
+     * for those - {@code AND_SC} / {@code OR_SC} do pop one and push none - but one shape among
+     * them moves the TERMINAL depth. A chain alone does not: {@code serializePredicatesAndSc} /
+     * {@code serializePredicatesOrSc} emit no operator after the last conjunct, so
+     * {@code "along = 1 and anint = 2"} serializes as {@code ...(=)(&&_sc)...(=)(ret)} and ends
+     * at depth 1. {@code serializeIn()} is what shifts the terminal - a top-level {@code IN()}
+     * emits its own {@code AND_SC(0)} exit, so once one sorts last,
+     * {@code "along = 1 and anint IN (2)"} serializes as {@code ...(=)(&&_sc)(ret)} and
+     * legitimately reaches {@code (ret)} at depth 0, where the depth-1 assertion at the end would
+     * false-fail. Telling the two apart needs the control flow this walk does not model, so the
+     * walk rejects the whole opcode class instead; pin a short-circuit shape with
+     * {@link #assertIR}.
      */
     private void assertIRStackBalanced() {
         long offset = 0;
@@ -3955,6 +4053,17 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     IR_UNDEFINED_CODE,
                     opcode
             );
+            final boolean isShortCircuitOpcode = opcode == AND_SC || opcode == OR_SC
+                    || opcode == BEGIN_SC || opcode == END_SC;
+            Assert.assertFalse(
+                    "assertIRStackBalanced() does not model short-circuit control flow: opcode "
+                            + opcode + " at offset " + instructionOffset + " is a short-circuit"
+                            + " opcode, and such a stream can reach (ret) at depth 0. Pin this shape"
+                            + " with assertIR() instead.",
+                    isShortCircuitOpcode
+            );
+            // The short-circuit arms below are unreachable past that guard. They stay because they
+            // record the per-opcode stack effect the guard's message contrasts with.
             final int pops = switch (opcode) {
                 case RET, IMM, MEM, VAR, BEGIN_SC, END_SC -> 0;
                 case NEG, NOT, SX_I64, AND_SC, OR_SC -> 1;

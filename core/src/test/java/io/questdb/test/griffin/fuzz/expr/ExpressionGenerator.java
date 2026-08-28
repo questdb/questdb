@@ -43,7 +43,9 @@ import io.questdb.test.griffin.fuzz.types.FuzzColumnTypes;
  *     <li>typed constant;</li>
  *     <li>arithmetic {@code a op b} where both sides are numeric;</li>
  *     <li>curated single-arg function call (abs, length, upper, ...);</li>
- *     <li>cast {@code inner::TYPE} to a target kind.</li>
+ *     <li>cast {@code inner::TYPE} to a target kind, provided a numeric
+ *     expression can be cast to it at all -- see
+ *     {@link #castTargetFromNumeric(ColumnKind)}.</li>
  * </ul>
  */
 public final class ExpressionGenerator {
@@ -130,12 +132,42 @@ public final class ExpressionGenerator {
             }
         }
         if (choice == 2) {
-            FuzzColumnType castTarget = FuzzColumnTypes.pickOfKind(rnd, target);
+            FuzzColumnType castTarget = castTargetFromNumeric(target);
             if (castTarget != null) {
                 return new CastExpr(generateOfKind(ColumnKind.NUMERIC, depth + 1), castTarget);
             }
         }
         return generateLeafOfKind(target);
+    }
+
+    /**
+     * Type for the {@code (<numeric>)::TYPE} arm of {@link #generateOfKind},
+     * or null when no cast reaches {@code target} from a numeric expression
+     * and the arm has to fall through to a leaf instead.
+     * <p>
+     * UUID is the one such kind. QuestDB registers exactly two casts producing
+     * a UUID -- {@code CastStrToUuidFunctionFactory} and
+     * {@code CastVarcharToUuidFunctionFactory} -- so every
+     * {@code (<numeric>)::UUID} this arm could emit dies with "there is no
+     * matching function `cast` with the argument types: (INT, UUID)", and the
+     * oracle throws the whole generated query away as an expected skip.
+     * Measured over 2000 predicates on a schema carrying one column of each
+     * type: 478 failed to compile and 126 of those -- 26% of every failure --
+     * were this cast. It costs no coverage to drop: the shape never compiled,
+     * and {@link #generateLeafOfKind} still fills a UUID slot with a column
+     * reference or a UUID literal.
+     * <p>
+     * The exclusion sits here rather than in
+     * {@link FuzzColumnTypes#pickOfKind}, which {@link #generateLeafOfKind}
+     * also calls -- to pick the type whose {@code generateConstant} spells the
+     * UUID literal. Excluding UUID there would take the literal away too and
+     * leave a UUID slot filled by an any-kind column reference.
+     */
+    private FuzzColumnType castTargetFromNumeric(ColumnKind target) {
+        if (target == ColumnKind.UUID) {
+            return null;
+        }
+        return FuzzColumnTypes.pickOfKind(rnd, target);
     }
 
     private ObjList<FuzzColumn> columnsOfKind(ColumnKind kind) {

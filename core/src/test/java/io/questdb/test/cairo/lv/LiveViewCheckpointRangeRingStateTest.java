@@ -853,10 +853,6 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
     }
 
     /**
-     * Asserts {@code entry} holds exactly the given per-page format-1 codec tags, in
-     * page order, and that no page stores more bytes than the payload it decodes to.
-     */
-    /**
      * Seals a one-word LONG value ring holding {@code payload} into {@code segmentId}, asserts
      * every value page self-identifies as the long page kind and landed under
      * {@code expectedValueCodec}, then walks the ring back against {@code payload}.
@@ -901,6 +897,11 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Asserts {@code entry} holds exactly the given per-page format-1 codec tags, in page order -
+     * the page count has to match the expectation exactly, not merely cover it - and that no page
+     * stores more bytes than the payload it decodes to.
+     */
     private static void assertPageCodecs(LiveViewCheckpointPartitionMapEntry entry, int... expectedCodecs) {
         Assert.assertEquals(expectedCodecs.length, entry.getStatePageCount());
         for (int i = 0; i < expectedCodecs.length; i++) {

@@ -24,10 +24,19 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
 /**
  * A sealed covering-index sidecar block whose covered values are ALL the column
@@ -38,9 +47,14 @@ import org.junit.Test;
  * stored base to 0; the span of an all-max stride is 0, so no packed payload is
  * written and both reader paths reproduce the clobbered base for every row.
  * <p>
- * Every test here pins a sealed block. The active partition never seals its
- * sidecar, so each table carries a later partition that pushes the all-max
- * partition out of the active slot.
+ * Every test here except the documented negative control
+ * {@link #testCoveredMaxValuesNonWalUnsealedReadsRawSidecar()} pins a sealed
+ * block. The active partition never seals its sidecar, so each table carries a
+ * later partition that pushes the all-max partition out of the active slot.
+ * {@link #assertSidecarSealed(String)} asserts that the seal really happened:
+ * the value assertions alone pass on the unfixed writer whenever the reader
+ * falls back to the raw sidecar, so without that pin a seal-threshold change
+ * would silently turn every test here into its own negative control.
  */
 public class CoveringIndexMaxValueTest extends AbstractCairoTest {
 
@@ -87,6 +101,7 @@ public class CoveringIndexMaxValueTest extends AbstractCairoTest {
                          '2024-01-02T00:00:00.000000Z')
                     """.formatted(MAX_VALUE_TUPLE));
             drainWalQueue();
+            assertSidecarSealed("t_max_mixed");
             assertQuery("SELECT " + COLUMNS + " FROM t_max_mixed WHERE sym = 'a'")
                     .noRandomAccess()
                     .expectSize()
@@ -138,7 +153,12 @@ public class CoveringIndexMaxValueTest extends AbstractCairoTest {
             createTable("t_max_nowal", "POSTING", "BYPASS WAL");
             insertMaxRows("t_max_nowal", 1);
             engine.releaseAllWriters();
-            assertCoveredMaxValues("t_max_nowal", 1);
+            // The opposite of every other test here: one commit stays far below
+            // cairo.posting.seal.gen.threshold, so the partition must NOT seal.
+            // Asserting that keeps this test honest as the negative control -- if
+            // it ever started sealing it would stop covering the raw-sidecar path.
+            assertSidecarUnsealed("t_max_nowal");
+            assertCoveredMaxValueRows("t_max_nowal", 1);
         });
     }
 
@@ -230,7 +250,83 @@ public class CoveringIndexMaxValueTest extends AbstractCairoTest {
         return String.format("'2024-01-01T%02d:%02d:%02d.000000Z'", i / 3_600, i / 60 % 60, i % 60);
     }
 
+    /**
+     * Reads the live {@code sealTxn} from the 2024-01-01 partition's posting key
+     * file. A partition that has never sealed its sidecar keeps
+     * {@code sealTxn == 0} -- the pre-seal {@code .pv.<colTxn>.0} layout whose
+     * covered values the reader serves raw. The first seal publishes
+     * {@code sealTxn >= 1} together with the compressed
+     * {@code .pc<N>.<colTxn>.<sealTxn>} sidecars that carry the Frame-of-Reference
+     * base this class pins. Returns -1 when the key file cannot be read, which
+     * fails both assertions below rather than passing silently.
+     */
+    private static long readPartitionSealTxn(String table) {
+        final TableToken token = engine.verifyTableName(table);
+        final long partitionTimestamp;
+        final long partitionNameTxn;
+        try (TableReader reader = engine.getReader(token)) {
+            partitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
+            partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+        }
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token);
+            TableUtils.setPathForNativePartition(
+                    path,
+                    ColumnType.TIMESTAMP,
+                    PartitionBy.DAY,
+                    partitionTimestamp,
+                    partitionNameTxn
+            );
+            return PostingIndexUtils.readSealTxnFromKeyFile(
+                    configuration.getFilesFacade(),
+                    PostingIndexUtils.keyFileName(path, "sym", COLUMN_NAME_TXN_NONE)
+            );
+        }
+    }
+
+    /**
+     * Pins that the all-max 2024-01-01 partition really sealed its covering
+     * sidecar. The clobbered Frame-of-Reference base only exists in a sealed,
+     * compressed block: on the raw-sidecar path the same value assertions pass
+     * even on the unfixed writer, which is exactly what
+     * {@link #testCoveredMaxValuesNonWalUnsealedReadsRawSidecar()} documents.
+     */
+    private static void assertSidecarSealed(String table) {
+        final long sealTxn = readPartitionSealTxn(table);
+        Assert.assertTrue(
+                "the all-max 2024-01-01 partition of " + table + " must seal its covering sidecar before"
+                        + " the read, otherwise this test silently degrades into the raw-sidecar negative"
+                        + " control (sealTxn=" + sealTxn + ", 0 means never sealed)",
+                sealTxn >= 1
+        );
+    }
+
+    /**
+     * The inverse of {@link #assertSidecarSealed(String)}: pins that the
+     * 2024-01-01 partition stayed unsealed so the covering reader really takes
+     * the raw-sidecar branch.
+     */
+    private static void assertSidecarUnsealed(String table) {
+        Assert.assertEquals(
+                "the 2024-01-01 partition of " + table + " must stay unsealed so the covering reader"
+                        + " serves the raw sidecar",
+                0,
+                readPartitionSealTxn(table)
+        );
+    }
+
+    /**
+     * Asserts the covered read of every all-max row AND that the block it reads
+     * is sealed. The negative control calls
+     * {@link #assertCoveredMaxValueRows(String, int)} directly instead, so the
+     * seal pin travels with every future caller of this method.
+     */
     private void assertCoveredMaxValues(String table, int maxRowCount) throws Exception {
+        assertSidecarSealed(table);
+        assertCoveredMaxValueRows(table, maxRowCount);
+    }
+
+    private void assertCoveredMaxValueRows(String table, int maxRowCount) throws Exception {
         StringBuilder expected = new StringBuilder("v_ipv4\tv_int\tv_long\tv_short\tv_byte\n");
         for (int i = 0; i < maxRowCount; i++) {
             expected.append("127.255.255.255\t2147483647\t9223372036854775807\t32767\t127\n");

@@ -537,12 +537,23 @@ private:
 // call, exactly as the scalar loops clear ColumnValueCache before every row.
 //
 // Handing one virtual register to two consumers is safe only while no consumer writes into an
-// operand register. The VEX encoding is three-operand and every helper in impl/avx2.h allocates its
-// own destination; the two that used to fold a result into lhs - cmp_eq's i128 arm and mul's i8 arm
-// - were rewritten to do the same. Anything added there has to keep that property. The scalar
-// backend's int32_and is the cautionary tale: an in-place AND overwrote a column value that the
-// rest of the predicate still had to read, and "(aboolean and aboolean2) = aboolean" matched every
-// row.
+// operand register. The VEX encoding is three-operand and every helper emit_code() reaches for in
+// impl/avx2.h allocates its own destination; the two that used to fold a result into lhs - cmp_eq's
+// i128 arm and mul's i8 arm - were rewritten to do the same. Anything added there has to keep that
+// property. The scalar backend's int32_and is the cautionary tale: an in-place AND overwrote a
+// column value that the rest of the predicate still had to read, and
+// "(aboolean and aboolean2) = aboolean" matched every row.
+//
+// to_bits16 is the one helper in impl/avx2.h that does NOT allocate its destination, so state the
+// invariant against emit_code() rather than against the whole header. It calls get_low(), which
+// returns x.half(); asmjit builds that from the kVec128 signature and the SAME register id, so the
+// two-operand packsswb that follows writes the caller's register. Two independent reasons keep it
+// safe today, and a change to either one has to revisit it. First, emit_code() never calls it:
+// avx2_loop calls to_bits() on the mask it pops AFTER the body's code is fully emitted, and
+// value_cache_ymm.clear() runs before the next body, so no cached read follows the clobber. Second,
+// that popped mask is always a freshly allocated comparison result rather than a cached operand -
+// a bare top-level BOOLEAN column never reaches the backend as a raw load, because
+// CompiledFilterIRSerializer expands it to "column = true" first.
 struct ValueCacheYmm {
     static constexpr size_t MAX_VALUES = 8;
 

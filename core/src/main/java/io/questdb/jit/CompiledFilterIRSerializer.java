@@ -184,6 +184,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // removeAt() re-hashes the entries below the freed slot, so the walk collects every doomed
     // offset before it removes any of them.
     private final LongList backfillDiscardOffsets = new LongList();
+    // The bindVarFunctions slot each bind variable node already took, so that a re-traversal of the
+    // SAME node reuses it rather than appending a duplicate. serializeCharOrdering() and
+    // serializeIPv4Ordering() re-traverse each operand four and up to six times respectively, so
+    // without this one textual bind variable claimed that many 16-byte vars slots, that many link
+    // functions, and reached the backend as that many DISTINCT VAR indices - and the AVX2 backend's
+    // ValueCacheYmm (jit/common.h) keys the bind-variable half of its cache on exactly that index,
+    // so the broadcast it exists to fold could never be reused either.
+    //
+    // Compared by identity, like the mark sets below. rewindOrderingOperands() is the ONLY place
+    // that truncates bindVarFunctions, and it clears this map alongside: a memoized slot above the
+    // watermark would otherwise point past the end of the vars block the backend reads.
+    private final ObjIntHashMap<ExpressionNode> bindVarIndexes = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     // List to collect predicates from AND chains for reordering
     private final ObjList<ExpressionNode> collectedPredicates = new ObjList<>();
     // Memoizes containsFloatExpression() for the current predicate. See arithExprTypeCache.
@@ -322,6 +334,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         orderingRewindBindVarSizes.clear();
         orderingRewindNodes.clear();
         orderingRewindOffsets.clear();
+        bindVarIndexes.clear();
         collectedPredicates.clear();
         // The memo caches below are keyed by ExpressionNode identity and live for a whole filter, so
         // this is their ONLY reset point - the node pool can hand the same objects to the next
@@ -902,6 +915,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         orderingRewindBindVarSizes.clear();
         orderingRewindNodes.clear();
         orderingRewindOffsets.clear();
+        // Same reason again: the slots this memo names belong to the bindVarFunctions list the
+        // CALLER owns, and that list is re-created per filter.
+        bindVarIndexes.clear();
         isWideLaneMode = !forceScalar && isWideLaneEligible(node) && requiresWideLane(node);
         // Detect if scalar mode is guaranteed by checking for mixed column sizes.
         // Short-circuit optimizations (including IN() short-circuit) only work correctly
@@ -4218,11 +4234,36 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final long offset = orderingRewindOffsets.getLast();
         memory.jumpTo(offset);
         bindVarFunctions.setPos(orderingRewindBindVarSizes.getLast());
+        // Truncating bindVarFunctions invalidates every slot the memo recorded at or above the
+        // watermark, and the map cannot remove a range, so drop the lot. Losing an entry below the
+        // watermark only costs a duplicate slot; keeping one above it would make serializeBindVariable
+        // emit a VAR index past the end of the vars block.
+        bindVarIndexes.clear();
         discardBackfillNodesFrom(offset);
     }
 
     private void serializeBindVariable(final ExpressionNode node) throws SqlException {
         if (predicateContext.isActive()) {
+            final int memoizedIndex = bindVarIndexes.get(node);
+            if (memoizedIndex != NOT_CACHED) {
+                // A repeat occurrence of the same node - the ordering expansions re-traverse their
+                // operands - reuses the slot the first one took. The type code rides with the
+                // function rather than in a parallel list: it derives from the bind variable
+                // service, which serialization never mutates, so the recorded slot reproduces
+                // exactly the code the first occurrence emitted. Only serializeBindVariable writes
+                // this memo, and it does so past the STRING early return below, so the slot always
+                // holds a plain link function.
+                final int memoizedTypeCode = bindVariableTypeCode(
+                        ColumnType.tagOf(bindVarFunctions.getQuick(memoizedIndex).getType())
+                );
+                putOperand(VAR, memoizedTypeCode, memoizedIndex);
+                // Stays per-occurrence. The widening marker is keyed by node too, so it answers the
+                // same for every occurrence, but the SX_I64 belongs to the OPERAND that was just
+                // pushed rather than to the slot, and the backend's value stack expects one per push.
+                maybeEmitI64Widening(node, memoizedTypeCode);
+                return;
+            }
+
             Function varFunction = getBindVariableFunction(node.position, node.token);
 
             final int columnType = varFunction.getType();
@@ -4246,6 +4287,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
             bindVarFunctions.add(varFunction);
             int index = bindVarFunctions.size() - 1;
+            bindVarIndexes.put(node, index);
             putOperand(VAR, typeCode, index);
             maybeEmitI64Widening(node, typeCode);
         } else {

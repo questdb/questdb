@@ -543,6 +543,22 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
             bindVariableService.setChar("highChar", '\uffff');
             assertJitMatchesJavaInAllModes("x WHERE c < :highChar");
+            // serializeBindVariable() memoizes the vars slot per bind variable node, so the four
+            // re-traversals the expansion makes emit ONE VAR index rather than four. The slot the
+            // memo names is the offset the backend reads out of the shared vars block, so the rows
+            // these select are what says the reuse points at the right value.
+            bindVariableService.setChar("lowChar", 'A');
+            assertJitMatchesJavaInAllModes("x WHERE c <= :lowChar");
+            assertJitMatchesJavaInAllModes("x WHERE c > :lowChar");
+            assertJitMatchesJavaInAllModes("x WHERE c >= :lowChar");
+            assertJitMatchesJavaInAllModes("x WHERE :lowChar < c");
+            // A sibling variable numbered BELOW the ordering node's rewind watermark keeps its own
+            // slot while the expansion renumbers its own, in both descent orders.
+            assertJitMatchesJavaInAllModes("x WHERE (c < :lowChar) = (c2 = :highChar)");
+            assertJitMatchesJavaInAllModes("x WHERE (c2 = :highChar) = (c < :lowChar)");
+            // Two ordering expansions over one textual name: the memo is per occurrence, and each
+            // expansion rewinds over its own watermark.
+            assertJitMatchesJavaInAllModes("x WHERE (c < :lowChar) = (c2 <= :lowChar)");
 
             // Equality compares the raw lane and still matches Java, so it keeps compiling.
             assertJitMatchesJava("x WHERE c = 'a'", true);
@@ -5827,6 +5843,35 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4OrderingBindVariableUsesCompiledFilter() throws Exception {
+        // The IPv4 twin of the bind-variable block in testCharOrderingUsesCompiledFilter. This
+        // expansion re-traverses each operand five times (strict) or six (non-strict), so it is the
+        // widest slot duplication serializeBindVariable()'s memo removes. BindVariableService only
+        // exposes setIPv4 by position, hence $1 / $2.
+        assertMemoryLeak(() -> {
+            createIPv4TestTable();
+
+            bindVariableService.clear();
+            bindVariableService.setIPv4(0, "128.0.0.0");
+            bindVariableService.setIPv4(1, "127.255.255.255");
+
+            assertJitMatchesJavaInAllModes("x WHERE ip < $1");
+            assertJitMatchesJavaInAllModes("x WHERE ip <= $1");
+            assertJitMatchesJavaInAllModes("x WHERE ip > $1");
+            assertJitMatchesJavaInAllModes("x WHERE ip >= $1");
+            assertJitMatchesJavaInAllModes("x WHERE $1 < ip");
+            assertJitMatchesJavaInAllModes("x WHERE $1 >= ip");
+            // A sibling variable numbered BELOW the ordering node's rewind watermark keeps its own
+            // slot while the expansion renumbers its own, in both descent orders.
+            assertJitMatchesJavaInAllModes("x WHERE (ip < $1) = (ip2 = $2)");
+            assertJitMatchesJavaInAllModes("x WHERE (ip2 = $2) = (ip < $1)");
+            // Two ordering expansions over one textual name: the memo is per occurrence, and each
+            // expansion rewinds over its own watermark.
+            assertJitMatchesJavaInAllModes("x WHERE (ip < $1) = (ip2 <= $1)");
+        });
+    }
+
+    @Test
     public void testIPv4QuotedLiteralPredicatesUseCompiledFilter() throws Exception {
         assertMemoryLeak(() -> {
             createIPv4TestTable();
@@ -6254,6 +6299,12 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             );
             bindVariableService.setChar("lo", 'a');
             bindVariableService.setChar("hi", 'z');
+            // BindVariableService declares setIPv4 by POSITION only - setIPv4(int, int),
+            // setIPv4(int, CharSequence) and setIPv4(int) all exist, and no named overload does -
+            // so an IPv4 parameter binds through $1 / $2. PGWire parameters arrive positionally
+            // anyway, so this is the shape the protocol actually produces.
+            bindVariableService.setIPv4(0, "10.0.0.0");
+            bindVariableService.setIPv4(1, "200.0.0.0");
 
             // Two i128 comparisons over ONE column. Whichever is serialized first clobbered the
             // shared register, so the second compared the first one's result against a UUID. Both
@@ -6281,10 +6332,17 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitCountQuery("SELECT count() FROM x WHERE c > 'a' AND c < 'z'", 12);
 
             // Same shape with bind variables, which the cache holds under a numbering of their
-            // own: read_vars_mem broadcasts each of these four times per body without it. CHAR
-            // rather than IPv4 only because BindVariableService names no IPv4 setter.
+            // own: read_vars_mem broadcasts each of these four (CHAR) or five (IPv4) times per
+            // body without it.
             assertJitMatchesJavaInAllModes("x WHERE c > :lo AND c < :hi");
             assertJitCountQuery("SELECT count() FROM x WHERE c > :lo AND c < :hi", 12);
+            // The IPv4 half is not merely CHAR's twin: its expansion re-traverses each operand
+            // five times rather than four, and it is the one that also emits IMM INT_MIN operands
+            // to keep 128.0.0.0 - which encodes as INT_MIN, the native i32 null sentinel - inside
+            // the range. The fixture holds 12 such rows, so a dropped or mis-signed repair term on
+            // the bind-variable side moves the answer here and nowhere else in this test.
+            assertJitMatchesJavaInAllModes("x WHERE ip > $1 AND ip < $2");
+            assertJitCountQuery("SELECT count() FROM x WHERE ip > $1 AND ip < $2", 23);
         });
     }
 
