@@ -66,7 +66,7 @@ public class QwpCursorBoundsCheckFuzzTest {
             // Timestamp cursor (uncompressed)
             TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS,
             // String cursor
-            TYPE_STRING, TYPE_VARCHAR,
+            TYPE_VARCHAR,
             // Symbol cursor (per-column dictionary mode)
             TYPE_SYMBOL,
             // GeoHash cursor
@@ -81,7 +81,7 @@ public class QwpCursorBoundsCheckFuzzTest {
     @Test
     public void testByteCorruption() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Rnd rnd = TestUtils.generateRandom(LOG, 42661209174423L, 1775678559100L);
+            Rnd rnd = TestUtils.generateRandom(LOG);
             int iterations = 50;
             int corruptionsPerMessage = 30;
 
@@ -199,7 +199,7 @@ public class QwpCursorBoundsCheckFuzzTest {
         message[1] = 'W';
         message[2] = 'P';
         message[3] = '1';
-        message[HEADER_OFFSET_VERSION] = VERSION_1;
+        message[HEADER_OFFSET_VERSION] = VERSION;
         message[HEADER_OFFSET_FLAGS] = 0;
         message[HEADER_OFFSET_TABLE_COUNT] = (byte) tableCount;
         message[HEADER_OFFSET_TABLE_COUNT + 1] = (byte) (tableCount >>> 8);
@@ -218,7 +218,7 @@ public class QwpCursorBoundsCheckFuzzTest {
      */
     private static void parseAndIterate(long address, int length) throws QwpParseException {
         QwpMessageCursor cursor = new QwpMessageCursor();
-        cursor.of(address, length, null, null);
+        cursor.of(address, length, null);
 
         while (cursor.hasNextTable()) {
             QwpTableBlockCursor table = cursor.nextTable();
@@ -306,7 +306,7 @@ public class QwpCursorBoundsCheckFuzzTest {
                     writeFixedWidthColumnData(out, rnd, valueCount, 8);
             case TYPE_UUID -> writeFixedWidthColumnData(out, rnd, valueCount, 16);
             case TYPE_LONG256 -> writeFixedWidthColumnData(out, rnd, valueCount, 32);
-            case TYPE_STRING, TYPE_VARCHAR -> writeStringColumnData(out, rnd, valueCount);
+            case TYPE_VARCHAR -> writeStringColumnData(out, rnd, valueCount);
             case TYPE_SYMBOL -> writeSymbolColumnData(out, rnd, valueCount);
             case TYPE_GEOHASH -> writeGeoHashColumnData(out, rnd, valueCount);
             case TYPE_DECIMAL64 -> writeDecimalColumnData(out, rnd, valueCount, 8);
@@ -401,9 +401,7 @@ public class QwpCursorBoundsCheckFuzzTest {
         writeVarint(out, rowCount);
         writeVarint(out, columnCount);
 
-        // Schema: full mode (0x00) + varint(schemaId=0) + column definitions
-        out.write(SCHEMA_MODE_FULL);
-        writeVarint(out, 0); // schemaId
+        // Schema: inline column definitions
         for (int i = 0; i < columnCount; i++) {
             byte[] colNameBytes = columnNames[i].getBytes(StandardCharsets.UTF_8);
             writeVarint(out, colNameBytes.length);

@@ -29,6 +29,7 @@ import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
@@ -108,6 +109,23 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         if (indexed) {
             flags |= BIT_INDEXED;
         }
+        // v1: only BIT_INDEXED (0x1) and BIT_DEDUP_KEY (0x2) were ever set,
+        // and "indexed" implied BITMAP (the only index type at the time).
+        return (flags & FLAGS_V1_BIT_INDEXED) != 0 ? IndexType.BITMAP : IndexType.NONE;
+    }
+
+    /**
+     * See {@link #decodeIndexType(long)}.
+     */
+    public static boolean decodeIsDedupKey(long flags) {
+        if ((flags & FLAGS_FORMAT_V2) != 0) {
+            return (flags & BIT_DEDUP_KEY) == BIT_DEDUP_KEY;
+        }
+        return (flags & FLAGS_V1_BIT_DEDUP_KEY) == FLAGS_V1_BIT_DEDUP_KEY;
+    }
+
+    public static long getFlags(byte indexType, boolean dedupKey) {
+        long flags = FLAGS_FORMAT_V_CURRENT | (indexType & INDEX_TYPE_MASK);
         if (dedupKey) {
             flags |= BIT_DEDUP_KEY;
         }
@@ -169,7 +187,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     securityContext.authorizeAlterTableAlterColumnType(tableToken, getAuthColumnNames());
             case CHANGE_SYMBOL_CAPACITY ->
                     securityContext.authorizeAlterTableAlterSymbolCapacity(tableToken, getAuthColumnNames());
-            case ADD_INDEX -> securityContext.authorizeAlterTableAddIndex(tableToken, getAuthColumnNames());
+            case ADD_INDEX -> securityContext.authorizeAlterTableAddIndex(tableToken, getAuthIndexedColumn());
             case DROP_INDEX -> securityContext.authorizeAlterTableDropIndex(tableToken, getAuthColumnNames());
             case ADD_SYMBOL_CACHE, REMOVE_SYMBOL_CACHE ->
                     securityContext.authorizeAlterTableAlterColumnCache(tableToken, getAuthColumnNames());
@@ -179,6 +197,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case DETACH_PARTITION -> securityContext.authorizeAlterTableDetachPartition(tableToken);
             case SET_PARAM_MAX_UNCOMMITTED_ROWS, SET_PARAM_COMMIT_LAG, SET_TTL ->
                     securityContext.authorizeAlterTableSetParam(tableToken);
+            case SET_TABLE_FORMAT -> securityContext.authorizeAlterTableSetFormat(tableToken);
             case SET_DEDUP_ENABLE -> securityContext.authorizeAlterTableDedupEnable(tableToken);
             case SET_DEDUP_DISABLE -> securityContext.authorizeAlterTableDedupDisable(tableToken);
             case CONVERT_PARTITION_TO_PARQUET ->
@@ -286,6 +305,13 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     @Override
+    public boolean isForceableWhenSuspended() {
+        // Any non-structural change may be force-applied directly to a hard-suspended table,
+        // mirroring FORCE DROP PARTITION. Structural changes must stay versioned through the WAL.
+        return !isStructural();
+    }
+
+    @Override
     public boolean isStructural() {
         return switch (command) {
             case ADD_COLUMN, RENAME_COLUMN, DROP_COLUMN, RENAME_TABLE, SET_DEDUP_DISABLE, SET_DEDUP_ENABLE,
@@ -339,7 +365,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             int columnType,
             int symbolCapacity,
             boolean cache,
-            boolean indexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean dedupKey,
             boolean notNull
@@ -424,7 +450,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         type,
                         symbolCapacity,
                         symbolCacheFlag,
-                        isIndexed,
+                        indexType,
                         indexValueBlockCapacity,
                         false,
                         isDedupKey,
@@ -441,7 +467,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private void applyAddIndex(MetadataService svc) {
         final CharSequence columnName = activeExtraStrInfo.getStrA(0);
         try {
-            svc.addIndex(columnName, (int) extraInfo.get(0));
+            byte indexType = extraInfo.size() > 1 ? (byte) extraInfo.get(1) : IndexType.BITMAP;
+            int coverCount = extraInfo.size() > 2 ? (int) extraInfo.get(2) : 0;
+            ObjList<CharSequence> coveringColumnNames = null;
+            if (coverCount > 0) {
+                coveringColumnNames = new ObjList<>(coverCount);
+                for (int i = 0; i < coverCount; i++) {
+                    coveringColumnNames.add(activeExtraStrInfo.getStrA(1 + i));
+                }
+            }
+            svc.addIndex(columnName, (int) extraInfo.get(0), indexType, coveringColumnNames);
         } catch (CairoException e) {
             // augment exception with table position
             e.position(tableNamePosition);
@@ -608,6 +643,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         );
     }
 
+    private void applyTableFormat(MetadataService svc) {
+        final int tableFormat = (int) extraInfo.get(0);
+        try {
+            svc.setMetaTableFormat(tableFormat);
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
+    }
+
     private void applyTtl(MetadataService svc) {
         final int ttlHoursOrMonths = (int) extraInfo.get(0);
         try {
@@ -631,8 +676,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         int symbolCapacity = (int) extraInfo.get(lParam++);
         boolean symbolCacheFlag = extraInfo.get(lParam++) > 0;
         long flags = extraInfo.get(lParam++);
-        boolean isIndexed = (flags & BIT_INDEXED) == BIT_INDEXED;
-        boolean isDedupKey = (flags & BIT_DEDUP_KEY) == BIT_DEDUP_KEY;
+        byte indexType = decodeIndexType(flags);
+        boolean isDedupKey = decodeIsDedupKey(flags);
         assert !isDedupKey; // adding column as dedup key is not supported in SQL yet.
         int indexValueBlockCapacity = (int) extraInfo.get(lParam++);
         int columnNamePosition = (int) extraInfo.get(lParam);
@@ -643,7 +688,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     newType,
                     symbolCapacity,
                     symbolCacheFlag,
-                    isIndexed,
+                    indexType,
                     indexValueBlockCapacity,
                     false,
                     securityContext
@@ -777,6 +822,17 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         authColumnNames.clear();
         for (int i = 0, n = activeExtraStrInfo.size(); i < n; i++) {
             authColumnNames.add(Chars.toString(activeExtraStrInfo.getStrA(i)));
+        }
+        return authColumnNames;
+    }
+
+    // ADD INDEX stores [indexedColumn, cov1, cov2, ...] in extraStrInfo.
+    // Authorization only covers the indexed column; covering INCLUDE columns
+    // are not part of the ADD INDEX privilege.
+    private ObjList<CharSequence> getAuthIndexedColumn() {
+        authColumnNames.clear();
+        if (activeExtraStrInfo.size() > 0) {
+            authColumnNames.add(Chars.toString(activeExtraStrInfo.getStrA(0)));
         }
         return authColumnNames;
     }

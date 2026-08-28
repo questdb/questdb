@@ -39,23 +39,27 @@ public class ArraySyntaxBrutalTest extends AbstractCairoTest {
             execute("CREATE TABLE test (id int)");
 
             // Alter table add column with space error
-            assertException("ALTER TABLE test ADD COLUMN data double []", 40, "array type requires no whitespace");
+            assertQuery("ALTER TABLE test ADD COLUMN data double []")
+                    .fails(40, "array type requires no whitespace");
         });
     }
 
     @Test
     public void testBasicWhitespaceInArrayTypes() throws Exception {
         // Single space - the original problem
-        assertException("CREATE TABLE t (x double [])", 25, "array type requires no whitespace");
+        assertQuery("CREATE TABLE t (x double [])")
+                .fails(25, "array type requires no whitespace");
 
         // Tab character
-        assertException("CREATE TABLE t (x double\t[])", 25, "array type requires no whitespace");
+        assertQuery("CREATE TABLE t (x double\t[])")
+                .fails(25, "array type requires no whitespace");
     }
 
     @Test
     public void testCastExpressionWhitespaceErrors() throws Exception {
         // Basic cast with space
-        assertException("SELECT CAST(null AS double [])", 27, "array type requires no whitespace");
+        assertQuery("SELECT CAST(null AS double [])")
+                .fails(27, "array type requires no whitespace");
     }
 
     @Test
@@ -64,34 +68,36 @@ public class ArraySyntaxBrutalTest extends AbstractCairoTest {
             execute("CREATE TABLE base (x int, y int)");
 
             // These should all fail with space errors
-            assertException("SELECT x::double [] FROM base", 17, "array type requires no whitespace");
+            assertQuery("SELECT x::double [] FROM base")
+                    .fails(17, "array type requires no whitespace");
         });
     }
 
     @Test
     public void testCreateTableInvalidSyntax() throws Exception {
         assertMemoryLeak(() -> {
-            assertException("create table test (arr double[1])", 30,
-                    "arrays do not have a fixed size, remove the number");
-            assertException("create table test (arr double[][][3])", 34,
-                    "arrays do not have a fixed size, remove the number");
-            assertException("create table test (arr double [1])", 30,
-                    "array type requires no whitespace between type and brackets");
-            assertException("create table test (arr array[double])", 23,
-                    "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE");
-            assertException("create table test (arr array[])", 23,
-                    "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE");
-            assertException("create table test (arr array)", 23,
-                    "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE");
-            assertException("create table test (arr double[][col][col2])", 31,
-                    "syntax error at column type definition, expected array type: 'DOUBLE[][]...");
+            assertQuery("create table test (arr double[1])")
+                    .fails(30, "arrays do not have a fixed size, remove the number");
+            assertQuery("create table test (arr double[][][3])")
+                    .fails(34, "arrays do not have a fixed size, remove the number");
+            assertQuery("create table test (arr double [1])")
+                    .fails(30, "array type requires no whitespace between type and brackets");
+            assertQuery("create table test (arr array[double])")
+                    .fails(23, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE");
+            assertQuery("create table test (arr array[])")
+                    .fails(23, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE");
+            assertQuery("create table test (arr array)")
+                    .fails(23, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE");
+            assertQuery("create table test (arr double[][col][col2])")
+                    .fails(31, "syntax error at column type definition, expected array type: 'DOUBLE[][]...");
         });
     }
 
     @Test
     public void testErrorRecoveryAfterArraySyntaxError() throws Exception {
         // Verify parser can recover after array syntax errors
-        assertException("CREATE TABLE t (x double [], y int)", 25, "array type requires no whitespace");
+        assertQuery("CREATE TABLE t (x double [], y int)")
+                .fails(25, "array type requires no whitespace");
 
         // Should be able to create valid table after error
         assertMemoryLeak(() -> {
@@ -103,18 +109,22 @@ public class ArraySyntaxBrutalTest extends AbstractCairoTest {
     @Test
     public void testExtremeWhitespaceScenarios() throws Exception {
         // Extreme amounts of whitespace
-        assertException("CREATE TABLE t (x double      [])", 30, "array type requires no whitespace");
+        assertQuery("CREATE TABLE t (x double      [])")
+                .fails(30, "array type requires no whitespace");
 
         // Mixed with line breaks
         String sqlWithLineBreak = "CREATE TABLE t (x double\n[])";
-        assertException(sqlWithLineBreak, 25, "array type requires no whitespace");
+        assertQuery(sqlWithLineBreak)
+                .fails(25, "array type requires no whitespace");
     }
 
     @Test
     public void testMultipleDimensionsWithSpaces() throws Exception {
         // Multi-dimensional arrays with spaces in different positions
-        assertException("CREATE TABLE t (x double [] [])", 25, "array type requires no whitespace");
-        assertException("CREATE TABLE t (x double[][] [])", 29, "array type requires no whitespace");
+        assertQuery("CREATE TABLE t (x double [] [])")
+                .fails(25, "array type requires no whitespace");
+        assertQuery("CREATE TABLE t (x double[][] [])")
+                .fails(29, "array type requires no whitespace");
     }
 
     @Test
@@ -123,17 +133,16 @@ public class ArraySyntaxBrutalTest extends AbstractCairoTest {
             execute("CREATE TABLE test (id int, data double[])");
 
             // Valid selects
-            assertSql(
-                    "data\n",
-                    "SELECT data FROM test"
-            );
-            assertSql(
-                    "cast\n",
-                    "SELECT CAST(null AS double[]) FROM test"
-            );
+            assertQuery("SELECT data FROM test")
+                    .noLeakCheck()
+                    .returns("data\n");
+            assertQuery("SELECT CAST(null AS double[]) FROM test")
+                    .noLeakCheck()
+                    .returns("cast\n");
 
             // Invalid casts with spaces
-            assertException("SELECT CAST(null AS double []) FROM test", 27, "array type requires no whitespace");
+            assertQuery("SELECT CAST(null AS double []) FROM test")
+                    .fails(27, "array type requires no whitespace");
         });
     }
 
@@ -145,7 +154,10 @@ public class ArraySyntaxBrutalTest extends AbstractCairoTest {
             execute("DROP TABLE test_valid");
 
             // Valid casts should work
-            assertSql("cast\nnull\n", "SELECT CAST(null AS double[])");
+            assertQuery("SELECT CAST(null AS double[])")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("cast\nnull\n");
         });
     }
 }

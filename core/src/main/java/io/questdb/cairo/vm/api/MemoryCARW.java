@@ -37,10 +37,12 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -73,10 +75,16 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     @Override
     default long putBin(long from, long len) {
-        if (len > 0) {
+        // len == 0 is a real, empty BINARY value distinct from null (which the
+        // caller signals with a negative len, or by calling putNullBin
+        // directly). The QWP-WS WAL appender relies on this so empty payloads
+        // ingested via column_binary() round-trip as empty rather than null.
+        if (len >= 0) {
             long addr = appendAddressFor(len + Long.BYTES);
             Unsafe.putLong(addr, len);
-            Vect.memcpy(addr + Long.BYTES, from, len);
+            if (len > 0) {
+                Vect.memcpy(addr + Long.BYTES, from, len);
+            }
             return getAppendOffset();
         }
         return putNullBin();
@@ -316,7 +324,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     @Override
     default long putStrUtf8(DirectUtf8Sequence value) {
-        throw new UnsupportedOperationException();
+        return putStr(value != null ? Utf8s.utf8ToUtf16OrThrow(value, Misc.getThreadLocalSink()) : null);
     }
 
     @Override

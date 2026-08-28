@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.log.Log;
+import io.questdb.std.IntList;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
@@ -34,10 +35,11 @@ import org.jetbrains.annotations.NotNull;
 
 public class CairoColumn implements Sinkable {
     public static final Log LOG = LogFactory.getLog(CairoEngine.class);
+    private IntList coveringColumnIndices;
     private boolean dedupKey;
     private boolean designated;
     private int indexBlockCapacity;
-    private boolean indexed;
+    private byte indexType;
     private long metadataVersion;
     private CharSequence name;
     private boolean isNotNull;
@@ -53,10 +55,11 @@ public class CairoColumn implements Sinkable {
     }
 
     public void copyTo(@NotNull CairoColumn target) {
+        target.coveringColumnIndices = this.coveringColumnIndices;
         target.designated = this.designated;
         target.indexBlockCapacity = this.indexBlockCapacity;
         target.dedupKey = this.dedupKey;
-        target.indexed = this.indexed;
+        target.indexType = this.indexType;
         target.symbolTableStatic = this.symbolTableStatic;
         target.name = this.name;
         target.isNotNull = this.isNotNull;
@@ -69,8 +72,16 @@ public class CairoColumn implements Sinkable {
         target.metadataVersion = this.metadataVersion;
     }
 
+    public IntList getCoveringColumnIndices() {
+        return coveringColumnIndices;
+    }
+
     public int getIndexBlockCapacity() {
         return indexBlockCapacity;
+    }
+
+    public byte getIndexType() {
+        return indexType;
     }
 
     public CharSequence getName() {
@@ -106,7 +117,7 @@ public class CairoColumn implements Sinkable {
     }
 
     public boolean isIndexed() {
-        return indexed;
+        return IndexType.isIndexed(indexType);
     }
 
     public boolean isNotNull() {
@@ -121,6 +132,10 @@ public class CairoColumn implements Sinkable {
         return symbolTableStatic;
     }
 
+    public void setCoveringColumnIndices(IntList coveringColumnIndices) {
+        this.coveringColumnIndices = coveringColumnIndices;
+    }
+
     public void setDedupKeyFlag(boolean dedupKey) {
         this.dedupKey = dedupKey;
     }
@@ -133,8 +148,8 @@ public class CairoColumn implements Sinkable {
         this.indexBlockCapacity = indexBlockCapacity;
     }
 
-    public void setIndexedFlag(boolean indexed) {
-        this.indexed = indexed;
+    public void setIndexType(byte indexType) {
+        this.indexType = indexType;
     }
 
     public void setName(CharSequence name) {

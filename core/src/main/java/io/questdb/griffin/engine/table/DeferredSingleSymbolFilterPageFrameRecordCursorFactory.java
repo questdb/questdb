@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -46,8 +47,8 @@ import org.jetbrains.annotations.NotNull;
 public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends PageFrameRecordCursorFactory {
     private final int symbolColumnIndex;
     private final SingleSymbolFilter symbolFilter;
-    private final Function symbolFunc;
     private boolean convertedToFrame;
+    private Function symbolFunc;
     private int symbolKey;
 
     public DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
@@ -95,6 +96,20 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
     public SingleSymbolFilter convertToSampleByIndexPageFrameCursorFactory() {
         convertedToFrame = true;
         return symbolFilter;
+    }
+
+    @Override
+    protected void _close() {
+        final Function symbolFunc = this.symbolFunc;
+        this.symbolFunc = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, symbolFunc);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override

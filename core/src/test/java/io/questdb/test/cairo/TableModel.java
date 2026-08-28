@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableStructure;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
@@ -97,6 +98,15 @@ public class TableModel implements TableStructure {
     }
 
     @Override
+    public byte getIndexType(int index) {
+        long bits = columnBits.getQuick(index * 2 + 1);
+        if ((bits & COLUMN_FLAG_INDEXED) == 0) {
+            return IndexType.NONE;
+        }
+        return (byte) ((bits >>> COLUMN_INDEX_TYPE_SHIFT) & 0x7L);
+    }
+
+    @Override
     public int getMaxUncommittedRows() {
         return configuration.getMaxUncommittedRows();
     }
@@ -141,15 +151,22 @@ public class TableModel implements TableStructure {
     }
 
     public TableModel indexed(boolean indexFlag, int indexBlockCapacity) {
+        return indexed(indexFlag, indexBlockCapacity, configuration.getDefaultSymbolIndexType());
+    }
+
+    public TableModel indexed(boolean indexFlag, int indexBlockCapacity, byte indexType) {
         int pos = columnBits.size() - 1;
         assert pos > 0;
         long bits = columnBits.getQuick(pos);
+        bits &= ~(COLUMN_FLAG_INDEXED | COLUMN_INDEX_TYPE_MASK);
         if (indexFlag) {
             assert indexBlockCapacity > 1;
-            columnBits.setQuick(pos, bits | ((long) Numbers.ceilPow2(indexBlockCapacity) << 32) | COLUMN_FLAG_INDEXED);
-        } else {
-            columnBits.setQuick(pos, bits & ~COLUMN_FLAG_INDEXED);
+            assert (indexType & ~0x7L) == 0 : "indexType out of range";
+            bits |= COLUMN_FLAG_INDEXED;
+            bits |= ((long) Numbers.ceilPow2(indexBlockCapacity)) << 32;
+            bits |= ((long) indexType) << COLUMN_INDEX_TYPE_SHIFT;
         }
+        columnBits.setQuick(pos, bits);
         return this;
     }
 
@@ -199,23 +216,19 @@ public class TableModel implements TableStructure {
     }
 
     public TableModel timestamp(int timestampType) {
-        switch (timestampType) {
-            case ColumnType.TIMESTAMP_MICRO:
-                return timestamp();
-            case ColumnType.TIMESTAMP_NANO:
-                return timestampNs();
-        }
-        return this;
+        return switch (timestampType) {
+            case ColumnType.TIMESTAMP_MICRO -> timestamp();
+            case ColumnType.TIMESTAMP_NANO -> timestampNs();
+            default -> this;
+        };
     }
 
     public TableModel timestamp(CharSequence name, int timestampType) {
-        switch (timestampType) {
-            case ColumnType.TIMESTAMP_MICRO:
-                return timestamp(name);
-            case ColumnType.TIMESTAMP_NANO:
-                return timestampNs(name);
-        }
-        return this;
+        return switch (timestampType) {
+            case ColumnType.TIMESTAMP_MICRO -> timestamp(name);
+            case ColumnType.TIMESTAMP_NANO -> timestampNs(name);
+            default -> this;
+        };
     }
 
     public TableModel timestamp() {

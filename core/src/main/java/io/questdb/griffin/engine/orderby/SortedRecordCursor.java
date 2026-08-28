@@ -48,7 +48,11 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     public SortedRecordCursor(RecordTreeChain chain, RecordComparator comparator, ObjList<DirectIntList> rankMaps) {
         this.chain = chain;
         this.comparator = comparator;
-        this.isOpen = true;
+        // Lazy variant: the chain skeleton is constructed but the MemoryPages
+        // key heap is not allocated yet. The first of() call binds the
+        // MemoryTracker and calls chain.reopen() to allocate the initial
+        // backing under it.
+        this.isOpen = false;
         this.rankMaps = rankMaps;
     }
 
@@ -97,7 +101,10 @@ class SortedRecordCursor implements DelegatingRecordCursor {
         this.baseCursor = baseCursor;
         if (!isOpen) {
             isOpen = true;
+            chain.setMemoryTracker(executionContext.getMemoryTracker());
             chain.reopen();
+        } else {
+            chain.clear();
         }
         SortKeyEncoder.buildRankMaps(baseCursor, rankMaps, comparator);
         chainCursor = chain.getCursor(baseCursor);
@@ -126,13 +133,11 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     }
 
     private void buildChain() {
+        // Consult the breaker before consuming the base, so an empty base scan still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         final Record record = baseCursor.getRecord();
         while (baseCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            // Tree chain is liable to re-position record to
-            // other rows to do record comparison. We must use our
-            // own record instance in case base cursor keeps
-            // state in the record it returns.
             chain.put(record);
         }
         toTop();

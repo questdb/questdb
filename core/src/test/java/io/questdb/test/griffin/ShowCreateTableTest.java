@@ -25,6 +25,12 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -82,8 +88,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \ti INT
                             ) timestamp(ts) PARTITION BY DAY
                             DEDUP UPSERT KEYS(ts,s,i);
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -97,8 +102,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             ) timestamp(ts) PARTITION BY NONE BYPASS WAL;
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -156,7 +160,10 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     " rnd_str(5,16,2) n" +
                     " from long_sequence(10)" +
                     ") timestamp (timestamp);");
-            assertSql("""
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \ti INT,
@@ -176,9 +183,147 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tm BINARY,
                             \tn STRING
                             ) timestamp(timestamp) PARTITION BY NONE BYPASS WAL;
-                            """,
-                    "show create table foo");
+                            """);
         });
+    }
+
+    @Test
+    public void testLiveViewRejected() throws Exception {
+        // SHOW CREATE TABLE over a live view reached ShowCreateTableRecordCursorFactory and printed
+        // a plausible-looking CREATE TABLE DDL for it: the parser gate only rejected regular and
+        // materialized views, and the factory's own backstop is an assert, which production disables.
+        // A user who copy-pasted that output would get a plain table instead of a live view.
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("create live view lv flush every 1s start from now as select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from base");
+            drainWalAndViewQueues();
+            assertExceptionNoLeakCheck(
+                    "show create table lv",
+                    18,
+                    "table name expected, got live view name"
+            );
+        });
+    }
+
+    @Test
+    public void testLiveViewStillAccessibleViaShowCreateLiveView() throws Exception {
+        // a live view rejected by SHOW CREATE TABLE must remain reachable via the dedicated statement
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("create live view lv flush every 1s start from now as select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from base");
+            drainWalAndViewQueues();
+            printSql("show create live view lv");
+            TestUtils.assertContains(sink.toString(), "CREATE LIVE VIEW 'lv'");
+        });
+    }
+
+    @Test
+    public void testMatViewRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
+            execute("create materialized view base_1h as (select ts, max(v) from base sample by 1h) partition by week");
+            drainWalAndViewQueues();
+            assertExceptionNoLeakCheck(
+                    "show create table base_1h",
+                    18,
+                    "table name expected, got view or materialized view name"
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewRejectedCaseInsensitive() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
+            execute("create materialized view base_1h as (select ts, max(v) from base sample by 1h) partition by week");
+            drainWalAndViewQueues();
+            // the keyword casing must not change the outcome - the position still points at the name
+            assertExceptionNoLeakCheck(
+                    "ShOw CrEaTe TaBlE base_1h",
+                    18,
+                    "table name expected, got view or materialized view name"
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewRejectedQuotedName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
+            execute("create materialized view 'base 1h' as (select ts, max(v) from base sample by 1h) partition by week");
+            drainWalAndViewQueues();
+            // the position points at the opening quote of the quoted identifier
+            assertExceptionNoLeakCheck(
+                    "show create table 'base 1h'",
+                    18,
+                    "table name expected, got view or materialized view name"
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewStillAccessibleViaShowCreateMatView() throws Exception {
+        // a materialized view rejected by SHOW CREATE TABLE must remain reachable via the dedicated statement
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
+            execute("create materialized view base_1h as (select ts, max(v) from base sample by 1h) partition by week");
+            drainWalAndViewQueues();
+            printSql("show create materialized view base_1h");
+            TestUtils.assertContains(sink.toString(), "CREATE MATERIALIZED VIEW 'base_1h'");
+        });
+    }
+
+    @Test
+    public void testShowCreateMatViewBeforeStartupHydration() throws Exception {
+        // Regression (M3): SHOW CREATE MATERIALIZED VIEW resolves the token from the
+        // synchronously loaded registry but reads the lazily hydrated metadata cache.
+        // In the post-restart window (cache not yet hydrated) it must hydrate the matview
+        // on demand rather than report a registered matview as non-existent.
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
+            execute("create materialized view base_1h as (select ts, max(v) from base sample by 1h) partition by week");
+            drainWalAndViewQueues();
+
+            // Simulate the window: registry knows the matview, metadata cache is empty.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
+            printSql("show create materialized view base_1h");
+            TestUtils.assertContains(sink.toString(), "CREATE MATERIALIZED VIEW 'base_1h'");
+        });
+    }
+
+    @Test
+    public void testShowCreateTableBeforeStartupHydration() throws Exception {
+        // Regression (M3): SHOW CREATE TABLE resolves the token from the synchronously
+        // loaded registry but reads the lazily hydrated metadata cache. In the
+        // post-restart window (or for an embedded engine before any catalogue query has
+        // warmed the cache) the table is not cached yet, and the command used to report
+        // a registered table as non-existent. It must hydrate the table on demand.
+        assertMemoryLeak(() -> {
+            execute("create table foo (ts timestamp, a int) timestamp(ts) partition by day wal");
+            drainWalQueue();
+
+            // Simulate the window: registry knows the table, metadata cache is empty.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
+            printSql("show create table foo");
+            TestUtils.assertContains(sink.toString(), "CREATE TABLE 'foo'");
+        });
+    }
+
+    @Test
+    public void testMissingNameReportsDoesNotExist() throws Exception {
+        // the existence check must run before the view/matview check, so an unknown
+        // name reports "does not exist" rather than the "got view" message
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck(
+                "show create table nope",
+                18,
+                "table does not exist"
+        ));
     }
 
     @Test
@@ -190,8 +335,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP NOT NULL
                             );
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -205,8 +349,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             );
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -220,8 +363,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP NOT NULL,
                             \td DOUBLE PARQUET(default, zstd(3))
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -235,8 +377,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP NOT NULL,
                             \ta INT PARQUET(plain, gzip(0))
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -250,8 +391,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP NOT NULL,
                             \td DOUBLE PARQUET(default, uncompressed)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -265,8 +405,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL PARQUET(default, zstd)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -280,8 +419,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP NOT NULL,
                             \ta INT PARQUET(delta_binary_packed)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -295,8 +433,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP NOT NULL,
                             \ta INT PARQUET(delta_binary_packed, zstd(3))
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -310,8 +447,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP NOT NULL,
                             \ta VARCHAR PARQUET(bloom_filter)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -325,8 +461,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP NOT NULL,
                             \ta INT PARQUET(plain, bloom_filter)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -340,8 +475,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP NOT NULL,
                             \ta INT PARQUET(delta_binary_packed, zstd(3), bloom_filter)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
         });
     }
 
@@ -373,8 +507,53 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tb VARCHAR PARQUET(delta_length_byte_array, bloom_filter),
                             \tc DOUBLE
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE foo");
+                            """);
+        });
+    }
+
+    @Test
+    public void testParquetIgnoredOnLegacyMetaFormat() throws Exception {
+        // Per-column parquet config lives at offset 20 of each column entry, which earlier
+        // meta layouts used for unrelated data (e.g., the upper half of the removed columnHash).
+        // SHOW CREATE TABLE must not emit PARQUET(...) for columns whose meta format predates
+        // the field, otherwise the output is invalid DDL like PARQUET(unknown(133), ...).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT, b LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            TableToken token = engine.verifyTableName("foo");
+            try (
+                    MemoryMARW mem = Vm.getCMARWInstance();
+                    Path path = new Path()
+            ) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+                mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                int columnCount = mem.getInt(TableUtils.META_OFFSET_COUNT);
+                for (int i = 0; i < columnCount; i++) {
+                    long off = TableUtils.META_OFFSET_COLUMN_TYPES + i * TableUtils.META_COLUMN_DATA_SIZE + 20;
+                    // bit 24 set (explicit flag), arbitrary bytes for encoding/compression/level
+                    mem.putInt(off, 0x035ACA85);
+                }
+                // Force isMetaFormatUpToDate() to return false so the legacy-format guard kicks in.
+                mem.putInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION, 0);
+            }
+
+            engine.releaseAllReaders();
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+            engine.getMetadataCache().onStartupAsyncHydrator();
+
+            assertQuery("SHOW CREATE TABLE foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ta INT,
+                            \tb LONG
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """);
         });
     }
 
@@ -388,8 +567,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             ) timestamp(ts) PARTITION BY YEAR;
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -403,8 +581,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             ) timestamp(ts) PARTITION BY YEAR BYPASS WAL;
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -428,8 +605,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             ) timestamp(ts) PARTITION BY NONE BYPASS WAL;
-                            """,
-                    "show create table t1 union show create table t2 union show create table t3");
+                            """);
         });
     }
 
@@ -443,8 +619,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL NOCACHE
                             );
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -458,14 +633,14 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL NOCACHE INDEX CAPACITY 1024
                             );
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
     @Test
     public void testTableDoesNotExist() throws Exception {
-        assertMemoryLeak(() -> assertException("show create table foo;", 18, "table does not exist"));
+        assertMemoryLeak(() -> assertQuery("show create table foo;")
+                .fails(18, "table does not exist"));
     }
 
     @Test
@@ -577,14 +752,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp NOT NULL, s symbol ) " +
                     "with maxUncommittedRows=1234");
-            assertSql("""
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             );
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -597,14 +774,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp NOT NULL, s symbol ) " +
                     "with maxUncommittedRows=1234, o3MaxLag=1s");
-            assertSql("""
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             );
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 
@@ -613,14 +792,16 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp NOT NULL, s symbol ) " +
                     "with o3MaxLag=1s");
-            assertSql("""
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             );
-                            """,
-                    "show create table foo");
+                            """);
         });
     }
 }

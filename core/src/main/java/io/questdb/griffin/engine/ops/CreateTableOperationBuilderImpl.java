@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -61,16 +62,18 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private int maxUncommittedRows;
     private long o3MaxLag = -1;
     private ExpressionNode partitionByExpr;
-    private Sinkable ttlToSinkOverride;
     // transient field, unoptimized AS SELECT model, used in toSink()
     private IQueryModel selectModel;
     private CharSequence selectText;
     private int selectTextPosition;
+    private int tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
+    private int tableFormatPosition;
     private int tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
     private int ttlHoursOrMonths;
     private int ttlPosition;
+    private Sinkable ttlToSinkOverride;
     private CharSequence volumeAlias;
     private int volumePosition;
     private boolean walEnabled;
@@ -90,6 +93,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             SqlExecutionContext sqlExecutionContext,
             CharSequence sqlText
     ) throws SqlException {
+        boolean autoIncludeTs = compiler.getEngine().getConfiguration().isPostingIndexAutoIncludeTimestamp();
         if (selectText != null) {
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),
@@ -106,6 +110,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     volumePosition,
                     ttlHoursOrMonths,
                     ttlPosition,
+                    tableFormat,
                     walEnabled,
                     defaultSymbolCapacity,
                     maxUncommittedRows,
@@ -113,7 +118,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     columnModels,
                     batchSize,
                     batchO3MaxLag,
-                    tableKind
+                    tableKind,
+                    autoIncludeTs
             );
         }
 
@@ -152,7 +158,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 maxUncommittedRows,
                 ttlHoursOrMonths,
                 ttlPosition,
-                walEnabled
+                tableFormat,
+                walEnabled,
+                autoIncludeTs
         );
     }
 
@@ -163,6 +171,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         columnModels.clear();
         batchO3MaxLag = -1;
         batchSize = -1;
+        tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
+        tableFormatPosition = 0;
         defaultSymbolCapacity = 0;
         ignoreIfExists = false;
         likeTableNameExpr = null;
@@ -210,6 +220,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public CharSequence getSelectText() {
         return selectText;
+    }
+
+    public int getTableFormat() {
+        return tableFormat;
+    }
+
+    public int getTableFormatPosition() {
+        return tableFormatPosition;
     }
 
     @Override
@@ -286,10 +304,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.partitionByExpr = partitionByExpr;
     }
 
-    public void setTtlToSinkOverride(Sinkable ttlToSinkOverride) {
-        this.ttlToSinkOverride = ttlToSinkOverride;
-    }
-
     @Override
     public void setSelectModel(IQueryModel selectModel) {
         this.selectModel = selectModel;
@@ -298,6 +312,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     public void setSelectText(CharSequence selectText, int selectTextPosition) {
         this.selectText = selectText;
         this.selectTextPosition = selectTextPosition;
+    }
+
+    public void setTableFormat(int tableFormat) {
+        this.tableFormat = tableFormat;
+    }
+
+    public void setTableFormatPosition(int tableFormatPosition) {
+        this.tableFormatPosition = tableFormatPosition;
     }
 
     public void setTableNameExpr(ExpressionNode expr) {
@@ -314,6 +336,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public void setTtlPosition(int ttlPosition) {
         this.ttlPosition = ttlPosition;
+    }
+
+    public void setTtlToSinkOverride(Sinkable ttlToSinkOverride) {
+        this.ttlToSinkOverride = ttlToSinkOverride;
     }
 
     public void setVolumeAlias(CharSequence volumeAlias, int volumePosition) {
@@ -403,6 +429,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         if (partitionByExpr != null) {
             sink.putAscii(" partition by ").put(partitionByExpr.token);
             ttlToSink(sink);
+            ShowCreateTableRecordCursorFactory.tableFormatToSink(tableFormat, sink);
             if (walEnabled) {
                 sink.putAscii(" wal");
             }
@@ -410,6 +437,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         if (volumeAlias != null) {
             sink.putAscii(" in volume '").put(volumeAlias).putAscii('\'');
         }
+    }
+
+    private static boolean hasCastGroup(int columnType) {
+        return ColumnType.tagOf(columnType) < castGroups.size();
     }
 
     private static boolean isIPv4Cast(int from, int to) {
@@ -450,14 +481,28 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             sink.putAscii(" nocache");
         }
         if (model.isIndexed()) {
-            sink.putAscii(" index capacity ");
-            sink.put(model.getIndexValueBlockSize());
+            sink.putAscii(" index");
+            byte indexType = model.getIndexType();
+            if (indexType != IndexType.BITMAP) {
+                sink.putAscii(" type ");
+                IndexType.putName(sink, indexType);
+            } else {
+                sink.putAscii(" capacity ");
+                sink.put(model.getIndexValueBlockSize());
+            }
         }
     }
 
     static boolean isCompatibleCast(int from, int to) {
         if (from == to || isIPv4Cast(from, to)) {
             return true;
+        }
+        if (!hasCastGroup(from) || !hasCastGroup(to)) {
+            // The group table stops at VARCHAR, so the decimal, array and NULL tags have no entry,
+            // and no single group could express a decimal's precision and scale or an array's
+            // dimensionality. INSERT ... SELECT gates the very same record copier on
+            // isConvertibleFrom, so deferring to it admits exactly the pairs the copier implements.
+            return ColumnType.isConvertibleFrom(from, to);
         }
         return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
     }

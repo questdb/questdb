@@ -201,7 +201,7 @@ public class SettingsProcessor implements HttpRequestHandler {
             transientState.setStatusCode(
                     e.isPreferencesOutOfDateError() ? HTTP_CONFLICT
                             : e.isAuthorizationError() ? HTTP_UNAUTHORIZED
-                            : HTTP_BAD_REQUEST
+                              : HTTP_BAD_REQUEST
             );
             final DirectUtf8Sink utf8Sink = transientState.getUtf8Sink();
             utf8Sink.put("{\"error\":\"").escapeJsonStr(e.getFlyweightMessage()).put("\"}");

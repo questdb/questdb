@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.PropertyKey;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -48,6 +49,9 @@ public class NamedWindowFuzzTest extends AbstractCairoTest {
             "rank()",
             "dense_rank()",
     };
+    private static final int ITERATIONS = 200;
+    private static final String[] ORDER_COLUMNS = {"ts", "x"};
+    private static final String[] PARTITION_COLUMNS = {"category", "x"};
     // Functions that work with RANGE frames (excludes row_number/rank/dense_rank)
     private static final String[] RANGE_COMPATIBLE_FUNCTIONS = {
             "sum(x)",
@@ -57,15 +61,13 @@ public class NamedWindowFuzzTest extends AbstractCairoTest {
             "max(x)",
             "min(x)",
     };
-    private static final int ITERATIONS = 200;
-    private static final String[] ORDER_COLUMNS = {"ts", "x"};
-    private static final String[] PARTITION_COLUMNS = {"category", "x"};
     private Rnd rnd;
 
     @Override
     @Before
     public void setUp() {
         rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(rnd.nextBoolean()));
         super.setUp();
     }
 

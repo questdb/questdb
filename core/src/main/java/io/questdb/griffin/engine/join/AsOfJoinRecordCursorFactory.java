@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -53,12 +54,12 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 
 public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final IntList columnIndex;
-    private final AsOfJoinRecordCursor cursor;
     private final int mapEvacuationThreshold;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
     private final int slaveValueTimestampIndex;
     private final long toleranceInterval;
+    private AsOfJoinRecordCursor cursor;
 
     public AsOfJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -79,13 +80,16 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             int slaveValueTimestampIndex
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        Map joinKeyMapA = null;
+        Map joinKeyMapB = null;
+        boolean isCursorOwningMaps = false;
         try {
             this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
-            Map joinKeyMapA = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes);
+            joinKeyMapA = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, false, false);
             // if toleranceInterval is not set, we do not need a second map for evacuation. since evacuations are only
             // executed when TOLERANCE_INTERVAL is set
-            Map joinKeyMapB = toleranceInterval != Numbers.LONG_NULL ? MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes) : null;
+            joinKeyMapB = toleranceInterval != Numbers.LONG_NULL ? MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, false, false) : null;
             int slaveWrappedOverMaster = slaveColumnTypes.getColumnCount() - masterTableKeyColumns.getColumnCount();
             this.cursor = new AsOfJoinRecordCursor(
                     columnSplit,
@@ -101,11 +105,19 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                     slaveWrappedOverMaster,
                     columnIndex
             );
+            // From here on the cursor owns the maps and its close() frees them.
+            isCursorOwningMaps = true;
             this.columnIndex = columnIndex;
             this.toleranceInterval = toleranceInterval;
             this.slaveValueTimestampIndex = slaveValueTimestampIndex;
             this.mapEvacuationThreshold = configuration.getSqlAsOfJoinMapEvacuationThreshold();
         } catch (Throwable th) {
+            // If a map allocation or the cursor constructor throws before the cursor takes ownership,
+            // close() cannot reach the maps, so free them here.
+            if (!isCursorOwningMaps) {
+                Misc.free(joinKeyMapA);
+                Misc.free(joinKeyMapB);
+            }
             close();
             throw th;
         }
@@ -122,7 +134,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         RecordCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor);
+            cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -152,10 +164,11 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
+        final AsOfJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class AsOfJoinRecordCursor extends AbstractSymbolWrapOverCursor {
@@ -165,6 +178,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         private final SymbolWrapOverJoinRecord record;
         private final int slaveTimestampIndex;
         private final RecordValueSink valueSink;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private Map currentJoinKeyMap;
         private boolean danglingSlaveRecord = false;
         private boolean isOpen;
@@ -194,7 +208,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
             this.valueSink = valueSink;
-            this.isOpen = true;
+            this.isOpen = false;
         }
 
         @Override
@@ -204,11 +218,14 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
         @Override
         public void close() {
+            // Free the maps regardless of isOpen. Map.close() is idempotent, so this costs nothing when
+            // of() never ran, and it keeps the factory leak-free no matter which openOnInit the maps use.
+            // The factory can be closed without ever handing out a cursor - EXPLAIN does exactly that.
+            joinKeyMapA.close();
+            if (joinKeyMapB != null) {
+                joinKeyMapB.close();
+            }
             if (isOpen) {
-                joinKeyMapA.close();
-                if (joinKeyMapB != null) {
-                    joinKeyMapB.close();
-                }
                 isOpen = false;
                 super.close();
             }
@@ -221,6 +238,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (masterCursor.hasNext()) {
                 final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL ? Long.MIN_VALUE : masterTimestamp - toleranceInterval;
@@ -339,15 +357,18 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             record.hasSlave(hasSlave);
         }
 
-        private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
             if (!isOpen) {
                 isOpen = true;
+                joinKeyMapA.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyMapA.reopen();
                 if (joinKeyMapB != null) {
                     // reopen joinKeyMapB only if it was created
+                    joinKeyMapB.setMemoryTracker(executionContext.getMemoryTracker());
                     joinKeyMapB.reopen();
                 }
             }
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             currentJoinKeyMap = joinKeyMapA;
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;

@@ -138,13 +138,14 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            arr
-                            [[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]
-                            """,
-                    "SELECT arr FROM qwp_udp_array_exec"
-            );
+            assertQuery("SELECT arr FROM qwp_udp_array_exec")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    arr
+                                    [[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]
+                                    """
+                    );
         });
     }
 
@@ -162,13 +163,14 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            arr
-                            [[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]
-                            """,
-                    "SELECT arr FROM qwp_udp_array_new_table"
-            );
+            assertQuery("SELECT arr FROM qwp_udp_array_new_table")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    arr
+                                    [[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]
+                                    """
+                    );
         });
     }
 
@@ -191,24 +193,25 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n20\n",
-                    "SELECT count() FROM auto_many_types"
-            );
-            assertSql(
-                    """
-                            host\tid\ttemp\tnote
-                            srv-0\t0\t20.0\trow-0
-                            """,
-                    "SELECT host, id, temp, note FROM auto_many_types ORDER BY timestamp LIMIT 1"
-            );
-            assertSql(
-                    """
-                            host\tid\ttemp\tnote
-                            srv-1\t19\t21.9\trow-19
-                            """,
-                    "SELECT host, id, temp, note FROM auto_many_types ORDER BY timestamp DESC LIMIT 1"
-            );
+            assertQuery("SELECT count() FROM auto_many_types")
+                    .noLeakCheck()
+                    .returnsOnce("count\n20\n");
+            assertQuery("SELECT host, id, temp, note FROM auto_many_types ORDER BY timestamp LIMIT 1")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    host\tid\ttemp\tnote
+                                    srv-0\t0\t20.0\trow-0
+                                    """
+                    );
+            assertQuery("SELECT host, id, temp, note FROM auto_many_types ORDER BY timestamp DESC LIMIT 1")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    host\tid\ttemp\tnote
+                                    srv-1\t19\t21.9\trow-19
+                                    """
+                    );
         });
     }
 
@@ -229,13 +232,14 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            count\tsum_id\tmin_id\tmax_id
-                            100\t4950\t0\t99
-                            """,
-                    "SELECT count(), sum(id) AS sum_id, min(id) AS min_id, max(id) AS max_id FROM auto_splits"
-            );
+            assertQuery("SELECT count(), sum(id) AS sum_id, min(id) AS min_id, max(id) AS max_id FROM auto_splits")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    count\tsum_id\tmin_id\tmax_id
+                                    100\t4950\t0\t99
+                                    """
+                    );
         });
     }
 
@@ -302,10 +306,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n50\n",
-                    "SELECT count() FROM auto_small"
-            );
+            assertQuery("SELECT count() FROM auto_small")
+                    .noLeakCheck()
+                    .returnsOnce("count\n50\n");
         });
     }
 
@@ -325,21 +328,20 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            min_val\tmax_val
-                            0.0\t122.5
-                            """,
-                    "SELECT min(value) AS min_val, max(value) AS max_val FROM auto_values"
-            );
-            assertSql(
-                    "value\n0.0\n",
-                    "SELECT value FROM auto_values ORDER BY timestamp LIMIT 1"
-            );
-            assertSql(
-                    "value\n122.5\n",
-                    "SELECT value FROM auto_values ORDER BY timestamp DESC LIMIT 1"
-            );
+            assertQuery("SELECT min(value) AS min_val, max(value) AS max_val FROM auto_values")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    min_val\tmax_val
+                                    0.0\t122.5
+                                    """
+                    );
+            assertQuery("SELECT value FROM auto_values ORDER BY timestamp LIMIT 1")
+                    .noLeakCheck()
+                    .returnsOnce("value\n0.0\n");
+            assertQuery("SELECT value FROM auto_values ORDER BY timestamp DESC LIMIT 1")
+                    .noLeakCheck()
+                    .returnsOnce("value\n122.5\n");
         });
     }
 
@@ -360,13 +362,14 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            count\tmin_id\tmax_id
-                            30\t0\t29
-                            """,
-                    "SELECT count(), min(id) AS min_id, max(id) AS max_id FROM auto_at_now"
-            );
+            assertQuery("SELECT count(), min(id) AS min_id, max(id) AS max_id FROM auto_at_now")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    count\tmin_id\tmax_id
+                                    30\t0\t29
+                                    """
+                    );
         });
     }
 
@@ -390,10 +393,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n50\n",
-                    "SELECT count() FROM auto_string"
-            );
+            assertQuery("SELECT count() FROM auto_string")
+                    .noLeakCheck()
+                    .returnsOnce("count\n50\n");
         });
     }
 
@@ -417,10 +419,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n50\n",
-                    "SELECT count() FROM auto_sym"
-            );
+            assertQuery("SELECT count() FROM auto_sym")
+                    .noLeakCheck()
+                    .returnsOnce("count\n50\n");
         });
     }
 
@@ -452,13 +453,14 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            count\tmax_id
-                            11\t10
-                            """,
-                    "SELECT count(), max(id) AS max_id FROM cancel_after_af"
-            );
+            assertQuery("SELECT count(), max(id) AS max_id FROM cancel_after_af")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    count\tmax_id
+                                    11\t10
+                                    """
+                    );
         });
     }
 
@@ -486,14 +488,15 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            id
-                            1
-                            3
-                            """,
-                    "SELECT id FROM cancel_between ORDER BY timestamp"
-            );
+            assertQuery("SELECT id FROM cancel_between ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    id
+                                    1
+                                    3
+                                    """
+                    );
         });
     }
 
@@ -518,13 +521,14 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            id\tnote
-                            1\tkeep me
-                            """,
-                    "SELECT id, note FROM cancel_partial ORDER BY timestamp"
-            );
+            assertQuery("SELECT id, note FROM cancel_partial ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    id\tnote
+                                    1\tkeep me
+                                    """
+                    );
         });
     }
 
@@ -545,10 +549,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "id\n1\n",
-                    "SELECT id FROM cancel_noop"
-            );
+            assertQuery("SELECT id FROM cancel_noop")
+                    .noLeakCheck()
+                    .returnsOnce("id\n1\n");
         });
     }
 
@@ -571,10 +574,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n2\n",
-                    "SELECT count() FROM close_flush"
-            );
+            assertQuery("SELECT count() FROM close_flush")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
         });
     }
 
@@ -608,12 +610,16 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                 }
                 Assert.assertTrue("receiver did not process the datagram", received);
                 drainWalQueue();
-                assertSql("count\n0\n", "SELECT count() FROM timer_commit");
+                assertQuery("SELECT count() FROM timer_commit")
+                        .noLeakCheck()
+                        .returnsOnce("count\n0\n");
 
                 TestUtils.assertEventually(() -> {
                     receiver.runSerially();
                     drainWalQueue();
-                    assertSql("count\n1\n", "SELECT count() FROM timer_commit");
+                    assertQuery("SELECT count() FROM timer_commit")
+                            .noLeakCheck()
+                            .returnsOnce("count\n1\n");
                 }, 5);
             }
         });
@@ -647,27 +653,35 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             execute("create table datagram_trigger_reset (ts timestamp NOT NULL, v long) timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=2, o3MaxLag=1s");
 
             try (InspectingQwpUdpReceiver receiver = new InspectingQwpUdpReceiver(conf, engine)) {
-                sendSingleRow("datagram_trigger_reset", 1L, 1_000_000L);
+                sendSingleRow(1L, 1_000_000L);
                 drainReceiver(receiver);
                 drainWalQueue();
-                assertSql("count\n0\n", "SELECT count() FROM datagram_trigger_reset");
+                assertQuery("SELECT count() FROM datagram_trigger_reset")
+                        .noLeakCheck()
+                        .returnsOnce("count\n0\n");
                 Assert.assertEquals(1, receiver.getTotalCount());
 
-                sendSingleRow("datagram_trigger_reset", 2L, 2_000_000L);
+                sendSingleRow(2L, 2_000_000L);
                 drainReceiver(receiver);
                 drainWalQueue();
-                assertSql("count\n2\n", "SELECT count() FROM datagram_trigger_reset");
+                assertQuery("SELECT count() FROM datagram_trigger_reset")
+                        .noLeakCheck()
+                        .returnsOnce("count\n2\n");
                 Assert.assertEquals(0, receiver.getTotalCount());
 
-                sendSingleRow("datagram_trigger_reset", 3L, 3_000_000L);
+                sendSingleRow(3L, 3_000_000L);
                 drainReceiver(receiver);
                 drainWalQueue();
-                assertSql("count\n2\n", "SELECT count() FROM datagram_trigger_reset");
+                assertQuery("SELECT count() FROM datagram_trigger_reset")
+                        .noLeakCheck()
+                        .returnsOnce("count\n2\n");
                 Assert.assertEquals(1, receiver.getTotalCount());
             }
 
             drainWalQueue();
-            assertSql("count\n3\n", "SELECT count() FROM datagram_trigger_reset");
+            assertQuery("SELECT count() FROM datagram_trigger_reset")
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
         });
     }
 
@@ -687,10 +701,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "ts\n1970-01-01T00:00:01.000000Z\n",
-                    "SELECT * FROM qwp_udp_array_deferred_schema_mismatch"
-            );
+            assertQuery("SELECT * FROM qwp_udp_array_deferred_schema_mismatch")
+                    .noLeakCheck()
+                    .returnsOnce("ts\n1970-01-01T00:00:01.000000Z\n");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
@@ -703,10 +716,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "arr\nnull\n[1.0,2.0]\n",
-                    "SELECT arr FROM qwp_udp_array_deferred_schema_mismatch ORDER BY ts"
-            );
+            assertQuery("SELECT arr FROM qwp_udp_array_deferred_schema_mismatch ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("arr\nnull\n[1.0,2.0]\n");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
@@ -719,11 +731,12 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql("count\n2\n", "SELECT count() FROM qwp_udp_array_deferred_schema_mismatch");
-            assertSql(
-                    "arr\nnull\n[1.0,2.0]\n",
-                    "SELECT arr FROM qwp_udp_array_deferred_schema_mismatch ORDER BY ts"
-            );
+            assertQuery("SELECT count() FROM qwp_udp_array_deferred_schema_mismatch")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
+            assertQuery("SELECT arr FROM qwp_udp_array_deferred_schema_mismatch ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("arr\nnull\n[1.0,2.0]\n");
         });
     }
 
@@ -743,11 +756,12 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql("count\n0\n", "SELECT count() FROM qwp_udp_array_schema_mismatch");
-            assertSql(
-                    "column\narr\nts\n",
-                    "SELECT \"column\" FROM table_columns('qwp_udp_array_schema_mismatch') ORDER BY \"column\""
-            );
+            assertQuery("SELECT count() FROM qwp_udp_array_schema_mismatch")
+                    .noLeakCheck()
+                    .returnsOnce("count\n0\n");
+            assertQuery("SELECT \"column\" FROM table_columns('qwp_udp_array_schema_mismatch') ORDER BY \"column\"")
+                    .noLeakCheck()
+                    .returnsOnce("column\narr\nts\n");
         });
     }
 
@@ -767,10 +781,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\tsum\n20\t190\n",
-                    "SELECT count(), sum(v) FROM low_commit"
-            );
+            assertQuery("SELECT count(), sum(v) FROM low_commit")
+                    .noLeakCheck()
+                    .returnsOnce("count\tsum\n20\t190\n");
         });
     }
 
@@ -793,16 +806,21 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql("count\n0\n", "SELECT count() FROM qwp_udp_array_mixed_dims");
-            assertSql(
-                    """
-                            column
-                            ts
-                            """,
+            assertQuery("SELECT count() FROM qwp_udp_array_mixed_dims")
+                    .noLeakCheck()
+                    .returnsOnce("count\n0\n");
+            assertQuery(
                     """
                             SELECT "column" FROM table_columns('qwp_udp_array_mixed_dims') ORDER BY "column"
                             """
-            );
+            )
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    column
+                                    ts
+                                    """
+                    );
         });
     }
 
@@ -823,10 +841,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
-                    "SELECT arr FROM qwp_udp_array_mixed_batch_new_table ORDER BY timestamp"
-            );
+            assertQuery("SELECT arr FROM qwp_udp_array_mixed_batch_new_table ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n");
         });
     }
 
@@ -849,10 +866,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
-                    "SELECT arr FROM qwp_udp_array_mixed_batch_existing ORDER BY ts"
-            );
+            assertQuery("SELECT arr FROM qwp_udp_array_mixed_batch_existing ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n");
         });
     }
 
@@ -872,10 +888,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\tsum\n10\t450\n",
-                    "SELECT count(), sum(value) FROM multi_row"
-            );
+            assertQuery("SELECT count(), sum(value) FROM multi_row")
+                    .noLeakCheck()
+                    .returnsOnce("count\tsum\n10\t450\n");
         });
     }
 
@@ -900,14 +915,12 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n3\n",
-                    "SELECT count() FROM table_a"
-            );
-            assertSql(
-                    "count\n5\n",
-                    "SELECT count() FROM table_b"
-            );
+            assertQuery("SELECT count() FROM table_a")
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
+            assertQuery("SELECT count() FROM table_b")
+                    .noLeakCheck()
+                    .returnsOnce("count\n5\n");
         });
     }
 
@@ -930,20 +943,22 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            region\ttemp
-                            us-east\t22.5
-                            """,
-                    "SELECT region, temp FROM schema_a"
-            );
-            assertSql(
-                    """
-                            count\tlabel
-                            42\talpha
-                            """,
-                    "SELECT count, label FROM schema_b"
-            );
+            assertQuery("SELECT region, temp FROM schema_a")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    region\ttemp
+                                    us-east\t22.5
+                                    """
+                    );
+            assertQuery("SELECT count, label FROM schema_b")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    count\tlabel
+                                    42\talpha
+                                    """
+                    );
         });
     }
 
@@ -970,22 +985,24 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            x
-                            1
-                            2
-                            """,
-                    "SELECT x FROM interleave_a ORDER BY timestamp"
-            );
-            assertSql(
-                    """
-                            y
-                            10
-                            20
-                            """,
-                    "SELECT y FROM interleave_b ORDER BY timestamp"
-            );
+            assertQuery("SELECT x FROM interleave_a ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    x
+                                    1
+                                    2
+                                    """
+                    );
+            assertQuery("SELECT y FROM interleave_b ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    y
+                                    10
+                                    20
+                                    """
+                    );
         });
     }
 
@@ -1014,14 +1031,12 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\tsum\n2\t3\n",
-                    "SELECT count(), sum(v) FROM sep_flush_a"
-            );
-            assertSql(
-                    "count\tsum\n2\t30\n",
-                    "SELECT count(), sum(v) FROM sep_flush_b"
-            );
+            assertQuery("SELECT count(), sum(v) FROM sep_flush_a")
+                    .noLeakCheck()
+                    .returnsOnce("count\tsum\n2\t3\n");
+            assertQuery("SELECT count(), sum(v) FROM sep_flush_b")
+                    .noLeakCheck()
+                    .returnsOnce("count\tsum\n2\t30\n");
         });
     }
 
@@ -1046,18 +1061,18 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            x
-                            1
-                            2
-                            """,
-                    "SELECT x FROM switchback_a ORDER BY timestamp"
-            );
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM switchback_b"
-            );
+            assertQuery("SELECT x FROM switchback_a ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    x
+                                    1
+                                    2
+                                    """
+                    );
+            assertQuery("SELECT count() FROM switchback_b")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -1088,10 +1103,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\tsum\n3\t6\n",
-                    "SELECT count(), sum(v) FROM multi_dgram"
-            );
+            assertQuery("SELECT count(), sum(v) FROM multi_dgram")
+                    .noLeakCheck()
+                    .returnsOnce("count\tsum\n3\t6\n");
         });
     }
 
@@ -1109,10 +1123,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "timestamp\n1970-01-01T00:00:01.000000Z\n",
-                    "SELECT * FROM qwp_udp_array_new_table_deferred"
-            );
+            assertQuery("SELECT * FROM qwp_udp_array_new_table_deferred")
+                    .noLeakCheck()
+                    .returnsOnce("timestamp\n1970-01-01T00:00:01.000000Z\n");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
@@ -1125,10 +1138,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
-                    "SELECT arr FROM qwp_udp_array_new_table_deferred ORDER BY timestamp"
-            );
+            assertQuery("SELECT arr FROM qwp_udp_array_new_table_deferred ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n");
         });
     }
 
@@ -1148,10 +1160,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "ts\n1970-01-01T00:00:01.000000Z\n",
-                    "SELECT * FROM qwp_udp_array_deferred"
-            );
+            assertQuery("SELECT * FROM qwp_udp_array_deferred")
+                    .noLeakCheck()
+                    .returnsOnce("ts\n1970-01-01T00:00:01.000000Z\n");
 
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
@@ -1164,10 +1175,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
-                    "SELECT arr FROM qwp_udp_array_deferred ORDER BY ts"
-            );
+            assertQuery("SELECT arr FROM qwp_udp_array_deferred ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n");
         });
     }
 
@@ -1196,15 +1206,16 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            id\tnote
-                            1\thello
-                            2\t
-                            3\tworld
-                            """,
-                    "SELECT id, note FROM nullable_test ORDER BY timestamp"
-            );
+            assertQuery("SELECT id, note FROM nullable_test ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    id\tnote
+                                    1\thello
+                                    2\t
+                                    3\tworld
+                                    """
+                    );
         });
     }
 
@@ -1230,15 +1241,16 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            id\ttemperature
-                            1\t36.6
-                            2\tnull
-                            3\t38.1
-                            """,
-                    "SELECT id, temperature FROM nullable_double ORDER BY timestamp"
-            );
+            assertQuery("SELECT id, temperature FROM nullable_double ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    id\ttemperature
+                                    1\t36.6
+                                    2\tnull
+                                    3\t38.1
+                                    """
+                    );
         });
     }
 
@@ -1264,15 +1276,16 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            id\tcount
-                            1\t100
-                            2\tnull
-                            3\t300
-                            """,
-                    "SELECT id, count FROM nullable_long ORDER BY timestamp"
-            );
+            assertQuery("SELECT id, count FROM nullable_long ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    id\tcount
+                                    1\t100
+                                    2\tnull
+                                    3\t300
+                                    """
+                    );
         });
     }
 
@@ -1291,13 +1304,14 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    """
-                            host\tusage\ttimestamp
-                            srv-1\t73.2\t1970-01-01T00:00:01.000000Z
-                            """,
-                    "SELECT * FROM single_row"
-            );
+            assertQuery("SELECT * FROM single_row")
+                    .noLeakCheck()
+                    .returnsOnce(
+                            """
+                                    host\tusage\ttimestamp
+                                    srv-1\t73.2\t1970-01-01T00:00:01.000000Z
+                                    """
+                    );
         });
     }
 
@@ -1318,14 +1332,12 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n5\n",
-                    "SELECT count() FROM sym_trip"
-            );
-            assertSql(
-                    "count_distinct\n5\n",
-                    "SELECT count_distinct(region) AS count_distinct FROM sym_trip"
-            );
+            assertQuery("SELECT count() FROM sym_trip")
+                    .noLeakCheck()
+                    .returnsOnce("count\n5\n");
+            assertQuery("SELECT count_distinct(region) AS count_distinct FROM sym_trip")
+                    .noLeakCheck()
+                    .returnsOnce("count_distinct\n5\n");
         });
     }
 
@@ -1346,10 +1358,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                     // Drain and assert switch_a arrived before any explicit flush
                     drainReceiver(receiver);
                     drainWalQueue();
-                    assertSql(
-                            "count\tsum\n3\t3\n",
-                            "SELECT count(), sum(x) FROM switch_a"
-                    );
+                    assertQuery("SELECT count(), sum(x) FROM switch_a")
+                            .noLeakCheck()
+                            .returnsOnce("count\tsum\n3\t3\n");
 
                     // Now complete switch_b and flush it separately
                     sender.longColumn("y", 100L)
@@ -1360,10 +1371,531 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM switch_b"
-            );
+            assertQuery("SELECT count() FROM switch_b")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+        });
+    }
+
+    @Test
+    public void testUdpAlterColumnTypeRefreshesCachedTableUpdateDetails() throws Exception {
+        // ALTER COLUMN ... TYPE keeps the table's TableToken and only bumps its
+        // metadata version. Staleness was judged by token identity alone, which
+        // catches a DROP but never an ALTER -- so the cached details, and the
+        // writer they hold, kept the old column type. On UDP that is unbounded:
+        // the receiver has ONE cache for every sender and no reconnect to heal
+        // it, so a single ALTER silently corrupts or refuses that column's rows
+        // from then on.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                execute("CREATE TABLE alter_type (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("alter_type").longColumn("v", 1).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                execute("ALTER TABLE alter_type ALTER COLUMN v TYPE DOUBLE");
+                drainWalQueue();
+
+                // A fresh sender, so the CLIENT's per-buffer type binding is new
+                // and the only stale view left is the receiver's cached one.
+                // The 2.5 value MUST stay non-integral: a stale LONG writer
+                // refuses a precision-losing double, so the datagram drops and
+                // unfixed code goes red. The integral 3.0 covers the other
+                // failure half -- unfixed code silently coerces it to LONG 3.
+                // Both rows travel in one datagram to avoid a receive race.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("alter_type").doubleColumn("v", 2.5).at(2_000_000L, ChronoUnit.MICROS);
+                    sender.table("alter_type").doubleColumn("v", 3.0).at(3_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                assertQuery("SELECT v FROM alter_type ORDER BY timestamp")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("v\n1.0\n2.5\n3.0\n");
+            }
+        });
+    }
+
+    @Test
+    public void testUdpDropEvictsOnlyDroppedTableCoCachedTableSurvives() throws Exception {
+        // A dropped table must be evicted without disturbing other tables cached
+        // in the same receiver: the survivor keeps its data and remains writable.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("surv_keep").symbol("host", "k0").doubleColumn("v", 1.0).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                    sender.table("surv_drop").symbol("host", "d0").doubleColumn("v", 2.0).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver, 2);
+                drainWalQueue();
+                Assert.assertEquals("both tables cached", 2, receiver.getCachedTableCount());
+
+                execute("DROP TABLE surv_drop");
+                drainWalQueue();
+
+                // Write the survivor again -> drives a commit cycle that must evict
+                // the dropped table only.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("surv_keep").symbol("host", "k1").doubleColumn("v", 3.0).at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                Assert.assertEquals("only the survivor remains cached", 1, receiver.getCachedTableCount());
+                assertQuery("SELECT count() FROM surv_keep")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n2\n");
+            }
+        });
+    }
+
+    @Test
+    public void testUdpDroppedTableEvictedByIntervalCommitPath() throws Exception {
+        // The datagram-triggered commit path (commitAllBestEffort) is covered by
+        // the tests above; this covers the sibling interval path (commitWalTables)
+        // in the storm condition it actually guards against: a FULLY COMMITTED then
+        // dropped table (zero uncommitted rows). In that case commit() short-circuits
+        // without a CommitFailedException.isTableDropped(), so the pre-existing
+        // eviction never fires - only the new token-staleness guard evicts it. We
+        // co-cache an active table so the interval timer keeps calling
+        // commitWalTables, which must then evict the dropped table.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(TIMER_COMMIT_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("timer_active").symbol("host", "a0").doubleColumn("v", 1.0).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                    sender.table("timer_drop").symbol("host", "d0").doubleColumn("v", 2.0).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                // Receive both datagrams first so both tables are autocreated;
+                // otherwise assertQuery below could hit a not-yet-created table
+                // and throw a CairoException that assertEventually does not catch.
+                drainReceiver(receiver, 2);
+                // Let the interval timer commit both tables (both now zero-uncommitted).
+                TestUtils.assertEventually(() -> {
+                    receiver.runSerially();
+                    drainWalQueue();
+                    assertQuery("SELECT count() FROM timer_drop").noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess().returns("count\n1\n");
+                    assertQuery("SELECT count() FROM timer_active").noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess().returns("count\n1\n");
+                }, 10);
+                Assert.assertEquals("both tables cached", 2, receiver.getCachedTableCount());
+
+                execute("DROP TABLE timer_drop");
+                drainWalQueue();
+
+                // Keep the active table producing so the interval timer keeps firing
+                // commitWalTables; that cycle must evict the dropped (zero-row) table.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("timer_active").symbol("host", "a1").doubleColumn("v", 3.0).at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                // Eviction of the dropped table and the survivor's interval
+                // commit happen on independent schedules: the staleness check
+                // fires on every pass, the commit only when the 50 ms interval
+                // elapses. Assert both inside one eventually-loop so the test
+                // does not exit between the two.
+                TestUtils.assertEventually(() -> {
+                    receiver.runSerially();
+                    Assert.assertEquals("interval commit path should evict the dropped table", 1, receiver.getCachedTableCount());
+                    drainWalQueue();
+                    assertQuery("SELECT count() FROM timer_active")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n2\n");
+                }, 10);
+            }
+        });
+    }
+
+    @Test
+    public void testUdpDroppedTableIsEvictedFromCacheNotRetriedForever() throws Exception {
+        // A fully committed TUD has zero pending rows, so commit() returns without
+        // surfacing CommitFailedException.isTableDropped(). The token check must
+        // still evict the dropped table on the next commit cycle.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("storm_dropped")
+                            .symbol("host", "h0")
+                            .doubleColumn("v", 1.0)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+                assertQuery("SELECT count() FROM storm_dropped")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+                Assert.assertEquals("dropped table should be cached before the drop", 1, receiver.getCachedTableCount());
+
+                // Drop the table but do NOT write it again. The stale TUD lingers
+                // in the cache until a commit cycle evicts it.
+                execute("DROP TABLE storm_dropped");
+                drainWalQueue();
+
+                // Drive a commit cycle by writing an unrelated table. With
+                // maxUncommittedDatagrams=1 this datagram forces commitAllBestEffort,
+                // which iterates the stale storm_dropped TUD and must evict it.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("storm_other")
+                            .symbol("host", "h1")
+                            .doubleColumn("v", 2.0)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                // Only storm_other remains; storm_dropped was evicted (not retained
+                // and retried forever).
+                Assert.assertEquals("dropped table's stale TUD should be evicted", 1, receiver.getCachedTableCount());
+                assertQuery("SELECT count() FROM storm_other")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testUdpExternallyRecreatedTableReplacesStaleCachedWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("recreate_external")
+                            .longColumn("v", 1L)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                execute("DROP TABLE recreate_external");
+                execute("CREATE TABLE recreate_external (v LONG, timestamp TIMESTAMP) " +
+                        "TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("recreate_external")
+                            .longColumn("v", 2L)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT v FROM recreate_external")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n2\n");
+        });
+    }
+
+    @Test
+    public void testUdpMultipleDroppedTablesEvictedInSingleCommitCycle() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    for (int i = 0; i < 3; i++) {
+                        sender.table("multi_drop_" + i)
+                                .longColumn("v", i)
+                                .at(1_000_000L + i, ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+                }
+                drainReceiver(receiver, 3);
+                Assert.assertEquals(3, receiver.getCachedTableCount());
+
+                for (int i = 0; i < 3; i++) {
+                    execute("DROP TABLE multi_drop_" + i);
+                }
+                drainWalQueue();
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("multi_drop_survivor")
+                            .longColumn("v", 1L)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                Assert.assertEquals(1, receiver.getCachedTableCount());
+            }
+        });
+    }
+
+    @Test
+    public void testUdpReinsertAfterDropDoesNotDistressStaleCachedWriter() throws Exception {
+        // After DROP, the name-keyed cache can retain a TUD bound to the old WAL
+        // writer. The next datagram must evict that TUD and create a fresh writer.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("reinsert_after_drop")
+                            .symbol("host", "h0")
+                            .doubleColumn("v", 1.0)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+                assertQuery("SELECT count() FROM reinsert_after_drop")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+
+                // Drop the table out from under the receiver's cached TUD.
+                execute("DROP TABLE reinsert_after_drop");
+                drainWalQueue();
+
+                // Write again through the same receiver. This datagram recreates
+                // the table after the cache evicts the stale TUD.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("reinsert_after_drop")
+                            .symbol("host", "h1")
+                            .doubleColumn("v", 2.0)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                assertQuery("SELECT count() FROM reinsert_after_drop")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testUdpRenameAndRecreateRoutesRowsToNewTable() throws Exception {
+        // C1 regression: after RENAME TABLE t TO t2 + CREATE TABLE t, the cached
+        // entry for "t" is still bound to what is now t2's writer. The staleness
+        // gate alone reports "not stale" (the dir still resolves), and goActive()
+        // would replay the rename into the writer, defeating the sequencer's
+        // token check -- rows sent for "t" would land in t2. The cache must
+        // instead evict the entry and rebuild it against the new "t".
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                execute("CREATE TABLE ren (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("ren").longColumn("v", 1).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                execute("RENAME TABLE ren TO ren_old");
+                execute("CREATE TABLE ren (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+                drainWalQueue();
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("ren").longColumn("v", 2).at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                assertQuery("SELECT v FROM ren")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("v\n2\n");
+                assertQuery("SELECT v FROM ren_old")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("v\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testUdpRenameAndRecreateSalvagesBufferedRows() throws Exception {
+        // Companion to testUdpRenameAndRecreateRoutesRowsToNewTable that PINS
+        // the salvage premise: v=1 is still buffered (uncommitted) when the
+        // rename+recreate lands, so the eviction on the next lookup must
+        // salvage it into the renamed table rather than discard it.
+        //
+        // LOW_COMMIT_RATE_CONF does not work here: its getMaxUncommittedDatagrams()
+        // = 1 force-commits after every datagram that leaves rows buffered, so
+        // v=1 is already committed and WAL-applied before the rename and the
+        // premise assertion below fails with count=1 (confirmed experimentally).
+        // This local config disables both commit triggers -- a nearly-infinite
+        // commit interval and an effectively unbounded uncommitted-datagram
+        // count -- so v=1 provably stays buffered until the receiver closes.
+        QwpUdpReceiverConfiguration bufferedConf = new DefaultQwpUdpReceiverConfiguration() {
+            @Override
+            public long getCommitInterval() {
+                return Long.MAX_VALUE / 4;
+            }
+
+            @Override
+            public int getMaxUncommittedDatagrams() {
+                return Integer.MAX_VALUE;
+            }
+
+            @Override
+            public int getPort() {
+                return PORT;
+            }
+
+            @Override
+            public boolean isOwnThread() {
+                return false;
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(bufferedConf, engine)) {
+                execute("CREATE TABLE sal_udp (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("sal_udp").longColumn("v", 1).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                // Pin the premise: nothing is committed yet -- v=1 is buffered in
+                // the cached writer. If this fails, the receiver config commits
+                // too eagerly and the salvage path is not being exercised.
+                assertQuery("SELECT count() FROM sal_udp")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n0\n");
+
+                execute("RENAME TABLE sal_udp TO sal_udp_old");
+                execute("CREATE TABLE sal_udp (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+                drainWalQueue();
+
+                // The next datagram's lookup finds the entry stale (old name
+                // re-used), salvages v=1 into sal_udp_old and rebuilds against
+                // the new sal_udp.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("sal_udp").longColumn("v", 2).at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+            // Receiver close commits v=2 best-effort; drain and assert the split.
+            drainWalQueue();
+            assertQuery("SELECT v FROM sal_udp_old")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n1\n");
+            assertQuery("SELECT v FROM sal_udp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n2\n");
+        });
+    }
+
+    @Test
+    public void testUdpStaleTableWithBufferedRowsDropsDatagramAndHeals() throws Exception {
+        // M4: end-to-end through processDatagram. A datagram buffers rows for a
+        // table that is then DROPped WITHOUT a commit, so the cached TUD still
+        // holds uncommitted rows. The next datagram for that name hits the
+        // stale-TUD eviction throw; processDatagram drops the whole datagram
+        // (no ack on UDP) and counts it as a stale-table drop (M6). A later
+        // datagram recreates the table and its row lands (drop-and-heal).
+        assertMemoryLeak(() -> {
+            // RCVR_CONF keeps up to 10 datagrams uncommitted, so a single
+            // datagram leaves its rows buffered (LOW_COMMIT_RATE_CONF would
+            // force-commit after every datagram).
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("udp_heal").symbol("host", "h0").doubleColumn("v", 1.0).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver, 1);
+                Assert.assertEquals(1, receiver.getCachedTableCount());
+
+                // Drop the table while its buffered row is still uncommitted.
+                execute("DROP TABLE udp_heal");
+                drainWalQueue();
+
+                // Next datagram for the same name: the stale TUD still holds the
+                // buffered row, so getTableUpdateDetails throws, the datagram is
+                // dropped, and the stale TUD is evicted.
+                long staleBefore = receiver.getDroppedStaleTableCount();
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("udp_heal").symbol("host", "h1").doubleColumn("v", 2.0).at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                Assert.assertEquals("stale-table drop must be counted separately",
+                        staleBefore + 1, receiver.getDroppedStaleTableCount());
+                Assert.assertEquals("stale TUD must be evicted", 0, receiver.getCachedTableCount());
+
+                // Heal: a later datagram recreates the table and buffers its row.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("udp_heal").symbol("host", "h2").doubleColumn("v", 3.0).at(3_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver, 1);
+                Assert.assertEquals(1, receiver.getCachedTableCount());
+            }
+            // close() commits buffered rows best-effort, so the healed row lands
+            // while the rolled-back (v=1) and dropped-datagram (v=2) rows do not.
+            drainWalQueue();
+            assertQuery("SELECT v FROM udp_heal")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n3.0\n");
+        });
+    }
+
+    @Test
+    public void testUdpRepeatedDropRecreateChurnAlwaysLands() throws Exception {
+        // The original footgun: a table repeatedly autocreated via UDP and
+        // dropped under the SAME name through one long-lived receiver. Before the
+        // fix, the first drop poisoned the name's cache entry permanently and
+        // every later write was silently lost. Expected: every churn iteration
+        // lands its row into a fresh table.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                for (int iter = 0; iter < 3; iter++) {
+                    try (QwpUdpSender sender = newSender()) {
+                        sender.table("churn_repeat")
+                                .symbol("host", "h" + iter)
+                                .doubleColumn("v", iter)
+                                .at(1_000_000L + iter, ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+                    drainReceiver(receiver);
+                    drainWalQueue();
+                    assertQuery("SELECT count() FROM churn_repeat")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n1\n");
+
+                    execute("DROP TABLE churn_repeat");
+                    drainWalQueue();
+                }
+            }
         });
     }
 
@@ -1380,19 +1912,47 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         };
     }
 
+    // Keyed on the receiver's datagram counters, not runSerially()'s return:
+    // the interval-commit branch also returns true, so with interleaved DDL
+    // the boolean could report "received" before any datagram was handled.
+    // processedCount + totalDroppedCount increases exactly once per handled
+    // datagram, making progress unambiguous.
     private static void drainReceiver(QwpUdpReceiver receiver) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-        boolean everReceived = false;
+        long handledBefore = receiver.getProcessedCount() + receiver.getTotalDroppedCount();
+        boolean hasEverProgressed = false;
         while (System.nanoTime() < deadline) {
-            boolean received = receiver.runSerially();
-            if (received) {
-                everReceived = true;
-            } else if (everReceived) {
+            receiver.runSerially();
+            long handledNow = receiver.getProcessedCount() + receiver.getTotalDroppedCount();
+            if (handledNow > handledBefore) {
+                handledBefore = handledNow;
+                hasEverProgressed = true;
+            } else if (hasEverProgressed) {
                 break;
             }
             Os.pause();
         }
-        Assert.assertTrue("timeout: receiver did not process any datagrams", everReceived);
+        Assert.assertTrue("timeout: receiver did not process any datagrams", hasEverProgressed);
+    }
+
+    // Deterministic drain for multi-datagram tests: the single-gap drainReceiver
+    // above can break after only the first of several back-to-back datagrams is
+    // processed (the second lands after the first empty poll). When a test knows
+    // how many tables it expects cached, drain until that count is reached
+    // instead of guessing at inter-datagram timing.
+    private static void drainReceiver(QwpUdpReceiver receiver, int minCachedTables) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        while (System.nanoTime() < deadline) {
+            receiver.runSerially();
+            if (receiver.getCachedTableCount() >= minCachedTables) {
+                return;
+            }
+            Os.pause();
+        }
+        Assert.assertTrue(
+                "timeout: receiver cached " + receiver.getCachedTableCount() + " tables, expected " + minCachedTables,
+                receiver.getCachedTableCount() >= minCachedTables
+        );
     }
 
     private static QwpUdpSender newSender(int maxDatagramSize) {
@@ -1403,9 +1963,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         return new QwpUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 0);
     }
 
-    private static void sendSingleRow(String table, long value, long timestampMicros) {
+    private static void sendSingleRow(long value, long timestampMicros) {
         try (QwpUdpSender sender = newSender()) {
-            sender.table(table)
+            sender.table("datagram_trigger_reset")
                     .longColumn("v", value)
                     .at(timestampMicros, ChronoUnit.MICROS);
             sender.flush();

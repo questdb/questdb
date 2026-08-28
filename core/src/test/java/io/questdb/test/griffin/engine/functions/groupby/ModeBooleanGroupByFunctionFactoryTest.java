@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.groupby.ModeBooleanGroupByFunction;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -34,119 +38,116 @@ import org.junit.Test;
 public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testIsThreadSafeDelegatesToArg() {
+        // Unlike the other mode functions this one keeps no map, so it once hard-coded isThreadSafe()=true.
+        // But it reads the arg per row, and SqlCodeGenerator.compileWorkerGroupByFunctionsConditionally
+        // only builds per-worker copies when some group-by function reports false - so a hard-coded true
+        // hands the same instance, and the same non-thread-safe arg, to every parallel GROUP BY worker
+        // (AsyncGroupByAtom.getGroupByFunctions returns ownerGroupByFunctions when perWorkerGroupByFunctions
+        // is null). It must report the arg's thread-safety instead.
+        Assert.assertFalse(
+                "mode() must inherit a non-thread-safe arg",
+                new ModeBooleanGroupByFunction(new TestBooleanFunction(false)).isThreadSafe()
+        );
+        Assert.assertTrue(
+                "mode() must inherit a thread-safe arg",
+                new ModeBooleanGroupByFunction(new TestBooleanFunction(true)).isThreadSafe()
+        );
+    }
+
+    @Test
     public void testModeAllFalse() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select mode(f) from tab")
+                .ddl("create table tab as (select false as f from long_sequence(5))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         mode
                         false
-                        """,
-                "select mode(f) from tab",
-                "create table tab as (select false as f from long_sequence(5))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testModeAllNull() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select mode(f) from tab")
+                .ddl("create table tab as (select null::boolean as f from long_sequence(5))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         mode
                         false
-                        """,
-                "select mode(f) from tab",
-                "create table tab as (select null::boolean as f from long_sequence(5))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testModeAllTrue() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select mode(f) from tab")
+                .ddl("create table tab as (select true as f from long_sequence(5))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         mode
                         true
-                        """,
-                "select mode(f) from tab",
-                "create table tab as (select true as f from long_sequence(5))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testModeBasic() throws Exception {
-        assertQuery(
-                """
-                        mode
-                        true
-                        """,
-                "select mode(f) from tab",
-                "create table tab as (" +
+        assertQuery("select mode(f) from tab")
+                .ddl("create table tab as (" +
                         "select true as f from long_sequence(3) " +
                         "union all " +
                         "select false as f from long_sequence(2)" +
-                        ")",
-                null,
-                false,
-                true
-        );
+                        ")")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        mode
+                        true
+                        """);
     }
 
     @Test
     public void testModeEmpty() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select mode(f) from tab")
+                .ddl("create table tab (f boolean)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         mode
                         false
-                        """,
-                "select mode(f) from tab",
-                "create table tab (f boolean)",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testModeSingleValue() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select mode(f) from tab")
+                .ddl("create table tab as (select true as f from long_sequence(1))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         mode
                         true
-                        """,
-                "select mode(f) from tab",
-                "create table tab as (select true as f from long_sequence(1))",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     // 3 of each, tie breaker makes it true
     @Test
     public void testModeSomeNull() throws Exception {
-        assertQuery(
-                """
-                        mode
-                        true
-                        """,
-                "select mode(f) from tab",
-                "create table tab as (" +
+        assertQuery("select mode(f) from tab")
+                .ddl("create table tab as (" +
                         "select null::boolean as f from long_sequence(2) " +
                         "union all " +
                         "select true as f from long_sequence(3) " +
                         "union all " +
                         "select false as f from long_sequence(1)" +
-                        ")",
-                null,
-                false,
-                true
-        );
+                        ")")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        mode
+                        true
+                        """);
     }
 
     /**
@@ -169,15 +170,8 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
      */
     @Test
     public void testModeWithGroupBy() throws Exception {
-        assertQuery(
-                """
-                        g\tmode
-                        A\ttrue
-                        B\tfalse
-                        C\ttrue
-                        """,
-                "select g, mode(f) from tab order by g",
-                "create table tab as (" +
+        assertQuery("select g, mode(f) from tab order by g")
+                .ddl("create table tab as (" +
                         "select 'A' as g, true as f from long_sequence(2) " +
                         "union all " +
                         "select 'A' as g, false as f from long_sequence(1) " +
@@ -189,53 +183,111 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "select 'C' as g, false as f from long_sequence(2) " +
                         "union all " +
                         "select 'C' as g, true as f from long_sequence(2)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+                        ")")
+                .expectSize()
+                .returns("""
+                        g\tmode
+                        A\ttrue
+                        B\tfalse
+                        C\ttrue
+                        """);
+    }
+
+    @Test
+    public void testModeWithPrecedingAggregate() throws Exception {
+        // getBool must read mode's own accumulator slot (valueIndex), not slot 0. A preceding
+        // aggregate (count()) takes slot 0, so the hard-coded slot-0 read returned the OTHER
+        // aggregate's value - count() is always >= 0, so mode(f) came back true regardless of the
+        // data. Here false is the majority (2 true, 5 false), so the correct mode is false.
+        assertQuery("select count(), mode(f) from tab")
+                .ddl("create table tab as (" +
+                        "select true as f from long_sequence(2) " +
+                        "union all " +
+                        "select false as f from long_sequence(5)" +
+                        ")")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count\tmode
+                        7\tfalse
+                        """);
+    }
+
+    @Test
+    public void testModeWithPrecedingAggregateGroupBy() throws Exception {
+        // Keyed variant: with a preceding count() aggregate, mode(f) must still read its own slot
+        // per group. Group A is false-majority (correct mode false); the slot-0 read returned
+        // count() >= 0 -> true for every group.
+        assertQuery("select g, count(), mode(f) from tab order by g")
+                .ddl("create table tab as (" +
+                        "select 'A' as g, true as f from long_sequence(1) " +
+                        "union all " +
+                        "select 'A' as g, false as f from long_sequence(3) " +
+                        "union all " +
+                        "select 'B' as g, true as f from long_sequence(3) " +
+                        "union all " +
+                        "select 'B' as g, false as f from long_sequence(1)" +
+                        ")")
+                .expectSize()
+                .returns("""
+                        g\tcount\tmode
+                        A\t4\tfalse
+                        B\t4\ttrue
+                        """);
     }
 
     @Test
     public void testModeWithRandomData() throws Exception {
-        assertQuery(
-                """
-                        mode
-                        true
-                        """,
-                "select mode(f) from tab",
-                "create table tab as (" +
+        assertQuery("select mode(f) from tab")
+                .ddl("create table tab as (" +
                         "select true as f from long_sequence(60) " +
                         "union all " +
                         "select rnd_boolean() as f from long_sequence(40)" +
-                        ")",
-                null,
-                false,
-                true
-        );
+                        ")")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        mode
+                        true
+                        """);
     }
 
     @Test
     public void testModeWithSampleBy() throws Exception {
-        assertQuery(
-                """
-                        k\tmode
-                        1970-01-01T00:00:00.000000Z\ttrue
-                        1970-01-01T01:00:00.000000Z\ttrue
-                        1970-01-01T02:00:00.000000Z\ttrue
-                        """,
-                "select k, mode(f) from tab sample by 1h",
-                "create table tab as (" +
+        assertQuery("select k, mode(f) from tab sample by 1h")
+                .ddl("create table tab as (" +
                         "select " +
                         "case when x % 3 = 0 then true " +
                         "when x % 3 = 1 then false " +
                         "else true end as f, " +
                         "timestamp_sequence(0, 60*60*1000000L/10) k " +
                         "from long_sequence(30)" +
-                        ") timestamp(k) partition by HOUR",
-                "k",
-                true,
-                true
-        );
+                        ") timestamp(k) partition by HOUR")
+                .timestamp("k")
+                .expectSize()
+                .returns("""
+                        k\tmode
+                        1970-01-01T00:00:00.000000Z\ttrue
+                        1970-01-01T01:00:00.000000Z\ttrue
+                        1970-01-01T02:00:00.000000Z\ttrue
+                        """);
+    }
+
+    private static class TestBooleanFunction extends BooleanFunction {
+        private final boolean isThreadSafe;
+
+        private TestBooleanFunction(boolean isThreadSafe) {
+            this.isThreadSafe = isThreadSafe;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return true;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return isThreadSafe;
+        }
     }
 }

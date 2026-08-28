@@ -35,61 +35,47 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByHistogram;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
-import io.questdb.std.histogram.org.HdrHistogram.Histogram;
 
 public class ApproxPercentileLongGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
     private final Function exprFunc;
     private final boolean isArgNotNull;
     private final int funcPosition;
-    private ObjList<Histogram> histograms = new ObjList<>();
-    private boolean isShared;
+    private final GroupByHistogram histogramA;
+    private final GroupByHistogram histogramB;
     private final Function percentileFunc;
-    private final int precision;
-    private int histogramIndex;
     private double percentile;
     private int valueIndex;
 
     public ApproxPercentileLongGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int funcPosition) {
-        assert precision >= 0 && precision <= 5;
         this.exprFunc = exprFunc;
         this.isArgNotNull = exprFunc != null && exprFunc.isNotNull();
         this.percentileFunc = percentileFunc;
-        this.precision = precision;
         this.funcPosition = funcPosition;
+        // We pre-size the histogram for [1, 1000] range to avoid resizes in some basic use cases
+        // like CPU load percentile or latency in millis.
+        this.histogramA = new GroupByHistogram(precision, 1000);
+        this.histogramB = new GroupByHistogram(precision, 1000);
     }
 
     @Override
     public void clear() {
-        if (isShared) return;
-        histograms.clear();
-        histogramIndex = 0;
+        histogramA.clear();
+        histogramB.clear();
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final Histogram histogram;
-        if (histograms.size() <= histogramIndex) {
-            // We pre-size the histogram for [1, 1000] range to avoid resizes in some basic use cases
-            // like CPU load percentile or latency in millis.
-            histograms.extendAndSet(histogramIndex, histogram = new Histogram(1, 1000, precision));
-            histogram.setAutoResize(true);
-        } else {
-            histogram = histograms.getQuick(histogramIndex);
-            histogram.reset();
-        }
-
         final long val = exprFunc.getLong(record);
         if (isArgNotNull || val != Numbers.LONG_NULL) {
             histogram.recordValue(val);
         }
-        mapValue.putLong(valueIndex, histogramIndex++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final Histogram histogram = histograms.getQuick(mapValue.getInt(valueIndex));
         final long val = exprFunc.getLong(record);
         if (isArgNotNull || val != Numbers.LONG_NULL) {
             histogram.recordValue(val);
@@ -98,11 +84,11 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
 
     @Override
     public double getDouble(Record rec) {
-        if (histograms.size() == 0) {
+        long ptr = rec.getLong(valueIndex);
+        if (ptr == 0) {
             return Double.NaN;
         }
-
-        final Histogram histogram = histograms.getQuick(rec.getInt(valueIndex));
+        GroupByHistogram histogram = histogramA.of(ptr);
         if (histogram.getTotalCount() == 0) {
             return Double.NaN;
         }
@@ -140,20 +126,13 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     }
 
     @Override
-    public void initSharedFrom(GroupByFunction primary) {
-        this.valueIndex = primary.getValueIndex();
-        this.histograms = ((ApproxPercentileLongGroupByFunction) primary).histograms;
-        this.isShared = true;
-    }
-
-    @Override
     public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }
 
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
-        valueIndex = columnTypes.getColumnCount();
+        initValueIndex(columnTypes.getColumnCount());
         columnTypes.add(ColumnType.LONG);
     }
 
@@ -168,17 +147,37 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     }
 
     @Override
-    public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcPtr = srcValue.getLong(valueIndex);
+        if (srcPtr == 0) {
+            return;
+        }
+
+        long destPtr = destValue.getLong(valueIndex);
+        if (destPtr == 0) {
+            destValue.putLong(valueIndex, srcPtr);
+            return;
+        }
+
+        histogramA.of(destPtr);
+        histogramB.of(srcPtr);
+        histogramA.merge(histogramB);
+        destValue.putLong(valueIndex, histogramA.ptr());
+    }
+
+    @Override
+    public void setAllocator(GroupByAllocator allocator) {
+        histogramA.setAllocator(allocator);
+        histogramB.setAllocator(allocator);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putLong(valueIndex, 0);
     }
 
     @Override
     public boolean supportsParallelism() {
-        return false;
+        return true;
     }
 }

@@ -35,7 +35,6 @@ use std::sync::Arc;
 pub enum ParquetErrorReason {
     OutOfMemory(Option<AllocFailure>),
     Parquet2(parquet2::error::Error),
-    QdbMeta(Arc<serde_json::Error>),
     Layout,
     Unsupported,
     InvalidType,
@@ -43,6 +42,7 @@ pub enum ParquetErrorReason {
     Utf8Decode(std::str::Utf8Error),
     Utf16Decode(std::char::DecodeUtf16Error),
     Io(Arc<std::io::Error>),
+    ParquetMeta(qdb_parquet_meta::error::ParquetMetaErrorKind),
 
     #[cfg(test)]
     Arrow(Arc<arrow::error::ArrowError>),
@@ -68,7 +68,6 @@ impl ParquetErrorReason {
                 .as_ref()
                 .map(|err| err as &(dyn std::error::Error + 'static)),
             ParquetErrorReason::Parquet2(err) => Some(err),
-            ParquetErrorReason::QdbMeta(err) => Some(err.as_ref()),
             ParquetErrorReason::Utf8Decode(err) => Some(err),
             ParquetErrorReason::Utf16Decode(err) => Some(err),
             ParquetErrorReason::Io(err) => Some(err.as_ref()),
@@ -230,6 +229,12 @@ impl From<CoreError> for ParquetError {
     }
 }
 
+impl From<qdb_parquet_meta::error::ParquetMetaError> for ParquetError {
+    fn from(e: qdb_parquet_meta::error::ParquetMetaError) -> Self {
+        Self::with_descr(ParquetErrorReason::ParquetMeta(e.kind), e.msg)
+    }
+}
+
 #[cfg(test)]
 impl From<arrow::error::ArrowError> for ParquetError {
     fn from(e: arrow::error::ArrowError) -> Self {
@@ -302,3 +307,25 @@ macro_rules! fmt_err {
 }
 
 pub(crate) use fmt_err;
+
+/// Constructs a qdbr `ParquetError` with a `ParquetMeta` reason.
+///
+/// Counterpart to `qdb_parquet_meta::parquet_meta_err!`: that one returns a
+/// `ParquetMetaError`, this one wraps a `ParquetMetaErrorKind` into qdbr's
+/// richer `ParquetError`. Same name, different crate: importers pick whichever
+/// matches their function's error type.
+macro_rules! parquet_meta_err {
+    ($kind:expr, $($arg:tt)+) => {
+        $crate::parquet::error::ParquetError::with_descr(
+            $crate::parquet::error::ParquetErrorReason::ParquetMeta($kind),
+            format!($($arg)+))
+    };
+    ($kind:expr) => {{
+        let k = $kind;
+        $crate::parquet::error::ParquetError::with_descr(
+            $crate::parquet::error::ParquetErrorReason::ParquetMeta(k),
+            k.to_string())
+    }};
+}
+
+pub(crate) use parquet_meta_err;

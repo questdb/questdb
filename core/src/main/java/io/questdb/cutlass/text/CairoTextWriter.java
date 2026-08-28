@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableStructure;
@@ -402,17 +403,9 @@ public class CairoTextWriter implements Closeable, Mutable {
                 break;
             case TableUtils.TABLE_EXISTS:
                 tableToken = engine.getTableTokenIfExists(tableName);
-                if (tableToken != null && tableToken.isView()) {
-                    throw CairoException.nonCritical()
-                            .put("cannot modify view [view=")
-                            .put(tableToken.getTableName())
-                            .put(']');
-                }
-                if (tableToken != null && tableToken.isMatView()) {
-                    throw CairoException.nonCritical()
-                            .put("cannot modify materialized view [view=")
-                            .put(tableToken.getTableName())
-                            .put(']');
+                if (tableToken != null && tableToken.getType() != TableToken.Type.TABLE) {
+                    throw CairoException.nonCritical().put("cannot modify ").put(tableToken.getType().keyword())
+                            .put(" [view=").put(tableToken.getTableName()).put(']');
                 }
                 if (overwrite) {
                     securityContext.authorizeTableDrop(tableToken);
@@ -532,8 +525,8 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
-        public boolean isIndexed(int columnIndex) {
-            return types.getQuick(columnIndex).isIndexed();
+        public byte getIndexType(int columnIndex) {
+            return types.getQuick(columnIndex).isIndexed() ? IndexType.BITMAP : IndexType.NONE;
         }
 
         @Override

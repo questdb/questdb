@@ -122,41 +122,20 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             execute("create table a (ts timestamp NOT NULL, i int, s symbol, l long, str string) timestamp(ts) partition by day wal");
             String alterPrefix = "alter table a ";
 
-            assertException(
-                    alterPrefix + "deduplicate UPSERT KEYS",
-                    37,
-                    "deduplicate key column list expected"
-            );
-            assertException(
-                    alterPrefix + "deduplicate UPSERT KEYS (;",
-                    39,
-                    "literal expected"
-            );
-            assertException(
-                    alterPrefix + "deduplicate UPSERT KEYS (a)",
-                    39,
-                    "deduplicate key column not found "
-            );
-            assertException(
-                    alterPrefix + "deduplicate UPSERT KEYS (s)",
-                    39,
-                    "deduplicate key list must include dedicated timestamp column"
-            );
-            assertException(
-                    alterPrefix + "deduplicate KEYS (s);",
-                    26,
-                    "expected 'upsert'"
-            );
-            assertException(
-                    alterPrefix + "deduplicate UPSERT (s);",
-                    33,
-                    "expected 'keys'"
-            );
-            assertException(
-                    alterPrefix + "deduplicate UPSERT KEYS",
-                    37,
-                    "column list expected"
-            );
+            assertQuery(alterPrefix + "deduplicate UPSERT KEYS")
+                    .fails(37, "deduplicate key column list expected");
+            assertQuery(alterPrefix + "deduplicate UPSERT KEYS (;")
+                    .fails(39, "literal expected");
+            assertQuery(alterPrefix + "deduplicate UPSERT KEYS (a)")
+                    .fails(39, "deduplicate key column not found ");
+            assertQuery(alterPrefix + "deduplicate UPSERT KEYS (s)")
+                    .fails(39, "deduplicate key list must include dedicated timestamp column");
+            assertQuery(alterPrefix + "deduplicate KEYS (s);")
+                    .fails(26, "expected 'upsert'");
+            assertQuery(alterPrefix + "deduplicate UPSERT (s);")
+                    .fails(33, "expected 'keys'");
+            assertQuery(alterPrefix + "deduplicate UPSERT KEYS")
+                    .fails(37, "column list expected");
         });
     }
 
@@ -256,10 +235,11 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 100.00m, 'duplicate1')");
             drainWalQueue();
 
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count(*) FROM " + tableName
-            );
+            assertQuery("SELECT count(*) FROM " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
 
             // Disable deduplication
             execute("ALTER table " + tableName + " dedup disable");
@@ -270,10 +250,11 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 100.00m, 'duplicate3')");
             drainWalQueue();
 
-            assertSql(
-                    "count\n3\n",
-                    "SELECT count(*) FROM " + tableName
-            );
+            assertQuery("SELECT count(*) FROM " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
 
             // Re-enable deduplication with decimal key
             execute("ALTER table " + tableName + " dedup enable UPSERT KEYS(ts, amount)");
@@ -284,14 +265,16 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 200.00m, 'new2')");
             drainWalQueue();
 
-            assertSql(
-                    "ts\tamount\tdescription\n" +
-                            "2024-01-01T00:00:00.000000Z\t100.00\tduplicate1\n" +
-                            "2024-01-01T00:00:00.000000Z\t100.00\tduplicate2\n" +
-                            "2024-01-01T00:00:00.000000Z\t100.00\tduplicate3\n" +
-                            "2024-01-01T00:00:00.000000Z\t200.00\tnew2\n",
-                    "SELECT * FROM " + tableName + " ORDER BY amount, description"
-            );
+            assertQuery("SELECT * FROM " + tableName + " ORDER BY amount, description")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tamount\tdescription
+                            2024-01-01T00:00:00.000000Z\t100.00\tduplicate1
+                            2024-01-01T00:00:00.000000Z\t100.00\tduplicate2
+                            2024-01-01T00:00:00.000000Z\t100.00\tduplicate3
+                            2024-01-01T00:00:00.000000Z\t200.00\tnew2
+                            """);
         });
     }
 
@@ -314,13 +297,15 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Should have 3 unique measurement values
-            assertSql(
-                    "ts\tmeasurement\tsensor_id\n" +
-                            "2024-01-01T00:00:00.000000Z\t123456789012345.123456789012344\t4\n" +
-                            "2024-01-01T00:00:00.000000Z\t123456789012345.123456789012345\t2\n" +
-                            "2024-01-01T00:00:00.000000Z\t123456789012345.123456789012346\t3\n",
-                    "SELECT * FROM " + tableName + " ORDER BY measurement"
-            );
+            assertQuery("SELECT * FROM " + tableName + " ORDER BY measurement")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tmeasurement\tsensor_id
+                            2024-01-01T00:00:00.000000Z\t123456789012345.123456789012344\t4
+                            2024-01-01T00:00:00.000000Z\t123456789012345.123456789012345\t2
+                            2024-01-01T00:00:00.000000Z\t123456789012345.123456789012346\t3
+                            """);
         });
     }
 
@@ -344,13 +329,15 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Should have 3 unique combinations
-            assertSql(
-                    "ts\tsymbol\tprice\tvolume\tactive\n" +
-                            "2024-01-01T00:00:00.000000Z\tAAPL\t150.50\t2000\tfalse\n" +
-                            "2024-01-01T00:00:00.000000Z\tAAPL\t150.51\t3000\ttrue\n" +
-                            "2024-01-01T00:00:00.000000Z\tGOOGL\t150.50\t5000\tfalse\n",
-                    "SELECT * FROM " + tableName + " ORDER BY symbol, price"
-            );
+            assertQuery("SELECT * FROM " + tableName + " ORDER BY symbol, price")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tsymbol\tprice\tvolume\tactive
+                            2024-01-01T00:00:00.000000Z\tAAPL\t150.50\t2000\tfalse
+                            2024-01-01T00:00:00.000000Z\tAAPL\t150.51\t3000\ttrue
+                            2024-01-01T00:00:00.000000Z\tGOOGL\t150.50\t5000\tfalse
+                            """);
         });
     }
 
@@ -385,14 +372,16 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Should have 4 rows (unique combinations of dedup keys)
-            assertSql(
-                    "ts\tprice\ttax\tdiscount\tnotes\n" +
-                            "2024-01-01T00:00:00.000000Z\t100.00\t8.250\t5.00\tthird\n" +
-                            "2024-01-01T00:00:00.000000Z\t100.00\t8.250\t5.01\tdifferent discount\n" +
-                            "2024-01-01T00:00:00.000000Z\t100.00\t8.251\t5.00\tdifferent tax\n" +
-                            "2024-01-01T00:00:00.000000Z\t100.01\t8.250\t5.00\tdifferent price\n",
-                    "SELECT * FROM " + tableName + " ORDER BY price, tax, discount"
-            );
+            assertQuery("SELECT * FROM " + tableName + " ORDER BY price, tax, discount")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tprice\ttax\tdiscount\tnotes
+                            2024-01-01T00:00:00.000000Z\t100.00\t8.250\t5.00\tthird
+                            2024-01-01T00:00:00.000000Z\t100.00\t8.250\t5.01\tdifferent discount
+                            2024-01-01T00:00:00.000000Z\t100.00\t8.251\t5.00\tdifferent tax
+                            2024-01-01T00:00:00.000000Z\t100.01\t8.250\t5.00\tdifferent price
+                            """);
         });
     }
 
@@ -423,12 +412,14 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Should have only 2 rows (one for each unique ts+price combination)
-            assertSql(
-                    "ts\tprice\tquantity\n" +
-                            "2024-01-01T00:00:00.000000Z\t99.99\t30\n" +
-                            "2024-01-01T00:00:00.000000Z\t100.00\t40\n",
-                    "SELECT * FROM " + tableName + " ORDER BY price"
-            );
+            assertQuery("SELECT * FROM " + tableName + " ORDER BY price")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tprice\tquantity
+                            2024-01-01T00:00:00.000000Z\t99.99\t30
+                            2024-01-01T00:00:00.000000Z\t100.00\t40
+                            """);
         });
     }
 
@@ -452,13 +443,15 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Nulls should be treated as distinct values for deduplication
-            assertSql(
-                    "ts\tprice\tnotes\n" +
-                            "2024-01-01T00:00:00.000000Z\t\tnull price 2\n" +
-                            "2024-01-01T00:00:00.000000Z\t0.00\tzero price\n" +
-                            "2024-01-01T00:00:00.000000Z\t99.99\tduplicate\n",
-                    "SELECT * FROM " + tableName + " ORDER BY price"
-            );
+            assertQuery("SELECT * FROM " + tableName + " ORDER BY price")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tprice\tnotes
+                            2024-01-01T00:00:00.000000Z\t\tnull price 2
+                            2024-01-01T00:00:00.000000Z\t0.00\tzero price
+                            2024-01-01T00:00:00.000000Z\t99.99\tduplicate
+                            """);
         });
     }
 
@@ -486,8 +479,10 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                             " (ts TIMESTAMP NOT NULL, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL"
             );
-            assertException("ALTER table " + tableName + " dedup UPSERT KEYS(ts,", 54, "')' expected");
-            assertException("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s", 55, "')' expected");
+            assertQuery("ALTER table " + tableName + " dedup UPSERT KEYS(ts,")
+                    .fails(54, "')' expected");
+            assertQuery("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s")
+                    .fails(55, "')' expected");
         });
     }
 
@@ -631,11 +626,8 @@ public class CreateTableDedupTest extends AbstractCairoTest {
 
             execute("ALTER table " + tableName + " dedup disable");
             execute("ALTER table " + tableName + " drop column s");
-            assertException(
-                    "ALTER table " + tableName + " dedup UPSERT KEYS(ts,s)",
-                    57,
-                    "deduplicate key column not found [column=s]"
-            );
+            assertQuery("ALTER table " + tableName + " dedup UPSERT KEYS(ts,s)")
+                    .fails(57, "deduplicate key column not found [column=s]");
             drainWalQueue();
 
             try (TableWriter writer = getWriter(tableName)) {
@@ -669,11 +661,13 @@ public class CreateTableDedupTest extends AbstractCairoTest {
         );
         execute("alter table " + tableName + " dedup disable");
         drainWalQueue();
-        assertSql(
-                "table_name\tdedup\n" +
-                        "testEnableDedup\tfalse\n",
-                "select table_name, dedup from tables() where table_name ='" + tableName + "'"
-        );
+        assertQuery("select table_name, dedup from tables() where table_name ='" + tableName + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        table_name\tdedup
+                        testEnableDedup\tfalse
+                        """);
 
         execute("alter table " + tableName + " dedup enable upsert keys(ts)");
         drainWalQueue();

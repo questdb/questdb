@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -38,10 +39,15 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
+import io.questdb.network.Net;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.griffin.CustomisableRunnable;
@@ -50,6 +56,9 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * This test verifies that various factories use circuit breaker and thus can time out or detect broken connection.
@@ -70,7 +79,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                 return NetworkSqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
             }
         };
-        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, config, MemoryTag.NATIVE_CB5) {
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, config) {
             @Override
             protected boolean testConnection(long fd) {
                 return false;
@@ -82,6 +91,101 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
         };
         ((SqlExecutionContextImpl) sqlExecutionContext).with(circuitBreaker);
         super.setUp();
+    }
+
+    @Test
+    public void testDisconnectAbortsParallelGroupBy() throws Exception {
+        // End-to-end pin for the parallel connection probe: a client that sends a byte and
+        // closes mid-scan (FIN behind unread data, the shape a peek probe cannot see) must
+        // abort a parallel GROUP BY well before any timeout. Either the owner-thread Phase-2
+        // check or the per-worker reduce-path check may detect it first; both run the real
+        // NetworkFacade probe against a real socket pair.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
+        Misc.free(circuitBreaker);
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                engine,
+                new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                    @Override
+                    public long getCircuitBreakerConnectionCheckThrottle() {
+                        return 10;
+                    }
+
+                    @Override
+                    public long getQueryTimeout() {
+                        return 600_000;
+                    }
+                }
+        );
+        executeWithPool(4, 16, (engine, compiler, sqlExecutionContext) -> {
+            final long acceptFd = Net.socketTcp(true);
+            Assert.assertTrue(acceptFd > 0);
+            long sockAddr = 0;
+            long clientFd = -1;
+            long serverFd = -1;
+            long buf = 0;
+            final AtomicBoolean isClientClosed = new AtomicBoolean();
+            try {
+                int port = bindToFreePort(acceptFd);
+                Net.listen(acceptFd, 16);
+                sockAddr = Net.sockaddr("127.0.0.1", port);
+                clientFd = Net.socketTcp(true);
+                TestUtils.assertConnect(clientFd, sockAddr);
+                serverFd = Net.accept(acceptFd);
+                Net.configureNonBlocking(serverFd);
+                circuitBreaker.of(serverFd);
+
+                buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.getUnsafe().putByte(buf, (byte) 'X');
+
+                execute(compiler, "create table disconnect_test as (select x from long_sequence(5_000_000))", sqlExecutionContext);
+
+                final long clientFdToClose = clientFd;
+                final long bufToSend = buf;
+                final AtomicLong closedAtMs = new AtomicLong();
+                TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                    @Override
+                    public boolean onGet(Record rec, int count) {
+                        if (count == 100_000 && isClientClosed.compareAndSet(false, true)) {
+                            closedAtMs.set(System.currentTimeMillis());
+                            Net.send(clientFdToClose, bufToSend, 1);
+                            Net.close(clientFdToClose);
+                        }
+                        return true;
+                    }
+                });
+                try (
+                        RecordCursorFactory factory = compiler.compile(
+                                "select sum(x) from disconnect_test where test_latched_counter()",
+                                sqlExecutionContext
+                        ).getRecordCursorFactory();
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    cursor.hasNext();
+                    Assert.fail("query must abort when the client disconnects mid-scan");
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected an interruption, got: " + e.getFlyweightMessage(), e.isInterruption());
+                    Assert.assertTrue("query aborted before the client disconnected", isClientClosed.get());
+                    long detectMs = System.currentTimeMillis() - closedAtMs.get();
+                    Assert.assertTrue("disconnect detected too slowly: " + detectMs + " ms", detectMs < 5_000);
+                } finally {
+                    TestLatchedCounterFunctionFactory.reset(null);
+                }
+            } finally {
+                if (buf != 0) {
+                    Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
+                }
+                if (clientFd != -1 && !isClientClosed.get()) {
+                    Net.close(clientFd);
+                }
+                if (serverFd != -1) {
+                    Net.close(serverFd);
+                }
+                if (sockAddr != 0) {
+                    Net.freeSockAddr(sockAddr);
+                }
+                Net.close(acceptFd);
+            }
+        });
     }
 
     @Test
@@ -118,6 +222,73 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                 16,
                 (engine, compiler, sqlExecutionContext) -> testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext)
         );
+    }
+
+    @Test
+    public void testTimeoutAbortsParallelGroupByDuringPhaseTwoWait() throws Exception {
+        // Every frame is in flight on a worker parked at its frame's first row, so the spinning
+        // owner is the only place query.timeout can fire; the pre-fix Phase-2 loop re-armed the
+        // wrapper timer per iteration and would surface the timeout only after the workers
+        // released, seconds later.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
+        Misc.free(circuitBreaker);
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                engine,
+                new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                    @Override
+                    public boolean checkConnection() {
+                        return false;
+                    }
+
+                    @Override
+                    public long getQueryTimeout() {
+                        return 300;
+                    }
+                }
+        );
+        executeWithPool(4, 16, (engine, compiler, sqlExecutionContext) -> {
+            execute(compiler, "create table phase2_timeout_test as (select x from long_sequence(400_000))", sqlExecutionContext);
+
+            final Thread ownerThread = Thread.currentThread();
+            final ThreadLocal<Boolean> hasParked = ThreadLocal.withInitial(() -> Boolean.FALSE);
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    if (Thread.currentThread() != ownerThread && !hasParked.get()) {
+                        hasParked.set(Boolean.TRUE);
+                        Os.sleep(3_000);
+                    }
+                    return true;
+                }
+            });
+            try (
+                    RecordCursorFactory factory = compiler.compile(
+                            "select sum(x) from phase2_timeout_test where test_latched_counter()",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory()
+            ) {
+                circuitBreaker.resetTimer();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    cursor.hasNext();
+                    Assert.fail("query must time out while the owner waits for in-flight frames");
+                } catch (CairoException e) {
+                    // Delivery of the abort is gated on the in-flight frames draining, so wall-clock
+                    // elapsed time cannot discriminate; the runtime recorded at throw time can.
+                    String msg = e.getFlyweightMessage().toString();
+                    TestUtils.assertContains(msg, "timeout, query aborted");
+                    int runtimeStart = msg.indexOf("runtime=");
+                    Assert.assertTrue("no runtime in: " + msg, runtimeStart >= 0);
+                    runtimeStart += "runtime=".length();
+                    long runtimeMs = Long.parseLong(msg.substring(runtimeStart, msg.indexOf("ms", runtimeStart)));
+                    Assert.assertTrue(
+                            "timeout must fire from the owner's Phase-2 wait while the workers hold their frames, got: " + msg,
+                            runtimeMs < 2_000
+                    );
+                }
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+        });
     }
 
     @Test
@@ -311,13 +482,14 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                 assertTimeout(
                         "create table grouptest as " +
                                 "(select cast(x%1000000 as int) as i, x as l from long_sequence(100000) );\n",
-                        "select * from \n" +
-                                "(\n" +
-                                "  select * \n" +
-                                "  from grouptest gt1\n" +
-                                "  join grouptest gt2 on i\n" +
-                                ")\n" +
-                                "join grouptest gt3 on i"
+                        """
+                                select * from\s
+                                (
+                                  select *\s
+                                  from grouptest gt1
+                                  join grouptest gt2 on i
+                                )
+                                join grouptest gt3 on i"""
                 );
             } finally {
                 resetTimeout();
@@ -329,9 +501,10 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
     public void testTimeoutInNonVectorizedKeyedGroupBy() throws Exception {
         assertMemoryLeak(() -> assertTimeout(
                 "create table grouptest as (select x as i, x as l from long_sequence(10000) );",
-                "select i, avg(l), max(l) \n" +
-                        "from grouptest \n" +
-                        "group by i"
+                """
+                        select i, avg(l), max(l)\s
+                        from grouptest\s
+                        group by i"""
         ));
     }
 
@@ -528,6 +701,15 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                 16,
                 (engine, compiler, sqlExecutionContext) -> testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext)
         );
+    }
+
+    private static int bindToFreePort(long fd) {
+        for (int port = 24_000; port < 25_000; port++) {
+            if (Net.bindTcp(fd, 0, port)) {
+                return port;
+            }
+        }
+        throw new AssertionError("could not bind a free port");
     }
 
     private void assertTimeout(String ddl, String query) {

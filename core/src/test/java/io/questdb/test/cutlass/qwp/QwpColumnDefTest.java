@@ -42,7 +42,6 @@ public class QwpColumnDefTest {
                 QwpConstants.TYPE_LONG,
                 QwpConstants.TYPE_FLOAT,
                 QwpConstants.TYPE_DOUBLE,
-                QwpConstants.TYPE_STRING,
                 QwpConstants.TYPE_SYMBOL,
                 QwpConstants.TYPE_TIMESTAMP,
                 QwpConstants.TYPE_DATE,
@@ -50,6 +49,7 @@ public class QwpColumnDefTest {
                 QwpConstants.TYPE_LONG256,
                 QwpConstants.TYPE_GEOHASH,
                 QwpConstants.TYPE_VARCHAR,
+                QwpConstants.TYPE_BINARY,
                 QwpConstants.TYPE_TIMESTAMP_NANOS,
                 QwpConstants.TYPE_DOUBLE_ARRAY,
                 QwpConstants.TYPE_LONG_ARRAY,
@@ -57,6 +57,7 @@ public class QwpColumnDefTest {
                 QwpConstants.TYPE_DECIMAL128,
                 QwpConstants.TYPE_DECIMAL256,
                 QwpConstants.TYPE_CHAR,
+                QwpConstants.TYPE_IPV4,
         };
         for (byte type : validTypes) {
             QwpColumnDef col = new QwpColumnDef("col", type);
@@ -83,7 +84,10 @@ public class QwpColumnDefTest {
 
     @Test(expected = QwpParseException.class)
     public void testValidateRejectsInvalidType() throws QwpParseException {
-        QwpColumnDef col = new QwpColumnDef("bad", (byte) 0x17);
+        // 0x19 sits just past TYPE_IPv4 (0x18) and is not currently assigned
+        // to any QWP wire type. If a new type lands at 0x19, pick another
+        // unassigned byte to keep this rejection coverage meaningful.
+        QwpColumnDef col = new QwpColumnDef("bad", (byte) 0x19);
         col.validate();
     }
 

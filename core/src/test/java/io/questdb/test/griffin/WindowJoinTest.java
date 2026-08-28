@@ -29,7 +29,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.join.AsyncWindowJoinAtom;
+import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -115,9 +117,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                         sink);
             }
 
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price + 1) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -129,17 +135,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, sum(p.price + 1) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(sink);
 
             if (!includePrevailing) {
                 printSql("select t.sym, t.price, t.ts, sum(p.price + 1) window_price " +
@@ -167,9 +165,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price + 1) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -180,16 +181,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, sum(p.price + 1) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(sink);
 
             if (!includePrevailing) {
                 printSql("select t.sym, t.price, t.ts, count(p.ts)  " +
@@ -218,9 +212,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                         sink);
             }
 
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.price, t.ts, count() " +
+                    "from trades t " +
+                    "window join prices p " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -231,16 +228,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, count() " +
-                            "from trades t " +
-                            "window join prices p " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(sink);
         });
     }
 
@@ -277,12 +267,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "('sym0', 3, '2023-01-01T09:00:02.000000Z');"
             );
 
-            assertQueryAndPlan(
-                    """
-                            s\tts\tavg_y
-                            sym0\t2023-01-01T09:00:00.000000Z\t1.5
-                            """,
-                    """
+            assertQuery("select x.*, avg(y.x) as avg_y " +
+                    "from x " +
+                    "window join y " +
+                    "on (x.s = y.s) " +
+                    " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by x.ts, x.s;")
+                    .withPlan("""
                             Encode sort
                               keys: [ts, s]
                                 Async Window Fast Join workers: 1
@@ -299,17 +290,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
-                                    """,
-                    "select x.*, avg(y.x) as avg_y " +
-                            "from x " +
-                            "window join y " +
-                            "on (x.s = y.s) " +
-                            " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by x.ts, x.s;",
-                    "ts",
-                    true,
-                    false
-            );
+                                    """)
+                    .timestamp("ts")
+                    .returns("""
+                            s\tts\tavg_y
+                            sym0\t2023-01-01T09:00:00.000000Z\t1.5
+                            """);
         });
     }
 
@@ -346,9 +332,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -360,17 +350,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(sink);
 
             // window in the past
             if (!includePrevailing) {
@@ -401,18 +383,15 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQuery(
-                    sink.toString(),
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 2 minute preceding and 1 minute preceding " +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 2 minute preceding and 1 minute preceding " +
+                    "order by t.ts, t.sym;")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(sink.toString());
 
             // window in the future
             if (!includePrevailing) {
@@ -444,18 +423,15 @@ public class WindowJoinTest extends AbstractCairoTest {
                         sink);
             }
 
-            assertQuery(
-                    sink,
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute following and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute following and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(sink);
         });
     }
 
@@ -503,11 +479,223 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantFalseFilterAsyncAggregateOverSplicedColumns() throws Exception {
+        // Aggregating a spliced null column drives the query through the parallel group-by, which asks
+        // ExtraNullColumnCursorFactory for a PAGE FRAME cursor rather than a record cursor. That cursor
+        // used to hand out the master's column mapping verbatim - one entry per master column, none for
+        // the spliced ones - while reporting the full spliced column count everywhere else, so every
+        // consumer that indexes the mapping by query column read past its end.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cfa_trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE cfa_prices (sym SYMBOL, l LONG, l256 LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO cfa_trades VALUES ('a', '2024-01-01T00:00:00.000000Z'), ('a', '2024-01-01T00:01:00.000000Z')");
+            execute("INSERT INTO cfa_prices VALUES ('a', 7, '0x01', '2024-01-01T00:00:00.000000Z')");
+
+            // SelectedRecordCursorFactory.wrap projects the mapping through columnCrossIndex, so a
+            // projection that keeps a spliced column reads the out-of-range entry first.
+            assertQuery("""
+                    SELECT sum(x), count(x), min(x), max(x) FROM (
+                      SELECT t.ts, sum(p.l) x
+                      FROM cfa_trades t WINDOW JOIN cfa_prices p ON (0 = 1)
+                      RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                    )""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum\tcount\tmin\tmax
+                            null\t0\tnull\tnull
+                            """);
+
+            // count() over a spliced LONG256 reaches CountLong256GroupByFunction, whose
+            // Long256Impl.isNull does an unchecked cast - the sibling defect in ExtraNullColumnRecord.
+            // It is only reachable from SQL once the page frame cursor stops throwing.
+            assertQuery("""
+                    SELECT count(s) FROM (
+                      SELECT t.ts, sum(p.l256) s
+                      FROM cfa_trades t WINDOW JOIN cfa_prices p ON (0 = 1)
+                      RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                    )""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
+
+            // EXPLAIN builds the same cursor, so the plan was not inspectable either.
+            assertQuery("""
+                    EXPLAIN SELECT count(x) FROM (
+                      SELECT t.ts, sum(p.l) x
+                      FROM cfa_trades t WINDOW JOIN cfa_prices p ON (0 = 1)
+                      RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                    )""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
+                            QUERY PLAN
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [count(x)]
+                              filter: null
+                                SelectedRecord
+                                    ExtraNullColumnRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cfa_trades
+                            """);
+        });
+    }
+
+    @Test
+    public void testConstantFalseFilterNullPadsDecimalAndVarSizeColumns() throws Exception {
+        // A WINDOW JOIN whose ON filter folds to constant false drops the join entirely and wraps the
+        // master in ExtraNullColumnCursorFactory, which splices one null column per window aggregate.
+        // The spliced columns carry the group-by functions' return types, so a DECIMAL aggregate fell
+        // through to Record's defaults - all six getDecimal* throw UnsupportedOperationException. The
+        // sibling HorizonJoinRecord was audited for exactly this gap; this record was missed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cf_trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    CREATE TABLE cf_prices (
+                      sym SYMBOL,
+                      d8 DECIMAL(2,1), d16 DECIMAL(4,1), d32 DECIMAL(9,2),
+                      d64 DECIMAL(18,2), d128 DECIMAL(38,2), d256 DECIMAL(76,2),
+                      s STRING, v VARCHAR, b BINARY,
+                      ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO cf_trades VALUES ('a', '2024-01-01T00:00:00.000000Z'), ('a', '2024-01-01T00:01:00.000000Z')");
+            execute("""
+                    INSERT INTO cf_prices VALUES ('a', 1.5::decimal(2,1), 2.5::decimal(4,1), 3.25::decimal(9,2),
+                      4.25::decimal(18,2), 5.25::decimal(38,2), 6.25::decimal(76,2), 'str', 'vch', null,
+                      '2024-01-01T00:00:00.000000Z')""");
+
+            // Every DECIMAL width reaches a different getter; all six used to throw.
+            assertQuery("SELECT t.ts, first(p.d8) f8, first(p.d16) f16, first(p.d32) f32, first(p.d64) f64, " +
+                    "first(p.d128) f128, first(p.d256) f256 FROM cf_trades t WINDOW JOIN cf_prices p ON (0 = 1) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tf8\tf16\tf32\tf64\tf128\tf256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t\t\t\t
+                            """);
+
+            // sum/avg widen the DECIMAL, so they land on getDecimal128 / getDecimal64 where first()
+            // on the same column would not.
+            assertQuery("SELECT t.ts, sum(p.d64) s64, avg(p.d64) a64, min(p.d64) m64, max(p.d64) x64 " +
+                    "FROM cf_trades t WINDOW JOIN cf_prices p ON (0 = 1) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\ts64\ta64\tm64\tx64
+                            2024-01-01T00:00:00.000000Z\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t\t
+                            """);
+
+            // length() reads getStrLen straight off the record, so it pins the NULL_LEN contract the
+            // spliced columns used to break by answering 0.
+            assertQuery("SELECT t.ts, first(p.s) fs, first(p.v) fv, length(first(p.s)) ls " +
+                    "FROM cf_trades t WINDOW JOIN cf_prices p ON (0 = 1) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tfs\tfv\tls
+                            2024-01-01T00:00:00.000000Z\t\t\t-1
+                            2024-01-01T00:01:00.000000Z\t\t\t-1
+                            """);
+
+            // EqVarcharFunctionFactory decides IS NULL by comparing getVarcharSize against
+            // TableUtils.NULL_LEN, so answering 0 made a spliced NULL varchar test as NOT NULL - a
+            // wrong result rather than an exception.
+            assertQuery("SELECT ts, fv FROM (SELECT t.ts, first(p.v) fv FROM cf_trades t " +
+                    "WINDOW JOIN cf_prices p ON (0 = 1) RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW) " +
+                    "WHERE fv IS NULL")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tfv
+                            2024-01-01T00:00:00.000000Z\t
+                            2024-01-01T00:01:00.000000Z\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testConstantFalseFilterParquetMasterSplicedColumnsReadNull() throws Exception {
+        // The same truncated column mapping is what PageFrameMemoryPool.resolveParquetColumn consults
+        // to map a query column onto a parquet column. Reading past the mapping picked up a stale slot
+        // that decoded as writer index 0, so on a parquet master partition the spliced NULL column
+        // silently served an unrelated master column's values instead of failing.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cfp_trades (a LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE cfp_prices (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO cfp_trades VALUES
+                      (111, '2024-01-01T00:00:00.000000Z'),
+                      (222, '2024-01-01T00:01:00.000000Z'),
+                      (333, '2024-01-02T00:00:00.000000Z')""");
+            execute("INSERT INTO cfp_prices VALUES (1, '2024-01-01T00:00:00.000000Z')");
+            // Only a non-active partition converts, hence the second day.
+            execute("ALTER TABLE cfp_trades CONVERT PARTITION TO PARQUET WHERE ts = '2024-01-01'");
+            assertQuery("SELECT name, isParquet FROM table_partitions('cfp_trades')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
+                            name\tisParquet
+                            2024-01-01\ttrue
+                            2024-01-02\tfalse
+                            """);
+
+            // Every x is NULL - the join was dropped. Before the fix the two parquet rows answered
+            // cfp_trades.a instead, giving sum=333, count=2, min=111, max=222.
+            assertQuery("""
+                    SELECT sum(x), count(x), min(x), max(x) FROM (
+                      SELECT t.ts, sum(p.l) x
+                      FROM cfp_trades t WINDOW JOIN cfp_prices p ON (0 = 1)
+                      RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                    )""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sum\tcount\tmin\tmax
+                            null\t0\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testCountOnlyWindowJoin() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
-            assertQueryAndPlan(
-                    """
+            assertQuery("select count() " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following" + (includePrevailing ? " include prevailing" : " exclude prevailing"))
+                    .withPlan("Async Window Fast Join workers: 1\n" +
+                            "  vectorized: true\n" +
+                            "  symbol: sym=sym\n" +
+                            "  window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
+                            "  window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trades\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: prices\n")
+                    .noRandomAccess()
+                    .returns("""
                             count
                             3
                             3
@@ -529,27 +717,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             1
                             1
                             1
-                            """,
-                    "Async Window Fast Join workers: 1\n" +
-                            "  vectorized: true\n" +
-                            "  symbol: sym=sym\n" +
-                            "  window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
-                            "  window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: trades\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: prices\n",
-                    "select count() " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following" + (includePrevailing ? " include prevailing" : " exclude prevailing"),
-                    null,
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
@@ -560,14 +728,14 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertPlanNoLeakCheck(
-                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
-                            "FROM trades t " +
-                            "WINDOW JOIN prices p " +
-                            " RANGE BETWEEN price::long seconds PRECEDING AND price::long seconds FOLLOWING " +
-                            (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
-                            "ORDER BY t.ts;",
-                    "Async Window Join workers: 1\n" +
+            assertQuery("SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p " +
+                    " RANGE BETWEEN price::long seconds PRECEDING AND price::long seconds FOLLOWING " +
+                    (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
+                    "ORDER BY t.ts;")
+                    .noLeakCheck()
+                    .assertsPlan("Async Window Join workers: 1\n" +
                             "  vectorized: false\n" +
                             "  window lo: dynamic" + (includePrevailing ? " (include prevailing)\n" : " (exclude prevailing)\n") +
                             "  window hi: dynamic\n" +
@@ -576,8 +744,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        Frame forward scan on: trades\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: prices\n"
-            );
+                            "        Frame forward scan on: prices\n");
         });
     }
 
@@ -622,38 +789,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, sink);
 
             // Async General path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN lo_bound minutes PRECEDING AND hi_bound minutes FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN lo_bound minutes PRECEDING AND hi_bound minutes FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
 
             // ST path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 4) m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN lo_bound minutes PRECEDING AND hi_bound minutes FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 4) m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN lo_bound minutes PRECEDING AND hi_bound minutes FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -710,38 +873,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, sink);
 
             // Async General path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN lo_bound minutes PRECEDING AND hi_bound minutes FOLLOWING
-                            INCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN lo_bound minutes PRECEDING AND hi_bound minutes FOLLOWING
+                    INCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
 
             // ST path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 4) m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN lo_bound minutes PRECEDING AND hi_bound minutes FOLLOWING
-                            INCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 4) m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN lo_bound minutes PRECEDING AND hi_bound minutes FOLLOWING
+                    INCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -787,38 +946,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, sink);
 
             // Async General path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
 
             // ST path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 4) m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 4) m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -874,38 +1029,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, sink);
 
             // Async General path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
-                            INCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                    INCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
 
             // ST path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 4) m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
-                            INCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 4) m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                    INCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -917,15 +1068,15 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
             // With symbol ON key but dynamic bound, should use General path not Fast path.
-            assertPlanNoLeakCheck(
-                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
-                            "FROM trades t " +
-                            "WINDOW JOIN prices p " +
-                            "ON (t.sym = p.sym) " +
-                            " RANGE BETWEEN price::long seconds PRECEDING AND 1 minute FOLLOWING " +
-                            (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
-                            "ORDER BY t.ts, t.sym;",
-                    "Encode sort\n" +
+            assertQuery("SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p " +
+                    "ON (t.sym = p.sym) " +
+                    " RANGE BETWEEN price::long seconds PRECEDING AND 1 minute FOLLOWING " +
+                    (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
+                    "ORDER BY t.ts, t.sym;")
+                    .noLeakCheck()
+                    .assertsPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Join workers: 1\n" +
                             "      vectorized: false\n" +
@@ -937,8 +1088,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n"
-            );
+                            "            Frame forward scan on: prices\n");
         });
     }
 
@@ -984,40 +1134,36 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, sink);
 
             // Async General path (ON key + dynamic bound)
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.sym, m.bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            ON (m.sym = s.sym)
-                            RANGE BETWEEN bound minutes PRECEDING AND CURRENT ROW
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.sym, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    ON (m.sym = s.sym)
+                    RANGE BETWEEN bound minutes PRECEDING AND CURRENT ROW
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
 
             // ST path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.sym, m.bound, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 4) m
-                            WINDOW JOIN slave s
-                            ON (m.sym = s.sym)
-                            RANGE BETWEEN bound minutes PRECEDING AND CURRENT ROW
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.sym, m.bound, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 4) m
+                    WINDOW JOIN slave s
+                    ON (m.sym = s.sym)
+                    RANGE BETWEEN bound minutes PRECEDING AND CURRENT ROW
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -1076,40 +1222,36 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, sink);
 
             // Async General path (ON key + dynamic bound + prevailing)
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.sym, m.bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            ON (m.sym = s.sym)
-                            RANGE BETWEEN bound minutes PRECEDING AND CURRENT ROW
-                            INCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.sym, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    ON (m.sym = s.sym)
+                    RANGE BETWEEN bound minutes PRECEDING AND CURRENT ROW
+                    INCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
 
             // ST path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.sym, m.bound, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 4) m
-                            WINDOW JOIN slave s
-                            ON (m.sym = s.sym)
-                            RANGE BETWEEN bound minutes PRECEDING AND CURRENT ROW
-                            INCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.sym, m.bound, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 4) m
+                    WINDOW JOIN slave s
+                    ON (m.sym = s.sym)
+                    RANGE BETWEEN bound minutes PRECEDING AND CURRENT ROW
+                    INCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -1121,14 +1263,14 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
             // Dynamic bound with time unit in the plan.
-            assertPlanNoLeakCheck(
-                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
-                            "FROM trades t " +
-                            "WINDOW JOIN prices p " +
-                            " RANGE BETWEEN t.price::long minutes PRECEDING AND 1 minute FOLLOWING " +
-                            (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
-                            "ORDER BY t.ts;",
-                    "Async Window Join workers: 1\n" +
+            assertQuery("SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p " +
+                    " RANGE BETWEEN t.price::long minutes PRECEDING AND 1 minute FOLLOWING " +
+                    (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
+                    "ORDER BY t.ts;")
+                    .noLeakCheck()
+                    .assertsPlan("Async Window Join workers: 1\n" +
                             "  vectorized: false\n" +
                             "  window lo: dynamic" + (includePrevailing ? " (include prevailing)\n" : " (exclude prevailing)\n") +
                             "  window hi: 60000000 following\n" +
@@ -1137,8 +1279,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        Frame forward scan on: trades\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: prices\n"
-            );
+                            "        Frame forward scan on: prices\n");
         });
     }
 
@@ -1150,14 +1291,14 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
             // Dynamic bound without time unit (raw microseconds).
-            assertPlanNoLeakCheck(
-                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
-                            "FROM trades t " +
-                            "WINDOW JOIN prices p " +
-                            " RANGE BETWEEN t.price::long PRECEDING AND 60_000_000 FOLLOWING " +
-                            (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
-                            "ORDER BY t.ts;",
-                    "Async Window Join workers: 1\n" +
+            assertQuery("SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p " +
+                    " RANGE BETWEEN t.price::long PRECEDING AND 60_000_000 FOLLOWING " +
+                    (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
+                    "ORDER BY t.ts;")
+                    .noLeakCheck()
+                    .assertsPlan("Async Window Join workers: 1\n" +
                             "  vectorized: false\n" +
                             "  window lo: dynamic" + (includePrevailing ? " (include prevailing)\n" : " (exclude prevailing)\n") +
                             "  window hi: 60000000 following\n" +
@@ -1166,8 +1307,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        Frame forward scan on: trades\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: prices\n"
-            );
+                            "        Frame forward scan on: prices\n");
         });
     }
 
@@ -1213,38 +1353,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, sink);
 
             // Async General path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN coalesce(m.bound, 0, 0) minutes PRECEDING AND CURRENT ROW
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN coalesce(m.bound, 0, 0) minutes PRECEDING AND CURRENT ROW
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
 
             // ST path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 3) m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN coalesce(m.bound, 0, 0) minutes PRECEDING AND CURRENT ROW
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 3) m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN coalesce(m.bound, 0, 0) minutes PRECEDING AND CURRENT ROW
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -1255,14 +1391,14 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertPlanNoLeakCheck(
-                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
-                            "FROM trades t " +
-                            "WINDOW JOIN prices p " +
-                            " RANGE BETWEEN 1 minute PRECEDING AND t.price::long seconds FOLLOWING " +
-                            (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
-                            "ORDER BY t.ts;",
-                    "Async Window Join workers: 1\n" +
+            assertQuery("SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p " +
+                    " RANGE BETWEEN 1 minute PRECEDING AND t.price::long seconds FOLLOWING " +
+                    (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
+                    "ORDER BY t.ts;")
+                    .noLeakCheck()
+                    .assertsPlan("Async Window Join workers: 1\n" +
                             "  vectorized: false\n" +
                             "  window lo: 60000000 preceding" + (includePrevailing ? " (include prevailing)\n" : " (exclude prevailing)\n") +
                             "  window hi: dynamic\n" +
@@ -1271,8 +1407,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        Frame forward scan on: trades\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: prices\n"
-            );
+                            "        Frame forward scan on: prices\n");
         });
     }
 
@@ -1283,14 +1418,14 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertPlanNoLeakCheck(
-                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
-                            "FROM trades t " +
-                            "WINDOW JOIN prices p " +
-                            " RANGE BETWEEN price::long seconds PRECEDING AND 1 minute FOLLOWING " +
-                            (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
-                            "ORDER BY t.ts;",
-                    "Async Window Join workers: 1\n" +
+            assertQuery("SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p " +
+                    " RANGE BETWEEN price::long seconds PRECEDING AND 1 minute FOLLOWING " +
+                    (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
+                    "ORDER BY t.ts;")
+                    .noLeakCheck()
+                    .assertsPlan("Async Window Join workers: 1\n" +
                             "  vectorized: false\n" +
                             "  window lo: dynamic" + (includePrevailing ? " (include prevailing)\n" : " (exclude prevailing)\n") +
                             "  window hi: 60000000 following\n" +
@@ -1299,8 +1434,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        Frame forward scan on: trades\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: prices\n"
-            );
+                            "        Frame forward scan on: prices\n");
         });
     }
 
@@ -1343,39 +1477,35 @@ public class WindowJoinTest extends AbstractCairoTest {
                     ORDER BY m.ts
                     """, sink);
 
-            // Async General path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN (lo_bound + 1) minutes PRECEDING AND (hi_bound * 2) minutes FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            // Async General path: the INT expressions are evaluated at INT width and accepted.
+            assertQuery("""
+                    SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN (lo_bound + 1) minutes PRECEDING AND (hi_bound * 2) minutes FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
 
             // ST path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 4) m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN (lo_bound + 1) minutes PRECEDING AND (hi_bound * 2) minutes FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 4) m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN (lo_bound + 1) minutes PRECEDING AND (hi_bound * 2) minutes FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -1387,14 +1517,12 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertExceptionNoLeakCheck(
-                    "SELECT t.ts, sum(p.price) AS agg " +
-                            "FROM trades t " +
-                            "WINDOW JOIN prices p " +
-                            " RANGE BETWEEN 1 minute PRECEDING AND nonexistent_func(1) seconds FOLLOWING;",
-                    106,
-                    "unknown function name"
-            );
+            assertQuery("SELECT t.ts, sum(p.price) AS agg " +
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p " +
+                    " RANGE BETWEEN 1 minute PRECEDING AND nonexistent_func(1) seconds FOLLOWING;")
+                    .noLeakCheck()
+                    .fails(106, "unknown function name");
         });
     }
 
@@ -1406,14 +1534,12 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertExceptionNoLeakCheck(
-                    "SELECT t.ts, sum(p.price) AS agg " +
-                            "FROM trades t " +
-                            "WINDOW JOIN prices p " +
-                            " RANGE BETWEEN nonexistent_func(1) seconds PRECEDING AND 1 minute FOLLOWING;",
-                    83,
-                    "unknown function name"
-            );
+            assertQuery("SELECT t.ts, sum(p.price) AS agg " +
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p " +
+                    " RANGE BETWEEN nonexistent_func(1) seconds PRECEDING AND 1 minute FOLLOWING;")
+                    .noLeakCheck()
+                    .fails(83, "unknown function name");
         });
     }
 
@@ -1424,14 +1550,12 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertExceptionNoLeakCheck(
-                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
-                            "FROM trades t " +
-                            "WINDOW JOIN prices p " +
-                            " RANGE BETWEEN 'invalid' PRECEDING AND 1 minute FOLLOWING;",
-                    108,
-                    "integer expression expected"
-            );
+            assertQuery("SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p " +
+                    " RANGE BETWEEN 'invalid' PRECEDING AND 1 minute FOLLOWING;")
+                    .noLeakCheck()
+                    .fails(108, "integer expression expected");
         });
     }
 
@@ -1442,15 +1566,13 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertExceptionNoLeakCheck(
-                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
-                            "FROM trades t " +
-                            "WINDOW JOIN prices p " +
-                            "ON (t.sym = p.sym) " +
-                            " RANGE BETWEEN p.price::long PRECEDING AND 1 minute FOLLOWING;",
-                    127,
-                    "RANGE BETWEEN expression must not reference right table columns"
-            );
+            assertQuery("SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p " +
+                    "ON (t.sym = p.sym) " +
+                    " RANGE BETWEEN p.price::long PRECEDING AND 1 minute FOLLOWING;")
+                    .noLeakCheck()
+                    .fails(127, "RANGE BETWEEN expression must not reference right table columns");
         });
     }
 
@@ -1462,15 +1584,13 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertExceptionNoLeakCheck(
-                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
-                            "FROM trades t " +
-                            "WINDOW JOIN prices p " +
-                            "ON (t.sym = p.sym) " +
-                            " RANGE BETWEEN coalesce(p.price::long, 0, 0) PRECEDING AND 1 minute FOLLOWING;",
-                    136,
-                    "RANGE BETWEEN expression must not reference right table columns"
-            );
+            assertQuery("SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p " +
+                    "ON (t.sym = p.sym) " +
+                    " RANGE BETWEEN coalesce(p.price::long, 0, 0) PRECEDING AND 1 minute FOLLOWING;")
+                    .noLeakCheck()
+                    .fails(136, "RANGE BETWEEN expression must not reference right table columns");
         });
     }
 
@@ -1513,38 +1633,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, sink);
 
             // Async General path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN 1 minute PRECEDING AND bound minutes FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 1 minute PRECEDING AND bound minutes FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
 
             // ST path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 4) m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN 1 minute PRECEDING AND bound minutes FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 4) m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 1 minute PRECEDING AND bound minutes FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -1597,38 +1713,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, sink);
 
             // Async General path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN 1 minute PRECEDING AND bound minutes FOLLOWING
-                            INCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 1 minute PRECEDING AND bound minutes FOLLOWING
+                    INCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
 
             // ST path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 4) m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN 1 minute PRECEDING AND bound minutes FOLLOWING
-                            INCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 4) m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 1 minute PRECEDING AND bound minutes FOLLOWING
+                    INCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -1677,22 +1789,20 @@ public class WindowJoinTest extends AbstractCairoTest {
             // No ST path here: LIMIT on master prevents the WHERE from becoming
             // a masterFilter in the reducer, so the ST path is not useful for
             // exercising FILTER_AND_AGGREGATE_DYNAMIC.
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN bound minutes PRECEDING AND CURRENT ROW
-                            EXCLUDE PREVAILING
-                            WHERE m.bound > 1
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN bound minutes PRECEDING AND CURRENT ROW
+                    EXCLUDE PREVAILING
+                    WHERE m.bound > 1
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -1738,38 +1848,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, sink);
 
             // Async General path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN lo_bound minutes PRECEDING AND hi_bound minutes FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN lo_bound minutes PRECEDING AND hi_bound minutes FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
 
             // ST path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 4) m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN lo_bound minutes PRECEDING AND hi_bound minutes FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 4) m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN lo_bound minutes PRECEDING AND hi_bound minutes FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -1811,38 +1917,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, sink);
 
             // Async General path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
 
             // ST path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 4) m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 4) m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -1899,38 +2001,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, sink);
 
             // Async General path (no ON key, dynamic bound)
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
 
             // ST path (LIMIT on master forces non-async)
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 4) m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 4) m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -1988,38 +2086,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, sink);
 
             // Async General path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
-                            INCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                    INCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
 
             // ST path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 4) m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
-                            INCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 4) m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                    INCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -2063,38 +2157,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, sink);
 
             // Async General path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
 
             // ST path (LIMIT on master forces non-async)
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 4) m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 4) m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -2146,38 +2236,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, sink);
 
             // Async General path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
-                            INCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                    INCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
 
             // ST path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 4) m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
-                            INCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 4) m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                    INCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -2219,38 +2305,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, sink);
 
             // Async General path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN 0 seconds PRECEDING AND bound minutes FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 0 seconds PRECEDING AND bound minutes FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
 
             // ST path
-            assertQueryNoLeakCheck(
-                    sink.toString(),
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 4) m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN 0 seconds PRECEDING AND bound minutes FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 4) m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 0 seconds PRECEDING AND bound minutes FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(sink.toString());
         });
     }
 
@@ -2294,38 +2376,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """;
 
             // Async General path
-            assertQueryNoLeakCheck(
-                    expected,
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN 0 seconds PRECEDING AND bound seconds FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 0 seconds PRECEDING AND bound seconds FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(expected);
 
             // ST path
-            assertQueryNoLeakCheck(
-                    expected,
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 3) m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN 0 seconds PRECEDING AND bound seconds FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 3) m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 0 seconds PRECEDING AND bound seconds FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(expected);
         });
     }
 
@@ -2369,38 +2447,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """;
 
             // Async General path
-            assertQueryNoLeakCheck(
-                    expected,
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM master m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN bound seconds PRECEDING AND 0 seconds FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN bound seconds PRECEDING AND 0 seconds FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(expected);
 
             // ST path
-            assertQueryNoLeakCheck(
-                    expected,
-                    """
-                            SELECT m.ts, m.bound, sum(s.val) AS agg
-                            FROM (SELECT * FROM master LIMIT 3) m
-                            WINDOW JOIN slave s
-                            RANGE BETWEEN bound seconds PRECEDING AND 0 seconds FOLLOWING
-                            EXCLUDE PREVAILING
-                            ORDER BY m.ts
-                            """,
-                    "ts",
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM (SELECT * FROM master LIMIT 3) m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN bound seconds PRECEDING AND 0 seconds FOLLOWING
+                    EXCLUDE PREVAILING
+                    ORDER BY m.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(expected);
         });
     }
 
@@ -2408,6 +2482,7 @@ public class WindowJoinTest extends AbstractCairoTest {
     public void testFastJoinWithJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
+            final boolean isMixedTimestampPrecision = leftTableTimestampType.getTimestampType() != rightTableTimestampType.getTimestampType();
             if (!includePrevailing) {
                 printSql("select t.sym, t.price, t.ts, avg(p.price) window_price " +
                         "from trades t " +
@@ -2436,9 +2511,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.price, t.ts, avg(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) and p.price < 300 " +
+                    " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: false\n" +
@@ -2451,17 +2530,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, avg(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) and p.price < 300 " +
-                            " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(sink);
 
             if (!includePrevailing) {
                 printSql("select t.sym, t.price, t.ts, avg(p.price) window_price " +
@@ -2491,9 +2562,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.price, t.ts, avg(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -2505,17 +2580,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, avg(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(sink);
 
             if (!includePrevailing) {
                 printSql("select t.sym, t.price, t.ts, avg(p.price) window_price " +
@@ -2545,9 +2612,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.price, t.ts, avg(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (p.price < 200 or p.price > 300 ) AND (t.sym = p.sym) " +
+                    " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: false\n" +
@@ -2560,17 +2631,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, avg(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (p.price < 200 or p.price > 300 ) AND (t.sym = p.sym) " +
-                            " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(sink);
 
             if (!includePrevailing) {
                 printSql("select t.sym, t.price, t.ts, avg(p.price) window_price " +
@@ -2600,9 +2663,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.price, t.ts, avg(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on p.price < 200 and p.price > 300 AND (t.sym = p.sym) " +
+                    " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: false\n" +
@@ -2615,17 +2682,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, avg(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on p.price < 200 and p.price > 300 AND (t.sym = p.sym) " +
-                            " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(sink);
 
             // with join filter and master filter
             if (!includePrevailing) {
@@ -2656,9 +2715,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.price, t.ts, avg(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on p.ts > 1000 AND (t.sym = p.sym) and p.price < 300 and p.sym != 'AAAAAA'" +
+                    " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    " where t.ts > 1000 " +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: false\n" +
@@ -2672,21 +2736,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "1970-01-01T00:00:00.001001Z" : "1970-01-01T00:00:00.000001001Z") + "\",\"MAX\")]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            (includePrevailing ? "            Frame forward scan on: prices\n" :
+                            (includePrevailing || isMixedTimestampPrecision ? "            Frame forward scan on: prices\n" :
                                     "            Interval forward scan on: prices\n" +
-                                            "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "1969-12-31T23:58:00.001001Z" : "1969-12-31T23:58:00.001001000Z")
-                                            : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "1969-12-31T23:58:00.000001Z" : "1969-12-31T23:58:00.000001001Z")) + "\",\"MAX\")]\n"),
-                    "select t.sym, t.price, t.ts, avg(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on p.ts > 1000 AND (t.sym = p.sym) and p.price < 300 and p.sym != 'AAAAAA'" +
-                            " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            " where t.ts > 1000 " +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                                    "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "1969-12-31T23:58:00.001001Z" : "1969-12-31T23:58:00.001001000Z")
+                                                                       : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "1969-12-31T23:58:00.000001Z" : "1969-12-31T23:58:00.000001001Z")) + "\",\"MAX\")]\n"))
+                    .timestamp("ts")
+                    .returns(sink);
         });
     }
 
@@ -2723,9 +2778,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.price, t.ts, avg(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    " where t.price < 300 " +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -2738,18 +2798,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, avg(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            " where t.price < 300 " +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(sink);
 
             if (!includePrevailing) {
                 printSql("select t.sym, t.ts, count(), max(p.ts) " +
@@ -2779,9 +2830,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.ts, count(), max(p.ts) " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    " where t.price < 300 " +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -2794,18 +2850,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.sym, t.ts, count(), max(p.ts) " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            " where t.price < 300 " +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(sink);
         });
     }
 
@@ -2853,12 +2900,14 @@ public class WindowJoinTest extends AbstractCairoTest {
             // max(concat(r.val, '')) forces non-vectorized path.
             // With prevailing: vals are 99, 20, 30 -> max("99") = "99".
             // Without prevailing (bug): vals are 20, 30 -> max("30") = "30".
-            assertQueryAndPlan(
-                    """
-                            ts\tsym\tf
-                            2023-01-01T09:05:00.000000Z\tA\t99
-                            """,
-                    """
+            assertQuery("""
+                    SELECT l.ts, l.sym, max(concat(r.val, '')) AS f
+                    FROM left_t l
+                    WINDOW JOIN right_t r ON (l.sym = r.sym)
+                    RANGE BETWEEN 2 MINUTES PRECEDING AND 2 MINUTES FOLLOWING
+                    INCLUDE PREVAILING
+                    """)
+                    .withPlan("""
                             Window Fast Join
                               vectorized: false
                               symbol: sym=sym
@@ -2870,26 +2919,24 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: right_t
-                            """,
-                    """
-                            SELECT l.ts, l.sym, max(concat(r.val, '')) AS f
-                            FROM left_t l
-                            WINDOW JOIN right_t r ON (l.sym = r.sym)
-                            RANGE BETWEEN 2 MINUTES PRECEDING AND 2 MINUTES FOLLOWING
-                            INCLUDE PREVAILING
-                            """,
-                    "ts",
-                    false,
-                    true
-            );
+                            """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tf
+                            2023-01-01T09:05:00.000000Z\tA\t99
+                            """);
 
             // Cross-check with vectorized count(*): 3 rows (prevailing + 2 window).
-            assertQueryAndPlan(
-                    """
-                            ts\tsym\tcnt
-                            2023-01-01T09:05:00.000000Z\tA\t3
-                            """,
-                    """
+            assertQuery("""
+                    SELECT l.ts, l.sym, count(*) AS cnt
+                    FROM left_t l
+                    WINDOW JOIN right_t r ON (l.sym = r.sym)
+                    RANGE BETWEEN 2 MINUTES PRECEDING AND 2 MINUTES FOLLOWING
+                    INCLUDE PREVAILING
+                    """)
+                    .withPlan("""
                             Window Fast Join
                               vectorized: true
                               symbol: sym=sym
@@ -2901,18 +2948,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: right_t
-                            """,
-                    """
-                            SELECT l.ts, l.sym, count(*) AS cnt
-                            FROM left_t l
-                            WINDOW JOIN right_t r ON (l.sym = r.sym)
-                            RANGE BETWEEN 2 MINUTES PRECEDING AND 2 MINUTES FOLLOWING
-                            INCLUDE PREVAILING
-                            """,
-                    "ts",
-                    false,
-                    true
-            );
+                            """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tcnt
+                            2023-01-01T09:05:00.000000Z\tA\t3
+                            """);
         });
     }
 
@@ -2962,8 +3005,31 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "('sym0', 9.0, '2023-01-08T09:00:04.000000Z');"
             );
 
-            assertQueryAndPlan(
-                    includePrevailing ? """
+            assertQuery("select t.sym, t.price, t.ts, first(p.bid) as first, avg(p.bid) as avg " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("""
+                            Encode sort
+                              keys: [ts, sym]
+                                Async Window Fast Join workers: 1
+                                  vectorized: true
+                                  symbol: sym=sym
+                            """ +
+                            "      window lo: 60000000 preceding" + (includePrevailing ? " (include prevailing)\n" : " (exclude prevailing)\n") +
+                            """
+                                          window hi: 60000000 following
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: prices
+                                    """)
+                    .timestamp("ts")
+                    .returns(includePrevailing ? """
                             sym	price	ts	first	avg
                             sym0	1.0	2023-01-01T08:59:56.000000Z	null	null
                             sym0	2.0	2023-01-01T08:59:57.000000Z	null	null
@@ -2986,34 +3052,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             sym0	7.0	2023-01-07T09:00:02.000000Z	null	null
                             sym0	8.0	2023-01-07T09:00:03.000000Z	null	null
                             sym0	9.0	2023-01-09T09:00:04.000000Z	null	null
-                            """,
-                    """
-                            Encode sort
-                              keys: [ts, sym]
-                                Async Window Fast Join workers: 1
-                                  vectorized: true
-                                  symbol: sym=sym
-                            """ +
-                            "      window lo: 60000000 preceding" + (includePrevailing ? " (include prevailing)\n" : " (exclude prevailing)\n") +
-                            """
-                                          window hi: 60000000 following
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: trades
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: prices
-                                    """,
-                    "select t.sym, t.price, t.ts, first(p.bid) as first, avg(p.bid) as avg " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -3089,21 +3128,18 @@ public class WindowJoinTest extends AbstractCairoTest {
                         sink);
             }
 
-            assertQuery(
-                    sink,
-                    String.format("""
-                                    SELECT t.sym, t.price, t.ts, count(p.price) AS window_price
-                                    FROM trades t
-                                    WINDOW JOIN prices p
-                                    ON p.price > 0
-                                       RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
-                                    ORDER BY t.ts, t.sym
-                                    """,
-                            includePrevailing ? "include" : "exclude"),
-                    "ts",
-                    true,
-                    false
-            );
+            assertQuery(String.format("""
+                            SELECT t.sym, t.price, t.ts, count(p.price) AS window_price
+                            FROM trades t
+                            WINDOW JOIN prices p
+                            ON p.price > 0
+                               RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                            ORDER BY t.ts, t.sym
+                            """,
+                    includePrevailing ? "include" : "exclude"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(sink);
         });
     }
 
@@ -3179,21 +3215,18 @@ public class WindowJoinTest extends AbstractCairoTest {
                         sink);
             }
 
-            assertQuery(
-                    sink,
-                    String.format("""
-                                    SELECT t.sym, t.price, t.ts, count(p.price) AS window_price
-                                    FROM (select * from trades where price > 0) t
-                                    WINDOW JOIN prices p
-                                    ON p.price > 0
-                                       RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
-                                    ORDER BY t.ts, t.sym
-                                    """,
-                            includePrevailing ? "include" : "exclude"),
-                    "ts",
-                    true,
-                    false
-            );
+            assertQuery(String.format("""
+                            SELECT t.sym, t.price, t.ts, count(p.price) AS window_price
+                            FROM (select * from trades where price > 0) t
+                            WINDOW JOIN prices p
+                            ON p.price > 0
+                               RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                            ORDER BY t.ts, t.sym
+                            """,
+                    includePrevailing ? "include" : "exclude"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(sink);
         });
     }
 
@@ -3231,20 +3264,18 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "('2023-01-01T09:01:00.000000Z', 'A', 5);"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select x.ts, x.sym, sum(y.val) " +
+                    "from x " +
+                    "window join y on (x.sym = y.sym and y.val = 5) " +
+                    "range between 1 minute preceding and 1 minute following " +
+                    (includePrevailing ? "include prevailing" : "exclude prevailing"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tsym\tsum
                             2023-01-01T09:01:00.000000Z\tA\t10
-                            """,
-                    "select x.ts, x.sym, sum(y.val) " +
-                            "from x " +
-                            "window join y on (x.sym = y.sym and y.val = 5) " +
-                            "range between 1 minute preceding and 1 minute following " +
-                            (includePrevailing ? "include prevailing" : "exclude prevailing"),
-                    "ts",
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
@@ -3285,20 +3316,18 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "('2023-01-01T09:01:00.000000Z', 'A', 3);"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select x.ts, x.sym, sum(y.val) " +
+                    "from x " +
+                    "window join y on (x.sym = y.sym and y.val > 1) " +
+                    "range between 1 minute preceding and 1 minute following " +
+                    (includePrevailing ? "include prevailing" : "exclude prevailing"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tsym\tsum
                             2023-01-01T09:01:00.000000Z\tA\t5
-                            """,
-                    "select x.ts, x.sym, sum(y.val) " +
-                            "from x " +
-                            "window join y on (x.sym = y.sym and y.val > 1) " +
-                            "range between 1 minute preceding and 1 minute following " +
-                            (includePrevailing ? "include prevailing" : "exclude prevailing"),
-                    "ts",
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
@@ -3338,20 +3367,18 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "('2023-01-01T09:01:00.000000Z', 1, 30);"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select x.ts, x.id, sum(y.val) " +
+                    "from x " +
+                    "window join y on (x.id = y.id and y.val > 10) " +
+                    "range between 1 minute preceding and 1 minute following " +
+                    (includePrevailing ? "include prevailing" : "exclude prevailing"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tid\tsum
                             2023-01-01T09:01:00.000000Z\t1\t50
-                            """,
-                    "select x.ts, x.id, sum(y.val) " +
-                            "from x " +
-                            "window join y on (x.id = y.id and y.val > 10) " +
-                            "range between 1 minute preceding and 1 minute following " +
-                            (includePrevailing ? "include prevailing" : "exclude prevailing"),
-                    "ts",
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
@@ -3390,22 +3417,18 @@ public class WindowJoinTest extends AbstractCairoTest {
             // Window covers all data, so prevailing has no effect.
             // TSLA at day3 12:00: window matches TSLA in [~Dec30, day3 12:00+1s] → 10.0 + 30.0 = 40.0
             // AMZN at day3 18:00: window matches AMZN in [~Dec30, day3 18:00+1s] → 20.0 + 40.0 = 60.0
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT t.sym, t.price, sum(p.price) AS window_price " +
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 100 hour PRECEDING AND 1 second FOLLOWING " +
+                    (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
+                    "ORDER BY t.ts")
+                    .noLeakCheck()
+                    .returns("""
                             sym\tprice\twindow_price
                             TSLA\t100.0\t40.0
                             AMZN\t200.0\t60.0
-                            """,
-                    "SELECT t.sym, t.price, sum(p.price) AS window_price " +
-                            "FROM trades t " +
-                            "WINDOW JOIN prices p ON (t.sym = p.sym) " +
-                            "RANGE BETWEEN 100 hour PRECEDING AND 1 second FOLLOWING " +
-                            (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
-                            "ORDER BY t.ts",
-                    null,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -3457,11 +3480,16 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
 
             String whatToDoWithPrevailing = includePrevailing ? "include" : "exclude";
-            assertQueryAndPlan(
-                    """
-                            sym\tprice\tts\tfirst\tavg
+            assertQuery(String.format("""
+                            SELECT t.sym, t.price, t.ts, first(p.bid) AS first, avg(p.bid) AS avg
+                            FROM (trades WHERE price > 5 LIMIT 5, 9) t
+                            WINDOW JOIN prices p
+                            ON (t.sym = p.sym)
+                                RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                            ORDER BY t.ts, t.sym
                             """,
-                    String.format("""
+                    whatToDoWithPrevailing))
+                    .withPlan(String.format("""
                             Encode sort
                               keys: [ts, sym]
                                 Window Fast Join
@@ -3478,20 +3506,11 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: prices
-                            """, whatToDoWithPrevailing),
-                    String.format("""
-                                    SELECT t.sym, t.price, t.ts, first(p.bid) AS first, avg(p.bid) AS avg
-                                    FROM (trades WHERE price > 5 LIMIT 5, 9) t
-                                    WINDOW JOIN prices p
-                                    ON (t.sym = p.sym)
-                                        RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
-                                    ORDER BY t.ts, t.sym
-                                    """,
-                            whatToDoWithPrevailing),
-                    "ts",
-                    true,
-                    false
-            );
+                            """, whatToDoWithPrevailing))
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tprice\tts\tfirst\tavg
+                            """);
         });
 
     }
@@ -3500,6 +3519,7 @@ public class WindowJoinTest extends AbstractCairoTest {
     public void testMasterHasIntervalFilter() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
+            final boolean isMixedTimestampPrecision = leftTableTimestampType.getTimestampType() != rightTableTimestampType.getTimestampType();
             if (!includePrevailing) {
                 printSql("select t.sym, t.price, t.ts, sum(p.price) window_price " +
                         "from (select * from trades where ts <= '2023-01-01T09:04:00.000000Z') t " +
@@ -3529,9 +3549,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    " where t.ts <= '2023-01-01T09:04:00.000000Z' " +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -3544,23 +3569,21 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "              intervals: [(\"MIN\",\"2023-01-01T09:04:00." + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000000Z" : "000000000Z") + "\")]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Interval forward scan on: prices\n" +
-                            "              intervals: [(\"MIN\",\"" + (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:05:00.000000Z" : "2023-01-01T09:05:00.000000000Z") + "\")]\n",
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            " where t.ts <= '2023-01-01T09:04:00.000000Z' " +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            (isMixedTimestampPrecision
+                                    ? "            Frame forward scan on: prices\n"
+                                    : "            Interval forward scan on: prices\n" +
+                                      "              intervals: [(\"MIN\",\"" + (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:05:00.000000Z" : "2023-01-01T09:05:00.000000000Z") + "\")]\n"))
+                    .timestamp("ts")
+                    .returns(sink);
 
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("declare @x := '2023-01-01T09:04:00.000000Z' select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym)  " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    " where t.ts <= @x " +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -3573,19 +3596,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "              intervals: [(\"MIN\",\"2023-01-01T09:04:00." + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000000Z" : "000000000Z") + "\")]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Interval forward scan on: prices\n" +
-                            "              intervals: [(\"MIN\",\"" + (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:05:00.000000Z" : "2023-01-01T09:05:00.000000000Z") + "\")]\n",
-                    "declare @x := '2023-01-01T09:04:00.000000Z' select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym)  " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            " where t.ts <= @x " +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            (isMixedTimestampPrecision
+                                    ? "            Frame forward scan on: prices\n"
+                                    : "            Interval forward scan on: prices\n" +
+                                      "              intervals: [(\"MIN\",\"" + (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:05:00.000000Z" : "2023-01-01T09:05:00.000000000Z") + "\")]\n"))
+                    .timestamp("ts")
+                    .returns(sink);
 
             if (!includePrevailing) {
                 printSql("select t.sym, t.price, t.ts, sum(p.price) window_price " +
@@ -3616,9 +3632,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym)  " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    " where t.ts > '2023-01-01T09:04:00.000000Z'" +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -3631,22 +3652,97 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "              intervals: [(\"2023-01-01T09:04:00." + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000001Z" : "000000001Z") + "\",\"MAX\")]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            (includePrevailing ?
+                            (includePrevailing || isMixedTimestampPrecision ?
                                     "            Frame forward scan on: prices\n"
                                     : "            Interval forward scan on: prices\n" +
-                                    "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:03:00.000001Z" : "2023-01-01T09:03:00.000001000Z")
-                                    : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:03:00.000000Z" : "2023-01-01T09:03:00.000000001Z")) + "\",\"MAX\")]\n"),
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym)  " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            " where t.ts > '2023-01-01T09:04:00.000000Z'" +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                                      "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:03:00.000001Z" : "2023-01-01T09:03:00.000001000Z")
+                                                                         : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:03:00.000000Z" : "2023-01-01T09:03:00.000000001Z")) + "\",\"MAX\")]\n"))
+                    .timestamp("ts")
+                    .returns(sink);
+        });
+    }
+
+    @Test
+    public void testMasterHasIntervalFilterHiOverflowKeepsSlaveRows() throws Exception {
+        // A master designated-timestamp filter pushes a finite interval hi into the slave's
+        // page-frame scan, shifted by the window's hi offset. When that shift overflows (a master
+        // bound near Long.MAX plus a FOLLOWING offset) the slave interval used to wrap to an early
+        // bound and drop real slave rows. offsetIntervalHi now clamps to the open sentinel, so the
+        // slave is fully scanned and the window keeps its rows.
+        //
+        // The rows live at a modest date (so the per-row window hi does not overflow); only the
+        // filter bound sits near the nano max, isolating the interval-pushdown overflow.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.NANO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.NANO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (val DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute("INSERT INTO master(val, ts) VALUES (1.0, '2020-01-01T00:00:05.000000000Z'::TIMESTAMP_NS)");
+            execute("INSERT INTO slave(val, ts) VALUES (3.0, '2020-01-01T00:00:08.000000000Z'::TIMESTAMP_NS)");
+
+            // The bound at :12 sits ~4.85s below the nano max (2262-04-11T23:47:16.854775807Z), so
+            // the 10s FOLLOWING offset overflows it. The slave at :08 falls in the master row's
+            // window [:05, :15], so the aggregate is 3.0. Before the clamp the slave interval wrapped
+            // to a year-1677 bound and dropped the row, so agg came back null.
+            assertQuery("""
+                    SELECT m.ts, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 0 seconds PRECEDING AND 10 seconds FOLLOWING
+                    EXCLUDE PREVAILING
+                    WHERE m.ts <= '2262-04-11T23:47:12.000000000Z'::TIMESTAMP_NS
+                    ORDER BY m.ts
+                    """)
+                    .withPlanContaining("Frame forward scan on: slave")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("ts\tagg\n2020-01-01T00:00:05.000000000Z\t3.0\n");
+        });
+    }
+
+    @Test
+    public void testMasterHasIntervalFilterLoUnderflowKeepsSlaveRows() throws Exception {
+        // Mirror of testMasterHasIntervalFilterHiOverflowKeepsSlaveRows for the PRECEDING/lo side.
+        // A master designated-timestamp lower-bound filter pushes a finite interval lo into the
+        // slave's page-frame scan, shifted back by the window's PRECEDING offset. When that subtract
+        // underflows (a master bound near Long.MIN minus a PRECEDING offset) the slave interval used
+        // to wrap to a late bound and drop real slave rows. offsetIntervalLo now clamps to the open
+        // lower sentinel (LONG_NULL), so the slave is fully scanned and the window keeps its rows.
+        //
+        // The rows live at a modest date (so the per-row window lo does not underflow); only the
+        // filter bound sits near the nano min, isolating the interval-pushdown underflow.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.NANO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.NANO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (val DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute("INSERT INTO master(val, ts) VALUES (1.0, '2020-01-01T00:00:15.000000000Z'::TIMESTAMP_NS)");
+            execute("INSERT INTO slave(val, ts) VALUES (3.0, '2020-01-01T00:00:08.000000000Z'::TIMESTAMP_NS)");
+
+            // The bound is a raw nano count ~6.85s above Long.MIN (it renders as 1677-01-01T00:12:50Z);
+            // a date-string literal that low rounds away from the boundary, so the cast pins it exactly.
+            // The 10s PRECEDING offset underflows it. The slave at :08 falls in the master row's window
+            // [:05, :15], so the aggregate is 3.0. Before the clamp the slave interval wrapped to a
+            // year-2262 bound and dropped the row, so agg came back null.
+            assertQuery("""
+                    SELECT m.ts, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 10 seconds PRECEDING AND 0 seconds FOLLOWING
+                    EXCLUDE PREVAILING
+                    WHERE m.ts >= (-9_223_372_030_000_000_000L)::TIMESTAMP_NS
+                    ORDER BY m.ts
+                    """)
+                    .withPlanContaining("Frame forward scan on: slave")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("ts\tagg\n2020-01-01T00:00:15.000000000Z\t3.0\n");
         });
     }
 
@@ -3683,12 +3779,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "('sym0', 5.0f, '2023-01-01T09:00:02.000000Z');"
             );
 
-            assertQueryAndPlan(
-                    """
-                            s\tts\tfirst\tavg
-                            sym0\t2023-01-01T09:00:00.000000Z\t2.0\t3.0
-                            """,
-                    """
+            assertQuery("select x.*, first(y.x) as first, avg(y.x) as avg " +
+                    "from x " +
+                    "window join y " +
+                    "on (x.s = y.s) " +
+                    " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by x.ts, x.s;")
+                    .withPlan("""
                             Encode sort
                               keys: [ts, s]
                                 Async Window Fast Join workers: 1
@@ -3705,17 +3802,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
-                                    """,
-                    "select x.*, first(y.x) as first, avg(y.x) as avg " +
-                            "from x " +
-                            "window join y " +
-                            "on (x.s = y.s) " +
-                            " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by x.ts, x.s;",
-                    "ts",
-                    true,
-                    false
-            );
+                                    """)
+                    .timestamp("ts")
+                    .returns("""
+                            s\tts\tfirst\tavg
+                            sym0\t2023-01-01T09:00:00.000000Z\t2.0\t3.0
+                            """);
         });
     }
 
@@ -3752,9 +3844,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price), max(p.ts), avg(p.price), min(p.ts) " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -3766,17 +3862,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, sum(p.price), max(p.ts), avg(p.price), min(p.ts) " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(sink);
 
             if (!includePrevailing) {
                 printSql("select t.sym, t.price, t.ts, max(p.ts), sum(p.price), avg(p.price), count(p.price), min(p.ts) " +
@@ -3805,9 +3893,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                         sink);
             }
 
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.price, t.ts, max(p.ts), sum(p.price), avg(p.price), count(p.price), min(p.ts) " +
+                    "from trades t " +
+                    "window join prices p " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -3818,25 +3909,21 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, max(p.ts), sum(p.price), avg(p.price), count(p.price), min(p.ts) " +
-                            "from trades t " +
-                            "window join prices p " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(sink);
 
             printSql("select t.sym, t.price, t.ts, max(p.ts), sum(p.price + 100), avg(p.price + 100), min(p.ts), avg(p.price + 101) " +
                     "from trades t " +
                     "left join prices p " +
                     " on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
                     "order by t.ts, t.sym;", sink);
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.price, t.ts, max(p.ts), sum(p.price + 100), avg(p.price + 100), min(p.ts), avg(p.price + 101) " +
+                    "from trades t " +
+                    "window join prices p " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -3847,16 +3934,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, max(p.ts), sum(p.price + 100), avg(p.price + 100), min(p.ts), avg(p.price + 101) " +
-                            "from trades t " +
-                            "window join prices p " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(sink);
         });
     }
 
@@ -3895,22 +3975,18 @@ public class WindowJoinTest extends AbstractCairoTest {
             // Window covers all data, so prevailing has no effect.
             // Trade at day3 12:00: prices in [~Dec30, day3 12:00+1s] → 10.0 + 20.0 + 30.0 = 60.0
             // Trade at day3 18:00: prices in [~Dec30, day3 18:00+1s] → 10.0 + 20.0 + 30.0 + 40.0 = 100.0
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT t.price, sum(p.price) AS window_price " +
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p " +
+                    "RANGE BETWEEN 100 hour PRECEDING AND 1 second FOLLOWING " +
+                    (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
+                    "ORDER BY t.ts")
+                    .noLeakCheck()
+                    .returns("""
                             price\twindow_price
                             100.0\t60.0
                             200.0\t100.0
-                            """,
-                    "SELECT t.price, sum(p.price) AS window_price " +
-                            "FROM trades t " +
-                            "WINDOW JOIN prices p " +
-                            "RANGE BETWEEN 100 hour PRECEDING AND 1 second FOLLOWING " +
-                            (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
-                            "ORDER BY t.ts",
-                    null,
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -3949,9 +4025,11 @@ public class WindowJoinTest extends AbstractCairoTest {
                         sink);
             }
 
-            assertQueryAndPlan(
-                    sink,
-                    """
+            assertQuery("  SELECT t.ts, t.price price,t.sym, max(cast(concat(p.price, '0') as double)) max_price, count() cnt " +
+                    "  FROM trades t " +
+                    "  WINDOW JOIN prices p ON t.sym = p.sym " +
+                    "  RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " + (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING "))
+                    .withPlan("""
                             Async Window Fast Join workers: 1
                               vectorized: true
                               symbol: sym=sym
@@ -3966,15 +4044,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: prices
-                                    """,
-                    "  SELECT t.ts, t.price price,t.sym, max(cast(concat(p.price, '0') as double)) max_price, count() cnt " +
-                            "  FROM trades t " +
-                            "  WINDOW JOIN prices p ON t.sym = p.sym " +
-                            "  RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " + (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING "),
-                    "ts",
-                    false,
-                    false
-            );
+                                    """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(sink);
 
             if (!includePrevailing) {
                 printSql(" SELECT t.ts, t.price price, t.sym, max(cast(concat(p.price, '2') as double)) max_price, count(p.ts) cnt " +
@@ -4007,9 +4080,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                         sink);
             }
 
-            assertQueryAndPlan(
-                    sink,
-                    """
+            assertQuery("  SELECT t.ts, t.price, t.sym, max(cast(concat(p.price, '2') as double)) max_price, count() cnt " +
+                    "  FROM trades t " +
+                    "  WINDOW JOIN prices p ON t.sym = p.sym " +
+                    "  RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " + (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
+                    "  WHERE cast(concat(t.price, '2') as double) > 200")
+                    .withPlan("""
                             Async Window Fast Join workers: 1
                               vectorized: true
                               symbol: sym=sym
@@ -4025,16 +4101,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: prices
-                                    """,
-                    "  SELECT t.ts, t.price, t.sym, max(cast(concat(p.price, '2') as double)) max_price, count() cnt " +
-                            "  FROM trades t " +
-                            "  WINDOW JOIN prices p ON t.sym = p.sym " +
-                            "  RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " + (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
-                            "  WHERE cast(concat(t.price, '2') as double) > 200",
-                    "ts",
-                    false,
-                    false
-            );
+                                    """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(sink);
         });
     }
 
@@ -4089,21 +4159,20 @@ public class WindowJoinTest extends AbstractCairoTest {
             // Before the fix, the engine returned 2 (missed the cross-partition prevailing).
             String tsFormat = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType())
                     ? "000000Z" : "000000000Z";
-            assertQueryNoLeakCheck(
-                    "ts\tid\tval\tcnt\n" +
+            assertQuery("SELECT m.ts, m.id, m.val, count(*) cnt " +
+                    "FROM master m " +
+                    "WINDOW JOIN slave s " +
+                    "ON m.id = s.id " +
+                    "RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " +
+                    "INCLUDE PREVAILING")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("ts\tid\tval\tcnt\n" +
                             "2023-01-02T00:00:00." + tsFormat + "\t1\t10\t2\n" +
                             "2023-01-02T00:00:01." + tsFormat + "\t1\t20\t3\n" +
-                            "2023-01-02T00:00:02." + tsFormat + "\t1\t30\t2\n",
-                    "SELECT m.ts, m.id, m.val, count(*) cnt " +
-                            "FROM master m " +
-                            "WINDOW JOIN slave s " +
-                            "ON m.id = s.id " +
-                            "RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " +
-                            "INCLUDE PREVAILING",
-                    "ts",
-                    false,
-                    true
-            );
+                            "2023-01-02T00:00:02." + tsFormat + "\t1\t30\t2\n");
         });
     }
 
@@ -4150,21 +4219,20 @@ public class WindowJoinTest extends AbstractCairoTest {
             // Before the fix, the engine returned 2 (missed the cross-partition prevailing).
             String tsFormat = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType())
                     ? "000000Z" : "000000000Z";
-            assertQueryNoLeakCheck(
-                    "ts\tsym\tval\tcnt\n" +
+            assertQuery("SELECT m.ts, m.sym, m.val, count(*) cnt " +
+                    "FROM master m " +
+                    "WINDOW JOIN slave s " +
+                    "ON m.sym = s.sym " +
+                    "RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " +
+                    "INCLUDE PREVAILING")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("ts\tsym\tval\tcnt\n" +
                             "2023-01-02T00:00:00." + tsFormat + "\t1\t10\t2\n" +
                             "2023-01-02T00:00:01." + tsFormat + "\t1\t20\t3\n" +
-                            "2023-01-02T00:00:02." + tsFormat + "\t1\t30\t2\n",
-                    "SELECT m.ts, m.sym, m.val, count(*) cnt " +
-                            "FROM master m " +
-                            "WINDOW JOIN slave s " +
-                            "ON m.sym = s.sym " +
-                            "RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " +
-                            "INCLUDE PREVAILING",
-                    "ts",
-                    false,
-                    true
-            );
+                            "2023-01-02T00:00:02." + tsFormat + "\t1\t30\t2\n");
         });
     }
 
@@ -4200,9 +4268,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.price, t.ts, avg(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -4214,17 +4286,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, avg(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(sink);
         });
     }
 
@@ -4258,9 +4322,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Async Window Join workers: 1\n" +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    " range between 15 minute preceding and 14 minute preceding " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts;")
+                    .withPlan("Async Window Join workers: 1\n" +
                             "  vectorized: true\n" +
                             "  window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "900000000" : "900000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
                             "  window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "840000000" : "840000000000") + " preceding\n" +
@@ -4269,16 +4336,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        Frame forward scan on: trades\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            " range between 15 minute preceding and 14 minute preceding " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts;",
-                    "ts",
-                    false,
-                    false
-            );
+                            "        Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(sink);
 
             if (!includePrevailing) {
                 printSql("select t.sym, t.price, t.ts, sum(p.price) window_price " +
@@ -4307,9 +4368,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Async Window Fast Join workers: 1\n" +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p on t.sym = p.sym" +
+                    " range between 5 minute preceding and 4 minute preceding " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts;")
+                    .withPlan("Async Window Fast Join workers: 1\n" +
                             "  vectorized: true\n" +
                             "  symbol: sym=sym\n" +
                             "  window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "300000000" : "300000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
@@ -4319,16 +4383,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        Frame forward scan on: trades\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p on t.sym = p.sym" +
-                            " range between 5 minute preceding and 4 minute preceding " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts;",
-                    "ts",
-                    false,
-                    false
-            );
+                            "        Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(sink);
         });
     }
 
@@ -4383,9 +4441,16 @@ public class WindowJoinTest extends AbstractCairoTest {
                     2023-01-01T09:18:00.000000Z	META	601.5	601.5
                     2023-01-02T09:19:00.000000Z	NFLX	699.5	699.5
                     """, leftTableTimestampType.getTypeName());
-            assertQueryAndPlan(
-                    expect,
-                    "Encode sort\n" +
+            assertQuery("select t.ts, t.sym, sum(p.price) as window_price1, sum(p1.price) as window_price2 " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "window join prices p1 " +
+                    "on (t.sym = p1.sym) " +
+                    " range between 3 minute preceding and 3 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Window Fast Join\n" +
                             "      vectorized: true\n" +
@@ -4405,20 +4470,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "                Frame forward scan on: prices\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.ts, t.sym, sum(p.price) as window_price1, sum(p1.price) as window_price2 " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "window join prices p1 " +
-                            "on (t.sym = p1.sym) " +
-                            " range between 3 minute preceding and 3 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(expect);
 
             expect = includePrevailing ?
                     replaceTimestampSuffix("""
@@ -4467,9 +4521,16 @@ public class WindowJoinTest extends AbstractCairoTest {
                     2023-01-01T09:18:00.000000Z	META	601.5
                     2023-01-02T09:19:00.000000Z	NFLX	699.5
                     """, leftTableTimestampType.getTypeName());
-            assertQueryAndPlan(
-                    expect,
-                    "Encode sort\n" +
+            assertQuery("select t.ts, t.sym, sum(p1.price) as window_price2 " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "window join prices p1 " +
+                    "on (t.sym = p1.sym) " +
+                    " range between 3 minute preceding and 3 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Window Fast Join\n" +
                             "      vectorized: true\n" +
@@ -4489,20 +4550,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "                Frame forward scan on: prices\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.ts, t.sym, sum(p1.price) as window_price2 " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "window join prices p1 " +
-                            "on (t.sym = p1.sym) " +
-                            " range between 3 minute preceding and 3 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(expect);
 
             expect = replaceTimestampSuffix("""
                     ts	sym	window_price1	window_price2
@@ -4527,9 +4577,16 @@ public class WindowJoinTest extends AbstractCairoTest {
                     2023-01-01T09:18:00.000000Z	META	601.5	null
                     2023-01-02T09:19:00.000000Z	NFLX	699.5	null
                     """, leftTableTimestampType.getTypeName());
-            assertQueryAndPlan(
-                    expect,
-                    "Encode sort\n" +
+            assertQuery("select t.ts, t.sym, sum(p.price) window_price1, sum(p1.price) as window_price2 " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (1 = 1) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "window join prices p1 " +
+                    "on (0 = 1) " +
+                    " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    ExtraNullColumnRecord\n" +
                             "        Async Window Join workers: 1\n" +
@@ -4541,20 +4598,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "                Frame forward scan on: trades\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: prices\n",
-                    "select t.ts, t.sym, sum(p.price) window_price1, sum(p1.price) as window_price2 " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (1 = 1) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "window join prices p1 " +
-                            "on (0 = 1) " +
-                            " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "                Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(expect);
 
             expect = includePrevailing ?
                     replaceTimestampSuffix("""
@@ -4603,9 +4649,16 @@ public class WindowJoinTest extends AbstractCairoTest {
                     2023-01-01T09:18:00.000000Z	META	null	601.5
                     2023-01-02T09:19:00.000000Z	NFLX	null	699.5
                     """, leftTableTimestampType.getTypeName());
-            assertQueryAndPlan(
-                    expect,
-                    "Encode sort\n" +
+            assertQuery("select t.ts, t.sym, sum(p.price) window_price1, sum(p1.price) as window_price2 " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (1 = 0 and t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "window join prices p1 " +
+                    "on (1 = 1 and t.sym = p1.sym) " +
+                    " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -4618,20 +4671,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "                Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.ts, t.sym, sum(p.price) window_price1, sum(p1.price) as window_price2 " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (1 = 0 and t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "window join prices p1 " +
-                            "on (1 = 1 and t.sym = p1.sym) " +
-                            " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(expect);
 
             // count is resolved to the first slave
             expect = replaceTimestampSuffix(
@@ -4660,9 +4702,16 @@ public class WindowJoinTest extends AbstractCairoTest {
                             """,
                     leftTableTimestampType.getTypeName()
             );
-            assertQueryAndPlan(
-                    expect,
-                    "Encode sort\n" +
+            assertQuery("select t.ts, t.sym, min(p.price) window_price1, max(p1.price) as window_price2, count() as cnt " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "window join prices p1 " +
+                    "on (t.sym = p1.sym) " +
+                    " range between 3 minute preceding and 3 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Window Fast Join\n" +
                             "      vectorized: true\n" +
@@ -4682,48 +4731,33 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "                Frame forward scan on: prices\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.ts, t.sym, min(p.price) window_price1, max(p1.price) as window_price2, count() as cnt " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "window join prices p1 " +
-                            "on (t.sym = p1.sym) " +
-                            " range between 3 minute preceding and 3 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(expect);
 
-            assertExceptionNoLeakCheck(
-                    "select t.ts, t.sym, sum(p1.price), p.price as window_price2 " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "window join prices p1 " +
-                            "on (t.sym = p1.sym) " +
-                            " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    35,
-                    "WINDOW join cannot reference right table non-aggregate column: p.price"
-            );
+            assertQuery("select t.ts, t.sym, sum(p1.price), p.price as window_price2 " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "window join prices p1 " +
+                    "on (t.sym = p1.sym) " +
+                    " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .noLeakCheck()
+                    .fails(35, "WINDOW join cannot reference right table non-aggregate column: p.price");
 
-            assertExceptionNoLeakCheck(
-                    "select t.ts, t.sym, sum(p1.price + p.price) as window_price2 " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "window join prices p1 " +
-                            "on (t.sym = p1.sym) " +
-                            " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    20,
-                    "WINDOW join aggregate function cannot reference columns from multiple models"
-            );
+            assertQuery("select t.ts, t.sym, sum(p1.price + p.price) as window_price2 " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "window join prices p1 " +
+                    "on (t.sym = p1.sym) " +
+                    " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .noLeakCheck()
+                    .fails(20, "WINDOW join aggregate function cannot reference columns from multiple models");
         });
     }
 
@@ -4734,15 +4768,13 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertExceptionNoLeakCheck(
-                    "select t.sym, t.price, t.ts, sum(p.price) sum_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on t.price-p.price " +
-                            " range between 1 second preceding and 1 second following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"),
-                    97,
-                    "boolean expression expected"
-            );
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) sum_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on t.price-p.price " +
+                    " range between 1 second preceding and 1 second following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"))
+                    .noLeakCheck()
+                    .fails(97, "boolean expression expected");
         });
     }
 
@@ -4754,15 +4786,13 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
 
-            assertExceptionNoLeakCheck(
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 2 minute preceding and 4 minute preceding;",
-                    150,
-                    "WINDOW join hi value cannot be less than lo value"
-            );
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 2 minute preceding and 4 minute preceding;")
+                    .noLeakCheck()
+                    .fails(150, "WINDOW join hi value cannot be less than lo value");
         });
     }
 
@@ -4774,15 +4804,66 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
 
-            assertExceptionNoLeakCheck(
-                    "select t.sym, t.price, t.ts, p.price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 second preceding and 1 second following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"),
-                    29,
-                    "WINDOW join cannot reference right table non-aggregate column: p.price"
-            );
+            assertQuery("select t.sym, t.price, t.ts, p.price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 second preceding and 1 second following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"))
+                    .noLeakCheck()
+                    .fails(29, "WINDOW join cannot reference right table non-aggregate column: p.price");
+        });
+    }
+
+    @Test
+    public void testWindowJoinFailsOnOutOfRangeStaticBound() throws Exception {
+        // TimestampDriver.from(long, char) narrows to int for m/h/d/w and multiplies unchecked,
+        // so a bound wider than the designated timestamp's units can carry came back as a
+        // different width and the join then evaluated a frame nobody wrote. SqlOptimiser stores a
+        // WINDOW JOIN PRECEDING bound positive, so on nanoseconds 300_000 days wraps past
+        // Long.MAX_VALUE to +86_496 days rather than to a negative span (the negated form, and
+        // with it the negative span, belongs to the plain RANGE frame); 4_294_967_296 days
+        // narrows to exactly 0.
+        //
+        // WindowContextImpl.toTimestampUnits already refused this for a plain RANGE frame; the
+        // four WINDOW JOIN conversion sites now share that one guard rather than carrying a
+        // fourth copy of the arithmetic. The interval-pruning site is the worse of the two: its
+        // converted bounds feed intrinsicModel.mergeIntervalModel, so a wrapped bound narrows
+        // the slave scan interval and drops rows before evaluation.
+        //
+        // 300_000 days is in range for microseconds (ceiling 106_751_991 days), so pin the
+        // nanosecond pairing to keep the assertion about the bound and not the parameterisation.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.NANO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.NANO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO master VALUES ('2024-01-01T02:00:00.000000000Z')");
+            execute("INSERT INTO slave VALUES (1.0, '2024-01-01T01:00:00.000000000Z')");
+
+            assertQuery("""
+                    SELECT m.ts, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 300_000 day PRECEDING AND 0 second FOLLOWING
+                    EXCLUDE PREVAILING
+                    """)
+                    .noLeakCheck()
+                    .fails(79, "RANGE frame start is out of range for the designated timestamp [width=300000 day, max=106751 day]");
+
+            // Without a WHERE there is no pushed interval model, so the interval-pruning
+            // conversion never runs and only the join site is covered. This variant pushes one,
+            // which is the site whose bounds feed mergeIntervalModel and so narrow the slave
+            // scan. It throws first, before the join site.
+            assertQuery("""
+                    SELECT m.ts, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 300_000 day PRECEDING AND 0 second FOLLOWING
+                    EXCLUDE PREVAILING
+                    WHERE m.ts > '2024-01-01T00:00:00.000000000Z'
+                    """)
+                    .noLeakCheck()
+                    .fails(79, "RANGE frame start is out of range for the designated timestamp [width=300000 day, max=106751 day]");
         });
     }
 
@@ -4790,17 +4871,15 @@ public class WindowJoinTest extends AbstractCairoTest {
     public void testWindowJoinFailsOnSlaveColumnsInFilter() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
-            assertExceptionNoLeakCheck(
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "where p.price > 10 " +
-                            "order by t.ts, t.sym;",
-                    195,
-                    "Invalid column: p.price"
-            );
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "where p.price > 10 " +
+                    "order by t.ts, t.sym;")
+                    .noLeakCheck()
+                    .fails(195, "Invalid column: p.price");
         });
     }
 
@@ -4812,16 +4891,14 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
 
-            assertExceptionNoLeakCheck(
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from (trades limit 5) t " +
-                            "window join (select * from prices where ts in '2023-01-01T09:03:00.000000Z' or ts = '2023-01-01T09:07:00.000000Z' and ts = '2023-01-01T09:08:00.000000Z') p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    82,
-                    "right side of window join must be a table, not sub-query"
-            );
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+                    "from (trades limit 5) t " +
+                    "window join (select * from prices where ts in '2023-01-01T09:03:00.000000Z' or ts = '2023-01-01T09:07:00.000000Z' and ts = '2023-01-01T09:08:00.000000Z') p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .noLeakCheck()
+                    .fails(82, "right side of window join must be a table, not sub-query");
         });
     }
 
@@ -4833,35 +4910,29 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
 
-            assertExceptionNoLeakCheck(
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on t.sym = p.sym " +
-                            " range between unbounded preceding and 1 day following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"),
-                    135,
-                    "unbounded preceding/following is not supported in WINDOW joins"
-            );
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on t.sym = p.sym " +
+                    " range between unbounded preceding and 1 day following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"))
+                    .noLeakCheck()
+                    .fails(135, "unbounded preceding/following is not supported in WINDOW joins");
 
-            assertExceptionNoLeakCheck(
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on t.sym = p.sym " +
-                            " range between 1 second preceding and unbounded following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"),
-                    158,
-                    "unbounded preceding/following is not supported in WINDOW joins"
-            );
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on t.sym = p.sym " +
+                    " range between 1 second preceding and unbounded following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"))
+                    .noLeakCheck()
+                    .fails(158, "unbounded preceding/following is not supported in WINDOW joins");
 
-            assertExceptionNoLeakCheck(
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on t.sym = p.sym " +
-                            " range between unbounded preceding and unbounded following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"),
-                    135,
-                    "unbounded preceding/following is not supported in WINDOW joins"
-            );
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on t.sym = p.sym " +
+                    " range between unbounded preceding and unbounded following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"))
+                    .noLeakCheck()
+                    .fails(135, "unbounded preceding/following is not supported in WINDOW joins");
         });
     }
 
@@ -4897,21 +4968,18 @@ public class WindowJoinTest extends AbstractCairoTest {
             String expectedDay2Price = includePrevailing ? "20.0" : "null";
 
             // Interval filter on the slave table.
-            assertQueryNoLeakCheck(
-                    "sym\tqty\tts\twindow_price\n" +
+            assertQuery("SELECT t.sym, t.qty, t.ts, sum(p.price) AS window_price " +
+                    "FROM trades t " +
+                    "WINDOW JOIN (prices WHERE ts IN '1970-01-01') p " +
+                    "ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 2 second PRECEDING AND 2 second FOLLOWING " +
+                    (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
+                    "ORDER BY t.ts, t.sym")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("sym\tqty\tts\twindow_price\n" +
                             "AX\t100.0\t1970-01-01T00:00:05.000000Z\t30.0\n" +
-                            "AX\t200.0\t1970-01-02T00:00:05.000000Z\t" + expectedDay2Price + "\n",
-                    "SELECT t.sym, t.qty, t.ts, sum(p.price) AS window_price " +
-                            "FROM trades t " +
-                            "WINDOW JOIN (prices WHERE ts IN '1970-01-01') p " +
-                            "ON (t.sym = p.sym) " +
-                            "RANGE BETWEEN 2 second PRECEDING AND 2 second FOLLOWING " +
-                            (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
-                            "ORDER BY t.ts, t.sym",
-                    "ts",
-                    true,
-                    false
-            );
+                            "AX\t200.0\t1970-01-02T00:00:05.000000Z\t" + expectedDay2Price + "\n");
 
             // Same query, but with reordered columns in the slave subquery.
             // This exercises SelectedConcurrentTimeFrameCursor.
@@ -4922,15 +4990,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "RANGE BETWEEN 2 second PRECEDING AND 2 second FOLLOWING " +
                     (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
                     "ORDER BY t.ts, t.sym";
-            assertQueryNoLeakCheck(
-                    "sym\tqty\tts\twindow_price\twindow_price0\n" +
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("sym\tqty\tts\twindow_price\twindow_price0\n" +
                             "AX\t100.0\t1970-01-01T00:00:05.000000Z\t30.0\t30.0\n" +
-                            "AX\t200.0\t1970-01-02T00:00:05.000000Z\t" + expectedDay2Price + "\t" + expectedDay2Price + "\n",
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            "AX\t200.0\t1970-01-02T00:00:05.000000Z\t" + expectedDay2Price + "\t" + expectedDay2Price + "\n");
         });
     }
 
@@ -4971,21 +5036,19 @@ public class WindowJoinTest extends AbstractCairoTest {
             // The binary search reads the price column as a timestamp, producing wrong results.
             // With INCLUDE PREVAILING, the second row should return 20.0 (prevailing price
             // from day 1), but the buggy binary search returns null.
-            assertQueryNoLeakCheck(
-                    "sym\tqty\tts\twindow_price\twindow_price0\n" +
+            assertQuery("SELECT t.sym, t.qty, t.ts, sum(p.price) AS window_price, sum(p.price0) AS window_price0 " +
+                    "FROM trades t " +
+                    "WINDOW JOIN (SELECT price, price price0, sym, ts FROM prices WHERE ts IN '1970-01-01') p " +
+                    "ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 2 second PRECEDING AND 2 second FOLLOWING " +
+                    (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
+                    "ORDER BY t.ts, t.sym")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("sym\tqty\tts\twindow_price\twindow_price0\n" +
                             "AX\t100.0\t1970-01-01T00:00:05.000000Z\t30.0\t30.0\n" +
-                            "AX\t200.0\t1970-01-02T00:00:05.000000Z\t" + expectedDay2Price + "\t" + expectedDay2Price + "\n",
-                    "SELECT t.sym, t.qty, t.ts, sum(p.price) AS window_price, sum(p.price0) AS window_price0 " +
-                            "FROM trades t " +
-                            "WINDOW JOIN (SELECT price, price price0, sym, ts FROM prices WHERE ts IN '1970-01-01') p " +
-                            "ON (t.sym = p.sym) " +
-                            "RANGE BETWEEN 2 second PRECEDING AND 2 second FOLLOWING " +
-                            (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
-                            "ORDER BY t.ts, t.sym",
-                    "ts",
-                    true,
-                    true
-            );
+                            "AX\t200.0\t1970-01-02T00:00:05.000000Z\t" + expectedDay2Price + "\t" + expectedDay2Price + "\n");
         });
     }
 
@@ -5012,32 +5075,722 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 ('1970-01-02T00:00:06.000000Z', 'AX', 40.0)
                             """
             );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                     SELECT sym, qty, ts, window_price FROM (
+                         SELECT t.sym, t.qty, t.ts, sum(p.price) AS window_price
+                         FROM trades t
+                         WINDOW JOIN prices p ON (sym)
+                             RANGE BETWEEN 2 second PRECEDING AND 2 second FOLLOWING
+                         UNION ALL
+                         SELECT t.sym, t.qty, t.ts, sum(p.price) AS window_price
+                         FROM trades t
+                         WINDOW JOIN prices p ON (sym)
+                             RANGE BETWEEN 2 second PRECEDING AND 2 second FOLLOWING
+                     )
+                     ORDER BY ts, sym
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             sym	qty	ts	window_price
                             AX	100.0	1970-01-01T00:00:05.000000Z	30.0
                             AX	100.0	1970-01-01T00:00:05.000000Z	30.0
                             AX	200.0	1970-01-02T00:00:05.000000Z	90.0
                             AX	200.0	1970-01-02T00:00:05.000000Z	90.0
-                            """,
-                    """
-                             SELECT sym, qty, ts, window_price FROM (
-                                 SELECT t.sym, t.qty, t.ts, sum(p.price) AS window_price
-                                 FROM trades t
-                                 WINDOW JOIN prices p ON (sym)
-                                     RANGE BETWEEN 2 second PRECEDING AND 2 second FOLLOWING
-                                 UNION ALL
-                                 SELECT t.sym, t.qty, t.ts, sum(p.price) AS window_price
-                                 FROM trades t
-                                 WINDOW JOIN prices p ON (sym)
-                                     RANGE BETWEEN 2 second PRECEDING AND 2 second FOLLOWING
-                             )
-                             ORDER BY ts, sym
-                            """,
-                    "ts",
-                    true,
-                    false
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowJoinKeyedBothBoundsPreceding() throws Exception {
+        // RANGE BETWEEN <lo> PRECEDING AND <hi> PRECEDING puts the whole window in the
+        // master row's past, so the window's upper-bound offset (windowHi) is negative. The
+        // single-threaded keyed (fast) factory sized its slave-index scan upper bound as
+        // windowHi * INDEX_LOOKAHEAD; for a negative windowHi that lands BELOW the window's
+        // own upper bound (masterTimestamp + windowHi) and drops the window's most recent
+        // slave rows from the index, undercounting every aggregate. Both native and parquet
+        // slaves undercount (differently), so the differential fuzzer flagged it as a storage
+        // divergence. Cross-check the keyed WINDOW JOIN against a plain LEFT JOIN reference
+        // (EXCLUDE PREVAILING) and across the single-threaded and parallel paths, for native
+        // and parquet slaves; it undercounts on HEAD without the fix.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices_pq (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Master rows every 30 min; slave rows every 20 min so each [M-4h, M-2h] window
+            // (2 h wide) spans several slave rows, including ones the buggy index scan dropped.
+            // Integer x keeps sum() order-independent so the oracle compares exactly.
+            execute("INSERT INTO trades SELECT rnd_symbol('a','b','c'), " +
+                    "timestamp_sequence('2024-01-01T08:00:00.000000Z', 30 * 60 * 1_000_000L) FROM long_sequence(60)");
+            execute("INSERT INTO prices SELECT rnd_symbol('a','b','c'), rnd_long(0, 1000, 0), " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 20 * 60 * 1_000_000L) FROM long_sequence(180)");
+            execute("INSERT INTO prices_pq SELECT * FROM prices");
+            execute("ALTER TABLE prices_pq CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Independent oracle: a plain LEFT JOIN over the same [M-4h, M-2h] slave window,
+            // which is exactly EXCLUDE PREVAILING semantics.
+            sink.clear();
+            printSql("SELECT t.sym, t.ts, sum(p.x) AS a0, count(p.x) AS a1 " +
+                    "FROM trades t LEFT JOIN prices p " +
+                    "ON t.sym = p.sym AND p.ts >= dateadd('h', -4, t.ts) AND p.ts <= dateadd('h', -2, t.ts) " +
+                    "GROUP BY t.sym, t.ts ORDER BY t.sym, t.ts", sink);
+            final String expected = sink.toString();
+            assertNonVacuousOracle("both bounds preceding", expected);
+
+            for (boolean parallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
+                for (String slave : new String[]{"prices", "prices_pq"}) {
+                    final String q = "SELECT t.sym, t.ts, sum(p.x) AS a0, count(p.x) AS a1 " +
+                            "FROM trades t WINDOW JOIN " + slave + " p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND 2 HOURS PRECEDING EXCLUDE PREVAILING " +
+                            "ORDER BY t.sym, t.ts";
+                    assertWindowJoinParallelism(q, parallel);
+                    sink.clear();
+                    printSql(q, sink);
+                    TestUtils.assertEquals("parallel=" + parallel + " slave=" + slave, expected, sink);
+                }
+            }
+
+            // INCLUDE PREVAILING has no simple plain-SQL oracle here; cross-check the
+            // single-threaded and parallel keyed paths against each other, for native and parquet
+            // slaves. Parity alone is not an oracle - two implementations agreeing on an empty or
+            // all-null result agree trivially - so the serial side goes through the same
+            // non-vacuity guard as the EXCLUDE oracle above, and each side asserts the route it
+            // actually took. testWindowJoinKeyedIncludePrevailingAbsoluteOracle pins the values.
+            for (String slave : new String[]{"prices", "prices_pq"}) {
+                final String incl = "SELECT t.sym, t.ts, sum(p.x) AS a0, count(p.x) AS a1 " +
+                        "FROM trades t WINDOW JOIN " + slave + " p ON (t.sym = p.sym) " +
+                        "RANGE BETWEEN 4 HOURS PRECEDING AND 2 HOURS PRECEDING INCLUDE PREVAILING " +
+                        "ORDER BY t.sym, t.ts";
+                sqlExecutionContext.setParallelWindowJoinEnabled(false);
+                assertWindowJoinParallelism(incl, false);
+                sink.clear();
+                printSql(incl, sink);
+                final String single = sink.toString();
+                assertNonVacuousOracle("include prevailing slave=" + slave, single);
+                sqlExecutionContext.setParallelWindowJoinEnabled(true);
+                assertWindowJoinParallelism(incl, true);
+                sink.clear();
+                printSql(incl, sink);
+                TestUtils.assertEquals("include prevailing slave=" + slave, single, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testWindowJoinKeyedIncludePrevailingAbsoluteOracle() throws Exception {
+        // The serial-vs-parallel INCLUDE PREVAILING differentials elsewhere in this class cannot say
+        // WHAT the right answer is, only that two routes agree on it. This pins the answer.
+        //
+        // A prevailing row is folded in when the window holds no slave row, or when its first slave
+        // row sits strictly after the window's lower bound; the row folded in is the last one before
+        // that bound, and there is at most one of them. The fixture is small enough to work out by
+        // hand, and the slave values are powers of two so every subset has a distinct sum - no
+        // expected total can be reached by the wrong set of rows.
+        //
+        // One master row at 06:00 and slave rows at 00:00 (1), 01:00 (2), 04:00 (4) and 05:30 (8):
+        //   [02:00, 04:00]  holds 04:00 only, which is after the bound -> folds in 01:00
+        //   [02:00, 03:00]  holds nothing                              -> folds in 01:00
+        //   [01:00, 04:00]  holds 01:00 exactly ON the bound           -> folds in nothing
+        //   [22:00, 23:00] of the previous day: nothing in it and nothing before it -> nothing
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices_pq (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Two symbols, and every gap in a's timeline holds a b row, so a prevailing lookup that
+            // ignored the join key would fold one of b's rows in and miss every expectation below.
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('a', '2024-01-01T06:00:00.000000Z'),
+                        ('b', '2024-01-01T06:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO prices VALUES
+                        ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                        ('a', 2, '2024-01-01T01:00:00.000000Z'),
+                        ('a', 4, '2024-01-01T04:00:00.000000Z'),
+                        ('a', 8, '2024-01-01T05:30:00.000000Z'),
+                        ('b', 64, '2024-01-01T00:30:00.000000Z'),
+                        ('b', 16, '2024-01-01T02:30:00.000000Z'),
+                        ('b', 32, '2024-01-01T03:15:00.000000Z')
+                    """);
+            execute("INSERT INTO prices_pq SELECT * FROM prices");
+            execute("ALTER TABLE prices_pq CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // {window, EXCLUDE PREVAILING rows, INCLUDE PREVAILING rows}. Derived by hand: a's rows
+            // are 1@00:00 2@01:00 4@04:00 8@05:30, b's are 64@00:30 16@02:30 32@03:15, both master
+            // rows sit at 06:00. b has a row before every window, so its prevailing fold fires where
+            // a's does not, and its values are the higher powers of two so no total is ambiguous.
+            final String[][] cases = {
+                    {
+                            // [02:00, 04:00]. a: 4 in window, first row after the bound -> folds 2.
+                            //                 b: 16 and 32 in window, first after the bound -> folds 64.
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND 2 HOURS PRECEDING",
+                            "a\t2024-01-01T06:00:00.000000Z\t4\t1\n"
+                                    + "b\t2024-01-01T06:00:00.000000Z\t48\t2\n",
+                            "a\t2024-01-01T06:00:00.000000Z\t6\t2\n"
+                                    + "b\t2024-01-01T06:00:00.000000Z\t112\t3\n"
+                    },
+                    {
+                            // [02:00, 03:00]. a: empty -> folds 2. b: 16 in window -> folds 64.
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND 3 HOURS PRECEDING",
+                            "a\t2024-01-01T06:00:00.000000Z\tnull\t0\n"
+                                    + "b\t2024-01-01T06:00:00.000000Z\t16\t1\n",
+                            "a\t2024-01-01T06:00:00.000000Z\t2\t1\n"
+                                    + "b\t2024-01-01T06:00:00.000000Z\t80\t2\n"
+                    },
+                    {
+                            // [01:00, 04:00]. a's first row sits exactly ON the bound, so a folds
+                            // nothing and INCLUDE equals EXCLUDE; b's first row is after it, so b
+                            // still folds 64. One window, both branches.
+                            "RANGE BETWEEN 5 HOURS PRECEDING AND 2 HOURS PRECEDING",
+                            "a\t2024-01-01T06:00:00.000000Z\t6\t2\n"
+                                    + "b\t2024-01-01T06:00:00.000000Z\t48\t2\n",
+                            "a\t2024-01-01T06:00:00.000000Z\t6\t2\n"
+                                    + "b\t2024-01-01T06:00:00.000000Z\t112\t3\n"
+                    },
+                    {
+                            // [22:00, 23:00] of the previous day: nothing in it and nothing before it,
+                            // for either symbol.
+                            "RANGE BETWEEN 8 HOURS PRECEDING AND 7 HOURS PRECEDING",
+                            "a\t2024-01-01T06:00:00.000000Z\tnull\t0\n"
+                                    + "b\t2024-01-01T06:00:00.000000Z\tnull\t0\n",
+                            "a\t2024-01-01T06:00:00.000000Z\tnull\t0\n"
+                                    + "b\t2024-01-01T06:00:00.000000Z\tnull\t0\n"
+                    },
+            };
+            final String header = "sym\tts\ta0\ta1\n";
+            for (String[] c : cases) {
+                for (String prevailing : new String[]{"EXCLUDE PREVAILING", "INCLUDE PREVAILING"}) {
+                    final String expected = header + ("EXCLUDE PREVAILING".equals(prevailing) ? c[1] : c[2]);
+                    for (String slave : new String[]{"prices", "prices_pq"}) {
+                        for (boolean parallel : new boolean[]{false, true}) {
+                            sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
+                            final String q = "SELECT t.sym, t.ts, sum(p.x) AS a0, count(p.x) AS a1 " +
+                                    "FROM trades t WINDOW JOIN " + slave + " p ON (t.sym = p.sym) " +
+                                    c[0] + " " + prevailing + " ORDER BY t.sym, t.ts";
+                            assertWindowJoinParallelism(q, parallel);
+                            // sizeMayVary: the serial keyed route reports a concrete size while the
+                            // parallel one reports -1, and this loop asserts both.
+                            assertQuery(q).noLeakCheck().sizeMayVary().returns(expected);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWindowJoinKeyedIndexAmortization() throws Exception {
+        // The keyed (fast) factory amortizes the slave index: indexLookaheadHi() prefetches past the
+        // window so following master rows reuse the index, and INDEX_COMPLETE stops rebuilding once
+        // the index spans the rest of the slave. Rows alone cannot pin any of that - a rebuild
+        // re-derives the same index from the same slave rows, so dropping the amortization keeps
+        // every result identical and merely turns the join quadratic. Assert the rebuild count.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Slave: one row per minute over 24 h. Master: one row per minute, starting 4 h in and
+            // running 4 h past the slave's last row, so the master tail exercises INDEX_COMPLETE.
+            execute("INSERT INTO prices SELECT 'a', x, " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(1_440)");
+            execute("INSERT INTO trades SELECT 'a', " +
+                    "timestamp_sequence('2024-01-01T04:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(1_440)");
+            sqlExecutionContext.setParallelWindowJoinEnabled(false);
+
+            // Vectorized cursor. A 4 h window plus the lookahead margin gives a horizon several hours
+            // past the window, so the index is rebuilt a handful of times over 1_440 master rows, and
+            // the master tail past the slave's last row rebuilds nothing at all. Without the margin,
+            // or without INDEX_COMPLETE, this climbs towards one rebuild per master row.
+            assertIndexRebuildCount(
+                    "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING",
+                    5
             );
+
+            // INCLUDE PREVAILING routes to a different cursor carrying its own copy of the rebuild gate.
+            assertIndexRebuildCount(
+                    "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING",
+                    5
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinKeyedIndexAmortizationNonVectorized() throws Exception {
+        // Companion to testWindowJoinKeyedIndexAmortization, which pins the slave-index rebuild count
+        // only for the vectorized keyed cursor (WindowJoinFastVectRecordCursor, the INDEX_COMPLETE gate
+        // in WindowJoinFastRecordCursorFactory) via sum(p.x) EXCLUDE/INCLUDE PREVAILING. The other three
+        // keyed cursors each carry their own copy of that gate and were unpinned:
+        //   - WindowJoinFastRecordCursor                            (non-vectorized, EXCLUDE)
+        //   - WindowJoinWithPrevailingFastRecordCursor              (non-vectorized, INCLUDE)
+        //   - WindowJoinWithPrevailingAndJoinFilterFastRecordCursor (non-vectorized, INCLUDE + join filter)
+        // The gate is identical across all four - a rebuild re-derives the same index from the same slave
+        // rows over the same lookahead horizon - so with the same slave (prices, one row/min from 00:00),
+        // the same master timestamps (trades, one row/min from 04:00) and the same 4 h window, every shape
+        // must rebuild exactly 5 times, matching the vectorized shape. Only the cursor shape differs, which
+        // the rebuild gate is deliberately blind to.
+        //
+        // Two levers drive the query off the vectorized cursor: sum(p.x + t.m) reads a MASTER column t.m,
+        // which the aggregate-vectorization check rejects; a join filter beyond the symbol equality forces
+        // non-vectorization unconditionally. EXCLUDE vs INCLUDE PREVAILING and the presence of a join filter
+        // then pick the exact cursor.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            // trades gains a LONG column m so an aggregate can read a master column; m does not affect the
+            // master timestamps or the slave, so the slave-index behavior - and the rebuild count - is
+            // unchanged from testWindowJoinKeyedIndexAmortization.
+            execute("CREATE TABLE trades (sym SYMBOL, m LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO prices SELECT 'a', x, " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(1_440)");
+            execute("INSERT INTO trades SELECT 'a', x, " +
+                    "timestamp_sequence('2024-01-01T04:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(1_440)");
+            sqlExecutionContext.setParallelWindowJoinEnabled(false);
+
+            // Each shape pins the route before it pins the count. assertIndexRebuildCount() can only see
+            // WindowJoinFastRecordCursorFactory, which is the factory for all four cursors, and every shape
+            // expects the same count of 5 - so a routing change that collapsed these onto one cursor would
+            // leave the counts green and silently drop three cursors from coverage. The factory picks the
+            // cursor from exactly three fields - vectorized, includePrevailing and whether a join filter
+            // survived - and toPlan() renders all three, so the plan attributes pin the cursor exactly.
+            // toPlan() emits "join filter:" only when joinFilter != null, so the no-filter shapes pin its
+            // ABSENCE: assertsPlanContaining is positive-only, and without the negative half a routing
+            // change that attached a join filter would leave them green on a different cursor. Both plan
+            // assertions are terminal on the builder, so the negative one needs its own statement.
+
+            // Non-vectorized cursor, EXCLUDE PREVAILING (WindowJoinFastRecordCursor). sum(p.x + t.m) reads
+            // master column t.m -> non-vectorized; EXCLUDE + no join filter routes here.
+            final String excludeNoFilter = "SELECT t.ts, sum(p.x + t.m) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
+            assertQuery(excludeNoFilter).noLeakCheck().assertsPlanContaining("vectorized: false", "(exclude prevailing)");
+            assertQuery(excludeNoFilter).noLeakCheck().assertsPlanNotContaining("join filter:");
+            assertIndexRebuildCount(excludeNoFilter, 5);
+
+            // Non-vectorized cursor, INCLUDE PREVAILING, no join filter (WindowJoinWithPrevailingFastRecordCursor).
+            final String includeNoFilter = "SELECT t.ts, sum(p.x + t.m) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING";
+            assertQuery(includeNoFilter).noLeakCheck().assertsPlanContaining("vectorized: false", "(include prevailing)");
+            assertQuery(includeNoFilter).noLeakCheck().assertsPlanNotContaining("join filter:");
+            assertIndexRebuildCount(includeNoFilter, 5);
+
+            // Non-vectorized cursor, INCLUDE PREVAILING, WITH a join filter
+            // (WindowJoinWithPrevailingAndJoinFilterFastRecordCursor). The extra ON predicate p.x > -1 (always
+            // true, non-constant) is the join filter -> non-vectorized; it keeps every slave row, so the index
+            // behavior is unchanged. The plan pin also asserts the filter stayed a JOIN filter: pushing it into
+            // the slave scan would route this shape to the no-filter cursor above.
+            final String includeWithFilter = "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) AND p.x > -1 " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING";
+            assertQuery(includeWithFilter).noLeakCheck()
+                    .assertsPlanContaining("vectorized: false", "(include prevailing)", "join filter:");
+            assertIndexRebuildCount(includeWithFilter, 5);
+
+            // Same join filter, EXCLUDE PREVAILING: routes back to WindowJoinFastRecordCursor, which applies
+            // the join filter inline. Pins that the join-filter path shares the same gate.
+            final String excludeWithFilter = "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) AND p.x > -1 " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
+            assertQuery(excludeWithFilter).noLeakCheck()
+                    .assertsPlanContaining("vectorized: false", "(exclude prevailing)", "join filter:");
+            assertIndexRebuildCount(excludeWithFilter, 5);
+        });
+    }
+
+    @Test
+    public void testWindowJoinKeyedIndexAmortizationOverEmptyWindows() throws Exception {
+        // The index scan looks for its first slave row up to the lookahead horizon, not merely up to
+        // the window's own upper bound. That distinction only shows when the window itself is empty:
+        // every master row here sits before the slave's first row, so its 4 h window holds nothing and
+        // aggregates to null. Searching only up to the window's upper bound finds no row, leaves the
+        // index empty, and rebuilds again for the next master row - all 240 of them. Searching up to
+        // the horizon finds the slave's first row, indexes it once, and every later master row reuses
+        // it. Both produce the same 240 null rows, so only the rebuild count can tell them apart.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Master runs 00:00-03:59, the slave only starts at 04:00: every master window is empty.
+            execute("INSERT INTO trades SELECT 'a', " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(240)");
+            execute("INSERT INTO prices SELECT 'a', x, " +
+                    "timestamp_sequence('2024-01-01T04:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(240)");
+            sqlExecutionContext.setParallelWindowJoinEnabled(false);
+
+            assertIndexRebuildCount(
+                    "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING",
+                    1
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinKeyedIndexAmortizationOverInteriorSlaveGap() throws Exception {
+        // The rebuild gate credits lastSlaveTimestamp per INDEXED ROW rather than per SEARCHED
+        // horizon, so a slave gap wider than the lookahead margin defeats it. The scan searches the
+        // whole horizon, finds only the row before the gap, and credits that row's timestamp; every
+        // following master row then sees masterTimestampHi > lastSlaveTimestamp and re-fires the
+        // gate - slaveData.clear(), slaveAllocator.clear() and a full re-scan that finds nothing
+        // new - once per master row. The index is valid up to the horizon it SEARCHED, not up to
+        // the last row it happened to find. Both spellings return the same rows, so only the
+        // rebuild count can tell them apart.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, m LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // One slave row on 01-01, then a two-day gap. The two master groups make the index scan
+            // end in each of the ways the credit has to be sound for:
+            //   01-01 04:00-07:59 - findRowLo lands on the 00:00 row, then nextFrame() reports the
+            //                       01-03 frame opens past the horizon;
+            //   01-02 04:00-07:59 - window AND horizon sit wholly inside the gap, so findRowLo
+            //                       returns Long.MIN_VALUE and an EMPTY index is credited a horizon.
+            execute("INSERT INTO prices VALUES ('a', 1, '2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO prices SELECT 'a', x, " +
+                    "timestamp_sequence('2024-01-03T00:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(240)");
+            execute("INSERT INTO trades SELECT 'a', x, " +
+                    "timestamp_sequence('2024-01-01T04:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(240)");
+            execute("INSERT INTO trades SELECT 'a', x, " +
+                    "timestamp_sequence('2024-01-02T04:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(240)");
+            sqlExecutionContext.setParallelWindowJoinEnabled(false);
+
+            // Rows first: crediting the horizon must not skip a rebuild that changes a result.
+            // EXCLUDE PREVAILING - only the very first master row's window reaches the 00:00 slave
+            // row; every other window is inside the gap.
+            assertQuery("SELECT count() n, count(a0) c, sum(a0) s FROM (" +
+                    "SELECT t.ts, sum(p.x) AS a0 FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("n\tc\ts\n480\t1\t1\n");
+
+            // INCLUDE PREVAILING - the 00:00 row is the prevailing row for ALL 480 master rows, on
+            // both sides of the gap. This is the assertion that would redden if the longer index
+            // retention corrupted the prevailing lookup.
+            assertQuery("SELECT count() n, count(a0) c, sum(a0) s FROM (" +
+                    "SELECT t.ts, sum(p.x) AS a0 FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("n\tc\ts\n480\t480\t480\n");
+
+            // All four keyed cursors carry their own copy of the gate. The levers that pick each one
+            // are the ones documented on testWindowJoinKeyedIndexAmortizationNonVectorized. Two
+            // rebuilds: one per master group. Crediting the last indexed row instead gives 480.
+            // Every shape expects the same count of 2 and shares one factory class, so each one pins
+            // its route through the plan attributes before it pins the count.
+
+            // Vectorized, EXCLUDE PREVAILING.
+            final String vectExclude = "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
+            assertQuery(vectExclude).noLeakCheck().assertsPlanContaining("vectorized: true", "(exclude prevailing)");
+            assertIndexRebuildCount(vectExclude, 2);
+
+            // Vectorized, INCLUDE PREVAILING.
+            final String vectInclude = "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING";
+            assertQuery(vectInclude).noLeakCheck().assertsPlanContaining("vectorized: true", "(include prevailing)");
+            assertIndexRebuildCount(vectInclude, 2);
+
+            // Non-vectorized, EXCLUDE PREVAILING (sum reads master column t.m).
+            final String excludeNoFilter = "SELECT t.ts, sum(p.x + t.m) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
+            assertQuery(excludeNoFilter).noLeakCheck().assertsPlanContaining("vectorized: false", "(exclude prevailing)");
+            assertQuery(excludeNoFilter).noLeakCheck().assertsPlanNotContaining("join filter:");
+            assertIndexRebuildCount(excludeNoFilter, 2);
+
+            // Non-vectorized, INCLUDE PREVAILING, no join filter.
+            final String includeNoFilter = "SELECT t.ts, sum(p.x + t.m) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING";
+            assertQuery(includeNoFilter).noLeakCheck().assertsPlanContaining("vectorized: false", "(include prevailing)");
+            assertQuery(includeNoFilter).noLeakCheck().assertsPlanNotContaining("join filter:");
+            assertIndexRebuildCount(includeNoFilter, 2);
+
+            // Non-vectorized, INCLUDE PREVAILING, with a join filter.
+            final String includeWithFilter = "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) AND p.x > -1 " +
+                    "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING";
+            assertQuery(includeWithFilter).noLeakCheck()
+                    .assertsPlanContaining("vectorized: false", "(include prevailing)", "join filter:");
+            assertIndexRebuildCount(includeWithFilter, 2);
+        });
+    }
+
+    @Test
+    public void testWindowJoinKeyedIndexReuseAcrossMasterRows() throws Exception {
+        // The single-threaded keyed (fast) factory prefetches slave rows past the window so that
+        // the following master rows reuse the per-symbol index instead of rebuilding it. It sized
+        // that prefetch margin from windowHi alone, so a window ending at or before the current row
+        // (windowHi <= 0) got no margin at all and rebuilt the index for every master row - correct,
+        // but O(master rows x window rows). The margin now comes from the window's span, so these
+        // shapes finally reuse the index; that reuse path was previously unreachable for them.
+        // Master rows are dense relative to the window, so the index is reused many times per
+        // rebuild. Cross-check against a plain LEFT JOIN oracle (EXCLUDE PREVAILING semantics),
+        // for native and parquet slaves, on the single-threaded and parallel paths.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices_pq (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Master rows every 5 min, slave rows every minute: a 4 h window holds ~240 slave rows,
+            // and the index survives ~48 master rows per rebuild. Integer x keeps sum() exact.
+            execute("INSERT INTO trades SELECT rnd_symbol('a','b','c'), " +
+                    "timestamp_sequence('2024-01-01T08:00:00.000000Z', 5 * 60 * 1_000_000L) FROM long_sequence(400)");
+            execute("INSERT INTO prices SELECT rnd_symbol('a','b','c'), rnd_long(0, 1000, 0), " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(2_000)");
+            execute("INSERT INTO prices_pq SELECT * FROM prices");
+            execute("ALTER TABLE prices_pq CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // windowHi < 0 (past-only) and windowHi == 0 (ends at the current row) - the two shapes
+            // that used to rebuild the index per master row.
+            final String[][] windows = {
+                    {"RANGE BETWEEN 4 HOURS PRECEDING AND 2 HOURS PRECEDING", "p.ts <= dateadd('h', -2, t.ts)"},
+                    {"RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW", "p.ts <= t.ts"},
+            };
+            for (String[] window : windows) {
+                sink.clear();
+                printSql("SELECT t.sym, t.ts, sum(p.x) AS a0, count(p.x) AS a1 " +
+                        "FROM trades t LEFT JOIN prices p " +
+                        "ON t.sym = p.sym AND p.ts >= dateadd('h', -4, t.ts) AND " + window[1] + " " +
+                        "GROUP BY t.sym, t.ts ORDER BY t.sym, t.ts", sink);
+                final String expected = sink.toString();
+                assertNonVacuousOracle(window[0], expected);
+
+                for (boolean parallel : new boolean[]{false, true}) {
+                    sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
+                    for (String slave : new String[]{"prices", "prices_pq"}) {
+                        final String q = "SELECT t.sym, t.ts, sum(p.x) AS a0, count(p.x) AS a1 " +
+                                "FROM trades t WINDOW JOIN " + slave + " p ON (t.sym = p.sym) " +
+                                window[0] + " EXCLUDE PREVAILING " +
+                                "ORDER BY t.sym, t.ts";
+                        assertWindowJoinParallelism(q, parallel);
+                        sink.clear();
+                        printSql(q, sink);
+                        TestUtils.assertEquals(
+                                window[0] + " parallel=" + parallel + " slave=" + slave,
+                                expected,
+                                sink
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWindowJoinKeyedIndexReuseWhenSlaveExhausted() throws Exception {
+        // The single-threaded keyed (fast) factory rebuilds its per-symbol index whenever the
+        // window reaches past the last slave row it has indexed. Two shapes used to defeat that
+        // gate and rebuild the index for every master row:
+        //   - the master runs past the end of the slave table, so the index scan runs out of slave
+        //     rows and the last indexed timestamp stops advancing (the whole windowHi-wide tail);
+        //   - the window holds no slave row at all - a master row before the slave's first row, or
+        //     a window inside a slave gap - so the vectorized cursor, which looked no further than
+        //     the window's own upper bound, indexed nothing.
+        // Both now index everything up to the index horizon and mark the index complete once the
+        // slave runs out, so the index is reused instead. The master here starts 6 h before the
+        // slave's first row, crosses a 4 h slave gap and ends 5 h past the slave's last row, so it
+        // exercises both shapes plus the gap the index scan must not mistake for the end of the
+        // slave. Results must not move: cross-check against a plain LEFT JOIN oracle (EXCLUDE
+        // PREVAILING semantics) and, for INCLUDE PREVAILING, against the parallel path, for native
+        // and parquet slaves.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, m LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices_pq (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Master rows every 5 min over 41 h. Slave rows every minute over 06:00-22:00 on day 1
+            // and 02:00-12:00 on day 2: the 4 h gap straddles the partition boundary, so the index
+            // scan also stops on "the next frame starts past the index horizon" - which does NOT
+            // complete the index, and drops the whole second partition from the aggregates if it is
+            // mistaken for the slave running out of rows.
+            // Integer x keeps sum() order-independent so the oracle compares exactly.
+            execute("INSERT INTO trades SELECT rnd_symbol('a','b','c'), rnd_long(0, 10, 0), " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 5 * 60 * 1_000_000L) FROM long_sequence(500)");
+            execute("INSERT INTO prices SELECT rnd_symbol('a','b','c'), rnd_long(0, 1000, 0), " +
+                    "timestamp_sequence('2024-01-01T06:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(961)");
+            execute("INSERT INTO prices SELECT rnd_symbol('a','b','c'), rnd_long(0, 1000, 0), " +
+                    "timestamp_sequence('2024-01-02T02:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(601)");
+            execute("INSERT INTO prices_pq SELECT * FROM prices");
+            execute("ALTER TABLE prices_pq CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // window clause, and the slave interval it selects, for the LEFT JOIN oracle
+            final String[][] windows = {
+                    {"RANGE BETWEEN CURRENT ROW AND 4 HOURS FOLLOWING", "p.ts >= t.ts AND p.ts <= dateadd('h', 4, t.ts)"},
+                    {"RANGE BETWEEN 4 HOURS PRECEDING AND 4 HOURS FOLLOWING", "p.ts >= dateadd('h', -4, t.ts) AND p.ts <= dateadd('h', 4, t.ts)"},
+                    {"RANGE BETWEEN 4 HOURS PRECEDING AND 2 HOURS PRECEDING", "p.ts >= dateadd('h', -4, t.ts) AND p.ts <= dateadd('h', -2, t.ts)"},
+            };
+            // Aggregate and join filter, chosen to route through each of the four keyed cursors:
+            // sum(p.x) is batch-computable, so it takes the vectorized cursor; sum(p.x + t.m) reads
+            // a master column, which the vectorized path cannot batch; a join filter (always true
+            // here, so the oracle holds) forces the join-filter cursors.
+            final String[][] shapes = {
+                    {"sum(p.x)", ""},
+                    {"sum(p.x + t.m)", ""},
+                    {"sum(p.x)", " AND p.x > -1"},
+            };
+            for (String[] window : windows) {
+                for (String[] shape : shapes) {
+                    sink.clear();
+                    printSql("SELECT t.sym, t.ts, " + shape[0] + " AS a0 " +
+                            "FROM trades t LEFT JOIN prices p " +
+                            "ON t.sym = p.sym AND " + window[1] + shape[1] + " " +
+                            "GROUP BY t.sym, t.ts ORDER BY t.sym, t.ts", sink);
+                    final String expected = sink.toString();
+                    assertNonVacuousOracle(window[0] + " " + shape[0], expected);
+
+                    final String prefix = window[0] + " " + shape[0] + shape[1];
+                    for (String slave : new String[]{"prices", "prices_pq"}) {
+                        for (boolean parallel : new boolean[]{false, true}) {
+                            sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
+                            final String q = "SELECT t.sym, t.ts, " + shape[0] + " AS a0 " +
+                                    "FROM trades t WINDOW JOIN " + slave + " p ON (t.sym = p.sym)" + shape[1] + " " +
+                                    window[0] + " EXCLUDE PREVAILING ORDER BY t.sym, t.ts";
+                            assertWindowJoinParallelism(q, parallel);
+                            sink.clear();
+                            printSql(q, sink);
+                            TestUtils.assertEquals(prefix + " parallel=" + parallel + " slave=" + slave, expected, sink);
+                        }
+
+                        // INCLUDE PREVAILING has no simple plain-SQL oracle; cross-check the
+                        // single-threaded and parallel keyed paths against each other. Only the
+                        // former rebuilds the index per master row, so they diverge if the index is
+                        // marked complete too early. Parity alone is not an oracle, so the serial
+                        // side also goes through the non-vacuity guard and each side asserts its
+                        // route; testWindowJoinKeyedIncludePrevailingAbsoluteOracle pins the values.
+                        final String incl = "SELECT t.sym, t.ts, " + shape[0] + " AS a0 " +
+                                "FROM trades t WINDOW JOIN " + slave + " p ON (t.sym = p.sym)" + shape[1] + " " +
+                                window[0] + " INCLUDE PREVAILING ORDER BY t.sym, t.ts";
+                        sqlExecutionContext.setParallelWindowJoinEnabled(false);
+                        assertWindowJoinParallelism(incl, false);
+                        sink.clear();
+                        printSql(incl, sink);
+                        final String single = sink.toString();
+                        assertNonVacuousOracle(prefix + " include prevailing slave=" + slave, single);
+                        sqlExecutionContext.setParallelWindowJoinEnabled(true);
+                        assertWindowJoinParallelism(incl, true);
+                        sink.clear();
+                        printSql(incl, sink);
+                        TestUtils.assertEquals(prefix + " include prevailing slave=" + slave, single, sink);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWindowJoinMasterTimestampMultiIntervalWhere() throws Exception {
+        // A master designated-timestamp predicate that extracts to MULTIPLE disjoint intervals
+        // (t.ts != literal, NOT BETWEEN, OR of ranges) must not collapse the slave page-frame scan
+        // to a single range. The slave scan derived from the master interval is the UNION of the
+        // per-master-range offsets, not their intersection; intersecting empties the slave frame and
+        // returns null aggregates. Every predicate below excludes only timestamps absent from the
+        // data, so it is a logical no-op and must match the predicate-free baseline. Cross-checked
+        // for the keyed (fast) and non-keyed (general) shapes, parallel and single-threaded.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO trades VALUES ('a','2024-01-01T12:00:00.000000Z'), ('a','2024-01-01T13:00:00.000000Z')");
+            execute("INSERT INTO prices VALUES " +
+                    "('a',10.0,'2024-01-01T10:30:00.000000Z'), ('a',20.0,'2024-01-01T11:00:00.000000Z'), " +
+                    "('a',30.0,'2024-01-01T11:40:00.000000Z'), ('a',40.0,'2024-01-01T12:40:00.000000Z')");
+
+            final String prevailing = includePrevailing ? " INCLUDE PREVAILING" : " EXCLUDE PREVAILING";
+            // keyed (fast factory) and non-keyed (general factory) shapes
+            final String[] onClauses = {" ON (t.sym = p.sym)", ""};
+            // master-only predicates that each extract to multiple disjoint intervals while excluding
+            // only timestamps that are absent from the data, so they are logical no-ops
+            final String[] predicates = {
+                    "t.ts != '2020-01-01T00:00:00.000000Z'::TIMESTAMP",
+                    "'2020-01-01T00:00:00.000000Z'::TIMESTAMP != t.ts",
+                    "t.ts NOT BETWEEN '2019-01-01T00:00:00.000000Z'::TIMESTAMP AND '2020-01-01T00:00:00.000000Z'::TIMESTAMP",
+                    "t.ts < '2019-01-01T00:00:00.000000Z'::TIMESTAMP OR t.ts > '2020-01-01T00:00:00.000000Z'::TIMESTAMP",
+            };
+            for (boolean parallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
+                for (String on : onClauses) {
+                    final String baseQuery = "SELECT t.sym, avg(p.x) AS a0 FROM trades t WINDOW JOIN prices p" + on +
+                            " RANGE BETWEEN 120 MINUTES PRECEDING AND 30 MINUTES PRECEDING" + prevailing +
+                            " ORDER BY t.sym, a0";
+                    sink.clear();
+                    printSql(baseQuery, sink);
+                    final String expected = sink.toString();
+                    // The baseline is itself a WINDOW JOIN, so this comparison alone is a self-check: the
+                    // bug it pins produces null aggregates, and a break that nulls both arms would pass.
+                    // Pin the baseline absolutely. avg over [ts-120m, ts-30m] is 15.0 for the 12:00 master
+                    // row (prices at 10:30 and 11:00) and 25.0 for the 13:00 one (11:00 and 11:40).
+                    // INCLUDE PREVAILING carries the 11:00 row, which is already in-window, so both
+                    // prevailing modes land on the same rows.
+                    TestUtils.assertEquals(
+                            "baseline drifted (parallel=" + parallel + ", on='" + on + "')",
+                            "sym\ta0\na\t15.0\na\t25.0\n",
+                            expected
+                    );
+                    for (String pred : predicates) {
+                        final String query = "SELECT t.sym, avg(p.x) AS a0 FROM trades t WINDOW JOIN prices p" + on +
+                                " RANGE BETWEEN 120 MINUTES PRECEDING AND 30 MINUTES PRECEDING" + prevailing +
+                                " WHERE " + pred + " ORDER BY t.sym, a0";
+                        assertWindowJoinParallelism(query, parallel);
+                        sink.clear();
+                        printSql(query, sink);
+                        TestUtils.assertEquals(query + " (parallel=" + parallel + ")", expected, sink);
+                    }
+                }
+            }
+
+        });
+    }
+
+    @Test
+    public void testWindowJoinMixedPrecisionBoundSurvivesIntervalPruning() throws Exception {
+        // The interval-pruning conversion used to run even when
+        // RuntimeIntervalModelBuilder.merge() would discard its result, which it does whenever
+        // the master model's timestamp type differs from the slave builder's. 110_000 days sits
+        // inside the microsecond ceiling of 106_751_991 that governs this frame but past the
+        // nanosecond one of 106_751, so range-checking the pruning site against the slave's type
+        // rejected a frame the join evaluates correctly - and only when a WHERE created a pushed
+        // interval model, so the very same query compiled fine without one. The block now
+        // applies merge()'s own type precondition and skips instead.
+        //
+        // Timestamp types come from the DDL here, so run this once rather than per parameter.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO master VALUES ('2024-01-02T02:00:00.000000Z')");
+            execute("INSERT INTO slave VALUES (1.5, '2024-01-02T01:00:00.000000000Z')");
+
+            assertQuery("""
+                    SELECT m.ts, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 110_000 day PRECEDING AND 0 second FOLLOWING
+                    EXCLUDE PREVAILING
+                    WHERE m.ts > '2024-01-01T00:00:00.000000Z'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
+                            ts\tagg
+                            2024-01-02T02:00:00.000000Z\t1.5
+                            """);
+
         });
     }
 
@@ -5066,26 +5819,25 @@ public class WindowJoinTest extends AbstractCairoTest {
                     (10.5, 'A', '2024-01-01T00:01:30.000000Z'),
                     (19.0, 'B', '2024-01-02T00:00:30.000000Z')
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                     SELECT i.id, sub.sum
+                     FROM instruments i
+                     JOIN (
+                         SELECT sum(t.price + q.price) AS sum, t.instrument_id
+                         FROM trades t
+                         WINDOW JOIN quotes q ON tag
+                             RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                     ) sub ON sub.instrument_id = i.id
+                     ORDER BY i.id, sub.sum
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id	sum
                             1	19.5
                             1	42.0
                             2	39.0
-                            """,
-                    """
-                             SELECT i.id, sub.sum
-                             FROM instruments i
-                             JOIN (
-                                 SELECT sum(t.price + q.price) AS sum, t.instrument_id
-                                 FROM trades t
-                                 WINDOW JOIN quotes q ON tag
-                                     RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
-                             ) sub ON sub.instrument_id = i.id
-                             ORDER BY i.id, sub.sum
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -5120,30 +5872,29 @@ public class WindowJoinTest extends AbstractCairoTest {
                     (10.5, 'A', '2024-01-01T00:01:30.000000Z'),
                     (19.0, 'B', '2024-01-02T00:00:30.000000Z')
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                     SELECT c.id AS category_id, sub1.sum
+                     FROM categories c
+                     JOIN (
+                         SELECT i.category_id, sub2.sum
+                         FROM instruments i
+                         JOIN (
+                             SELECT sum(t.price + q.price) AS sum, t.instrument_id
+                             FROM trades t
+                             WINDOW JOIN quotes q ON tag
+                                 RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                         ) sub2 ON sub2.instrument_id = i.id
+                     ) sub1 ON sub1.category_id = c.id
+                     ORDER BY c.id, sub1.sum
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             category_id	sum
                             1	19.5
                             1	42.0
                             2	39.0
-                            """,
-                    """
-                             SELECT c.id AS category_id, sub1.sum
-                             FROM categories c
-                             JOIN (
-                                 SELECT i.category_id, sub2.sum
-                                 FROM instruments i
-                                 JOIN (
-                                     SELECT sum(t.price + q.price) AS sum, t.instrument_id
-                                     FROM trades t
-                                     WINDOW JOIN quotes q ON tag
-                                         RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
-                                 ) sub2 ON sub2.instrument_id = i.id
-                             ) sub1 ON sub1.category_id = c.id
-                             ORDER BY c.id, sub1.sum
-                            """,
-                    null, true, true
-            );
+                            """);
         });
     }
 
@@ -5178,9 +5929,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                         sink);
             }
 
-            assertQueryAndPlan(
-                    sink,
-                    "Async Window Join workers: 1\n" +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    " range between 2 minute preceding and 1 minute preceding " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts;")
+                    .withPlan("Async Window Join workers: 1\n" +
                             "  vectorized: true\n" +
                             "  window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
                             "  window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
@@ -5189,16 +5943,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        Frame forward scan on: trades\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            " range between 2 minute preceding and 1 minute preceding " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts;",
-                    "ts",
-                    false,
-                    false
-            );
+                            "        Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(sink);
 
             if (!includePrevailing) {
                 printSql("select t.sym, t.price, t.ts, sum(p.price) window_price " +
@@ -5226,9 +5974,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Async Window Join workers: 1\n" +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    " range between 3 minute preceding and 2 minute preceding " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts;")
+                    .withPlan("Async Window Join workers: 1\n" +
                             "  vectorized: true\n" +
                             "  window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "180000000" : "180000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
                             "  window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
@@ -5237,16 +5988,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        Frame forward scan on: trades\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            " range between 3 minute preceding and 2 minute preceding " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts;",
-                    "ts",
-                    false,
-                    false
-            );
+                            "        Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(sink);
 
             if (!includePrevailing) {
                 printSql("select t.sym, t.price, t.ts, sum(p.price) window_price, count() as cnt " +
@@ -5275,9 +6020,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Async Window Join workers: 1\n" +
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price, count() as cnt " +
+                    "from trades t " +
+                    "window join prices p " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    " where t.price < 300 " +
+                    "order by t.ts;")
+                    .withPlan("Async Window Join workers: 1\n" +
                             "  vectorized: true\n" +
                             "  window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
                             "  window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
@@ -5287,17 +6036,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        Frame forward scan on: trades\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price, count() as cnt " +
-                            "from trades t " +
-                            "window join prices p " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            " where t.price < 300 " +
-                            "order by t.ts;",
-                    "ts",
-                    false,
-                    false
-            );
+                            "        Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(sink);
         });
     }
 
@@ -5343,9 +6085,18 @@ public class WindowJoinTest extends AbstractCairoTest {
                         sink
                 );
             }
-            assertQueryAndPlan(
-                    sink,
-                    String.format("""
+            assertQuery(String.format(
+                    """
+                            SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
+                            FROM trades t
+                            WINDOW JOIN prices p
+                            ON (t.sym = p.sym)
+                              RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                            ORDER BY t.ts DESC
+                            """,
+                    prevailing
+            ))
+                    .withPlan(String.format("""
                                     Encode sort
                                       keys: [ts desc]
                                         Async Window Fast Join workers: 1
@@ -5362,22 +6113,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     """,
                             nanoZeros,
                             prevailing
-                    ),
-                    String.format(
-                            """
-                                    SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
-                                    FROM trades t
-                                    WINDOW JOIN prices p
-                                    ON (t.sym = p.sym)
-                                      RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
-                                    ORDER BY t.ts DESC
-                                    """,
-                            prevailing
-                    ),
-                    "ts###DESC",
-                    true,
-                    false
-            );
+                    ))
+                    .timestampDesc("ts")
+                    .returns(sink);
         });
     }
 
@@ -5421,9 +6159,17 @@ public class WindowJoinTest extends AbstractCairoTest {
                         sink
                 );
             }
-            assertQueryAndPlan(
-                    sink,
-                    String.format(
+            assertQuery(String.format(
+                    """
+                            SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
+                            FROM trades t
+                            WINDOW JOIN prices p
+                              RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                            ORDER BY t.ts DESC, t.sym
+                            """,
+                    prevailing
+            ))
+                    .withPlan(String.format(
                             """
                                     Encode sort
                                       keys: [ts desc, sym]
@@ -5440,21 +6186,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     """,
                             nanoZeros,
                             prevailing
-                    ),
-                    String.format(
-                            """
-                                    SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
-                                    FROM trades t
-                                    WINDOW JOIN prices p
-                                      RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
-                                    ORDER BY t.ts DESC, t.sym
-                                    """,
-                            prevailing
-                    ),
-                    "ts###DESC",
-                    true,
-                    false
-            );
+                    ))
+                    .timestampDesc("ts")
+                    .returns(sink);
         });
     }
 
@@ -5501,9 +6235,18 @@ public class WindowJoinTest extends AbstractCairoTest {
                         sink
                 );
             }
-            assertQueryAndPlan(
-                    sink,
-                    String.format(
+            assertQuery(String.format(
+                    """
+                            SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
+                            FROM (SELECT * FROM trades LIMIT 10) t
+                            WINDOW JOIN prices p
+                            ON (t.sym = p.sym)
+                              RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                            ORDER BY t.ts DESC
+                            """,
+                    prevailing
+            ))
+                    .withPlan(String.format(
                             """
                                     Encode sort
                                       keys: [ts desc]
@@ -5522,22 +6265,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     """,
                             nanoZeros,
                             prevailing
-                    ),
-                    String.format(
-                            """
-                                    SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
-                                    FROM (SELECT * FROM trades LIMIT 10) t
-                                    WINDOW JOIN prices p
-                                    ON (t.sym = p.sym)
-                                      RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
-                                    ORDER BY t.ts DESC
-                                    """,
-                            prevailing
-                    ),
-                    "ts###DESC",
-                    true,
-                    true
-            );
+                    ))
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns(sink);
         });
     }
 
@@ -5584,9 +6315,18 @@ public class WindowJoinTest extends AbstractCairoTest {
                         sink
                 );
             }
-            assertQueryAndPlan(
-                    sink,
-                    String.format(
+            assertQuery(String.format(
+                    """
+                            SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
+                            FROM (SELECT * FROM trades LIMIT 10) t
+                            WINDOW JOIN prices p
+                            ON (concat(t.sym, '_0') = concat(p.sym, '_0'))
+                              RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                            ORDER BY t.ts DESC
+                            """,
+                    prevailing
+            ))
+                    .withPlan(String.format(
                             """
                                     Encode sort
                                       keys: [ts desc]
@@ -5604,22 +6344,59 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     """,
                             nanoZeros,
                             prevailing
-                    ),
-                    String.format(
-                            """
-                                    SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
-                                    FROM (SELECT * FROM trades LIMIT 10) t
-                                    WINDOW JOIN prices p
-                                    ON (concat(t.sym, '_0') = concat(p.sym, '_0'))
-                                      RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
-                                    ORDER BY t.ts DESC
-                                    """,
-                            prevailing
-                    ),
-                    "ts###DESC",
-                    true,
-                    true
-            );
+                    ))
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns(sink);
+        });
+    }
+
+    @Test
+    public void testWindowJoinParallelMasterArrayColumnDoesNotLeak() throws Exception {
+        // Reading an array column through a PARALLEL WINDOW JOIN master had no coverage at all, so
+        // this closes that gap: it drives PageFrameMemoryRecord.getArray() from the async cursor's
+        // master record and pins the values.
+        //
+        // It is deliberately NOT a leak regression test. AsyncWindowJoinRecordCursor.close() frees
+        // that record, whose close() runs Misc.freeObjList(arrayBuffers), but arrayBuffers holds
+        // BorrowedArray - a view over page-frame memory, not an owner - and ArrayView.close() is
+        // empty, so nothing native is released there. Removing the Misc.free(masterRecord) leaves
+        // this test green. The free is worth keeping (it also drops the symbol table cache), but
+        // an array column is not what makes it load bearing.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('a', ARRAY[1.0, 2.0], '2024-01-01T00:00:00.000000Z'),
+                    ('a', ARRAY[3.0, 4.0], '2024-01-01T00:01:00.000000Z'),
+                    ('a', ARRAY[5.0, 6.0], '2024-01-01T00:02:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO prices VALUES
+                    ('a', 10, '2024-01-01T00:00:00.000000Z'),
+                    ('a', 20, '2024-01-01T00:01:00.000000Z'),
+                    ('a', 30, '2024-01-01T00:02:00.000000Z')
+                    """);
+            sqlExecutionContext.setParallelWindowJoinEnabled(true);
+
+            final String query = "SELECT t.ts, t.arr, sum(p.x) AS a0 FROM trades t " +
+                    "WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
+            // The leak lives only in the async cursor, so pin that this is the factory under test.
+            assertQuery(query).noLeakCheck().assertsPlanContaining("Async Window ");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tarr\ta0
+                            2024-01-01T00:00:00.000000Z\t[1.0,2.0]\t10
+                            2024-01-01T00:01:00.000000Z\t[3.0,4.0]\t30
+                            2024-01-01T00:02:00.000000Z\t[5.0,6.0]\t50
+                            """);
         });
     }
 
@@ -5655,9 +6432,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select sum(p.price) + 2 as window_price, t.price + 1, t.sym, t.ts " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [sum+2,price+1,sym,ts]\n" +
@@ -5671,17 +6452,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "                Frame forward scan on: trades\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: prices\n",
-                    "select sum(p.price) + 2 as window_price, t.price + 1, t.sym, t.ts " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "                Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(sink);
 
             if (!includePrevailing) {
                 printSql("select sum(p.price) + 2 window_price, t.price + 1, t.sym, t.ts " +
@@ -5711,9 +6484,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select sum(p.price) + 2 as window_price, t.price + 1, t.sym, t.ts " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym != p.sym and p.price > 100) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [sum+2,price+1,sym,ts]\n" +
@@ -5727,17 +6504,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "                Frame forward scan on: trades\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: prices\n",
-                    "select sum(p.price) + 2 as window_price, t.price + 1, t.sym, t.ts " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym != p.sym and p.price > 100) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
-            );
+                            "                Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(sink);
         });
     }
 
@@ -5768,36 +6537,34 @@ public class WindowJoinTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Self-join with aggregates and WHERE clause - this was reproducing the "Invalid column: price" error
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT " +
+                    "t.timestamp, " +
+                    "t.order_id, " +
+                    "t.symbol, " +
+                    "t.side, " +
+                    "t.price AS fill_price, " +
+                    "sum(w.price * w.quantity) / sum(w.quantity) AS vwap_5m, " +
+                    "(t.price - sum(w.price * w.quantity) / sum(w.quantity)) " +
+                    "    / (sum(w.price * w.quantity) / sum(w.quantity)) * 10000 AS slippage_bps " +
+                    "FROM fx_trades t " +
+                    "WINDOW JOIN fx_trades w " +
+                    "    ON (t.symbol = w.symbol) " +
+                    "    RANGE BETWEEN 5 minutes PRECEDING AND 1 microseconds PRECEDING " +
+                    "    EXCLUDE PREVAILING " +
+                    "WHERE t.symbol = 'EURUSD' " +
+                    "ORDER BY t.timestamp " +
+                    "LIMIT 100")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .returns("""
                             timestamp\torder_id\tsymbol\tside\tfill_price\tvwap_5m\tslippage_bps
                             2025-01-01T00:00:00.000000Z\t0010cde8-12ce-40ee-8010-a928bb8b9650\tEURUSD\tbuy\t1.05\tnull\tnull
                             2025-01-01T00:01:00.000000Z\t9f9b2131-d49f-4d1d-ab81-39815c50d341\tEURUSD\tsell\t1.051\t1.05\t9.523809523808474
                             2025-01-01T00:02:00.000000Z\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\tEURUSD\tbuy\t1.052\t1.0503333333333333\t15.867978419549715
                             2025-01-01T00:04:00.000000Z\te8beef38-cd7b-43d8-9b2d-34586f6275fa\tEURUSD\tsell\t1.053\t1.050888888888889\t20.088813702684046
                             2025-01-01T00:05:00.000000Z\t322a2198-864b-4b14-b97f-a69eb8fec6cc\tEURUSD\tbuy\t1.054\t1.0511\t27.590143659025067
-                            """,
-                    "SELECT " +
-                            "t.timestamp, " +
-                            "t.order_id, " +
-                            "t.symbol, " +
-                            "t.side, " +
-                            "t.price AS fill_price, " +
-                            "sum(w.price * w.quantity) / sum(w.quantity) AS vwap_5m, " +
-                            "(t.price - sum(w.price * w.quantity) / sum(w.quantity)) " +
-                            "    / (sum(w.price * w.quantity) / sum(w.quantity)) * 10000 AS slippage_bps " +
-                            "FROM fx_trades t " +
-                            "WINDOW JOIN fx_trades w " +
-                            "    ON (t.symbol = w.symbol) " +
-                            "    RANGE BETWEEN 5 minutes PRECEDING AND 1 microseconds PRECEDING " +
-                            "    EXCLUDE PREVAILING " +
-                            "WHERE t.symbol = 'EURUSD' " +
-                            "ORDER BY t.timestamp " +
-                            "LIMIT 100",
-                    "timestamp",
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
@@ -5819,7 +6586,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         // Create fx_trades-like table
                         engine.execute(
                                 "create table fx_trades (" +
@@ -5881,6 +6648,266 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinStaticWindowOverflow() throws Exception {
+        // A static FOLLOWING bound large enough to push masterTs + windowHi past Long.MAX_VALUE. The
+        // designated timestamp is never negative, so this is the only direction the frame arithmetic
+        // can overflow, and the bound below is the largest one the codegen unit conversion still
+        // scales without wrapping - it means "to the end of time".
+        //
+        // The dynamic-bound cursors already saturate here (testDynamicWindowOverflowHiBound); the
+        // static-bound cursors wrapped the sum negative instead, scanned an early timestamp range and
+        // reported an empty window. The sync non-keyed cursor routes its constant bounds through the
+        // same saturating helpers as the dynamic ones, so before the fix the very same query answered
+        // differently depending on whether it ran keyed, and whether it ran parallel.
+        assertMemoryLeak(() -> {
+            // Seconds that scale to just under Long.MAX_VALUE in the master's own units.
+            final long bound = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType())
+                    ? 9_223_372_036_854L
+                    : 9_223_372_036L;
+            execute(
+                    "CREATE TABLE master (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY"
+                            .replace("#TIMESTAMP", leftTableTimestampType.getTypeName())
+            );
+            execute(
+                    "CREATE TABLE slave (ts #TIMESTAMP, sym SYMBOL, val INT) TIMESTAMP(ts) PARTITION BY DAY"
+                            .replace("#TIMESTAMP", rightTableTimestampType.getTypeName())
+            );
+            execute("""
+                    INSERT INTO master VALUES
+                    ('2023-01-01T09:00:00.000000Z'::timestamp, 'a'),
+                    ('2023-01-01T09:01:00.000000Z'::timestamp, 'a')
+                    """);
+            execute("""
+                    INSERT INTO slave VALUES
+                    ('2023-01-01T08:59:00.000000Z'::timestamp, 'a', 10),
+                    ('2023-01-01T09:00:30.000000Z'::timestamp, 'a', 20),
+                    ('2023-01-01T09:02:00.000000Z'::timestamp, 'a', 30),
+                    ('2023-01-01T09:03:00.000000Z'::timestamp, 'b', 40)
+                    """);
+
+            final String ts = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType())
+                    ? "000000Z" : "000000000Z";
+            // [masterTs, end of time], and (start of time, end of time] - the latter also saturates the
+            // index lookahead margin, which sums both bounds.
+            final String toEndOfTime = "RANGE BETWEEN 0 seconds PRECEDING AND " + bound + " seconds FOLLOWING ";
+            final String unbounded = "RANGE BETWEEN " + bound + " seconds PRECEDING AND " + bound + " seconds FOLLOWING ";
+
+            for (boolean parallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
+
+                // keyed (fast) cursors
+                assertQuery("SELECT m.ts, sum(s.val) AS agg, count(*) AS cnt FROM master m " +
+                        "WINDOW JOIN slave s ON m.sym = s.sym " + toEndOfTime + "EXCLUDE PREVAILING")
+                        .noLeakCheck().timestamp("ts").noRandomAccess().sizeMayVary()
+                        .returns("ts\tagg\tcnt\n" +
+                                "2023-01-01T09:00:00." + ts + "\t50\t2\n" +
+                                "2023-01-01T09:01:00." + ts + "\t30\t1\n");
+                assertQuery("SELECT m.ts, sum(s.val) AS agg, count(*) AS cnt FROM master m " +
+                        "WINDOW JOIN slave s ON m.sym = s.sym " + toEndOfTime + "INCLUDE PREVAILING")
+                        .noLeakCheck().timestamp("ts").noRandomAccess().sizeMayVary()
+                        .returns("ts\tagg\tcnt\n" +
+                                "2023-01-01T09:00:00." + ts + "\t60\t3\n" +
+                                "2023-01-01T09:01:00." + ts + "\t50\t2\n");
+                assertQuery("SELECT m.ts, sum(s.val) AS agg, count(*) AS cnt FROM master m " +
+                        "WINDOW JOIN slave s ON m.sym = s.sym " + unbounded + "EXCLUDE PREVAILING")
+                        .noLeakCheck().timestamp("ts").noRandomAccess().sizeMayVary()
+                        .returns("ts\tagg\tcnt\n" +
+                                "2023-01-01T09:00:00." + ts + "\t60\t3\n" +
+                                "2023-01-01T09:01:00." + ts + "\t60\t3\n");
+
+                // non-keyed (general) cursors
+                assertQuery("SELECT m.ts, sum(s.val) AS agg, count(*) AS cnt FROM master m " +
+                        "WINDOW JOIN slave s " + toEndOfTime + "EXCLUDE PREVAILING")
+                        .noLeakCheck().timestamp("ts").noRandomAccess().sizeMayVary()
+                        .returns("ts\tagg\tcnt\n" +
+                                "2023-01-01T09:00:00." + ts + "\t90\t3\n" +
+                                "2023-01-01T09:01:00." + ts + "\t70\t2\n");
+                assertQuery("SELECT m.ts, sum(s.val) AS agg, count(*) AS cnt FROM master m " +
+                        "WINDOW JOIN slave s " + unbounded + "EXCLUDE PREVAILING")
+                        .noLeakCheck().timestamp("ts").noRandomAccess().sizeMayVary()
+                        .returns("ts\tagg\tcnt\n" +
+                                "2023-01-01T09:00:00." + ts + "\t100\t4\n" +
+                                "2023-01-01T09:01:00." + ts + "\t100\t4\n");
+            }
+        });
+    }
+
+    @Test
+    public void testWindowJoinSymbolAggregateInProjection() throws Exception {
+        // A SYMBOL-typed aggregate (first / last over the slave symbol column) wrapped in a
+        // projection plus ORDER BY / LIMIT. The parallel window join must bind the aggregate's slave
+        // arg at getCursor() time so the projection can resolve the output column's static symbol
+        // table; otherwise SymbolColumn.init trips on a null static symbol table. Cross-checked
+        // against the single-threaded path, which binds eagerly and is unaffected.
+        assertMemoryLeak(() -> {
+            prepareTable();
+            final String prevailing = includePrevailing ? " INCLUDE PREVAILING" : " EXCLUDE PREVAILING";
+            final String[] queries = {
+                    // General path (no ON clause), matching the fuzzer repro: a literal and reordered
+                    // columns force a VirtualRecord projection over the join.
+                    "SELECT t.sym, 'U', t.ts, max(p.price), first(p.sym), count(*) " +
+                            "FROM trades t WINDOW JOIN prices p " +
+                            "RANGE BETWEEN 1 MINUTE PRECEDING AND 5 MINUTES FOLLOWING" + prevailing +
+                            " ORDER BY 1, 3 LIMIT 100",
+                    // Fast (symbol-keyed) path: the symbol equality ON clause selects the fast factory.
+                    "SELECT t.sym, 'V', t.ts, first(p.sym), last(p.sym), count(*) " +
+                            "FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 1 MINUTE PRECEDING AND 5 MINUTES FOLLOWING" + prevailing +
+                            " ORDER BY 1, 3 LIMIT 100",
+            };
+            for (int i = 0; i < queries.length; i++) {
+                final String query = queries[i];
+                sqlExecutionContext.setParallelWindowJoinEnabled(false);
+                // The bug is parallel-only, so the differential is worthless unless the two arms really
+                // took different routes. Pin each arm's factory, or a gate change turns this into the
+                // single-threaded path compared against itself.
+                assertWindowJoinParallelism(query, false);
+                sink.clear();
+                printSql(query, sink);
+                final String expected = sink.toString();
+                // Guard against a vacuous comparison: the fixed bug crashes rather than returning wrong
+                // rows, so a result that is empty - or all-null - on both paths would let a regression pass.
+                assertNonVacuousOracle(query, expected);
+
+                sqlExecutionContext.setParallelWindowJoinEnabled(true);
+                assertWindowJoinParallelism(query, true);
+                sink.clear();
+                printSql(query, sink);
+                TestUtils.assertEquals(query, expected, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testWindowJoinVectorizedSharedColumnAggregates() throws Exception {
+        // Multiple vectorized slave aggregates where two share one slave column dedup to a single
+        // column slot. The per-worker reduce path kept its function args function-indexed (an entry
+        // per aggregate, null for the deduped one) while the types and column slots stayed
+        // column-indexed, so a worker overran them: AssertionError in the general factory,
+        // "valueIndex out of bounds" in the fast factory. Cross-checked against the single-threaded
+        // result for both factories. Throws on HEAD without the fix.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, 2_000_000_000L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        // v is LONG256, whose first/last are thread-unsafe, so the planner builds
+                        // per-worker group-by function copies - the path the bug lives on. n is INT for
+                        // the second, distinct column slot.
+                        engine.execute(
+                                "create table trades (ts timestamp, sym symbol, v long256, n int) " +
+                                        "timestamp(ts) partition by day",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "create table prices (ts timestamp, sym symbol, v long256, n int) " +
+                                        "timestamp(ts) partition by day",
+                                sqlExecutionContext
+                        );
+                        // 4000 master rows over small page frames fan hundreds of frames out to the 4 pool
+                        // workers, so the per-worker reduce path (where the bug lives) is reliably hit.
+                        engine.execute(
+                                "insert into trades select " +
+                                        "'2023-01-01T00:00:00.000000Z'::timestamp + (1_000_000 * x), " +
+                                        "rnd_symbol('TSLA', 'AMZN', 'META'), rnd_long256(), rnd_int() " +
+                                        "from long_sequence(4000)",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "insert into prices select " +
+                                        "'2023-01-01T00:00:00.000000Z'::timestamp + (100_000 * x), " +
+                                        "rnd_symbol('TSLA', 'AMZN', 'META'), rnd_long256(), rnd_int() " +
+                                        "from long_sequence(40_000)",
+                                sqlExecutionContext
+                        );
+                        TestUtils.drainWalQueue(engine);
+
+                        // first/last/count are order-independent and bit-exact, so the parallel result
+                        // matches the single-threaded one (a floating-point sum/avg would diverge in the
+                        // last ULP between the two paths).
+                        final String prevailing = includePrevailing ? " INCLUDE PREVAILING" : " EXCLUDE PREVAILING";
+                        final String[] queries = {
+                                // General (non-keyed) factory: first/last over v dedup to one column slot,
+                                // count over n is the second.
+                                "SELECT t.sym, t.ts, first(p.v), last(p.v), count(p.n) " +
+                                        "FROM trades t WINDOW JOIN prices p " +
+                                        "RANGE BETWEEN 5 SECONDS PRECEDING AND 5 SECONDS FOLLOWING" + prevailing +
+                                        " ORDER BY 1, 2",
+                                // Fast (symbol-keyed) factory: same shape with a symbol equality join key.
+                                "SELECT t.sym, t.ts, first(p.v), last(p.v), count(p.n) " +
+                                        "FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                                        "RANGE BETWEEN 5 SECONDS PRECEDING AND 5 SECONDS FOLLOWING" + prevailing +
+                                        " ORDER BY 1, 2",
+                        };
+                        final StringSink expectedSink = new StringSink();
+                        final StringSink actualSink = new StringSink();
+                        for (int i = 0; i < queries.length; i++) {
+                            final String query = queries[i];
+                            sqlExecutionContext.setParallelWindowJoinEnabled(false);
+                            TestUtils.printSql(compiler, sqlExecutionContext, query, expectedSink);
+                            // The fixed bug throws rather than returning wrong rows, so a result that is
+                            // empty - or all-null - on both paths would let a regression pass.
+                            assertNonVacuousOracle(query, expectedSink.toString());
+
+                            sqlExecutionContext.setParallelWindowJoinEnabled(true);
+                            TestUtils.printSql(compiler, sqlExecutionContext, query, actualSink);
+
+                            TestUtils.assertEquals(query, expectedSink, actualSink);
+                        }
+
+                        // Independent oracle for the EXCLUDE PREVAILING case: a plain LEFT JOIN over the
+                        // same [M-5s, M+5s] window computes count(p.n) through a different code path than
+                        // the WINDOW JOIN reduce, so a miscompute shared by the single-threaded and parallel
+                        // window-join paths (which the cross-check above would not catch) is caught here.
+                        // Only count is checked: first/last over LONG256 are order-dependent and have no
+                        // simple plain-SQL oracle. INCLUDE PREVAILING adds the carried prevailing row and
+                        // has no plain-SQL oracle either, so it relies on the cross-check above.
+                        if (!includePrevailing) {
+                            final String[] oracleJoinKeys = {"", "t.sym = p.sym AND "};
+                            final String[] windowJoinOn = {"", " ON (t.sym = p.sym)"};
+                            for (int i = 0; i < oracleJoinKeys.length; i++) {
+                                expectedSink.clear();
+                                TestUtils.printSql(
+                                        compiler,
+                                        sqlExecutionContext,
+                                        "SELECT t.sym, t.ts, count(p.n) AS a0 " +
+                                                "FROM trades t LEFT JOIN prices p " +
+                                                "ON " + oracleJoinKeys[i] +
+                                                "p.ts >= dateadd('s', -5, t.ts) AND p.ts <= dateadd('s', 5, t.ts) " +
+                                                "GROUP BY t.sym, t.ts ORDER BY 1, 2",
+                                        expectedSink
+                                );
+                                for (boolean parallel : new boolean[]{false, true}) {
+                                    sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
+                                    final String q = "SELECT t.sym, t.ts, count(p.n) AS a0 " +
+                                            "FROM trades t WINDOW JOIN prices p" + windowJoinOn[i] + " " +
+                                            "RANGE BETWEEN 5 SECONDS PRECEDING AND 5 SECONDS FOLLOWING EXCLUDE PREVAILING " +
+                                            "ORDER BY 1, 2";
+                                    actualSink.clear();
+                                    TestUtils.printSql(compiler, sqlExecutionContext, q, actualSink);
+                                    TestUtils.assertEquals(
+                                            "count oracle parallel=" + parallel + " keyed=" + (i == 1),
+                                            expectedSink,
+                                            actualSink
+                                    );
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testWindowJoinWithComplicityAggFunctions() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
@@ -5907,9 +6934,16 @@ public class WindowJoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndPlan(
-                    "ts\tsym\tprice\tagg0\tagg1\tagg2\tagg3\n",
+            assertQuery("""
+                    SELECT t.ts, t.sym, t.price, first(val0) agg0, last(val1) agg1, sum(val1) agg2, last(val1) agg3
+                    FROM trades t
+                    WINDOW JOIN prices p
+                    """ +
+                    "RANGE BETWEEN 773 microseconds PRECEDING AND 773 microseconds FOLLOWING" + (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
                     """
+                            ORDER BY t.ts, t.sym
+                            """)
+                    .withPlan("""
                             Encode sort
                               keys: [ts, sym]
                                 VirtualRecord
@@ -5926,24 +6960,19 @@ public class WindowJoinTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: prices
-                                    """,
-                    """
-                            SELECT t.ts, t.sym, t.price, first(val0) agg0, last(val1) agg1, sum(val1) agg2, last(val1) agg3
-                            FROM trades t
-                            WINDOW JOIN prices p
-                            """ +
-                            "RANGE BETWEEN 773 microseconds PRECEDING AND 773 microseconds FOLLOWING" + (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
-                            """
-                                    ORDER BY t.ts, t.sym
-                                    """,
-                    "ts",
-                    true,
-                    false
-            );
+                                    """)
+                    .timestamp("ts")
+                    .returns("ts\tsym\tprice\tagg0\tagg1\tagg2\tagg3\n");
 
-            assertQueryAndPlan(
-                    "ts\tsym\tprice\tagg0\tagg1\tagg2\tagg3\n",
+            assertQuery("""
+                    SELECT t.ts, t.sym, t.price, first(val0) agg0, last(val1) agg1, sum(val1) agg2, last(val1) agg3
+                    FROM trades t
+                    WINDOW JOIN prices p
+                    """ +
+                    " RANGE BETWEEN 773 microseconds PRECEDING AND 773 microseconds FOLLOWING" + (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
                     """
+                            ORDER BY ts, sym;""")
+                    .withPlan("""
                             Encode sort
                               keys: [ts, sym]
                                 VirtualRecord
@@ -5960,23 +6989,19 @@ public class WindowJoinTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: prices
-                                    """,
-                    """
-                            SELECT t.ts, t.sym, t.price, first(val0) agg0, last(val1) agg1, sum(val1) agg2, last(val1) agg3
-                            FROM trades t
-                            WINDOW JOIN prices p
-                            """ +
-                            " RANGE BETWEEN 773 microseconds PRECEDING AND 773 microseconds FOLLOWING" + (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
-                            """
-                                    ORDER BY ts, sym;""",
-                    "ts",
-                    true,
-                    false
-            );
+                                    """)
+                    .timestamp("ts")
+                    .returns("ts\tsym\tprice\tagg0\tagg1\tagg2\tagg3\n");
 
-            assertQueryAndPlan(
-                    "ts\tsym\tprice\tagg1\tagg2\n",
+            assertQuery("""
+                    SELECT t.ts, t.sym, t.price, first(val0 + 1) - last(val1 + 1) agg1, sum(val1 + 2) - last(val1 + 2) agg2
+                    FROM trades t
+                    WINDOW JOIN prices p
+                    """ +
+                    "RANGE BETWEEN 773 microseconds PRECEDING AND 773 microseconds FOLLOWING" + (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
                     """
+                            ORDER BY t.ts, t.sym""")
+                    .withPlan("""
                             Encode sort
                               keys: [ts, sym]
                                 VirtualRecord
@@ -5993,19 +7018,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: prices
-                                    """,
-                    """
-                            SELECT t.ts, t.sym, t.price, first(val0 + 1) - last(val1 + 1) agg1, sum(val1 + 2) - last(val1 + 2) agg2
-                            FROM trades t
-                            WINDOW JOIN prices p
-                            """ +
-                            "RANGE BETWEEN 773 microseconds PRECEDING AND 773 microseconds FOLLOWING" + (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
-                            """
-                                    ORDER BY t.ts, t.sym""",
-                    "ts",
-                    true,
-                    false
-            );
+                                    """)
+                    .timestamp("ts")
+                    .returns("ts\tsym\tprice\tagg1\tagg2\n");
         });
     }
 
@@ -6016,8 +7031,17 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertQueryNoLeakCheck(
-                    includePrevailing ?
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) sum_price " +
+                    "from (trades limit 10, 13) t " +
+                    "window join prices p " +
+                    "on (t.sym=p.sym) " +
+                    " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "where 42=42;")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(includePrevailing ?
                             """
                                     sym	price	ts	sum_price
                                     TSLA	400.0	2023-01-01T09:10:00.000000Z	800.0
@@ -6029,32 +7053,20 @@ public class WindowJoinTest extends AbstractCairoTest {
                             TSLA	400.0	2023-01-01T09:10:00.000000Z	400.5
                             TSLA	401.0	2023-01-01T09:11:00.000000Z	null
                             AMZN	500.0	2023-01-01T09:12:00.000000Z	500.5
-                            """,
-                    "select t.sym, t.price, t.ts, sum(p.price) sum_price " +
-                            "from (trades limit 10, 13) t " +
-                            "window join prices p " +
-                            "on (t.sym=p.sym) " +
-                            " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "where 42=42;",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) sum_price " +
+                    "from (trades limit 10, 13) t " +
+                    "window join prices p " +
+                    "on (t.sym=p.sym) " +
+                    " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "where 42=43;")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             sym	price	ts	sum_price
-                            """,
-                    "select t.sym, t.price, t.ts, sum(p.price) sum_price " +
-                            "from (trades limit 10, 13) t " +
-                            "window join prices p " +
-                            "on (t.sym=p.sym) " +
-                            " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "where 42=43;",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6065,8 +7077,16 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertQueryNoLeakCheck(
-                    includePrevailing ?
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) sum_price " +
+                    "from (trades limit 13) t " +
+                    "window join prices p " +
+                    "on (42=42) " +
+                    " range between 1 second preceding and 1 second following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(includePrevailing ?
                             """
                                     sym	price	ts	sum_price
                                     	null	2023-01-01T09:00:00.000000Z	null
@@ -6098,16 +7118,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             TSLA	400.0	2023-01-01T09:10:00.000000Z	400.5
                             TSLA	401.0	2023-01-01T09:11:00.000000Z	499.5
                             AMZN	500.0	2023-01-01T09:12:00.000000Z	500.5
-                            """,
-                    "select t.sym, t.price, t.ts, sum(p.price) sum_price " +
-                            "from (trades limit 13) t " +
-                            "window join prices p " +
-                            "on (42=42) " +
-                            " range between 1 second preceding and 1 second following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"),
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -6145,9 +7156,16 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             String nanoZeros = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "" : "000";
             String whatToDoWithPrevailing = includePrevailing ? "include" : "exclude";
-            assertQueryAndPlan(
-                    sink,
-                    String.format("""
+            assertQuery(String.format("""
+                            SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
+                            FROM (trades LIMIT 5) t
+                            WINDOW JOIN prices p
+                            ON (t.sym = p.sym)
+                               RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                            ORDER BY t.ts, t.sym
+                            """,
+                    whatToDoWithPrevailing))
+                    .withPlan(String.format("""
                             Encode sort
                               keys: [ts, sym]
                                 Window Fast Join
@@ -6162,20 +7180,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: prices
-                            """, nanoZeros, whatToDoWithPrevailing),
-                    String.format("""
-                                    SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price
-                                    FROM (trades LIMIT 5) t
-                                    WINDOW JOIN prices p
-                                    ON (t.sym = p.sym)
-                                       RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
-                                    ORDER BY t.ts, t.sym
-                                    """,
-                            whatToDoWithPrevailing),
-                    "ts",
-                    true,
-                    true
-            );
+                            """, nanoZeros, whatToDoWithPrevailing))
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(sink);
         });
     }
 
@@ -6216,15 +7224,21 @@ public class WindowJoinTest extends AbstractCairoTest {
             String nanoZeros = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "" : "000";
             boolean isLeftMicroTs = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType());
             boolean isRightMicroTs = ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType());
-            String planFragment = includePrevailing
+            String planFragment = includePrevailing || isLeftMicroTs != isRightMicroTs
                     ? "Frame forward scan on: prices"
                     : String.format("""
                             Interval forward scan on: prices
                                           intervals: [("2023-01-01T08:59:00.00000%sZ","MAX")]""",
                     isLeftMicroTs ? (isRightMicroTs ? "1" : "1000") : (isRightMicroTs ? "0" : "0001"));
-            assertQueryAndPlan(
-                    sink,
-                    String.format("""
+            assertQuery(String.format("""
+                    SELECT t.sym, t.price, t.ts, max(concat(p.price, '000')) f
+                    FROM (trades WHERE ts > '2023-01-01T09:00:00Z' LIMIT 1, 4) t
+                    WINDOW JOIN prices p
+                    ON (t.sym = p.sym)
+                      RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                    ORDER BY t.ts, t.sym
+                    """, whatToDoWithPrevailing))
+                    .withPlan(String.format("""
                             Encode sort
                               keys: [ts, sym]
                                 Window Fast Join
@@ -6240,19 +7254,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         %3$s
-                            """, nanoZeros, whatToDoWithPrevailing, planFragment),
-                    String.format("""
-                            SELECT t.sym, t.price, t.ts, max(concat(p.price, '000')) f
-                            FROM (trades WHERE ts > '2023-01-01T09:00:00Z' LIMIT 1, 4) t
-                            WINDOW JOIN prices p
-                            ON (t.sym = p.sym)
-                              RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
-                            ORDER BY t.ts, t.sym
-                            """, whatToDoWithPrevailing),
-                    "ts",
-                    true,
-                    false
-            );
+                            """, nanoZeros, whatToDoWithPrevailing, planFragment))
+                    .timestamp("ts")
+                    .returns(sink);
 
             // fast factory, vectorized
             if (!includePrevailing) {
@@ -6283,9 +7287,15 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    String.format("""
+            assertQuery(String.format("""
+                    SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price, count() AS cnt
+                    FROM (trades WHERE ts > '2023-01-01T09:00:00Z' LIMIT 1, 4) t
+                    WINDOW JOIN prices p
+                    ON (t.sym = p.sym)
+                      RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                    ORDER BY t.ts, t.sym
+                    """, whatToDoWithPrevailing))
+                    .withPlan(String.format("""
                             Encode sort
                               keys: [ts, sym]
                                 Window Fast Join
@@ -6301,24 +7311,20 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         %3$s
-                            """, nanoZeros, whatToDoWithPrevailing, planFragment),
-                    String.format("""
-                            SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price, count() AS cnt
-                            FROM (trades WHERE ts > '2023-01-01T09:00:00Z' LIMIT 1, 4) t
-                            WINDOW JOIN prices p
-                            ON (t.sym = p.sym)
-                              RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
-                            ORDER BY t.ts, t.sym
-                            """, whatToDoWithPrevailing),
-                    "ts",
-                    true,
-                    false
-            );
+                            """, nanoZeros, whatToDoWithPrevailing, planFragment))
+                    .timestamp("ts")
+                    .returns(sink);
 
             // non-fast factory
-            assertQueryAndPlan(
-                    sink,
-                    String.format("""
+            assertQuery(String.format("""
+                    SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price, count AS cnt
+                    FROM (trades WHERE ts > '2023-01-01T09:00:00Z' LIMIT 1, 4) t
+                    WINDOW JOIN prices p
+                    ON (concat(t.sym, '_0') = concat(p.sym, '_0'))
+                     RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                    ORDER BY t.ts, t.sym
+                    """, whatToDoWithPrevailing))
+                    .withPlan(String.format("""
                             Encode sort
                               keys: [ts, sym]
                                 Window Join
@@ -6333,19 +7339,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         %3$s
-                            """, nanoZeros, whatToDoWithPrevailing, planFragment),
-                    String.format("""
-                            SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price, count AS cnt
-                            FROM (trades WHERE ts > '2023-01-01T09:00:00Z' LIMIT 1, 4) t
-                            WINDOW JOIN prices p
-                            ON (concat(t.sym, '_0') = concat(p.sym, '_0'))
-                             RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
-                            ORDER BY t.ts, t.sym
-                            """, whatToDoWithPrevailing),
-                    "ts",
-                    true,
-                    false
-            );
+                            """, nanoZeros, whatToDoWithPrevailing, planFragment))
+                    .timestamp("ts")
+                    .returns(sink);
         });
     }
 
@@ -6356,19 +7352,24 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-            assertExceptionNoLeakCheck(
-                    "select t.ts, t.sym, sum(p.price) " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            " where p.price > 100;",
-                    171,
-                    "Invalid column: p.price"
-            );
+            assertQuery("select t.ts, t.sym, sum(p.price) " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    " where p.price > 100;")
+                    .noLeakCheck()
+                    .fails(171, "Invalid column: p.price");
 
-            assertQueryNoLeakCheck(
-                    includePrevailing ?
+            assertQuery("select t.sym, t.price, sum(p.price) sum_price " +
+                    "from (trades limit 12) t " +
+                    "window join prices p " +
+                    "on (t.sym=p.sym) " +
+                    " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "where 42 = 42 and t.price > 101;")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(includePrevailing ?
                             """
                                     sym	price	sum_price
                                     TSLA	400.0	800.0
@@ -6378,17 +7379,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     sym	price	sum_price
                                     TSLA	400.0	400.5
                                     TSLA	401.0	null
-                                    """,
-                    "select t.sym, t.price, sum(p.price) sum_price " +
-                            "from (trades limit 12) t " +
-                            "window join prices p " +
-                            "on (t.sym=p.sym) " +
-                            " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "where 42 = 42 and t.price > 101;",
-                    null,
-                    false,
-                    false
-            );
+                                    """);
         });
     }
 
@@ -6447,8 +7438,14 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
 
             // Query exercises the window join with parallel execution
-            assertSql(
-                    """
+            assertQuery("SELECT t.*, avg(p.bid) avg_bid, avg(p.ask) avg_ask " +
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p ON p.sym = t.symbol " +
+                    "RANGE BETWEEN 1 second PRECEDING and 1 second FOLLOWING LIMIT 100")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .returns("""
                             symbol\tside\tprice\tamount\ttimestamp\tavg_bid\tavg_ask
                             IBBT\tsell\t27.62658038426882\t25.755174211876263\t2025-01-01T00:00:00.000000Z\tnull\tnull
                             SRGO\tsell\t23.775851060898002\t10.159709099174506\t2025-01-01T00:00:00.010000Z\tnull\tnull
@@ -6550,11 +7547,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             HNZH\tbuy\t28.820793409876465\t13.814646966480208\t2025-01-01T00:00:00.970000Z\tnull\tnull
                             IPHZ\tbuy\t10.37439621579069\t16.06275240804409\t2025-01-01T00:00:00.980000Z\tnull\tnull
                             OXPK\tbuy\t25.128429718796674\t27.43678869894423\t2025-01-01T00:00:00.990000Z\tnull\tnull
-                            """,
-                    "SELECT t.*, avg(p.bid) avg_bid, avg(p.ask) avg_ask " +
-                            "FROM trades t " +
-                            "WINDOW JOIN prices p ON p.sym = t.symbol " +
-                            "RANGE BETWEEN 1 second PRECEDING and 1 second FOLLOWING LIMIT 100");
+                            """);
         });
     }
 
@@ -6566,20 +7559,17 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select t.sym, sum(p.price) sum_price " +
+                    "from (trades limit 3) t " +
+                    "window join prices p " +
+                    "on (t.sym=p.sym) " +
+                    " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "where rnd_long() = 42;")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             sym	sum_price
-                            """,
-                    "select t.sym, sum(p.price) sum_price " +
-                            "from (trades limit 3) t " +
-                            "window join prices p " +
-                            "on (t.sym=p.sym) " +
-                            " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "where rnd_long() = 42;",
-                    null,
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
@@ -6614,26 +7604,23 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    """
+            assertQuery("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (0 = 1) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("""
                             Encode sort light
                               keys: [ts, sym]
                                 ExtraNullColumnRecord
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """,
-                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (0 = 1) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    true
-            );
+                            """)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(sink);
 
             if (!includePrevailing) {
                 printSql("select  sum(p.price), t.price t_price, avg(p.price), t.sym, t.ts " +
@@ -6662,9 +7649,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    """
+            assertQuery("select sum(p.price), t.price t_price, avg(p.price), t.sym, t.ts " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (0 = 1) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.sym;")
+                    .withPlan("""
                             Encode sort light
                               keys: [sym]
                                 SelectedRecord
@@ -6672,17 +7663,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: trades
-                            """,
-                    "select sum(p.price), t.price t_price, avg(p.price), t.sym, t.ts " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (0 = 1) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.sym;",
-                    null,
-                    true,
-                    true
-            );
+                            """)
+                    .expectSize()
+                    .returns(sink);
         });
     }
 
@@ -6719,9 +7702,16 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             String nanoZeros = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "" : "000";
             String whatToDoWithPrevailing = includePrevailing ? "include" : "exclude";
-            assertQueryAndPlan(
-                    sink,
-                    String.format("""
+            assertQuery(String.format("""
+                            SELECT t.sym, t.price, t.ts, avg(p.price) AS window_price
+                            FROM trades t
+                            WINDOW JOIN prices p
+                            ON (t.sym = p.sym)
+                                RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
+                            LIMIT 3
+                            """,
+                    whatToDoWithPrevailing))
+                    .withPlan(String.format("""
                             Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                                 Async Window Fast Join workers: 1
                                   vectorized: true
@@ -6734,20 +7724,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: prices
-                            """, nanoZeros, whatToDoWithPrevailing),
-                    String.format("""
-                                    SELECT t.sym, t.price, t.ts, avg(p.price) AS window_price
-                                    FROM trades t
-                                    WINDOW JOIN prices p
-                                    ON (t.sym = p.sym)
-                                        RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING %s PREVAILING
-                                    LIMIT 3
-                                    """,
-                            whatToDoWithPrevailing),
-                    "ts",
-                    false,
-                    false
-            );
+                            """, nanoZeros, whatToDoWithPrevailing))
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(sink);
         });
     }
 
@@ -6782,9 +7762,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 """,
                         sink);
             }
-            assertQueryAndPlan(
-                    sink,
-                    "Encode sort\n" +
+            assertQuery("select t.sym, t.price, t.ts, sum(t.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by t.ts, t.sym;")
+                    .withPlan("Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: false\n" +
@@ -6796,17 +7780,324 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: trades\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: prices\n",
-                    "select t.sym, t.price, t.ts, sum(t.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by t.ts, t.sym;",
-                    "ts",
-                    true,
-                    false
+                            "            Frame forward scan on: prices\n")
+                    .timestamp("ts")
+                    .returns(sink);
+        });
+    }
+
+    @Test
+    public void testWithProjectedMasterSymbol() throws Exception {
+        // https://github.com/questdb/questdb/issues/7097
+        // The master is a sub-select with a virtual column, which forces the master
+        // factory to wrap and expose the SYMBOL column through a SymbolColumn rather
+        // than a StaticSymbolTable. The fast path must unwrap to the underlying static
+        // symbol table instead of crashing with a ClassCastException.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table trades (" +
+                            "  sym symbol," +
+                            "  price double," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
             );
+            execute(
+                    "create table prices (" +
+                            "  sym symbol," +
+                            "  bid double," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute(
+                    "insert into trades values " +
+                            "('A', 1.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('A', 2.0, '2023-01-01T09:01:00.000000Z')," +
+                            "('B', 3.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('B', 4.0, '2023-01-01T09:02:00.000000Z');"
+            );
+            execute(
+                    "insert into prices values " +
+                            "('A', 10.0, '2023-01-01T08:59:30.000000Z')," +
+                            "('A', 20.0, '2023-01-01T09:00:30.000000Z')," +
+                            "('A', 30.0, '2023-01-01T09:01:30.000000Z')," +
+                            "('B', 40.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('B', 50.0, '2023-01-01T09:02:30.000000Z');"
+            );
+
+            // The virtual `p2` column wraps the master in a VirtualRecordCursorFactory,
+            // which does not support page frames, so the single-threaded fast path is used.
+            final String query = "SELECT a.sym, a.ts, sum(p.bid) AS s " +
+                    "FROM (SELECT sym, ts, price + 0 AS p2 FROM trades) a " +
+                    "WINDOW JOIN prices p " +
+                    "ON (a.sym = p.sym) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING EXCLUDE PREVAILING " +
+                    "ORDER BY a.ts, a.sym";
+
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [ts, sym]
+                                Window Fast Join
+                                  vectorized: true
+                                  symbol: sym=sym
+                                  window lo: 60000000 preceding (exclude prevailing)
+                                  window hi: 60000000 following
+                                    VirtualRecord
+                                      functions: [sym,ts]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: prices
+                            """)
+                    .returns("""
+                            sym\tts\ts
+                            A\t2023-01-01T09:00:00.000000Z\t30.0
+                            B\t2023-01-01T09:00:00.000000Z\t40.0
+                            A\t2023-01-01T09:01:00.000000Z\t50.0
+                            B\t2023-01-01T09:02:00.000000Z\t50.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testWithProjectedMasterSymbolAndJoinFilter() throws Exception {
+        // Same projected-master scenario as testWithProjectedMasterSymbol but with an
+        // extra predicate on the slave column. The symbol equality is still extracted
+        // for the fast-path lookup map, while the remaining predicate is compiled as
+        // a join filter that runs against the projected master.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table trades (" +
+                            "  sym symbol," +
+                            "  price double," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+            execute(
+                    "create table prices (" +
+                            "  sym symbol," +
+                            "  bid double," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute(
+                    "insert into trades values " +
+                            "('A', 1.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('A', 2.0, '2023-01-01T09:01:00.000000Z')," +
+                            "('B', 3.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('B', 4.0, '2023-01-01T09:02:00.000000Z');"
+            );
+            execute(
+                    "insert into prices values " +
+                            "('A', 10.0, '2023-01-01T08:59:30.000000Z')," +
+                            "('A', 20.0, '2023-01-01T09:00:30.000000Z')," +
+                            "('A', 30.0, '2023-01-01T09:01:30.000000Z')," +
+                            "('B', 40.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('B', 50.0, '2023-01-01T09:02:30.000000Z');"
+            );
+
+            final String query = "SELECT a.sym, a.ts, sum(p.bid) AS s " +
+                    "FROM (SELECT sym, ts, price + 0 AS p2 FROM trades) a " +
+                    "WINDOW JOIN prices p " +
+                    "ON (a.sym = p.sym AND p.bid > 15) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING EXCLUDE PREVAILING " +
+                    "ORDER BY a.ts, a.sym";
+
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [ts, sym]
+                                Window Fast Join
+                                  vectorized: false
+                                  symbol: sym=sym
+                                  window lo: 60000000 preceding (exclude prevailing)
+                                  window hi: 60000000 following
+                                  join filter: 15<p.bid
+                                    VirtualRecord
+                                      functions: [sym,ts]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: prices
+                            """)
+                    .returns("""
+                            sym\tts\ts
+                            A\t2023-01-01T09:00:00.000000Z\t20.0
+                            B\t2023-01-01T09:00:00.000000Z\t40.0
+                            A\t2023-01-01T09:01:00.000000Z\t50.0
+                            B\t2023-01-01T09:02:00.000000Z\t50.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testWithProjectedMasterSymbolIncludePrevailing() throws Exception {
+        // INCLUDE PREVAILING variant of testWithProjectedMasterSymbol. Exercises the
+        // WindowJoinWithPrevailingFastRecordCursor path, which shares setupSlaveLookupMap
+        // with the EXCLUDE PREVAILING cursor and therefore relies on the same symbol-table
+        // unwrap.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table trades (" +
+                            "  sym symbol," +
+                            "  price double," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+            execute(
+                    "create table prices (" +
+                            "  sym symbol," +
+                            "  bid double," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute(
+                    "insert into trades values " +
+                            "('A', 1.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('A', 2.0, '2023-01-01T09:01:00.000000Z')," +
+                            "('B', 3.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('B', 4.0, '2023-01-01T09:02:00.000000Z');"
+            );
+            execute(
+                    "insert into prices values " +
+                            "('A', 10.0, '2023-01-01T08:59:30.000000Z')," +
+                            "('A', 20.0, '2023-01-01T09:00:30.000000Z')," +
+                            "('A', 30.0, '2023-01-01T09:01:30.000000Z')," +
+                            "('B', 40.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('B', 50.0, '2023-01-01T09:02:30.000000Z');"
+            );
+
+            final String query = "SELECT a.sym, a.ts, sum(p.bid) AS s " +
+                    "FROM (SELECT sym, ts, price + 0 AS p2 FROM trades) a " +
+                    "WINDOW JOIN prices p " +
+                    "ON (a.sym = p.sym) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING INCLUDE PREVAILING " +
+                    "ORDER BY a.ts, a.sym";
+
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [ts, sym]
+                                Window Fast Join
+                                  vectorized: true
+                                  symbol: sym=sym
+                                  window lo: 60000000 preceding (include prevailing)
+                                  window hi: 60000000 following
+                                    VirtualRecord
+                                      functions: [sym,ts]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: prices
+                            """)
+                    .returns("""
+                            sym\tts\ts
+                            A\t2023-01-01T09:00:00.000000Z\t30.0
+                            B\t2023-01-01T09:00:00.000000Z\t40.0
+                            A\t2023-01-01T09:01:00.000000Z\t60.0
+                            B\t2023-01-01T09:02:00.000000Z\t90.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testWithProjectedNonStaticSymbolFallsBackToWindowJoin() throws Exception {
+        // Negative path of the SqlCodeGenerator gate added for issue #7097. When the
+        // master projects a non-static SYMBOL (here via varchar -> symbol cast), the
+        // planner must NOT pick the symbol-keyed fast path; the entire ON expression
+        // becomes a join filter on the generic Window Join factory.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table quotes (" +
+                            "  s varchar," +
+                            "  price double," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+            execute(
+                    "create table prices (" +
+                            "  sym symbol," +
+                            "  bid double," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute(
+                    "insert into quotes values " +
+                            "('A', 1.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('A', 2.0, '2023-01-01T09:01:00.000000Z')," +
+                            "('B', 3.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('B', 4.0, '2023-01-01T09:02:00.000000Z');"
+            );
+            execute(
+                    "insert into prices values " +
+                            "('A', 10.0, '2023-01-01T08:59:30.000000Z')," +
+                            "('A', 20.0, '2023-01-01T09:00:30.000000Z')," +
+                            "('A', 30.0, '2023-01-01T09:01:30.000000Z')," +
+                            "('B', 40.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('B', 50.0, '2023-01-01T09:02:30.000000Z');"
+            );
+
+            final String query = "SELECT a.sym, a.ts, sum(p.bid) AS s " +
+                    "FROM (SELECT s::symbol AS sym, ts FROM quotes) a " +
+                    "WINDOW JOIN prices p " +
+                    "ON (a.sym = p.sym) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING EXCLUDE PREVAILING " +
+                    "ORDER BY a.ts, a.sym";
+
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [ts, sym]
+                                Window Join
+                                  window lo: 60000000 preceding (exclude prevailing)
+                                  window hi: 60000000 following
+                                  join filter: a.sym=p.sym
+                                    VirtualRecord
+                                      functions: [s::symbol,ts]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: quotes
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: prices
+                            """)
+                    .returns("""
+                            sym\tts\ts
+                            A\t2023-01-01T09:00:00.000000Z\t30.0
+                            B\t2023-01-01T09:00:00.000000Z\t40.0
+                            A\t2023-01-01T09:01:00.000000Z\t50.0
+                            B\t2023-01-01T09:02:00.000000Z\t50.0
+                            """);
         });
     }
 
@@ -6844,13 +8135,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "('sym4', 'sym44', '2023-01-01T09:00:02.000000Z');"
             );
 
-            assertQueryAndPlan(
-                    """
-                            s	s1	ts	count
-                            sym0	sym1	2023-01-01T09:00:00.000000Z	0
-                            sym2	sym2	2023-01-01T09:00:00.000000Z	1
-                            """,
-                    """
+            assertQuery("select x.*, count() " +
+                    "from x " +
+                    "window join y " +
+                    "on (x.s = x.s1 and x.s = y.s) " +
+                    " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by x.ts, x.s;")
+                    .withPlan("""
                             Encode sort
                               keys: [ts, s]
                                 Async Window Fast Join workers: 1
@@ -6868,31 +8159,21 @@ public class WindowJoinTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
-                                    """,
-                    "select x.*, count() " +
-                            "from x " +
-                            "window join y " +
-                            "on (x.s = x.s1 and x.s = y.s) " +
-                            " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by x.ts, x.s;",
-                    "ts",
-                    true,
-                    false
-            );
-
-            assertQueryAndPlan(
-                    includePrevailing ? """
+                                    """)
+                    .timestamp("ts")
+                    .returns("""
                             s	s1	ts	count
-                            sym0	sym1	2023-01-01T09:00:00.000000Z	1
+                            sym0	sym1	2023-01-01T09:00:00.000000Z	0
                             sym2	sym2	2023-01-01T09:00:00.000000Z	1
-                            """
-                            :
-                            """
-                                    s	s1	ts	count
-                                    sym0	sym1	2023-01-01T09:00:00.000000Z	0
-                                    sym2	sym2	2023-01-01T09:00:00.000000Z	1
-                                    """,
-                    """
+                            """);
+
+            assertQuery("select x.*, count() " +
+                    "from x " +
+                    "window join y " +
+                    "on (x.s = y.s1 and y.s = y.s1) " +
+                    " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by x.ts, x.s;")
+                    .withPlan("""
                             Encode sort
                               keys: [ts, s]
                                 Async Window Fast Join workers: 1
@@ -6910,25 +8191,27 @@ public class WindowJoinTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
-                                    """,
-                    "select x.*, count() " +
-                            "from x " +
-                            "window join y " +
-                            "on (x.s = y.s1 and y.s = y.s1) " +
-                            " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by x.ts, x.s;",
-                    "ts",
-                    true,
-                    false
-            );
-
-            assertQueryAndPlan(
-                    """
+                                    """)
+                    .timestamp("ts")
+                    .returns(includePrevailing ? """
                             s	s1	ts	count
-                            sym0	sym1	2023-01-01T09:00:00.000000Z	0
+                            sym0	sym1	2023-01-01T09:00:00.000000Z	1
                             sym2	sym2	2023-01-01T09:00:00.000000Z	1
-                            """,
-                    """
+                            """
+                            :
+                            """
+                                    s	s1	ts	count
+                                    sym0	sym1	2023-01-01T09:00:00.000000Z	0
+                                    sym2	sym2	2023-01-01T09:00:00.000000Z	1
+                                    """);
+
+            assertQuery("select x.*, count() " +
+                    "from x " +
+                    "window join y " +
+                    "on (x.s = y.s1 and x.s1 = y.s1 and x.s1 = y.s and x.s = y.s) " +
+                    " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                    "order by x.ts, x.s;")
+                    .withPlan("""
                             Encode sort
                               keys: [ts, s]
                                 Async Window Fast Join workers: 1
@@ -6946,22 +8229,84 @@ public class WindowJoinTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
-                                    """,
-                    "select x.*, count() " +
-                            "from x " +
-                            "window join y " +
-                            "on (x.s = y.s1 and x.s1 = y.s1 and x.s1 = y.s and x.s = y.s) " +
-                            " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                            "order by x.ts, x.s;",
-                    "ts",
-                    true,
-                    false
-            );
+                                    """)
+                    .timestamp("ts")
+                    .returns("""
+                            s	s1	ts	count
+                            sym0	sym1	2023-01-01T09:00:00.000000Z	0
+                            sym2	sym2	2023-01-01T09:00:00.000000Z	1
+                            """);
         });
     }
 
+    /**
+     * Rejects a vacuous differential comparison. A LEFT JOIN oracle emits one row per master row
+     * whether or not the window matched anything, so "the oracle has rows" is not enough on its own:
+     * if the data ever drifted such that no window held a slave row, every aggregate would be null on
+     * both arms and the comparison would assert nothing. Require a data row, and a row whose
+     * aggregates are not all null.
+     */
+    private static void assertNonVacuousOracle(String context, String oracle) {
+        final int header = oracle.indexOf('\n');
+        Assert.assertTrue("expected a non-empty oracle for: " + context, header != oracle.lastIndexOf('\n'));
+        boolean hasAggregate = false;
+        for (String row : oracle.substring(header + 1).split("\n")) {
+            if (!row.isEmpty() && !row.contains("\tnull")) {
+                hasAggregate = true;
+                break;
+            }
+        }
+        Assert.assertTrue("expected at least one non-null aggregate in the oracle for: " + context, hasAggregate);
+    }
+
+    /**
+     * Pins that the parallel knob actually routed the query to the async window-join factory - and that
+     * the serial arm did not. Without this, a future gate change could silently degenerate a
+     * single-threaded-vs-parallel differential into comparing one path against itself.
+     * <p>
+     * "Async Window Join" / "Async Window Fast Join" are the async plan types; their single-threaded
+     * siblings render as "Window Join" / "Window Fast Join", which are substrings of the async ones -
+     * so the serial arm asserts the absence of the "Async " prefix rather than the presence of its own.
+     */
+    private void assertWindowJoinParallelism(String query, boolean parallel) throws Exception {
+        if (parallel) {
+            assertQuery(query).noLeakCheck().assertsPlanContaining("Async Window ");
+        } else {
+            assertQuery(query).noLeakCheck().assertsPlanNotContaining("Async Window ");
+        }
+    }
+
+    /**
+     * Drains the query and asserts how many times the keyed WINDOW JOIN rebuilt its slave index.
+     * The index amortization is invisible in the result set - a rebuild re-derives the same index
+     * from the same rows - so this counter is the only thing that can pin it.
+     */
+    private void assertIndexRebuildCount(String select, long expectedRebuilds) throws SqlException {
+        try (RecordCursorFactory factory = select(select)) {
+            RecordCursorFactory base = factory instanceof QueryProgress ? ((QueryProgress) factory).getBaseFactory() : factory;
+            Assert.assertTrue(
+                    "expected the keyed fast WINDOW JOIN factory, got " + base.getClass().getSimpleName(),
+                    base instanceof WindowJoinFastRecordCursorFactory
+            );
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                //noinspection StatementWithEmptyBody
+                while (cursor.hasNext()) {
+                }
+            }
+            Assert.assertEquals(
+                    "slave index rebuilds",
+                    expectedRebuilds,
+                    ((WindowJoinFastRecordCursorFactory) base).getIndexRebuildCount()
+            );
+        }
+    }
+
     private void assertSkipToAndCalculateSize(String select, int size) throws Exception {
-        assertQueryNoLeakCheck("count\n" + size + "\n", "select count(*) from (" + select + ")", null, false, true);
+        assertQuery("select count(*) from (" + select + ")")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" + size + "\n");
         RecordCursor.Counter counter = new RecordCursor.Counter();
 
         try (RecordCursorFactory factory = select(select)) {
@@ -6971,7 +8316,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                 for (int i = 0; i < size + 2; i++) {
                     cursor.toTop();
                     counter.set(i);
-                    cursor.skipRows(counter);
+                    cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
                     Assert.assertEquals(Math.max(i - size, 0), counter.get());
                     counter.clear();
                     cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);

@@ -1,0 +1,380 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.griffin.engine.table.parquet;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableUtils;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetVersion;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.Path;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TableModel;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
+
+public class ParquetFileDecoderTest extends AbstractCairoTest {
+
+    @Test
+    public void testMetadata() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            final long columns = 24;
+            final long rows = 1001;
+            execute(
+                    "create table x as (select" +
+                            " x id," +
+                            " rnd_boolean() a_boolean," +
+                            " rnd_byte() a_byte," +
+                            " rnd_short() a_short," +
+                            " rnd_char() a_char," +
+                            " rnd_int() an_int," +
+                            " rnd_long() a_long," +
+                            " rnd_float() a_float," +
+                            " rnd_double() a_double," +
+                            " rnd_symbol('a','b','c') a_symbol," +
+                            " rnd_geohash(4) a_geo_byte," +
+                            " rnd_geohash(8) a_geo_short," +
+                            " rnd_geohash(16) a_geo_int," +
+                            " rnd_geohash(32) a_geo_long," +
+                            " rnd_str('hello', 'world', '!') a_string," +
+                            " rnd_bin() a_bin," +
+                            " rnd_varchar('ганьба','слава','добрий','вечір') a_varchar," +
+                            " rnd_ipv4() a_ip," +
+                            " rnd_uuid4() a_uuid," +
+                            " rnd_long256() a_long256," +
+                            " to_long128(rnd_long(), rnd_long()) a_long128," +
+                            " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
+                            " timestamp_sequence(500000000000, 600) a_ts," +
+                            " timestamp_sequence_ns(500000000000, 600000) a_ns," +
+                            " timestamp_sequence(400000000000, 500) designated_ts" +
+                            " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
+            );
+
+            long fd = -1;
+            long addr = 0;
+            long fileSize = 0;
+            try (
+                    Path path = new Path();
+                    ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                fd = TableUtils.openRO(ff, path.$(), LOG);
+                fileSize = ff.length(fd);
+                addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                parquetFileDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                Assert.assertEquals(reader.getMetadata().getColumnCount(), parquetFileDecoder.metadata().getColumnCount());
+                Assert.assertEquals(rows, parquetFileDecoder.metadata().getRowCount());
+                Assert.assertEquals(1, parquetFileDecoder.metadata().getRowGroupCount());
+                // designated timestamp is the last column
+                final int timestampIndex = parquetFileDecoder.metadata().getTimestampIndex();
+                Assert.assertEquals(parquetFileDecoder.metadata().getColumnCount() - 1, timestampIndex);
+                // and its name matches the designated column used in DDL
+                TestUtils.assertEquals("designated_ts", parquetFileDecoder.metadata().getColumnName(timestampIndex));
+
+                TableReaderMetadata readerMeta = reader.getMetadata();
+                Assert.assertEquals(readerMeta.getColumnCount(), parquetFileDecoder.metadata().getColumnCount());
+
+                for (int i = 0; i < columns; i++) {
+                    TestUtils.assertEquals("column: " + i, readerMeta.getColumnName(i), parquetFileDecoder.metadata().getColumnName(i));
+                    Assert.assertEquals("column: " + i, i, parquetFileDecoder.metadata().getColumnId(i));
+                    Assert.assertEquals("column: " + i, readerMeta.getColumnType(i), parquetFileDecoder.metadata().getColumnType(i));
+                }
+            } finally {
+                ff.close(fd);
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+        });
+    }
+
+    @Test
+    public void testNotNullRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            execute(
+                    "create table x (" +
+                            " a INT NOT NULL," +
+                            " b LONG," +
+                            " c SYMBOL NOT NULL," +
+                            " d VARCHAR NOT NULL," +
+                            " e DOUBLE," +
+                            " ts TIMESTAMP NOT NULL" +
+                            ") timestamp(ts) partition by day bypass wal"
+            );
+            execute("insert into x values (1, 10, 'a', 'v1', 1.5, '2024-01-01')");
+            execute("insert into x values (2, 20, 'b', 'v2', 2.5, '2024-01-01T01:00:00.000Z')");
+
+            long fd = -1;
+            long addr = 0;
+            long fileSize = 0;
+            try (
+                    Path path = new Path();
+                    PartitionDecoder partitionDecoder = new PartitionDecoder();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x_not_null.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                fd = TableUtils.openRO(ff, path.$(), LOG);
+                fileSize = ff.length(fd);
+                addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                partitionDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+
+                final PartitionDecoder.Metadata meta = partitionDecoder.metadata();
+                Assert.assertTrue("a NOT NULL", meta.isNotNull(meta.getColumnIndex("a")));
+                Assert.assertFalse("b nullable", meta.isNotNull(meta.getColumnIndex("b")));
+                Assert.assertTrue("c NOT NULL symbol", meta.isNotNull(meta.getColumnIndex("c")));
+                Assert.assertTrue("d NOT NULL varchar", meta.isNotNull(meta.getColumnIndex("d")));
+                Assert.assertFalse("e nullable", meta.isNotNull(meta.getColumnIndex("e")));
+                Assert.assertTrue("ts NOT NULL designated timestamp", meta.isNotNull(meta.getColumnIndex("ts")));
+            } finally {
+                ff.close(fd);
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+        });
+    }
+
+    @Test
+    public void testOutOfMemory() throws Exception {
+        final long rows = 10;
+        final FilesFacade ff = configuration.getFilesFacade();
+
+        // We first set up the table without memory limits.
+        assertMemoryLeak(() -> execute(
+                "create table x as (select" +
+                        " x id," +
+                        " timestamp_sequence(400000000000, 500) designated_ts" +
+                        " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by day"
+        ));
+
+        assertMemoryLeak(() -> {
+            final long memInit = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            long fd = -1;
+            long addr = 0;
+            long fileSize = 0;
+            try (
+                    Path path = new Path();
+                    RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    DirectIntList columns = new DirectIntList(2, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder()
+            ) {
+                path.of(root).concat("x.parquet").$();
+
+                // Encode
+                try (
+                        TableReader reader = engine.getReader("x");
+                        PartitionDescriptor partitionDescriptor = new PartitionDescriptor()
+                ) {
+                    PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                    PartitionEncoder.encode(partitionDescriptor, path);
+                }
+
+                fd = TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
+                fileSize = ff.length(fd);
+                addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                parquetFileDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                columns.add(0);
+                columns.add(ColumnType.LONG);
+
+                try {
+                    // prevent more allocs
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
+                    parquetFileDecoder.decodeRowGroup(rowGroupBuffers, columns, 0, 0, 1);
+                    Assert.fail("Expected CairoException for out of memory");
+                } catch (CairoException e) {
+                    final String msg = e.getMessage();
+                    Assert.assertTrue(e.isOutOfMemory());
+                    TestUtils.assertContains(msg, "could not decode row group 0");
+                    TestUtils.assertContains(msg, "memory limit exceeded when allocating");
+                } finally {
+                    // Reset to allow allocs again
+                    Unsafe.setRssMemLimit(0);
+                }
+
+                final long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                parquetFileDecoder.decodeRowGroup(rowGroupBuffers, columns, 0, 0, 1);
+                final long memAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+
+                // Allocation happened in Rust code, associated to the `RowGroupBuffers` object.
+                Assert.assertTrue(memAfter > memBefore);
+            } finally {
+                ff.close(fd);
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+
+            // Freed memory is tracked.
+            final long memFinal = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            Assert.assertEquals(memFinal, memInit);
+        });
+    }
+
+    @Test
+    public void testVarcharSlicePageBuffersAccounting() throws Exception {
+        // A compressed VARCHAR_SLICE chunk keeps its decompressed string bytes in retained Rust
+        // page buffers (data_vec stays empty), so getChunkDataSize() alone undercounts the frame.
+        // The decode cache adds getChunkPageBuffersSize() so the byte budget tracks those string
+        // bytes, and sumChunkBytes() must fold it in. This is the assertion that distinguishes the
+        // fix from the undercount bug: without page-buffer accounting the sum would equal data+aux.
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int rows = 20_000;
+        assertMemoryLeak(() -> {
+            execute("create table x as (select" +
+                    " rnd_varchar(40, 80, 0) v," +
+                    " timestamp_sequence(0, 1000) designated_ts" +
+                    " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by day");
+
+            long fd = -1;
+            long addr = 0;
+            long fileSize = 0;
+            try (
+                    Path path = new Path();
+                    RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    DirectIntList columns = new DirectIntList(2, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder();
+                    TableReader reader = engine.getReader("x");
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor()
+            ) {
+                path.of(root).concat("x.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                // Compress so the varchar string bytes are retained in heap page buffers; the
+                // uncompressed path borrows them from the mmap and reports a zero page-buffers size.
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.packCompressionCodecLevel(ParquetCompression.COMPRESSION_LZ4_RAW, 0),
+                        true,
+                        false,
+                        0,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0.0
+                );
+
+                fd = TableUtils.openRO(ff, path.$(), LOG);
+                fileSize = ff.length(fd);
+                addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                parquetFileDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+
+                // Decode the varchar column (index 0) as a VARCHAR_SLICE chunk into slot 0.
+                columns.add(0);
+                columns.add(ColumnType.VARCHAR_SLICE);
+                final int rowGroupRows = (int) parquetFileDecoder.metadata().getRowCount();
+                parquetFileDecoder.decodeRowGroup(rowGroupBuffers, columns, 0, 0, rowGroupRows);
+
+                final long dataSize = rowGroupBuffers.getChunkDataSize(0);
+                final long auxSize = rowGroupBuffers.getChunkAuxSize(0);
+                final long pageBuffersSize = rowGroupBuffers.getChunkPageBuffersSize(0);
+
+                Assert.assertTrue("page buffers must retain the decompressed varchar bytes, got " + pageBuffersSize, pageBuffersSize > 0);
+                final long sum = rowGroupBuffers.sumChunkBytes(0, 1);
+                Assert.assertEquals(dataSize + auxSize + pageBuffersSize, sum);
+                Assert.assertTrue("sumChunkBytes must exceed data+aux alone for a compressed varchar frame, got " + sum, sum > dataSize + auxSize);
+            } finally {
+                ff.close(fd);
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+        });
+    }
+
+    /**
+     * Test error handling when we update a row group that does not exist.
+     */
+    @Test
+    public void testUpdateInvalidRowGroup() throws Exception {
+        final FilesFacade ff = configuration.getFilesFacade();
+
+        // We first set up the table without memory limits.
+        assertMemoryLeak(() -> {
+            TableModel src = new TableModel(configuration, "x", PartitionBy.DAY);
+            createPopulateTable(
+                    1,
+                    src.timestamp("designated_ts")
+                            .col("id", ColumnType.LONG),
+                    100,
+                    "1970-01-05",
+                    2
+            ); // generate 2 partitions
+
+            // Convert the partition to parquet via SQL.
+            execute("alter table x convert partition to parquet where designated_ts >= 0");
+
+            long fd = -1;
+            long addr = 0;
+            long fileSize = 0;
+            try (
+                    Path path = new Path();
+                    RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    DirectIntList columns = new DirectIntList(2, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder()
+            ) {
+                // Check that the partition directory and data.parquet file now exists on disk.
+                path.of(root).concat("x~").concat("1970-01-05.1").slash$();
+                Assert.assertTrue(ff.exists(path.$()));
+                // Assert.assertTrue(ff.isDirOrSoftLinkDir(path.$())); -- see https://github.com/questdb/questdb/issues/5054
+                path.concat("data.parquet").$();
+                Assert.assertTrue(ff.exists(path.$()));
+                Assert.assertFalse(ff.isDirOrSoftLinkDir(path.$()));
+
+                // Open it up.
+                fd = TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
+                fileSize = ff.length(fd);
+                addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                parquetFileDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                columns.add(0);
+                columns.add(ColumnType.LONG);
+
+                final CairoException badDecodeRowGroup = Assert.assertThrows(
+                        CairoException.class,
+                        () -> parquetFileDecoder.decodeRowGroup(rowGroupBuffers, columns, 1000, 0, 1)
+                );
+                TestUtils.assertContains(
+                        badDecodeRowGroup.getMessage(),
+                        "row group index 1000 out of range [0,1)");
+            } finally {
+                ff.close(fd);
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+        });
+    }
+}

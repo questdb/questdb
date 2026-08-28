@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
@@ -33,14 +34,12 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.jit.CompiledFilter;
+import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -76,17 +75,10 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Transient @NotNull ListColumnFilter groupByColumnFilter,
             @NotNull ObjList<Function> keyFunctions,
-            @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
-            @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function ownerFilter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
+            AsyncHorizonJoinResources resources,
             int workerCount
     ) {
         super(
@@ -101,20 +93,14 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
                 columnSources,
                 columnIndexes,
                 ownerGroupByFunctions,
-                perWorkerGroupByFunctions,
-                compiledFilter,
-                bindVarMemory,
-                bindVarFunctions,
-                ownerFilter,
-                filterUsedColumnIndexes,
-                perWorkerFilters,
+                resources,
                 workerCount
         );
 
         try {
             // Store key functions for init() and close()
             this.ownerKeyFunctions = keyFunctions;
-            this.perWorkerKeyFunctions = perWorkerKeyFunctions;
+            this.perWorkerKeyFunctions = resources.takePerWorkerKeyFunctions();
 
             // Create per-worker map sinks to support expression keys
             // Each worker needs its own sink with its own key functions
@@ -173,7 +159,7 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
                     workerCount
             );
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -201,22 +187,34 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
     ) throws SqlException {
         super.initGroupByFunctions(executionContext, masterSource, slaveSources);
 
-        // Initialize key functions (for expression keys) with combined symbol table source
+        // The owner key functions bind in initOwnerFunctions(), at getCursor() time; only their
+        // per-worker clones bind here.
         final MultiHorizonJoinSymbolTableSource horizonJoinSymbolTableSource = getSymbolTableSource();
-        if (ownerKeyFunctions != null) {
-            Function.init(ownerKeyFunctions, horizonJoinSymbolTableSource, executionContext, null);
-        }
-
         if (perWorkerKeyFunctions != null) {
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
             try {
                 for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                    Function.init(perWorkerKeyFunctions.getQuick(i), horizonJoinSymbolTableSource, executionContext, null);
+                    PerWorkerFunctionList.init(
+                            perWorkerKeyFunctions.getQuick(i),
+                            ownerKeyFunctions,
+                            horizonJoinSymbolTableSource,
+                            executionContext
+                    );
                 }
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }
+        }
+    }
+
+    @Override
+    public void initOwnerFunctions(SqlExecutionContext executionContext) throws SqlException {
+        super.initOwnerFunctions(executionContext);
+        // The expression key functions feed the parent projection the same way the aggregates do,
+        // so they bind at getCursor() time too.
+        if (ownerKeyFunctions != null) {
+            Function.init(ownerKeyFunctions, getSymbolTableSource(), executionContext, null);
         }
     }
 
@@ -230,6 +228,11 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
 
     @Override
     public void reopen() {
+        // Bind the per-query tracker (captured in the base init()) on the sharding context
+        // before reopening it, so the per-worker fragment maps and destination shards count
+        // their growth against the per-query limit. The base reopen() binds the allocators
+        // and ASOF maps.
+        shardingCtx.setMemoryTracker(memoryTracker);
         shardingCtx.reopen();
         super.reopen();
     }
@@ -253,13 +256,27 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
 
     @Override
     protected void closeAggregationState() {
-        shardingCtx.close();
-        Misc.freeObjList(ownerKeyFunctions);
+        // Null-safe: the base ctor calls close() on its error path before this subclass
+        // ctor has assigned shardingCtx, so it can still be null here.
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, shardingCtx);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, ownerKeyFunctions);
         if (perWorkerKeyFunctions != null) {
             for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                Misc.freeObjList(perWorkerKeyFunctions.getQuick(i));
+                final ObjList<Function> functions = perWorkerKeyFunctions.getQuick(i);
+                perWorkerKeyFunctions.setQuick(i, null);
+                try {
+                    PerWorkerFunctionList.close(functions);
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
+                }
             }
         }
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     private ObjList<GroupByFunction> getGroupByFunctions(int slotId) {

@@ -24,10 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -40,22 +37,54 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
             execute("create table B(col0 long, col1 string, col2 float)");
             execute("create table C(col0 double, col1 char, col2 byte)");
             drainWalQueue();
-            assertQueryNoLeakCheck(
-                    "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                            "qdb\tpublic\tA\tcol0\t0\t\tyes\tinteger\n" +
-                            "qdb\tpublic\tA\tcol1\t1\t\tyes\tcharacter varying\n" +
-                            "qdb\tpublic\tA\tcol2\t2\t\tyes\tdouble precision\n" +
-                            "qdb\tpublic\tB\tcol0\t0\t\tyes\tbigint\n" +
-                            "qdb\tpublic\tB\tcol1\t1\t\tyes\tcharacter varying\n" +
-                            "qdb\tpublic\tB\tcol2\t2\t\tyes\treal\n" +
-                            "qdb\tpublic\tC\tcol0\t0\t\tyes\tdouble precision\n" +
-                            "qdb\tpublic\tC\tcol1\t1\t\tyes\tcharacter\n" +
-                            "qdb\tpublic\tC\tcol2\t2\t\tyes\tsmallint\n",
-                    "SELECT * FROM information_schema.columns() ORDER BY table_name",
-                    null,
-                    null,
-                    true
-            );
+            assertQuery("SELECT * FROM information_schema.columns() ORDER BY table_name")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .returns("""
+                            table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
+                            qdb\tpublic\tA\tcol0\t0\t\tyes\tinteger
+                            qdb\tpublic\tA\tcol1\t1\t\tyes\tcharacter varying
+                            qdb\tpublic\tA\tcol2\t2\t\tyes\tdouble precision
+                            qdb\tpublic\tB\tcol0\t0\t\tyes\tbigint
+                            qdb\tpublic\tB\tcol1\t1\t\tyes\tcharacter varying
+                            qdb\tpublic\tB\tcol2\t2\t\tyes\treal
+                            qdb\tpublic\tC\tcol0\t0\t\tyes\tdouble precision
+                            qdb\tpublic\tC\tcol1\t1\t\tyes\tcharacter
+                            qdb\tpublic\tC\tcol2\t2\t\tyes\tsmallint
+                            """);
+        });
+    }
+
+    @Test
+    public void testColumnsCompleteBeforeStartupHydration() throws Exception {
+        // Regression for the startup-hydration race shared with tables()/all_tables():
+        // information_schema.columns() (and the pg_catalog.pg_attribute it backs)
+        // snapshot MetadataCache, which the background onStartupAsyncHydrator() fills
+        // lazily. A query in the post-restart / post-backup-restore pre-hydration
+        // window used to omit tables and their columns, which breaks PostgreSQL
+        // driver introspection (the pg_class -> pg_attribute join renders existing
+        // tables with zero columns). getCursor() must reconcile first.
+        assertMemoryLeak(() -> {
+            execute("create table A(col0 int, col1 symbol)");
+            execute("create table B(col0 long, col1 string)");
+            drainWalQueue();
+
+            // Simulate the pre-hydration window: the registry knows the tables, but
+            // the metadata cache is empty (async hydrator has not run).
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
+            assertQuery("SELECT table_name, column_name FROM information_schema.columns() ORDER BY table_name, column_name")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .returns("""
+                            table_name	column_name
+                            A	col0
+                            A	col1
+                            B	col0
+                            B	col1
+                            """);
         });
     }
 
@@ -64,32 +93,25 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
         assertMemoryLeak(() -> {
             execute("create table x (old int)");
 
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                CompiledQuery compile = compiler.compile("information_schema.columns()", sqlExecutionContext);
-
-                // we use a single instance of RecordCursorFactory before and after table drop
-                // this mimic behavior of a query cache.
-                try (RecordCursorFactory recordCursorFactory = compile.getRecordCursorFactory()) {
-                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
-                        assertCursor("table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                                        "qdb\tpublic\tx\told\t0\t\tyes\tinteger\n",
-                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
-                    }
-
-                    // re-create a table with the *same name* again
-                    execute("drop table x");
-                    execute("create table x (new long)"); // different column type and name
-                    drainWalQueue();
-
-                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
-                        assertCursor("table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                                        "qdb\tpublic\tx\tnew\t0\t\tyes\tbigint\n",
-                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
-                    }
-                }
-            }
+            // a single RecordCursorFactory is reused before and after the table is
+            // dropped and recreated, mimicking the behavior of a query cache
+            assertQuery("information_schema.columns()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .sizeMayVary()
+                    .mutateWith("drop table x", "create table x (new long)") // recreate with different column type and name
+                    .returns(
+                            """
+                                    table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
+                                    qdb\tpublic\tx\told\t0\t\tyes\tinteger
+                                    """,
+                            """
+                                    table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
+                                    qdb\tpublic\tx\tnew\t0\t\tyes\tbigint
+                                    """
+                    );
         });
-
     }
 
     @Test

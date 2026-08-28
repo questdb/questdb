@@ -63,12 +63,10 @@ public class NoOpGroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table y (id int, ref int, val double)");
             engine.releaseAllWriters();
-            assertExceptionNoLeakCheck(
-                    "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, :var, y.ref",
-                    "create table x (id int, ref int, ref3 int)",
-                    73,
-                    "literal expected"
-            );
+            assertQuery("select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, :var, y.ref")
+                    .ddl("create table x (id int, ref int, ref3 int)")
+                    .noLeakCheck()
+                    .fails(73, "literal expected");
         });
     }
 
@@ -87,92 +85,83 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                     "from x " +
                     "where sym1 in ('AA', 'BB' ) " +
                     "group by sym1, sym2";
-            assertPlanNoLeakCheck(
-                    query,
-                    "VirtualRecord\n" +
-                            "  functions: [sym1,avgBid]\n" +
-                            "    Async JIT Group By workers: 1\n" +
-                            "      keys: [sym1,sym2]\n" +
-                            "      values: [avg(bid)]\n" +
-                            "      filter: sym1 in [AA,BB]\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: x\n"
-            );
-            assertQueryNoLeakCheck("sym1\tavgBid\n", query, null, true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [sym1,avgBid]
+                                Async JIT Group By workers: 1
+                                  keys: [sym1,sym2]
+                                  values: [avg(bid)]
+                                  filter: sym1 in [AA,BB]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                            """)
+                    .returns("sym1\tavgBid\n");
         });
     }
 
     @Test
     public void testNoopGroupByFailureWhenUsing2KeysInSelectStatementButOnlyOneInGroupByV1() throws Exception {
-        assertException(
-                "select sym1, sym2, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym1",
-                "create table x (\n" +
-                        "    sym1 symbol,\n" +
-                        "    sym2 symbol,\n" +
-                        "    bid int,\n" +
-                        "    ask int\n" +
-                        ")",
-                13,
-                "column must appear in GROUP BY clause or aggregate function"
-        );
+        assertQuery("select sym1, sym2, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym1")
+                .ddl("""
+                        create table x (
+                            sym1 symbol,
+                            sym2 symbol,
+                            bid int,
+                            ask int
+                        )""")
+                .fails(13, "column must appear in GROUP BY clause or aggregate function");
     }
 
     @Test
     public void testNoopGroupByFailureWhenUsing2KeysInSelectStatementButOnlyOneInGroupByV2() throws Exception {
-        assertException(
-                "select sym1, sym2, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym2",
-                "create table x (\n" +
-                        "    sym1 symbol,\n" +
-                        "    sym2 symbol,\n" +
-                        "    bid int,\n" +
-                        "    ask int\n" +
-                        ")",
-                7,
-                "column must appear in GROUP BY clause or aggregate function"
-        );
+        assertQuery("select sym1, sym2, avg(bid) avgBid from x where sym1 in ('AA', 'BB' ) group by sym2")
+                .ddl("""
+                        create table x (
+                            sym1 symbol,
+                            sym2 symbol,
+                            bid int,
+                            ask int
+                        )""")
+                .fails(7, "column must appear in GROUP BY clause or aggregate function");
     }
 
     @Test
     public void testNoopGroupByFailureWhenUsingAliasedColumnAndWrongTableAlias() throws Exception {
-        assertException(
-                "select sym ccy, avg(bid) avgBid from x a where sym in ('AA', 'BB' ) group by b.ccy",
-                "create table x (\n" +
-                        "    sym symbol,\n" +
-                        "    bid int,\n" +
-                        "    ask int\n" +
-                        ")",
-                77,
-                "Invalid table name or alias"
-        );
+        assertQuery("select sym ccy, avg(bid) avgBid from x a where sym in ('AA', 'BB' ) group by b.ccy")
+                .ddl("""
+                        create table x (
+                            sym symbol,
+                            bid int,
+                            ask int
+                        )""")
+                .fails(77, "Invalid table name or alias");
     }
 
     @Test
     public void testNoopGroupByFailureWhenUsingFunctionColumn() throws Exception {
-        assertException(
-                "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by avgBid",
-                "create table x (\n" +
-                        "    sym symbol,\n" +
-                        "    bid int,\n" +
-                        "    ask int\n" +
-                        ")",
-                71,
-                "aggregate functions are not allowed in GROUP BY"
-        );
+        assertQuery("select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by avgBid")
+                .ddl("""
+                        create table x (
+                            sym symbol,
+                            bid int,
+                            ask int
+                        )""")
+                .fails(71, "aggregate functions are not allowed in GROUP BY");
     }
 
     @Test
     public void testNoopGroupByFailureWhenUsingInvalidColumn() throws Exception {
-        assertException(
-                "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by badColumn",
-                "create table x (\n" +
-                        "    sym symbol,\n" +
-                        "    bid int,\n" +
-                        "    ask int\n" +
-                        ")",
-                71,
-                "Invalid column: badColumn"
-        );
+        assertQuery("select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by badColumn")
+                .ddl("""
+                        create table x (
+                            sym symbol,
+                            bid int,
+                            ask int
+                        )""")
+                .fails(71, "Invalid column: badColumn");
     }
 
     @Test
@@ -215,16 +204,15 @@ public class NoOpGroupByTest extends AbstractCairoTest {
             execute("create table y (id int, ref int, val double)");
             execute("insert into y values (1,1,1), (1,2,2);");
             engine.releaseAllWriters();
-            assertQueryNoLeakCheck(
-                    "id\tcolumn\tsum\n" +
-                            "1\t2\t1.0\n" +
-                            "1\t3\t3.0\n" +
-                            "1\t4\t2.0\n",
-                    "select x.id, x.ref + y.ref, sum(val) from x join y on (id) group by x.id, x.ref + y.ref order by 1, 2",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select x.id, x.ref + y.ref, sum(val) from x join y on (id) group by x.id, x.ref + y.ref order by 1, 2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tcolumn\tsum
+                            1\t2\t1.0
+                            1\t3\t3.0
+                            1\t4\t2.0
+                            """);
         });
     }
 
@@ -234,11 +222,9 @@ public class NoOpGroupByTest extends AbstractCairoTest {
             execute("create table y(id int, ref int, val double)");
             execute("create table x (id int, ref int, ref3 int)");
             engine.releaseAllWriters();
-            assertExceptionNoLeakCheck(
-                    "select x.id, x.ref - y.ref, sum(val) from x join y on (id) group by x.id, y.ref - x.ref",
-                    21,
-                    "column must appear in GROUP BY clause or aggregate function"
-            );
+            assertQuery("select x.id, x.ref - y.ref, sum(val) from x join y on (id) group by x.id, y.ref - x.ref")
+                    .noLeakCheck()
+                    .fails(21, "column must appear in GROUP BY clause or aggregate function");
         });
     }
 
@@ -248,12 +234,9 @@ public class NoOpGroupByTest extends AbstractCairoTest {
             execute("create table x (id int, ref int, ref3 int)");
             execute("create table y(id int, ref int, val double)");
             engine.releaseAllWriters();
-            assertQueryNoLeakCheck(
-                    "z\tsum\n",
-                    "select 'x' z, sum(val) from x join y on (id) group by 'x'",
-                    null,
-                    true
-            );
+            assertQuery("select 'x' z, sum(val) from x join y on (id) group by 'x'")
+                    .noLeakCheck()
+                    .returns("z\tsum\n");
         });
     }
 
@@ -262,14 +245,11 @@ public class NoOpGroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table y(id int, ref int, val double)");
             engine.releaseAllWriters();
-            assertQueryNoLeakCheck(
-                    "id\tref\tref1\tsum\n",
-                    "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, x.ref, y.ref",
-                    "create table x (id int, ref int, ref3 int)",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, x.ref, y.ref")
+                    .noLeakCheck()
+                    .ddl("create table x (id int, ref int, ref3 int)")
+                    .expectSize()
+                    .returns("id\tref\tref1\tsum\n");
         });
     }
 
@@ -278,12 +258,10 @@ public class NoOpGroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table y(id int, ref int, val double)");
             engine.releaseAllWriters();
-            assertExceptionNoLeakCheck(
-                    "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, x.ref3, y.ref",
-                    "create table x (id int, ref int, ref3 int)",
-                    13,
-                    "column must appear in GROUP BY clause or aggregate function"
-            );
+            assertQuery("select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, x.ref3, y.ref")
+                    .ddl("create table x (id int, ref int, ref3 int)")
+                    .noLeakCheck()
+                    .fails(13, "column must appear in GROUP BY clause or aggregate function");
         });
     }
 
@@ -294,7 +272,9 @@ public class NoOpGroupByTest extends AbstractCairoTest {
             execute("create table y(id int, ref int, val double)");
             engine.releaseAllWriters();
             String query = "select 'x' z, sum(val) from x join y on (id) group by 'y'";
-            assertQueryNoLeakCheck("z\tsum\n", query, null, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("z\tsum\n");
         });
     }
 
@@ -717,32 +697,30 @@ public class NoOpGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testSubQuery() throws Exception {
-        assertQuery(
-                "bkt\tavg\n",
-                "select bkt, avg(bid) from (select abs(id % 10) bkt, bid from x) group by bkt order by bkt",
-                "create table x (\n" +
-                        "    id long,\n" +
-                        "    bid double\n" +
-                        ") ",
-                null,
-                "insert into x select * from (select " +
-                        "         rnd_long(), \n" +
-                        "        rnd_double() \n" +
-                        "    from long_sequence(20))",
-                "bkt\tavg\n" +
-                        "0\t0.1911234617573182\n" +
-                        "1\t0.33762525947485594\n" +
-                        "2\t0.22452340856088226\n" +
-                        "3\t0.7715455271652294\n" +
-                        "4\t0.413662826357355\n" +
-                        "5\t0.08486964232560668\n" +
-                        "6\t0.7275909062911847\n" +
-                        "7\t0.47335449523280454\n" +
-                        "8\t0.5773046624150107\n" +
-                        "9\t0.5793466326862211\n",
-                true,
-                true,
-                false
-        );
+        assertQuery("select bkt, avg(bid) from (select abs(id % 10) bkt, bid from x) group by bkt order by bkt")
+                .ddl("""
+                        create table x (
+                            id long,
+                            bid double
+                        )\s""")
+                .mutateWith("""
+                        insert into x select * from (select \
+                                 rnd_long(),\s
+                                rnd_double()\s
+                            from long_sequence(20))""")
+                .expectSize()
+                .returns("bkt\tavg\n", """
+                        bkt\tavg
+                        0\t0.1911234617573182
+                        1\t0.33762525947485594
+                        2\t0.22452340856088226
+                        3\t0.7715455271652294
+                        4\t0.413662826357355
+                        5\t0.08486964232560668
+                        6\t0.7275909062911847
+                        7\t0.47335449523280454
+                        8\t0.5773046624150107
+                        9\t0.5793466326862211
+                        """);
     }
 }

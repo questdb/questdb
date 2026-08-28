@@ -285,8 +285,9 @@ public class QwpMessageHeader {
             throw QwpParseException.invalidMagic();
         }
 
-        // Validate version
-        if (version < VERSION_1 || version > MAX_SUPPORTED_VERSION) {
+        // Validate version. QWP runs at a single version; reject anything else
+        // at the wire level.
+        if (version != VERSION) {
             throw QwpParseException.unsupportedVersion();
         }
 

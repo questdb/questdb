@@ -28,6 +28,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -46,7 +47,7 @@ public class SequencerMetadataService implements MetadataServiceStub {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
@@ -58,11 +59,16 @@ public class SequencerMetadataService implements MetadataServiceStub {
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
-                isIndexed,
+                indexType,
                 indexValueBlockCapacity,
                 isDedupKey,
                 isNotNull
         );
+    }
+
+    @Override
+    public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
+        metadata.addIndex(columnName, indexValueBlockSize, indexType, coveringColumnNames);
     }
 
     @Override
@@ -71,7 +77,7 @@ public class SequencerMetadataService implements MetadataServiceStub {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isSequential,
             SecurityContext securityContext
@@ -81,7 +87,7 @@ public class SequencerMetadataService implements MetadataServiceStub {
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
-                isIndexed,
+                indexType,
                 indexValueBlockCapacity
         );
     }

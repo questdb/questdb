@@ -390,6 +390,32 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     /**
+     * Returns true if this function is guaranteed to evaluate to the same value for the whole
+     * duration of a single query execution, including across repeated
+     * {@link #init(SymbolTableSource, SqlExecutionContext)} calls against the same
+     * {@link SqlExecutionContext} (for example when the same expression is compiled twice:
+     * once for an interval-pruning model and once for a residual filter, each opening its own
+     * cursor).
+     * <p>
+     * This is a weaker property than determinism. {@code now()} and bind variables are
+     * non-deterministic across executions, yet stable within one: {@code now()} reads the
+     * timestamp snapshot frozen by {@code SqlExecutionContext.initNow()} at statement entry,
+     * and a bind variable's value is set before execution starts and is immutable while it
+     * runs. Genuinely traversal-unstable functions ({@code rnd_*}, {@code systimestamp()},
+     * {@code sysdate()}) re-sample on every call and must report false.
+     * <p>
+     * The default derives from {@link #isNonDeterministic()}: deterministic implies stable,
+     * and non-deterministic functions are assumed unstable unless they override this method
+     * with a proof of within-execution stability. Consumers must treat {@code false} as
+     * "stability not proven", never as a licence to re-evaluate.
+     *
+     * @return true if the value cannot change within a single query execution
+     */
+    default boolean isStableWithinExecution() {
+        return !isNonDeterministic();
+    }
+
+    /**
      * Returns true if the function and all of its children functions are thread-safe
      * and, thus, can be called concurrently, false - otherwise. Used as a hint for
      * parallel SQL execution, thus this method makes sense only for functions

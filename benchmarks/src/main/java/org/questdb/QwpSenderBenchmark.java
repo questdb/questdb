@@ -186,6 +186,26 @@ public class QwpSenderBenchmark {
         return TimeUnit.MILLISECONDS.toMicros(10 * rowIndex);
     }
 
+    private static void recreateTable() throws Exception {
+        try (Connection conn = createConnection();
+             Statement st = conn.createStatement()) {
+            st.execute("DROP TABLE IF EXISTS " + TABLE_NAME);
+            st.execute("""
+                    CREATE TABLE complex_types (
+                        ts TIMESTAMP,
+                        d_val DOUBLE,
+                        v_text VARCHAR,
+                        ts_event TIMESTAMP,
+                        dec64_val DECIMAL(18, 4),
+                        dec128_val DECIMAL(38, 8),
+                        dec256_val DECIMAL(76, 10),
+                        dbl_arr DOUBLE[],
+                        dbl_arr2d DOUBLE[][],
+                        is_even BOOLEAN
+                    ) TIMESTAMP(ts) PARTITION BY HOUR WAL""");
+        }
+    }
+
     private static void validateAggregates(Statement st) throws Exception {
         // Validate sum of d_val: sum(i*1.5 for i in 1..ROW_COUNT) = 1.5 * ROW_COUNT*(ROW_COUNT+1)/2
         try (ResultSet rs = st.executeQuery(

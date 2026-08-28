@@ -26,10 +26,15 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSink;
+import io.questdb.cairo.lv.LiveViewCheckpointRingStateSource;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -39,28 +44,38 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 // Returns value evaluated at the row that is the last row of the window frame.
 public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
     public static final ArrayColumnTypes LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES;
+    public static final ArrayColumnTypes LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes LAST_VALUE_COLUMN_TYPES;
     public static final ArrayColumnTypes LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES;
+    public static final ArrayColumnTypes LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES;
+    public static final ArrayColumnTypes LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV;
     public static final String NAME = "last_value";
     private static final String SIGNATURE = NAME + "(L)";
 
@@ -180,10 +195,12 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                     }
 
                     int timestampIndex = windowContext.getTimestampIndex();
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES
+                            liveView ? LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES_LV
+                                    : LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES
                     );
 
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
@@ -199,7 +216,10 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                             args.get(0),
                             mem,
                             initialBufferSize,
-                            timestampIndex
+                            timestampIndex,
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
@@ -237,25 +257,37 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                 }
                 // between [unbounded | x] preceding and [x preceding | current row] (but not unbounded preceding to current row )
                 else {
-                    Map map = MapFactory.createUnorderedMap(
-                            configuration,
-                            partitionByKeyTypes,
-                            LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES
-                    );
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
-                    );
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(
+                                configuration,
+                                partitionByKeyTypes,
+                                liveView ? LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV
+                                        : LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES
+                        );
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
+                        );
 
-                    // moving average over preceding N rows
-                    return new LastNotNullValueOverPartitionRowsFrameFunction(
-                            map,
-                            partitionByRecord,
-                            partitionBySink,
-                            rowsLo,
-                            rowsHi,
-                            args.get(0),
-                            mem
-                    );
+                        // moving last_value(IGNORE NULLS) over preceding N rows
+                        return new LastNotNullValueOverPartitionRowsFrameFunction(
+                                map,
+                                partitionByRecord,
+                                partitionBySink,
+                                rowsLo,
+                                rowsHi,
+                                args.get(0),
+                                mem,
+                                partitionByKeyTypes,
+                                liveView
+                        );
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         } else { // no partition key
@@ -379,10 +411,12 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                     }
 
                     int timestampIndex = windowContext.getTimestampIndex();
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES
+                            liveView ? LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES_LV
+                                    : LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES
                     );
 
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
@@ -398,7 +432,10 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                             args.get(0),
                             mem,
                             initialBufferSize,
-                            timestampIndex
+                            timestampIndex,
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
@@ -427,26 +464,38 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                     );
                 } //between [unbounded | x] preceding and x preceding
                 else {
-                    Map map = MapFactory.createUnorderedMap(
-                            configuration,
-                            partitionByKeyTypes,
-                            LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES
-                    );
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(
+                                configuration,
+                                partitionByKeyTypes,
+                                liveView ? LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV
+                                        : LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES
+                        );
 
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
-                    );
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
+                        );
 
-                    // moving last over preceding N rows
-                    return new LastValueOverPartitionRowsFrameFunction(
-                            map,
-                            partitionByRecord,
-                            partitionBySink,
-                            rowsLo,
-                            rowsHi,
-                            args.get(0),
-                            mem
-                    );
+                        // moving last_value over preceding N rows
+                        return new LastValueOverPartitionRowsFrameFunction(
+                                map,
+                                partitionByRecord,
+                                partitionBySink,
+                                rowsLo,
+                                rowsHi,
+                                args.get(0),
+                                mem,
+                                partitionByKeyTypes,
+                                liveView
+                        );
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         } else { // no partition key
@@ -866,9 +915,13 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                 Function arg,
                 MemoryARW memory,
                 int initialBufferSize,
-                int timestampIdx
+                int timestampIdx,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
-            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx);
+            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx,
+                    partitionByKeyTypes, liveView, configuration);
             frameIncludesCurrentValue = rangeHi == 0;
         }
 
@@ -914,6 +967,9 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             long d = arg.getLong(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -937,7 +993,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -967,7 +1023,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -993,11 +1049,6 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             mapValue.putLong(3, firstIdx);
         }
 
-        /**
-         * Indicates this window function ignores NULL input values.
-         *
-         * @return true because this implementation uses the "IGNORE NULLS" semantics
-         */
         @Override
         public boolean isIgnoreNulls() {
             return true;
@@ -1013,27 +1064,13 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
-        // holds fixed-size ring buffers of timestamp values
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
+        // holds fixed-size ring buffers of long values
         private final MemoryARW memory;
         private long lastValue = Numbers.LONG_NULL;
 
-        /**
-         * Constructs a partitioned rows-framed last_value implementation that ignores NULLs.
-         *
-         * <p>Initializes internal ring-buffer sizing and frame flags based on the ROWS frame bounds.
-         * If rowsLo > Long.MIN_VALUE the constructor treats the frame as bounded on the lower side:
-         * - frameSize is computed from rowsHi - rowsLo (adjusted when rowsHi is negative).
-         * - bufferSize is set to |rowsLo|.
-         * Otherwise the frame is treated as unbounded below:
-         * - frameSize is set to 1.
-         * - bufferSize is set to |rowsHi| (rowsHi == 0 is handled elsewhere).
-         * The boolean frameIncludesCurrentValue is true when rowsHi == 0.</p>
-         *
-         * @param rowsLo lower bound of the ROWS frame (can be Long.MIN_VALUE to indicate unbounded PRECEDING)
-         * @param rowsHi upper bound of the ROWS frame
-         * @param arg    function providing input values for the window
-         * @param memory ring-buffer memory used to store per-partition (timestamp, value) entries
-         */
         public LastNotNullValueOverPartitionRowsFrameFunction(
                 Map map,
                 VirtualRecord partitionByRecord,
@@ -1041,7 +1078,9 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                 long rowsLo,
                 long rowsHi,
                 Function arg,
-                MemoryARW memory
+                MemoryARW memory,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             if (rowsLo > Long.MIN_VALUE) {
@@ -1055,6 +1094,24 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             }
             this.frameIncludesCurrentValue = rowsHi == 0;
             this.memory = memory;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 3;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         /**
@@ -1103,6 +1160,9 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             long d = arg.getLong(record);
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && d != Numbers.LONG_NULL) {
@@ -1147,18 +1207,18 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             if (frameLoBounded && memory.getLong(startOffset + loIdx % bufferSize * Long.BYTES) == this.lastValue) {
                 nextLastValue = Numbers.LONG_NULL;
             }
-            value.putTimestamp(0, nextLastValue);
+            value.putLong(0, nextLastValue);
             value.putLong(1, (loIdx + 1) % bufferSize);
             value.putLong(2, startOffset);//not necessary because it doesn't change
             memory.putLong(startOffset + loIdx * Long.BYTES, d);
         }
 
-        /**
-         * Returns the current last long value tracked by this function for the active row/frame.
-         *
-         * @param rec record (ignored)
-         * @return the most recent non-null value observed for the active partition/frame
-         */
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
+        }
+
         @Override
         public long getLong(Record rec) {
             return lastValue;
@@ -1174,74 +1234,128 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             return NAME;
         }
 
-        /**
-         * Indicates this window function requires no separate passes.
-         *
-         * @return the pass count constant {@link WindowFunction#ZERO_PASS}
-         */
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
-        /**
-         * Indicates this window function ignores NULL input values.
-         *
-         * @return true because this implementation uses the "IGNORE NULLS" semantics
-         */
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
+        }
+
         @Override
         public boolean isIgnoreNulls() {
             return true;
         }
 
-        /**
-         * First-pass handler: updates the internal `lastValue` with the given input record
-         * and writes that value to the function output column at the provided record offset.
-         * <p>
-         * The method calls {@code computeNext(record)} to advance internal state (which may
-         * change `lastValue`) and then stores `lastValue` into the SPI output slot for this
-         * row using the configured `columnIndex`.
-         *
-         * @param record       the input record used to update the function state
-         * @param recordOffset the memory offset/row index supplied by the WindowSPI where the result should be written
-         */
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
+        }
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
-        /**
-         * Reopens the function for reuse, invoking superclass reopen behavior.
-         * <p>
-         * Any memory-backed resources are not allocated here and will be lazily
-         * allocated on first use.
-         */
         @Override
         public void reopen() {
             super.reopen();
+            tombstoneCount = 0;
             // memory will allocate on first use
         }
 
-        /**
-         * Resets the function's state and releases its memory buffer.
-         * <p>
-         * This calls the superclass reset logic and closes the associated memory resource to free any
-         * allocated native/storage buffers used by this instance.
-         */
         @Override
         public void reset() {
             super.reset();
             memory.close();
+            tombstoneCount = 0;
         }
 
-        /**
-         * Appends this window function's textual plan representation to the given PlanSink.
-         * <p>
-         * The plan includes the function name and argument, the "ignore nulls" marker,
-         * the partition-by expressions, and the ROWS framing clause in the form:
-         * "rows between {bufferSize} preceding and {current row|N preceding}".
-         */
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                final long startOffset = value.getLong(2);
+                value.putLong(0, Numbers.LONG_NULL);
+                value.putLong(1, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putLong(startOffset + (long) i * Long.BYTES, Numbers.LONG_NULL);
+                }
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            final long ringBytes = (long) bufferSize * Long.BYTES;
+            final long partitionLastValue = source.getLong(offset);
+            offset += Long.BYTES;
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor(ringBytes) - memory.getPageAddress(0);
+            for (int i = 0; i < bufferSize; i++) {
+                memory.putLong(newStartOffset + (long) i * Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            value.putLong(0, partitionLastValue);
+            value.putLong(1, loIdx);
+            value.putLong(2, newStartOffset);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putLong(value.getLong(1));
+            final long startOffset = value.getLong(2);
+            for (int i = 0; i < bufferSize; i++) {
+                sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
+            }
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+        }
+
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
@@ -1260,17 +1374,12 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             sink.val(')');
         }
 
-        /**
-         * Reset the function to its initial state before reuse.
-         *
-         * <p>Performs superclass reset, releases/clears any allocated ring-buffer memory, and
-         * clears the cached last value by setting it to `Numbers.LONG_NULL`.</p>
-         */
         @Override
         public void toTop() {
             super.toTop();
             memory.truncate();
             lastValue = Numbers.LONG_NULL;
+            tombstoneCount = 0;
         }
     }
 
@@ -1316,7 +1425,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -1358,7 +1467,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -1430,7 +1539,6 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             }
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
-            initBuffer();
         }
 
         /**
@@ -1651,6 +1759,10 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
     public static class LastNotNullValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
         private long value = Numbers.LONG_NULL;
+        // The captured value's and the flag's slots in the group's fused map value, or -1 when
+        // this function owns its state.
+        private int windowStateCapturedSlot = -1;
+        private int windowStateValueSlot = -1;
 
         /**
          * Construct a function that computes LAST_VALUE for long inputs while ignoring NULLs,
@@ -1663,6 +1775,34 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          */
         public LastNotNullValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
+        }
+
+        /**
+         * Replaces the group's slice with this row's payload when the row contributes, and takes
+         * the partition's first row whether it contributes or not - which is what the private-map
+         * implementation below does on its {@code isNew()} branch. The flag is what carries
+         * "this partition has written its slot" for the group.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final long d = arg.getLong(record);
+            if (value.getLong(windowStateCapturedSlot) == 0) {
+                value.putLong(windowStateValueSlot, d);
+                value.putLong(windowStateCapturedSlot, 1);
+            } else if (d != Numbers.LONG_NULL) {
+                value.putLong(windowStateValueSlot, d);
+            }
+        }
+
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            this.windowStateValueSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_CAPTURED_VALUE);
+            this.windowStateCapturedSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_CAPTURED);
         }
 
         /**
@@ -1682,6 +1822,11 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
          */
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The group absorbed this row into its one slice and materialized the projection
+                // before the cursor got here.
+                return;
+            }
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
@@ -1745,6 +1890,16 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         }
 
         /**
+         * The private per-partition map, which is also this function's whole eligibility for a
+         * fused group. Exposing it does not sign the function up for the live-view checkpoint
+         * pipeline, which is gated on {@code supportsCheckpointState()} - false here.
+         */
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        /**
          * First-pass handler that computes and writes the last_value for the current input record.
          * <p>
          * Computes the next aggregated value from the supplied record (updating this function's internal
@@ -1758,6 +1913,16 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        /**
+         * Reads the payload the group's slice holds. No empty test: the identity is
+         * {@code LONG_NULL}, and a partition the traversal has reached has written the slot on
+         * its very first row.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            this.value = value.getLong(windowStateValueSlot);
         }
 
         /**
@@ -1777,6 +1942,21 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_LONG_LAST_NOT_NULL_VALUE;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            return WindowAccumulatorProjection.PROJECTION_CAPTURED_VALUE;
         }
     }
 
@@ -1964,6 +2144,24 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             return WindowFunction.ZERO_PASS;
         }
 
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // Trivially true: the descriptor a stateless function carries declares an empty
+            // state extent, and a value read off the current row is determined by it.
+            return true;
+        }
+
+        @Override
+        public boolean isCheckpointStateless() {
+            // computeNext reads the argument off the row it was handed, so the call is
+            // equivalent to projecting that argument and the frame's start does not
+            // participate - an unbounded one and a bounded one land here alike. Nothing is
+            // left for a checkpoint to carry, and no output but the changed row's own moves.
+            // See LastValueIncludeCurrentPartitionRowsFrameBase.isCheckpointStateless() for
+            // what the zero forward influence rests on in the RANGE spelling.
+            return true;
+        }
+
         /**
          * First-pass handler that computes and writes the last_value for the current input record.
          * <p>
@@ -2108,6 +2306,24 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             return WindowFunction.ZERO_PASS;
         }
 
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // Trivially true: the descriptor a stateless function carries declares an empty
+            // state extent, and a value read off the current row is determined by it.
+            return true;
+        }
+
+        @Override
+        public boolean isCheckpointStateless() {
+            // computeNext reads the argument off the row it was handed, so the call is
+            // equivalent to projecting that argument and the frame's start does not
+            // participate - an unbounded one and a bounded one land here alike. Nothing is
+            // left for a checkpoint to carry, and no output but the changed row's own moves.
+            // See LastValueIncludeCurrentPartitionRowsFrameBase.isCheckpointStateless() for
+            // what the zero forward influence rests on in the RANGE spelling.
+            return true;
+        }
+
         /**
          * First-pass handler that computes and writes the last_value for the current input record.
          * <p>
@@ -2229,32 +2445,25 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
     public static class LastValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
+        // Retained for the live-view frontier sweep, which sizes both of its scratch
+        // containers - the state map and the ring arena - from it.
+        protected final CairoConfiguration configuration;
         protected final boolean frameLoBounded;
         // list of [size, startOffset] pairs marking free space within mem
         protected final LongList freeList = new LongList();
         protected final int initialBufferSize;
+        protected final ArrayColumnTypes keyColumnTypes;
+        protected final boolean liveView;
+        protected final ArrayColumnTypes mapValueTypes;
         protected final long maxDiff;
         // holds resizable ring buffers
         protected final MemoryARW memory;
         protected final RingBufferDesc memoryDesc = new RingBufferDesc();
         protected final long minDiff;
+        protected final RingRestoreSink ringRestore = new RingRestoreSink();
         protected final int timestampIndex;
         protected long lastValue = Numbers.LONG_NULL;
 
-        /**
-         * Creates a partitioned RANGE-frame implementation of LAST_VALUE for long values using
-         * a memory-backed ring buffer to maintain [timestamp, value] pairs.
-         * <p>
-         * The constructor configures whether the lower bound is bounded and computes the
-         * absolute minimum and maximum allowed timestamp differences (used to evict entries
-         * outside the range frame).
-         *
-         * @param rangeLo           lower bound of the RANGE frame (relative to current row); use Long.MIN_VALUE for unbounded
-         * @param rangeHi           upper bound of the RANGE frame (relative to current row)
-         * @param memory            memory-backed ring buffer storage for timestamp/value pairs
-         * @param initialBufferSize initial capacity for the per-partition ring buffer
-         * @param timestampIdx      index within the stored tuple that contains the designated timestamp used for range comparisons
-         */
         public LastValueOverPartitionRangeFrameFunction(
                 Map map,
                 VirtualRecord partitionByRecord,
@@ -2264,7 +2473,10 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                 Function arg,
                 MemoryARW memory,
                 int initialBufferSize,
-                int timestampIdx
+                int timestampIdx,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -2273,6 +2485,26 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             this.memory = memory;
             this.initialBufferSize = initialBufferSize;
             this.timestampIndex = timestampIdx;
+            this.configuration = configuration;
+
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 4;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         /**
@@ -2285,6 +2517,44 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        /**
+         * Enrols this function in the live-view frontier sweep. The two indices name the value
+         * layout {@link #computeNext(Record)} reads back: slot 0 is the ring's start offset,
+         * slot 2 its capacity. The IGNORE NULLS subclass keeps every slot where this class puts
+         * it - unlike {@code first_value}, {@code last_value} carries no frame-size slot for
+         * IGNORE NULLS to drop - so it inherits this pair rather than declaring its own.
+         */
+        @Override
+        protected void copyRingSlab(MapValue srcValue, MapValue dstValue, MemoryARW scratch) {
+            AbstractWindowFunctionFactory.copyRingSlab(srcValue, dstValue, memory, scratch, 0, 2, RECORD_SIZE);
+        }
+
+        @Override
+        public MemoryARW getRingArena() {
+            return memory;
+        }
+
+        @Override
+        protected LongList getRingFreeList() {
+            return freeList;
+        }
+
+        @Override
+        protected MemoryARW newCompactionRingScratch() {
+            return Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            // Outside live-view mode the layout copies were never taken, and nothing calls the
+            // sweep either; keep the opt-out rather than dereference a null layout.
+            return liveView ? MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes) : null;
         }
 
         /**
@@ -2323,6 +2593,9 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             long d = arg.getLong(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -2342,7 +2615,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
                         } else {
@@ -2357,7 +2630,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         lastIndex = (int) (idx % capacity);
                         size--;
                     } else {
@@ -2396,35 +2669,60 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             mapValue.putLong(3, firstIdx);
         }
 
-        /**
-         * Returns the current last long value tracked by this function for the active row/frame.
-         *
-         * @param rec record (ignored)
-         * @return the most recent non-null value observed for the active partition/frame
-         */
         @Override
         public long getLong(Record rec) {
             return lastValue;
         }
 
-        /**
-         * Returns the canonical name of this window function.
-         *
-         * @return the function name ("last_value")
-         */
         @Override
         public String getName() {
             return NAME;
         }
 
-        /**
-         * Indicates this window function requires no separate passes.
-         *
-         * @return the pass count constant {@link WindowFunction#ZERO_PASS}
-         */
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // computeNext keeps the entries within minDiff of the current row plus the one
+            // carried entry it emits, and the eviction above that drops everything further
+            // back than maxDiff - the frame's own look-behind. So a bounded frame start makes
+            // the state a function of the rows in [t - maxDiff, t] and of nothing else, which
+            // is the extent the descriptor declares. The IGNORE NULLS subclass evicts on the
+            // same two bounds and only declines to buffer a null argument, so it inherits
+            // this reading.
+            //
+            // An unbounded start switches the maxDiff eviction off, and the carried entry is
+            // then the newest row below the lag however far back that lies - older than every
+            // retained entry, and older than any width a warm-up could replay. That arm has
+            // no look-behind to declare, so it answers false and takes no repair plan.
+            return frameLoBounded;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
+            freeList.clear();
         }
 
         @Override
@@ -2433,28 +2731,141 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
-        /**
-         * Reinitializes the function for a new execution pass.
-         * <p>
-         * Calls the superclass reopen() and resets the cached lastValue to the long null sentinel.
-         */
         @Override
         public void reopen() {
             super.reopen();
             lastValue = Numbers.LONG_NULL;
+            tombstoneCount = 0;
         }
 
-        /**
-         * Reset the function's runtime state to its initial (closed) state.
-         *
-         * <p>This performs superclass reset actions, closes the associated memory buffer,
-         * and clears the internal free-list used for buffer slot management.</p>
-         */
         @Override
         public void reset() {
             super.reset();
             memory.close();
             freeList.clear();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putLong(1, 0L);
+                value.putLong(3, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public void restoreCheckpointRingState(LiveViewCheckpointRingStateSource source, MapValue value) {
+            final long size = source.getRowCount();
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            ringRestore.of(newStartOffset);
+            source.forEachRow(ringRestore);
+            if (ringRestore.rows != size) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint last_value RANGE ring row count mismatch [expected=").put(size)
+                        .put(", actual=").put(ringRestore.rows).put(']');
+            }
+            value.putLong(0, newStartOffset);
+            value.putLong(1, size);
+            value.putLong(2, capacity);
+            value.putLong(3, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = WindowFunction.restoredRingCapacity(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            for (long i = 0; i < size; i++) {
+                memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(offset));
+                offset += Long.BYTES;
+                memory.putLong(newStartOffset + i * RECORD_SIZE + Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            value.putLong(0, newStartOffset);
+            value.putLong(1, size);
+            value.putLong(2, capacity);
+            value.putLong(3, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int checkpointRingValueKind() {
+            return LiveViewCheckpointRangeRingStateReader.VALUE_KIND_LONG;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointRingState(LiveViewCheckpointRingStateSink sink, MapValue value) {
+            // last_value carries no running aggregate and slot 0 is the start
+            // offset, not a frame count, so the scalar slot is unused (0) and
+            // frameSize carries the row count. The ring holds every buffered row
+            // including nulls; a last_value over a NULL newest row is LONG_NULL,
+            // which the raw 64-bit value column round-trips.
+            final long startOffset = value.getLong(0);
+            final long size = value.getLong(1);
+            final long capacity = value.getLong(2);
+            final long firstIdx = value.getLong(3);
+            sink.putScalarState(0L, size);
+            for (long i = 0; i < size; i++) {
+                final long idx = (firstIdx + i) % capacity;
+                sink.putRow(
+                        memory.getLong(startOffset + idx * RECORD_SIZE),
+                        memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES)
+                );
+            }
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            final long startOffset = value.getLong(0);
+            final long size = value.getLong(1);
+            final long capacity = value.getLong(2);
+            final long firstIdx = value.getLong(3);
+            sink.putLong(size);
+            for (long i = 0; i < size; i++) {
+                final long idx = (firstIdx + i) % capacity;
+                sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
+                sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES));
+            }
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public boolean supportsCheckpointRingState() {
+            return supportsCheckpointState();
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         /**
@@ -2484,19 +2895,36 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             sink.val(')');
         }
 
-        /**
-         * Reset the function's runtime state to its initial/top position.
-         *
-         * <p>Performs superclass reset, truncates the backing memory buffer, clears
-         * any cached free-list entries, and resets the cached last value to SQL NULL
-         * (Numbers.LONG_NULL).</p>
-         */
         @Override
         public void toTop() {
             super.toTop();
             memory.truncate();
             freeList.clear();
             lastValue = Numbers.LONG_NULL;
+            tombstoneCount = 0;
+        }
+
+        /**
+         * Writes restored ring rows straight into the partition's freshly sized
+         * slab. Reused across partitions so a restore that walks thousands of them
+         * allocates nothing per partition. The value column is a raw 64-bit word: a
+         * last_value ring row can be a NULL argument (LONG_NULL).
+         */
+        protected class RingRestoreSink implements LiveViewCheckpointRingStateSource.RowConsumer {
+            protected long rows;
+            private long startOffset;
+
+            @Override
+            public void accept(long timestamp, long valueBits) {
+                memory.putLong(startOffset + rows * RECORD_SIZE, timestamp);
+                memory.putLong(startOffset + rows * RECORD_SIZE + Long.BYTES, valueBits);
+                rows++;
+            }
+
+            protected void of(long startOffset) {
+                this.startOffset = startOffset;
+                this.rows = 0;
+            }
         }
     }
 
@@ -2507,24 +2935,14 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
         private final int bufferSize;
-        // holds fixed-size ring buffers of timestamp values
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
+        // holds fixed-size ring buffers of long values
         private final MemoryARW memory;
         private final long rowLo;
         private long lastValue = Numbers.LONG_NULL;
 
-        /**
-         * Construct a partitioned ROWS-frame implementation that tracks the last value within a sliding
-         * window of preceding rows using a ring buffer stored in off-heap memory.
-         *
-         * <p>Buffer capacity is derived from the absolute value of {@code rowsHi}. {@code rowsLo} is
-         * stored for use when evaluating whether a row falls into the frame. The provided {@code memory}
-         * is used as the backing MemoryARW ring buffer for per-partition frame storage.</p>
-         *
-         * @param rowsLo lower bound of the ROWS frame (preceding offset or other frame-specific lower bound)
-         * @param rowsHi upper bound of the ROWS frame; its absolute value determines the initial ring buffer size
-         * @param arg    function producing the input long values to be tracked
-         * @param memory off-heap memory (MemoryARW) used as the ring buffer backing store for frame data
-         */
         public LastValueOverPartitionRowsFrameFunction(
                 Map map,
                 VirtualRecord partitionByRecord,
@@ -2532,25 +2950,40 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                 long rowsLo,
                 long rowsHi,
                 Function arg,
-                MemoryARW memory
+                MemoryARW memory,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             bufferSize = (int) Math.abs(rowsHi);
             this.rowLo = rowsLo;
             this.memory = memory;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 3;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
-        /**
-         * Advance the per-partition ring buffer with the timestamp from the given record and update the cached last value.
-         *
-         * <p>This method:
-         * - Looks up or creates partition state in the map keyed by the partition record.
-         * - On first encounter allocates a contiguous memory region for the partition's circular buffer and initializes it with `Numbers.LONG_NULL`.
-         * - Reads the current "oldest" index from partition state, writes the record timestamp into the buffer position pointed to by that index,
-         * advances the stored oldest index (modulo buffer size), and updates the in-memory `lastValue` from the overwritten slot before the write.</p>
-         *
-         * @param record input record whose timestamp is appended into the partition's rows-frame ring buffer
-         */
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
+        }
+
         @Override
         public void computeNext(Record record) {
             // map stores:
@@ -2565,6 +2998,9 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             long startOffset;
             long d = arg.getLong(record);
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
                 value.putLong(1, startOffset);
@@ -2581,87 +3017,140 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             memory.putLong(startOffset + loIdx % bufferSize * Long.BYTES, d);
         }
 
-        /**
-         * Returns the current last long value tracked by this function for the active row/frame.
-         *
-         * @param rec record (ignored)
-         * @return the most recent non-null value observed for the active partition/frame
-         */
         @Override
         public long getLong(Record rec) {
             return lastValue;
         }
 
-        /**
-         * Returns the canonical name of this window function.
-         *
-         * @return the function name ("last_value")
-         */
         @Override
         public String getName() {
             return NAME;
         }
 
-        /**
-         * Indicates this window function requires no separate passes.
-         *
-         * @return the pass count constant {@link WindowFunction#ZERO_PASS}
-         */
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
-        /**
-         * First-pass handler: updates the internal `lastValue` with the given input record
-         * and writes that value to the function output column at the provided record offset.
-         * <p>
-         * The method calls {@code computeNext(record)} to advance internal state (which may
-         * change `lastValue`) and then stores `lastValue` into the SPI output slot for this
-         * row using the configured `columnIndex`.
-         *
-         * @param record       the input record used to update the function state
-         * @param recordOffset the memory offset/row index supplied by the WindowSPI where the result should be written
-         */
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the bufferSize values behind the current row and computeNext
+            // emits the oldest of them, so the state is a function of that many rows and
+            // of nothing else. bufferSize is the frame's own high bound, which is where
+            // the descriptor takes this function's state extent from, and replaying that
+            // many rows overwrites every slot - so a warm-up from the extent's lower edge
+            // emits what a whole-history run would, however far back the frame starts.
+            return true;
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
+            memory.jumpTo(0);
+        }
+
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
-        /**
-         * Reopens the function instance for reuse, resetting its transient state.
-         * <p>
-         * Calls super.reopen(), defers memory allocation until first use, and resets
-         * the cached `lastValue` to the sentinel `Numbers.LONG_NULL`.
-         */
         @Override
         public void reopen() {
             super.reopen();
+            tombstoneCount = 0;
             // memory will allocate on first use
             lastValue = Numbers.LONG_NULL;
         }
 
-        /**
-         * Resets the function's state and releases its memory buffer.
-         * <p>
-         * This calls the superclass reset logic and closes the associated memory resource to free any
-         * allocated native/storage buffers used by this instance.
-         */
         @Override
         public void reset() {
             super.reset();
             memory.close();
+            tombstoneCount = 0;
         }
 
-        /**
-         * Appends the query-plan representation of this window function to the given PlanSink.
-         * <p>
-         * The produced plan includes the function name and argument, an "ignore nulls" marker when
-         * applicable, and a "over (partition by ... rows between ... preceding and ... preceding)" frame
-         * description. When rowLo equals Long.MAX_VALUE the lower bound is rendered as "unbounded";
-         * otherwise the absolute value of rowLo is used.
-         */
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                final long startOffset = value.getLong(1);
+                value.putLong(0, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putLong(startOffset + (long) i * Long.BYTES, Numbers.LONG_NULL);
+                }
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            final long ringBytes = (long) bufferSize * Long.BYTES;
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor(ringBytes) - memory.getPageAddress(0);
+            for (int i = 0; i < bufferSize; i++) {
+                memory.putLong(newStartOffset + (long) i * Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            value.putLong(0, loIdx);
+            value.putLong(1, newStartOffset);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            final long startOffset = value.getLong(1);
+            for (int i = 0; i < bufferSize; i++) {
+                sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
+            }
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+        }
+
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
@@ -2683,17 +3172,12 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             sink.val(')');
         }
 
-        /**
-         * Reset the function to its initial state before reuse.
-         *
-         * <p>Performs superclass reset, releases/clears any allocated ring-buffer memory, and
-         * clears the cached last value by setting it to `Numbers.LONG_NULL`.</p>
-         */
         @Override
         public void toTop() {
             super.toTop();
             memory.truncate();
             lastValue = Numbers.LONG_NULL;
+            tombstoneCount = 0;
         }
     }
 
@@ -2757,7 +3241,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
             capacity = initialCapacity;
             memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
         }
 
@@ -2799,7 +3283,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         newFirstIdx = (idx + 1) % capacity;
                         size--;
                     } else {
@@ -2814,7 +3298,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             for (long i = 0, n = size; i < n; i++) {
                 long idx = (firstIdx + i) % capacity;
                 long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                if (Math.abs(timestamp - ts) >= minDiff) {
+                if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                     lastIndex = (int) (idx % capacity);
                     size--;
                 } else {
@@ -2924,6 +3408,11 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             memory.close();
         }
 
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
+        }
+
         /**
          * Appends a textual plan fragment for this last_value function to the provided PlanSink.
          * <p>
@@ -2995,7 +3484,6 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             bufferSize = (int) Math.abs(rowsHi);
             this.buffer = memory;
             this.rowsLo = rowsLo;
-            initBuffer();
         }
 
         /**
@@ -3249,9 +3737,28 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // native buffer capacity
         LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // index of last buffered element
 
+        LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // native array start offset
+        LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // native buffer size
+        LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // native buffer capacity
+        LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // index of last buffered element
+        LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
+
         LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES = new ArrayColumnTypes();
-        LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);
+        LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // lastValue
+        LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // position of current oldest element
         LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // start offset of native array
-        LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // count of values in buffer
+
+        LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // lastValue
+        LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // position of current oldest element
+        LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // start offset of native array
+        LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
+
+        LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // position of current oldest element
+        LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // start offset of native array
+        LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // count of values in buffer (unused, kept for layout symmetry)
+        LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
     }
 }

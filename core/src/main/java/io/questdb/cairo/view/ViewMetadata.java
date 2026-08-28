@@ -25,6 +25,7 @@
 package io.questdb.cairo.view;
 
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
@@ -50,7 +51,7 @@ public class ViewMetadata extends GenericRecordMetadata implements TableMetadata
                         new TableColumnMetadata(
                                 sourceMetadata.getColumnName(i),
                                 sourceMetadata.getColumnType(i),
-                                false,
+                                IndexType.NONE,
                                 0,
                                 false,
                                 sourceMetadata.getMetadata(i),
@@ -126,8 +127,8 @@ public class ViewMetadata extends GenericRecordMetadata implements TableMetadata
     }
 
     @Override
-    public boolean isIndexed(int columnIndex) {
-        return false;
+    public byte getIndexType(int columnIndex) {
+        return IndexType.NONE;
     }
 
     @Override

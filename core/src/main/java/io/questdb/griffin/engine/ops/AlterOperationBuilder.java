@@ -54,7 +54,7 @@ public class AlterOperationBuilder implements Mutable {
             int type,
             int symbolCapacity,
             boolean cache,
-            boolean indexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean dedupKey,
             boolean notNull
@@ -118,13 +118,22 @@ public class AlterOperationBuilder implements Mutable {
         extraInfo.add(columnNamePosition);
     }
 
-    public void ofAddIndex(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int indexValueBlockSize) {
+    public void ofAddIndex(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
         this.command = ADD_INDEX;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;
         this.extraStrInfo.add(columnName);
         this.extraInfo.add(indexValueBlockSize);
+        this.extraInfo.add(indexType);
+        // Covering column count followed by names (0 means no covering)
+        int coverCount = coveringColumnNames != null ? coveringColumnNames.size() : 0;
+        this.extraInfo.add(coverCount);
+        if (coverCount > 0) {
+            for (int i = 0; i < coverCount; i++) {
+                this.extraStrInfo.add(coveringColumnNames.get(i));
+            }
+        }
     }
 
     public AlterOperationBuilder ofAttachPartition(int tableNamePosition, TableToken tableToken, int tableId) {
@@ -326,6 +335,15 @@ public class AlterOperationBuilder implements Mutable {
         this.tableId = tableId;
         this.extraStrInfo.add(columnName);
         this.extraInfo.add(parquetEncodingConfig);
+        return this;
+    }
+
+    public AlterOperationBuilder ofSetTableFormat(int tableNamePosition, TableToken tableToken, int tableId, int tableFormat) {
+        this.command = SET_TABLE_FORMAT;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.extraInfo.add(tableFormat);
+        this.tableId = tableId;
         return this;
     }
 

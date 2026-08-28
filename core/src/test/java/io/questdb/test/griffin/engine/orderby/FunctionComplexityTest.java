@@ -65,8 +65,7 @@ public class FunctionComplexityTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
-                            """
-            );
+                            """);
         });
     }
 

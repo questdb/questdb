@@ -25,6 +25,8 @@ import java.math.RoundingMode;
  * </p>
  */
 public class Decimal128 implements Sinkable, Decimal {
+
+    public static final int BYTES = 16;
     /**
      * Maximum allowed precision (number of digits)
      */
@@ -206,6 +208,7 @@ public class Decimal128 implements Sinkable, Decimal {
     private final DecimalKnuthDivider divider = new DecimalKnuthDivider();
     private long high;  // High 64 bits
     private long low;   // Low 64 bits
+    private int[] ryuE10;
     private int scale;  // Number of decimal places
 
     /**
@@ -241,8 +244,6 @@ public class Decimal128 implements Sinkable, Decimal {
         }
     }
 
-    /* ---------- helpers (use built-in power-of-ten tables) ---------- */
-
     /**
      * Add two Decimal128 numbers and store the result in sink
      *
@@ -254,6 +255,8 @@ public class Decimal128 implements Sinkable, Decimal {
         sink.copyFrom(a);
         sink.add(b);
     }
+
+    /* ---------- helpers (use built-in power-of-ten tables) ---------- */
 
     /**
      * Compares 2 Decimal128, ignoring scaling.
@@ -314,22 +317,25 @@ public class Decimal128 implements Sinkable, Decimal {
             bHigh = ~bHigh + (bLow == 0 ? 1L : 0L);
         }
 
-        // Different scales - need to align for comparison
-        // We'll scale up the one with smaller scale
-        Decimal128 holder = Misc.getThreadLocalDecimal128();
+        // Different scales - we'll scale up the one with the smaller scale. When the aligned value no
+        // longer fits, its magnitude is past MAX_VALUE and therefore past the other operand, so the
+        // ordering is already known and there is no need to materialise it.
+        final int cmp;
         if (aScale < bScale) {
-            holder.of(aHigh, aLow, aScale);
-            holder.multiplyByPowerOf10InPlace(bScale - aScale);
-            aHigh = holder.high;
-            aLow = holder.low;
+            final int scaleDiff = bScale - aScale;
+            if (scaleUpOverflows(aHigh, aLow, scaleDiff)) {
+                return aNeg ? -1 : 1;
+            }
+            cmp = compareScaledUp(aHigh, aLow, scaleDiff, bHigh, bLow);
         } else {
-            holder.of(bHigh, bLow, bScale);
-            holder.multiplyByPowerOf10InPlace(aScale - bScale);
-            bHigh = holder.high;
-            bLow = holder.low;
+            final int scaleDiff = aScale - bScale;
+            if (scaleUpOverflows(bHigh, bLow, scaleDiff)) {
+                return aNeg ? 1 : -1;
+            }
+            cmp = -compareScaledUp(bHigh, bLow, scaleDiff, aHigh, aLow);
         }
 
-        return compare(aHigh, aLow, bHigh, bLow) * (aNeg ? -1 : 1);
+        return aNeg ? -cmp : cmp;
     }
 
     /**
@@ -679,6 +685,14 @@ public class Decimal128 implements Sinkable, Decimal {
      * Add another Decimal128 to this one (in-place)
      */
     public void add(long otherHigh, long otherLow, int otherScale) {
+        if ((otherHigh | otherLow) == 0) {
+            // Adding zero still widens the result to max(scale, otherScale).
+            if (otherScale > scale) {
+                rescale0(otherScale);
+            }
+            return;
+        }
+
         add(this, this.high, this.low, this.scale, otherHigh, otherLow, otherScale);
     }
 
@@ -1152,6 +1166,14 @@ public class Decimal128 implements Sinkable, Decimal {
         divide(0, 1, 0, targetScale, roundingMode);
     }
 
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
+    }
+
     /**
      * Set the scale forcefully without doing any rescaling operations
      */
@@ -1176,6 +1198,14 @@ public class Decimal128 implements Sinkable, Decimal {
      * @param bScale the number of decimal places of the other Decimal128
      */
     public void subtract(long bH, long bL, int bScale) {
+        if ((bH | bL) == 0) {
+            // Subtracting zero still widens the result to max(scale, bScale).
+            if (bScale > scale) {
+                rescale0(bScale);
+            }
+            return;
+        }
+
         // Two's complement: invert all bits and add 1
         bL = ~bL + 1;
         bH = ~bH + (bL == 0 ? 1 : 0);
@@ -1249,6 +1279,7 @@ public class Decimal128 implements Sinkable, Decimal {
      *
      * @return double representation
      */
+    @TestOnly
     public double toDouble() {
         return toBigDecimal().doubleValue();
     }
@@ -1332,6 +1363,21 @@ public class Decimal128 implements Sinkable, Decimal {
         }
     }
 
+    /**
+     * Compares the unsigned magnitude {@code a * 10^n} against the unsigned magnitude {@code b}.
+     * The caller must have ruled out an overflow of the scale-up with {@link #scaleUpOverflows}.
+     */
+    private static int compareScaledUp(long aHigh, long aLow, int n, long bHigh, long bLow) {
+        final long mLow = TEN_POWERS_TABLE_LOW[n];
+        final long low = aLow * mLow;
+        // 10^n fits one limb up to n=19, so the high partial product exists only past that
+        long high = Math.unsignedMultiplyHigh(aLow, mLow) + aHigh * mLow;
+        if (n >= 20) {
+            high += aLow * TEN_POWERS_TABLE_HIGH[n - 20];
+        }
+        return compare(high, low, bHigh, bLow);
+    }
+
     private static int compareToPowerOfTen(long aHi, long aLo, int pow, int multiplier) {
         final int offset = (multiplier - 1) * 2;
         long bHi = POWERS_TEN_TABLE[pow][offset];
@@ -1340,6 +1386,21 @@ public class Decimal128 implements Sinkable, Decimal {
         }
         long bLo = POWERS_TEN_TABLE[pow][offset + 1];
         return Long.compareUnsigned(aLo, bLo);
+    }
+
+    /**
+     * Returns true when the given magnitude multiplied by 10^n is out of the Decimal128 range.
+     * Mirrors the bounds enforced by {@link #multiplyByPowerOf10InPlace(int)}.
+     */
+    private static boolean scaleUpOverflows(long high, long low, int n) {
+        if (high == 0 && low == 0) {
+            return false;
+        }
+        if (n > POWERS_TEN_TABLE_THRESHOLDS.length) {
+            return true;
+        }
+        final long[] thresholds = POWERS_TEN_TABLE_THRESHOLDS[n - 1];
+        return high > thresholds[0] || (high == thresholds[0] && unsignedLongCompare(low, thresholds[1]));
     }
 
     /**

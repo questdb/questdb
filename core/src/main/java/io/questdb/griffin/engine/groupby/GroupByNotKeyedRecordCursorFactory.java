@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -49,11 +50,11 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
-    private final GroupByNotKeyedRecordCursor cursor;
-    private final ObjList<GroupByFunction> groupByFunctions;
-    private final @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
-    private final SimpleMapValue value;
+    private RecordCursorFactory base;
+    private GroupByNotKeyedRecordCursor cursor;
+    private ObjList<GroupByFunction> groupByFunctions;
+    private @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
+    private SimpleMapValue value;
     private final VirtualRecord virtualRecordA;
     private ObjList<GroupByNotKeyedSharedCursor> sharedCursors;
 
@@ -84,7 +85,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 this.cursor = new GroupByNotKeyedRecordCursor(configuration, groupByFunctions, updater);
             }
         } catch (Throwable e) {
-            close();
+            Misc.free(this, e);
             throw e;
         }
     }
@@ -94,29 +95,66 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         return base;
     }
 
+    // Stable iff every aggregate (which may evaluate arbitrary argument expressions, for example
+    // max(rnd_timestamp(...))) and the base are stable.
+    @Override
+    public boolean isNonDeterministic() {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (groupByFunctions.getQuick(i).isNonDeterministic()) {
+                return true;
+            }
+        }
+        return base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (!groupByFunctions.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        return base.isStableWithinExecution();
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        RecordCursor baseCursor = cursor.baseCursor;
-        if (baseCursor == null) {
-            baseCursor = base.getCursor(executionContext);
+        // The base cursor is shared with getSharedCursor and opened by whichever runs first, so
+        // close the cursor on a breach only when this call opened it.
+        if (cursor.baseCursor == null) {
+            cursor.baseCursor = base.getCursor(executionContext);
+            try {
+                return cursor.of(cursor.baseCursor, executionContext);
+            } catch (Throwable th) {
+                cursor.close();
+                throw th;
+            }
         }
+        // getSharedCursor opened cursor.baseCursor first (e.g. it sits on the build side of a
+        // hash join, which opens before the probe side that holds this primary getCursor). cursor.of()
+        // reopens the allocator and then runs Function.init, which can throw; guard it so the reopened
+        // allocator is freed under the current per-query tracker instead of being deferred to factory
+        // close, by which point the tracker may have been recycled to another query.
         try {
-            return cursor.of(baseCursor, executionContext);
-        } catch (Throwable e) {
-            Misc.free(baseCursor);
-            throw e;
+            return cursor.of(cursor.baseCursor, executionContext);
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
         }
     }
 
     @Override
     public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+        final ObjList<ObjList<Function>> sharedRecordFunctions = this.sharedRecordFunctions;
+        if (sharedRecordFunctions == null) {
+            throw new UnsupportedOperationException();
+        }
         if (sharedCursors == null) {
             sharedCursors = new ObjList<>();
         }
         int idx = sharedId - 1;
         GroupByNotKeyedSharedCursor shared = sharedCursors.getQuiet(idx);
         if (shared == null) {
-            assert sharedRecordFunctions != null;
             assert idx < sharedRecordFunctions.size();
             shared = new GroupByNotKeyedSharedCursor(cursor, sharedRecordFunctions.getQuick(idx), value);
             sharedCursors.extendAndSet(idx, shared);
@@ -126,14 +164,48 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             cursor.baseCursor = base.getCursor(executionContext);
         }
         try {
+            // The owner group-by functions must initialize before any shared consumer's clones,
+            // regardless of open order: stateful functions inside aggregate arguments - such as
+            // cursor comparisons caching a scalar sub-query result - run their expensive and
+            // potentially nondeterministic initialization exactly once per query, in the owner,
+            // and every consumer inherits that state. Shared consumers can open first (they sit
+            // on the build side of the enclosing join), so trigger the owner setup here; the
+            // primary getCursor skips the second initialization via areFunctionsInitialized.
+            if (!cursor.areFunctionsInitialized) {
+                cursor.of(cursor.baseCursor, executionContext);
+            }
+            // donate the owner state to the consumer's aligned clones before they initialize
+            final ObjList<Function> sharedFunctions = sharedRecordFunctions.getQuick(idx);
+            assert groupByFunctions.size() == sharedFunctions.size();
+            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                groupByFunctions.getQuick(i).offerStateTo(sharedFunctions.getQuick(i));
+            }
             shared.of(cursor.baseCursor, executionContext);
             return shared;
         } catch (Throwable e) {
             if (isNewCursor) {
-                cursor.baseCursor = Misc.free(cursor.baseCursor);
+                // This call opened the base cursor and may have run the owner setup above. Close
+                // the primary cursor outright - freeing the base cursor and the allocator under
+                // the current per-query tracker, clearing the functions, and resetting
+                // areFunctionsInitialized - so the next execution of this cached factory
+                // re-initializes the functions instead of serving stale state. When the primary
+                // opened the base cursor, its owner closes it.
+                cursor.close();
             }
             throw e;
         }
+    }
+
+    /**
+     * Returns true when this factory builds an early-exit non-keyed group-by
+     * cursor, i.e. one that stops scanning the base cursor as soon as the
+     * aggregate value is final (see {@link EarlyExitGroupByNotKeyedRecordCursor}).
+     * That happens for aggregates such as {@code count_distinct} over a constant
+     * or over a fully-enumerated symbol column, where reading further rows cannot
+     * change the result.
+     */
+    public boolean isEarlyExitSupported() {
+        return cursor instanceof EarlyExitGroupByNotKeyedRecordCursor;
     }
 
     @Override
@@ -166,13 +238,30 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     protected void _close() {
-        Misc.free(value);
-        Misc.freeObjList(groupByFunctions);
-        Misc.free(base);
-        Misc.free(cursor);
-        GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final GroupByNotKeyedRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final ObjList<GroupByFunction> groupByFunctions = this.groupByFunctions;
+        this.groupByFunctions = null;
+        final ObjList<GroupByNotKeyedSharedCursor> sharedCursors = this.sharedCursors;
+        this.sharedCursors = null;
+        final ObjList<ObjList<Function>> sharedRecordFunctions = this.sharedRecordFunctions;
+        this.sharedRecordFunctions = null;
+        final SimpleMapValue value = this.value;
+        this.value = null;
+
+        Throwable cleanupFailure = Misc.freeBestEffort(null, value);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, groupByFunctions);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, base);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        cleanupFailure = GroupByRecordCursorFactory.freeSharedRecordFunctionsBestEffort(
+                cleanupFailure,
+                sharedRecordFunctions
+        );
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     private static class GroupByNotKeyedSharedCursor implements NoRandomAccessRecordCursor {
@@ -272,6 +361,9 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     private class GroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         private final GroupByAllocator allocator;
         private final GroupByFunctionsUpdater groupByFunctionsUpdater;
+        // True once of() has initialized the group-by functions for the current execution;
+        // getSharedCursor donates owner state to shared consumers only when this is set.
+        private boolean areFunctionsInitialized;
         // hold on to reference of base cursor here
         // because we use it as symbol table source for the functions
         private RecordCursor baseCursor;
@@ -285,7 +377,10 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 GroupByFunctionsUpdater groupByFunctionsUpdater
         ) {
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-            this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+            // Lazy variant: the allocator's chunk index is not allocated until the
+            // first cursor's of() binds a MemoryTracker and calls reopen(), keeping
+            // per-query alloc/free accounting symmetric from the very first cursor.
+            this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
         }
 
@@ -299,6 +394,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public void close() {
+            areFunctionsInitialized = false;
             baseCursor = Misc.free(baseCursor);
             Misc.free(allocator);
             Misc.clearObjList(groupByFunctions);
@@ -338,8 +434,15 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             this.isExhausted = false;
             this.isValueBuilt = false;
             this.circuitBreaker = executionContext.getCircuitBreaker();
+            allocator.setMemoryTracker(executionContext.getMemoryTracker());
             allocator.reopen();
-            Function.init(groupByFunctions, baseCursor, executionContext, null);
+            // getSharedCursor may have run this setup already (a shared consumer can open before
+            // the primary cursor); the functions must not re-run their once-per-query
+            // initialization, or stateful functions such as scalar sub-query caches execute again.
+            if (!areFunctionsInitialized) {
+                Function.init(groupByFunctions, baseCursor, executionContext, null);
+                areFunctionsInitialized = true;
+            }
             return this;
         }
 
@@ -360,6 +463,9 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
         void buildValueConditionally() {
             if (!isValueBuilt) {
+                // Consult the breaker before aggregating, so an empty base scan (which only calls
+                // updateEmpty below, never the row loop) still observes cancellation.
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 final Record baseRecord = baseCursor.getRecord();
                 if (baseCursor.hasNext()) {
                     long rowId = 0;

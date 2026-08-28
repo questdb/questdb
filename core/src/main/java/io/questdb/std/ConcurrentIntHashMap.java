@@ -63,7 +63,6 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.ObjectStreamField;
 import java.io.Serializable;
-import java.lang.ThreadLocal;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Arrays;
@@ -454,7 +453,7 @@ public class ConcurrentIntHashMap<V> implements Serializable {
             new ObjectStreamField("segmentShift", Integer.TYPE)
     };
     private static final long serialVersionUID = 7249069246763182397L;
-    private final ThreadLocal<Traverser<V>> tlTraverser = ThreadLocal.withInitial(Traverser::new);
+    private final CarrierLocal<Traverser<V>> tlTraverser = CarrierLocal.withInitial(Traverser::new);
     /**
      * The array of bins. Lazily initialized upon first insertion.
      * Size is always a power of two. Accessed directly by iterators.
@@ -603,7 +602,7 @@ public class ConcurrentIntHashMap<V> implements Serializable {
                     if (tabAt(tab, i) == f) {
                         Node<V> p = (fh >= 0 ? f :
                                 (f instanceof TreeBin) ?
-                                        ((TreeBin<V>) f).first : null);
+                                ((TreeBin<V>) f).first : null);
                         while (p != null) {
                             --delta;
                             p = p.next;
@@ -772,6 +771,7 @@ public class ConcurrentIntHashMap<V> implements Serializable {
         for (Node<V>[] tab = table; ; ) {
             Node<V> f;
             int n, i, fh;
+            V fv;
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
@@ -792,6 +792,9 @@ public class ConcurrentIntHashMap<V> implements Serializable {
                     break;
             } else if ((fh = f.hash) == MOVED)
                 tab = helpTransfer(tab, f);
+            else if (fh == h && f.key == key    // check first node without acquiring lock
+                    && (fv = f.val) != null)
+                return fv;
             else {
                 boolean added = false;
                 synchronized (f) {
@@ -874,6 +877,7 @@ public class ConcurrentIntHashMap<V> implements Serializable {
         for (Node<V>[] tab = table; ; ) {
             Node<V> f;
             int n, i, fh;
+            V fv;
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
@@ -894,6 +898,9 @@ public class ConcurrentIntHashMap<V> implements Serializable {
                     break;
             } else if ((fh = f.hash) == MOVED)
                 tab = helpTransfer(tab, f);
+            else if (fh == h && f.key == key    // check first node without acquiring lock
+                    && (fv = f.val) != null)
+                return fv;
             else {
                 boolean added = false;
                 synchronized (f) {
@@ -1335,7 +1342,7 @@ public class ConcurrentIntHashMap<V> implements Serializable {
         long n = sumCount();
         return ((n < 0L) ? 0 :
                 (n > (long) Integer.MAX_VALUE) ? Integer.MAX_VALUE :
-                        (int) n);
+                (int) n);
     }
 
     /**
@@ -2364,7 +2371,7 @@ public class ConcurrentIntHashMap<V> implements Serializable {
             implements Set<IntEntry<V>>, Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
 
-        private final ThreadLocal<EntryIterator<V>> tlEntryIterator = ThreadLocal.withInitial(EntryIterator::new);
+        private final CarrierLocal<EntryIterator<V>> tlEntryIterator = CarrierLocal.withInitial(EntryIterator::new);
 
         EntrySetView(ConcurrentIntHashMap<V> map) {
             super(map);
@@ -2506,7 +2513,7 @@ public class ConcurrentIntHashMap<V> implements Serializable {
     public static class KeySetView<V> implements Serializable {
         private static final long serialVersionUID = 7249069246763182397L;
         private final ConcurrentIntHashMap<V> map;
-        private final ThreadLocal<KeyIterator<V>> tlKeyIterator = ThreadLocal.withInitial(KeyIterator::new);
+        private final CarrierLocal<KeyIterator<V>> tlKeyIterator = CarrierLocal.withInitial(KeyIterator::new);
         private final V value;
 
         KeySetView(ConcurrentIntHashMap<V> map, V value) {  // non-public
@@ -2983,21 +2990,32 @@ public class ConcurrentIntHashMap<V> implements Serializable {
          * Possibly blocks awaiting root lock.
          */
         private void contendedLock() {
-            boolean waiting = false;
-            for (int s; ; ) {
-                if (((s = lockState) & ~WAITER) == 0) {
-                    if (Unsafe.cas(this, LOCKSTATE, s, WRITER)) {
-                        if (waiting)
-                            waiter = null;
-                        return;
+            boolean isInterrupted = false;
+            boolean isWaiting = false;
+            try {
+                for (int s; ; ) {
+                    if (((s = lockState) & ~WAITER) == 0) {
+                        if (Unsafe.cas(this, LOCKSTATE, s, WRITER)) {
+                            if (isWaiting)
+                                waiter = null;
+                            return;
+                        }
+                    } else if ((s & WAITER) == 0) {
+                        if (Unsafe.cas(this, LOCKSTATE, s, s | WAITER)) {
+                            isWaiting = true;
+                            waiter = Thread.currentThread();
+                        }
+                    } else if (isWaiting) {
+                        // The bin monitor admits one writer, so only this thread can own WAITER.
+                        LockSupport.park(this);
+                        // Consume interrupts so the next park can block; restore the flag on exit.
+                        isInterrupted |= Thread.interrupted();
                     }
-                } else if ((s & WAITER) == 0) {
-                    if (Unsafe.cas(this, LOCKSTATE, s, s | WAITER)) {
-                        waiting = true;
-                        waiter = Thread.currentThread();
-                    }
-                } else if (waiting)
-                    LockSupport.park(this);
+                }
+            } finally {
+                if (isInterrupted) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
 
@@ -3005,6 +3023,7 @@ public class ConcurrentIntHashMap<V> implements Serializable {
          * Acquires write lock for tree restructuring.
          */
         private void lockRoot() {
+            assert Thread.holdsLock(this) : "TreeBin writer must hold the bin monitor";
             if (!Unsafe.cas(this, LOCKSTATE, 0, WRITER))
                 contendedLock(); // offload to separate method
         }
@@ -3530,7 +3549,7 @@ public class ConcurrentIntHashMap<V> implements Serializable {
     static final class ValuesView<V> extends CollectionView<V, V>
             implements Collection<V>, Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
-        private final ThreadLocal<ValueIterator<V>> tlValueIterator = ThreadLocal.withInitial(ValueIterator::new);
+        private final CarrierLocal<ValueIterator<V>> tlValueIterator = CarrierLocal.withInitial(ValueIterator::new);
 
         ValuesView(ConcurrentIntHashMap<V> map) {
             super(map);

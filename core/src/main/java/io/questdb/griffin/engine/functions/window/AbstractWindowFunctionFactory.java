@@ -24,6 +24,11 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -31,6 +36,9 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
@@ -41,6 +49,69 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
     @Override
     public boolean isWindow() {
         return true;
+    }
+
+    // Snapshots the partition key types. The code generator hands out a reusable buffer it clears and
+    // rebuilds for each window column's PARTITION BY, so a partitioned function that reads the types
+    // back later (e.g. when it builds its map lazily in initRecordComparator) must copy them up front.
+    static ArrayColumnTypes copyKeyTypes(ColumnTypes keyTypes) {
+        final ArrayColumnTypes copy = new ArrayColumnTypes();
+        for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+            copy.add(keyTypes.getColumnType(i));
+        }
+        return copy;
+    }
+
+    /**
+     * Copies one partition's whole ring slab from {@code srcArena} into {@code dstArena} and
+     * writes the slab's new start offset into {@code dstValue}. Used by the live-view frontier
+     * sweep to re-home the partitions that survive so the arena can be compacted down to them;
+     * see {@code BasePartitionedWindowFunction.copyRingSlab}.
+     * <p>
+     * The whole slab moves, not just the live records: {@code firstIdx} and {@code size} address
+     * positions WITHIN the capacity, so preserving the slab's internal geometry is what lets the
+     * caller leave every other slot of the copied value alone. Compacting the ring itself would
+     * mean rewriting those two as well, and the sweep has no reason to - the arena's waste is
+     * the dead partitions, not the slack inside a live one's ring.
+     * <p>
+     * {@code appendAddressFor} can reallocate {@code dstArena}, so the destination address is
+     * taken from its return value and the new offset derived from the page address only after
+     * that; reading either earlier can name a buffer that has already moved.
+     */
+    static void copyRingSlab(
+            MapValue srcValue,
+            MapValue dstValue,
+            MemoryARW srcArena,
+            MemoryARW dstArena,
+            int startOffsetValueIndex,
+            int capacityValueIndex,
+            int recordSize
+    ) {
+        final long capacity = srcValue.getLong(capacityValueIndex);
+        final long startOffset = srcValue.getLong(startOffsetValueIndex);
+        final long bytes = capacity * recordSize;
+        // Range-check the pair before trusting it, because the failure this guards against is
+        // otherwise SILENT. The two indices are declared per concrete class against a layout that
+        // differs between the RANGE and ROWS shapes of the same aggregate and shifts again in
+        // subclasses that add a leading slot; naming the wrong pair reads some neighbouring
+        // counter as a geometry, copies the wrong bytes (or, when the misread capacity is zero,
+        // copies none and leaves the entry naming the arena as it was before the truncate) and
+        // corrupts results only later and elsewhere. An existing entry always has a slab - the
+        // first row of a partition allocates one, and resetPartition zeroes the accumulator slots
+        // without touching the geometry - so a non-positive capacity or an out-of-range extent
+        // means the caller named the wrong slots, and that is worth failing the refresh over.
+        if (capacity <= 0 || startOffset < 0 || startOffset + bytes > srcArena.getAppendOffset()) {
+            throw CairoException.critical(0)
+                    .put("window ring slab out of range, check the (startOffset, capacity) value indices [startOffset=")
+                    .put(startOffset)
+                    .put(", capacity=").put(capacity)
+                    .put(", recordSize=").put(recordSize)
+                    .put(", arenaUsed=").put(srcArena.getAppendOffset())
+                    .put(']');
+        }
+        final long dstAddress = dstArena.appendAddressFor(bytes);
+        Vect.memcpy(dstAddress, srcArena.getPageAddress(0) + startOffset, bytes);
+        dstValue.putLong(startOffsetValueIndex, dstAddress - dstArena.getPageAddress(0));
     }
 
     static void expandRingBuffer(MemoryARW memory, RingBufferDesc desc, int recordSize) {
@@ -157,6 +228,156 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         }
     }
 
+    static class Decimal128NullFunction extends BaseNullFunction {
+        private final int type;
+
+        Decimal128NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+            this.type = type;
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            sink.ofRawNull();
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, Decimals.DECIMAL128_HI_NULL);
+            Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
+        }
+    }
+
+    static class Decimal16NullFunction extends BaseNullFunction {
+        private final int type;
+
+        Decimal16NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+            this.type = type;
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            return Decimals.DECIMAL16_NULL;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), Decimals.DECIMAL16_NULL);
+        }
+    }
+
+    static class Decimal256NullFunction extends BaseNullFunction {
+        private final int type;
+
+        Decimal256NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+            this.type = type;
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.ofRawNull();
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, Decimals.DECIMAL256_HH_NULL);
+            Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
+            Unsafe.putLong(addr + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
+            Unsafe.putLong(addr + 3 * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
+        }
+    }
+
+    static class Decimal32NullFunction extends BaseNullFunction {
+        private final int type;
+
+        Decimal32NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+            this.type = type;
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            return Decimals.DECIMAL32_NULL;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), Decimals.DECIMAL32_NULL);
+        }
+    }
+
+    static class Decimal64NullFunction extends BaseNullFunction {
+        private final int type;
+
+        Decimal64NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+            this.type = type;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return Decimals.DECIMAL64_NULL;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), Decimals.DECIMAL64_NULL);
+        }
+    }
+
+    static class Decimal8NullFunction extends BaseNullFunction {
+        private final int type;
+
+        Decimal8NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+            this.type = type;
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            return Decimals.DECIMAL8_NULL;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.putByte(spi.getAddress(recordOffset, columnIndex), Decimals.DECIMAL8_NULL);
+        }
+    }
+
     static class DoubleNullFunction extends BaseNullFunction implements WindowDoubleFunction {
 
         DoubleNullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord) {
@@ -177,14 +398,6 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
     static class LongNullFunction extends BaseNullFunction implements WindowLongFunction {
         private final long zeroValue;
 
-        /**
-         * Constructs a LongNullFunction that produces a constant long value for every row in the window.
-         * <p>
-         * The constructor initializes the null-function frame (name, bounds, range flag and partition spec)
-         * and sets the constant value written/read by this function.
-         *
-         * @param zeroValue the constant long value returned by getLong and written into window memory during pass1
-         */
         LongNullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, long zeroValue) {
             super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
             this.zeroValue = zeroValue;
@@ -195,12 +408,6 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
             return zeroValue;
         }
 
-        /**
-         * Writes the configured zero timestamp value into the window buffer for the given record offset.
-         *
-         * @param record       the source record (unused; kept for interface compatibility)
-         * @param recordOffset byte offset of the record within window memory
-         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), zeroValue);
@@ -226,30 +433,17 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
     static class TimestampNullFunction extends BaseNullFunction implements WindowTimestampFunction {
         private final long zeroValue;
 
-        /**
-         * Create a TimestampNullFunction that supplies a constant timestamp for null window entries.
-         *
-         * @param arg               the wrapped argument function
-         * @param name              function name used in plans and diagnostics
-         * @param rowLo             lower window bound (rows or range units)
-         * @param rowHi             upper window bound (rows or range units)
-         * @param isRange           true if the window frame is RANGE, false if ROWS
-         * @param partitionByRecord optional partitioning record (may be null)
-         * @param zeroValue         timestamp value returned/written for null results
-         */
         TimestampNullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, long zeroValue) {
             super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
             this.zeroValue = zeroValue;
         }
 
-        /**
-         * Returns the configured constant timestamp used to represent null/window-default values.
-         *
-         * <p>The provided record is ignored; the method always returns the stored `zeroValue`.</p>
-         *
-         * @param rec unused record parameter provided by the WindowTimestampFunction interface
-         * @return the constant timestamp value used for nulls
-         */
+        @Override
+        public long getDate(Record rec) {
+            // zeroValue is always LONG_NULL, which is the NULL sentinel for both DATE and TIMESTAMP results.
+            return zeroValue;
+        }
+
         @Override
         public long getTimestamp(Record rec) {
             return zeroValue;
@@ -260,12 +454,6 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
             return arg.getType();
         }
 
-        /**
-         * Writes the configured zero timestamp value into the window buffer for the given record offset.
-         *
-         * @param record       the source record (unused; kept for interface compatibility)
-         * @param recordOffset byte offset of the record within window memory
-         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), zeroValue);

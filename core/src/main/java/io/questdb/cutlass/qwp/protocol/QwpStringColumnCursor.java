@@ -29,10 +29,10 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8s;
 
-import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_STRING;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_VARCHAR;
 
 /**
- * Streaming cursor for STRING and VARCHAR columns.
+ * Streaming cursor for VARCHAR columns.
  * <p>
  * Wire format:
  * <pre>
@@ -99,7 +99,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
     @Override
     public void clear() {
         valueUtf8.clear();
-        typeCode = TYPE_STRING;
+        typeCode = TYPE_VARCHAR;
         nullBitmapAddress = 0;
         offsetArrayAddress = 0;
         stringDataAddress = 0;
@@ -135,7 +135,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
      * @param dataAddress address of column data
      * @param dataLength  available bytes from dataAddress
      * @param rowCount    number of rows
-     * @param typeCode    column type code (TYPE_STRING or TYPE_VARCHAR)
+     * @param typeCode    column type code (TYPE_VARCHAR)
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if data is truncated
      */

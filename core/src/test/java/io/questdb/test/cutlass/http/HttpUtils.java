@@ -27,7 +27,7 @@ package io.questdb.test.cutlass.http;
 import io.questdb.cutlass.http.HttpCookie;
 import io.questdb.cutlass.http.HttpSessionStore;
 import io.questdb.cutlass.http.client.HttpClient;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
@@ -39,7 +39,7 @@ import static org.junit.Assert.*;
 
 public final class HttpUtils {
 
-    private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
 
     private HttpUtils() {
     }

@@ -24,26 +24,32 @@
 
 package io.questdb.cairo.security;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.catalogue.Constants;
-import io.questdb.std.ObjList;
-import org.jetbrains.annotations.NotNull;
 
-public class AllowAllSecurityContext implements SecurityContext {
-    public static final AllowAllSecurityContext INSTANCE = new AllowAllSecurityContext(false);
-    public static final AllowAllSecurityContext SETTINGS_READ_ONLY = new AllowAllSecurityContext(true);
-
-    private final boolean settingsReadOnly;
+/**
+ * The concrete allow-all security context. The shared singletons ({@link #INSTANCE} /
+ * {@link #SETTINGS_READ_ONLY}) are instances of this class, and {@code forPrincipal} derives further
+ * instances of it, so a derived context reports the authenticated user while preserving the allow-all
+ * (and settings-read-only) behavior.
+ * <p>
+ * A subclass that overrides an {@code authorize*} or identity method MUST also override
+ * {@link #newPrincipalContext} to return its own type. This class's {@code newPrincipalContext} returns a
+ * plain {@code AllowAllSecurityContext}, so {@code forPrincipal} on a subclass that does not override it
+ * would drop the override and downgrade the context to plain allow-all -- silently turning a subclass that
+ * DENIES an operation into one that ALLOWS it. {@code forPrincipal} asserts against that (see
+ * {@code AbstractPrincipalAwareSecurityContext.newCheckedPrincipalContext}), so a subclass that forgets
+ * fails loudly under {@code -ea} instead of quietly losing its restrictions.
+ */
+public class AllowAllSecurityContext extends AbstractAllowAllSecurityContext {
+    public static final AllowAllSecurityContext INSTANCE = new AllowAllSecurityContext(false, Constants.USER_NAME);
+    public static final AllowAllSecurityContext SETTINGS_READ_ONLY = new AllowAllSecurityContext(true, Constants.USER_NAME);
 
     protected AllowAllSecurityContext() {
-        this(false);
     }
 
-    private AllowAllSecurityContext(boolean settingsReadOnly) {
-        this.settingsReadOnly = settingsReadOnly;
+    protected AllowAllSecurityContext(boolean settingsReadOnly, CharSequence principal) {
+        super(settingsReadOnly, principal);
     }
 
     @Override

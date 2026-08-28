@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -32,14 +31,13 @@ public class PowerBiSqlTest extends AbstractCairoTest {
 
     @Test
     public void testCharSet() throws Exception {
-        assertQuery(
-                "character_set_name\n" +
-                        "UTF8\n",
-                "select character_set_name from INFORMATION_SCHEMA.character_sets",
-                null,
-                false,
-                true
-        );
+        assertQuery("select character_set_name from INFORMATION_SCHEMA.character_sets")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        character_set_name
+                        UTF8
+                        """);
     }
 
     @Test
@@ -82,63 +80,71 @@ public class PowerBiSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEnum() throws SqlException {
-        assertSql(
-                "oid\tenumlabel\n",
-                "/*** Load enum fields ***/\n" +
-                        "SELECT pg_type.oid, enumlabel\n" +
-                        "FROM pg_enum\n" +
-                        "JOIN pg_type ON pg_type.oid=enumtypid\n" +
-                        "ORDER BY oid, enumsortorder"
-        );
+    public void testEnum() throws Exception {
+        assertQuery("""
+                /*** Load enum fields ***/
+                SELECT pg_type.oid, enumlabel
+                FROM pg_enum
+                JOIN pg_type ON pg_type.oid=enumtypid
+                ORDER BY oid, enumsortorder""")
+                .noLeakCheck()
+                .returns("oid\tenumlabel\n");
     }
 
     @Test
-    public void testParanoidTableSelect() throws SqlException {
+    public void testParanoidTableSelect() throws Exception {
         execute("create table trades as (select rnd_int() a, rnd_double() b, 0::timestamp t from long_sequence(10)) timestamp(t) partition by hour");
-        assertSql(
-                "a\tb\tt\n" +
-                        "-1148479920\t0.8043224099968393\t1970-01-01T00:00:00.000000Z\n" +
-                        "-727724771\t0.08486964232560668\t1970-01-01T00:00:00.000000Z\n" +
-                        "1326447242\t0.0843832076262595\t1970-01-01T00:00:00.000000Z\n" +
-                        "-847531048\t0.6508594025855301\t1970-01-01T00:00:00.000000Z\n" +
-                        "-1436881714\t0.7905675319675964\t1970-01-01T00:00:00.000000Z\n" +
-                        "1545253512\t0.22452340856088226\t1970-01-01T00:00:00.000000Z\n" +
-                        "-409854405\t0.3491070363730514\t1970-01-01T00:00:00.000000Z\n" +
-                        "1904508147\t0.7611029514995744\t1970-01-01T00:00:00.000000Z\n" +
-                        "1125579207\t0.4217768841969397\t1970-01-01T00:00:00.000000Z\n" +
-                        "426455968\t0.0367581207471136\t1970-01-01T00:00:00.000000Z\n",
-                "select \"$Table\".\"a\" as \"a\",\n" +
-                        "    \"$Table\".\"b\" as \"b\",\n" +
-                        "    \"$Table\".\"t\" as \"t\",\n" +
-                        "from \"public\".\"trades\" \"$Table\""
-        );
+        assertQuery("""
+                select "$Table"."a" as "a",
+                    "$Table"."b" as "b",
+                    "$Table"."t" as "t",
+                from "public"."trades" "$Table\"""")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("t")
+                .returns("""
+                        a\tb\tt
+                        -1148479920\t0.8043224099968393\t1970-01-01T00:00:00.000000Z
+                        -727724771\t0.08486964232560668\t1970-01-01T00:00:00.000000Z
+                        1326447242\t0.0843832076262595\t1970-01-01T00:00:00.000000Z
+                        -847531048\t0.6508594025855301\t1970-01-01T00:00:00.000000Z
+                        -1436881714\t0.7905675319675964\t1970-01-01T00:00:00.000000Z
+                        1545253512\t0.22452340856088226\t1970-01-01T00:00:00.000000Z
+                        -409854405\t0.3491070363730514\t1970-01-01T00:00:00.000000Z
+                        1904508147\t0.7611029514995744\t1970-01-01T00:00:00.000000Z
+                        1125579207\t0.4217768841969397\t1970-01-01T00:00:00.000000Z
+                        426455968\t0.0367581207471136\t1970-01-01T00:00:00.000000Z
+                        """);
     }
 
     @Test
-    public void testSelectParanoidEnvelope() throws SqlException {
+    public void testSelectParanoidEnvelope() throws Exception {
         execute("create table trades as (select rnd_int() a, rnd_double() b, 0::timestamp t from long_sequence(10)) timestamp(t) partition by hour");
-        assertSql(
-                "a\tb\tt\n" +
-                        "-1148479920\t0.8043224099968393\t1970-01-01T00:00:00.000000Z\n" +
-                        "-727724771\t0.08486964232560668\t1970-01-01T00:00:00.000000Z\n" +
-                        "1326447242\t0.0843832076262595\t1970-01-01T00:00:00.000000Z\n" +
-                        "-847531048\t0.6508594025855301\t1970-01-01T00:00:00.000000Z\n" +
-                        "-1436881714\t0.7905675319675964\t1970-01-01T00:00:00.000000Z\n" +
-                        "1545253512\t0.22452340856088226\t1970-01-01T00:00:00.000000Z\n" +
-                        "-409854405\t0.3491070363730514\t1970-01-01T00:00:00.000000Z\n" +
-                        "1904508147\t0.7611029514995744\t1970-01-01T00:00:00.000000Z\n" +
-                        "1125579207\t0.4217768841969397\t1970-01-01T00:00:00.000000Z\n" +
-                        "426455968\t0.0367581207471136\t1970-01-01T00:00:00.000000Z\n",
-                "select \"$Table\".\"a\" as \"a\",\n" +
-                        "    \"$Table\".\"b\" as \"b\",\n" +
-                        "    \"$Table\".\"t\" as \"t\",\n" +
-                        "from \n" +
-                        "(\n" +
-                        "    select * from trades\n" +
-                        ") \"$Table\"\n" +
-                        "limit 1000"
-        );
+        assertQuery("""
+                select "$Table"."a" as "a",
+                    "$Table"."b" as "b",
+                    "$Table"."t" as "t",
+                from\s
+                (
+                    select * from trades
+                ) "$Table"
+                limit 1000""")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("t")
+                .returns("""
+                        a\tb\tt
+                        -1148479920\t0.8043224099968393\t1970-01-01T00:00:00.000000Z
+                        -727724771\t0.08486964232560668\t1970-01-01T00:00:00.000000Z
+                        1326447242\t0.0843832076262595\t1970-01-01T00:00:00.000000Z
+                        -847531048\t0.6508594025855301\t1970-01-01T00:00:00.000000Z
+                        -1436881714\t0.7905675319675964\t1970-01-01T00:00:00.000000Z
+                        1545253512\t0.22452340856088226\t1970-01-01T00:00:00.000000Z
+                        -409854405\t0.3491070363730514\t1970-01-01T00:00:00.000000Z
+                        1904508147\t0.7611029514995744\t1970-01-01T00:00:00.000000Z
+                        1125579207\t0.4217768841969397\t1970-01-01T00:00:00.000000Z
+                        426455968\t0.0367581207471136\t1970-01-01T00:00:00.000000Z
+                        """);
     }
 
     @Test

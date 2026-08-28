@@ -31,14 +31,12 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.client.cutlass.line.AbstractLineTcpSender;
 import io.questdb.client.cutlass.line.LineTcpSenderV2;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
-import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
@@ -159,7 +157,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
 
                 // so that we know when the table writer is returned to the pool whence the ilpAgent is stopped
                 final SOCountDownLatch tableWriterReturnedToPool = new SOCountDownLatch(1);
-                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                engine.setPoolListener((factoryType, _, name, event, _, _) -> {
                     if (name != null && Chars.equalsNc(tableName, name.getTableName())) {
                         if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                             tableWriterReturnedToPool.countDown();
@@ -214,18 +212,15 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 }
 
                 // check size
-                try (
-                        SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine);
-                        SqlCompiler compiler = engine.getSqlCompiler()
-                ) {
-                    TestUtils.assertSql(
-                            compiler,
-                            context,
-                            "SELECT min(timestamp), max(timestamp), count() FROM " + tableName + " WHERE timestamp IN '" + activePartitionName + "'",
-                            Misc.getThreadLocalSink(),
-                            "min\tmax\tcount\n" +
-                                    "\t\t0\n"
-                    );
+                try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine)) {
+                    assertQuery("SELECT min(timestamp), max(timestamp), count() FROM " + tableName + " WHERE timestamp IN '" + activePartitionName + "'")
+                            .withEngine(engine)
+                            .withContext(context)
+                            .noLeakCheck()
+                            .returnsOnce("""
+                                    min\tmax\tcount
+                                    \t\t0
+                                    """);
                 }
             }
         });

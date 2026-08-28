@@ -42,6 +42,7 @@ public class Utf8StringSinkList implements Mutable, Utf8Sink {
     private byte[] buffer;
     private boolean currentElemAscii = true;
     private int pos;
+    private int[] ryuE10;
 
     public Utf8StringSinkList(int initialCapacity) {
         this.buffer = new byte[initialCapacity];
@@ -118,6 +119,14 @@ public class Utf8StringSinkList implements Mutable, Utf8Sink {
     public Utf8Sink putNonAscii(long lo, long hi) {
         currentElemAscii = false;
         return put(lo, hi);
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     /**

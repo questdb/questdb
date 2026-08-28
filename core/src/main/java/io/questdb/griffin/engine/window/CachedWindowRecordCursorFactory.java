@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.RecordArray;
@@ -42,10 +43,9 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
-import io.questdb.griffin.engine.orderby.LongTreeChain;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
-import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -53,11 +53,9 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final ObjList<WindowFunction> allFunctions;
-    private final RecordCursorFactory base;
+    private final ObjList<WindowFunction> backwardUnorderedFunctions;
     private final GenericRecordMetadata chainMetadata;
-    private final ObjList<RecordComparator> comparators;
-    private final CachedWindowRecordCursor cursor;
+    private final ObjList<WindowFunction> forwardUnorderedFunctions;
     private final ObjList<ObjList<WindowFunction>> ordered2PassFunctions;
     private final ObjList<ObjList<WindowFunction>> orderedFunctions;
     private final int orderedGroupCount;
@@ -65,7 +63,15 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     private final ObjList<WindowFunction> unordered2PassFunctions;
     @Nullable
     private final ObjList<WindowFunction> unorderedFunctions;
-    private boolean closed = false;
+    // The window Map groups this factory's functions form, arranged by the traversal that
+    // drives them, or null when they form none. Owned by this factory; the functions the
+    // groups bind are owned as they always were.
+    @Nullable
+    private final CachedWindowMapGroups windowMapGroups;
+    private ObjList<WindowFunction> allFunctions;
+    private RecordCursorFactory base;
+    private CachedWindowRecordCursor cursor;
+    private boolean isClosed;
 
     public CachedWindowRecordCursorFactory(
             CairoConfiguration configuration,
@@ -78,57 +84,47 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             @Nullable ObjList<WindowFunction> unorderedFunctions,
             @NotNull IntList columnIndexes,
             @NotNull final ObjList<IntList> sortKeys,
-            @NotNull GenericRecordMetadata chainMetadata
+            @NotNull GenericRecordMetadata chainMetadata,
+            @Nullable CachedWindowMapGroups windowMapGroups
     ) {
         super(metadata);
+        RecordArray recordChain = null;
+        ObjList<WindowSortBuffer> sortBuffers = null;
+        // Adopted before anything below can throw, so a failed construction frees the groups
+        // through this factory's own close() rather than leaving them to the compiler's catch.
+        this.windowMapGroups = windowMapGroups;
         try {
             this.base = base;
             this.orderedGroupCount = comparators.size();
             assert orderedGroupCount == orderedFunctions.size();
             this.orderedFunctions = orderedFunctions;
-            this.comparators = comparators;
-            RecordArray recordChain = new RecordArray(
+            recordChain = new RecordArray(
                     chainTypes,
                     recordSink,
                     configuration.getSqlWindowStorePageSize(),
-                    configuration.getSqlWindowStoreMaxPages()
+                    configuration.getSqlWindowCacheMaxPagesResolved(),
+                    configuration.getSqlWindowCacheMaxPagesConfigKey()
             );
             this.sortKeys = sortKeys;
             this.chainMetadata = chainMetadata;
-
-            ObjList<ObjList<DirectIntList>> perGroupRankMaps = new ObjList<>(orderedGroupCount);
-            try {
-                for (int i = 0; i < orderedGroupCount; i++) {
-                    perGroupRankMaps.add(SortKeyEncoder.createRankMaps(chainMetadata, sortKeys.getQuick(i)));
-                }
-            } catch (Throwable t) {
-                freePerGroupRankMaps(perGroupRankMaps);
-                Misc.free(recordChain);
-                throw t;
-            }
-
-            ObjList<LongTreeChain> orderedSources = new ObjList<>(orderedGroupCount);
-            // red&black trees, one for each comparator where comparator is not null
-            try {
-                for (int i = 0; i < orderedGroupCount; i++) {
-                    orderedSources.add(
-                            new LongTreeChain(
-                                    configuration.getSqlWindowTreeKeyPageSize(),
-                                    configuration.getSqlWindowTreeKeyMaxPages(),
-                                    configuration.getSqlWindowRowIdPageSize(),
-                                    configuration.getSqlWindowRowIdMaxPages()
-                            )
-                    );
-                }
-            } catch (Throwable t) {
-                Misc.freeObjList(orderedSources);
-                freePerGroupRankMaps(perGroupRankMaps);
-                recordChain.close();
-                throw t;
-            }
-
-            this.cursor = new CachedWindowRecordCursor(columnIndexes, recordChain, orderedSources, perGroupRankMaps);
             this.allFunctions = new ObjList<>();
+
+            sortBuffers = new ObjList<>(orderedGroupCount);
+            for (int i = 0; i < orderedGroupCount; i++) {
+                final IntList groupKeys = sortKeys.getQuick(i);
+                if (comparators.getQuiet(i) == null) {
+                    sortBuffers.add(new EncodedWindowSortBuffer(configuration, chainMetadata, groupKeys));
+                } else {
+                    sortBuffers.add(new TreeWindowSortBuffer(
+                            configuration,
+                            comparators.getQuick(i),
+                            SortKeyEncoder.createRankMaps(chainMetadata, groupKeys)
+                    ));
+                }
+            }
+            this.cursor = new CachedWindowRecordCursor(columnIndexes, recordChain, sortBuffers);
+            recordChain = null;
+            sortBuffers = null;
 
             ObjList<ObjList<WindowFunction>> orderedTmp = null;
             for (int i = 0, n = orderedFunctions.size(); i < n; i++) {
@@ -157,6 +153,8 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             ordered2PassFunctions = orderedTmp;
 
             ObjList<WindowFunction> unorderedTmp = null;
+            ObjList<WindowFunction> forwardTmp = null;
+            ObjList<WindowFunction> backwardTmp = null;
             if (unorderedFunctions != null) {
                 allFunctions.addAll(unorderedFunctions);
 
@@ -168,12 +166,27 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                         }
                         unorderedTmp.add(function);
                     }
+                    if (function.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.FORWARD) {
+                        if (forwardTmp == null) {
+                            forwardTmp = new ObjList<>();
+                        }
+                        forwardTmp.add(function);
+                    } else {
+                        if (backwardTmp == null) {
+                            backwardTmp = new ObjList<>();
+                        }
+                        backwardTmp.add(function);
+                    }
                 }
             }
             this.unordered2PassFunctions = unorderedTmp;
+            this.forwardUnorderedFunctions = forwardTmp;
+            this.backwardUnorderedFunctions = backwardTmp;
 
             this.unorderedFunctions = unorderedFunctions;
         } catch (Throwable th) {
+            Misc.free(recordChain);
+            Misc.freeObjList(sortBuffers);
             close();
             throw th;
         }
@@ -182,6 +195,10 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     @Override
     public boolean followedOrderByAdvice() {
         return base.followedOrderByAdvice();
+    }
+
+    public ObjList<WindowFunction> getAllWindowFunctions() {
+        return allFunctions;
     }
 
     @Override
@@ -197,13 +214,28 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        cursor.of(baseCursor, executionContext);
-        return cursor;
+        try {
+            cursor.of(baseCursor, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            // free partial allocations under the still-bound per-query tracker on a failed open
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
     public int getScanDirection() {
         return base.getScanDirection();
+    }
+
+    /**
+     * Returns the window Map groups this factory's functions form, or null when they form
+     * none. A group compiled but left unbound - which is what
+     * {@code cairo.sql.window.map.fusion.enabled} off produces - is still reported here.
+     */
+    public @Nullable CachedWindowMapGroups getWindowMapGroups() {
+        return windowMapGroups;
     }
 
     @Override
@@ -263,12 +295,6 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         return base.usesIndex();
     }
 
-    private static void freePerGroupRankMaps(ObjList<ObjList<DirectIntList>> perGroupRankMaps) {
-        for (int i = 0, n = perGroupRankMaps.size(); i < n; i++) {
-            Misc.freeObjList(perGroupRankMaps.getQuick(i));
-        }
-    }
-
     private void addSortKeys(PlanSink sink, IntList list) {
         for (int i = 0, n = list.size(); i < n; i++) {
             int colIdx = list.get(i);
@@ -291,33 +317,44 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     protected void _close() {
-        if (closed) {
+        if (isClosed) {
             return;
         }
-        closed = true;
-        Misc.free(base);
-        Misc.free(cursor);
-        Misc.freeObjList(allFunctions);
+        isClosed = true;
+        final ObjList<WindowFunction> allFunctions = this.allFunctions;
+        this.allFunctions = null;
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final CachedWindowRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        // Before the functions rather than after: a group owns only its own map and its key
+        // projection over chain columns, so freeing it touches nothing a function owns - but
+        // ordering it first keeps that independence obvious rather than incidental.
+        failure = Misc.freeBestEffort(failure, windowMapGroups);
+        failure = Misc.freeObjListBestEffort(failure, allFunctions);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     class CachedWindowRecordCursor implements RecordCursor {
-        private final IntList columnIndexes; // Used for symbol table lookups.
-        private final ObjList<LongTreeChain> orderedSources;
-        private final ObjList<ObjList<DirectIntList>> perGroupRankMaps;
+        private final IntList columnIndexes;
         private final RecordArray recordChain;
+        private final ObjList<WindowSortBuffer> sortBuffers;
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
         private boolean isRecordChainBuilt;
         private long recordChainOffset;
 
-        public CachedWindowRecordCursor(IntList columnIndexes, RecordArray recordChain, ObjList<LongTreeChain> orderedSources, ObjList<ObjList<DirectIntList>> perGroupRankMaps) {
+        public CachedWindowRecordCursor(IntList columnIndexes, RecordArray recordChain, ObjList<WindowSortBuffer> sortBuffers) {
             this.columnIndexes = columnIndexes;
             this.recordChain = recordChain;
             this.recordChain.setSymbolTableResolver(this);
-            this.isOpen = true;
-            this.orderedSources = orderedSources;
-            this.perGroupRankMaps = perGroupRankMaps;
+            // Lazy: the first of() binds the MemoryTracker on each sort buffer and
+            // reopens it, so the per-query counter charges every byte symmetrically.
+            this.isOpen = false;
+            this.sortBuffers = sortBuffers;
         }
 
         @Override
@@ -334,13 +371,16 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             if (isOpen) {
                 Misc.free(baseCursor);
                 Misc.free(recordChain);
-                for (int i = 0, n = orderedSources.size(); i < n; i++) {
-                    Misc.free(orderedSources.getQuick(i));
-                }
-                for (int i = 0, n = perGroupRankMaps.size(); i < n; i++) {
-                    Misc.freeObjListAndKeepObjects(perGroupRankMaps.getQuick(i));
+                for (int i = 0, n = sortBuffers.size(); i < n; i++) {
+                    Misc.free(sortBuffers.getQuick(i));
                 }
                 resetFunctions();
+                // Symmetric with the reopen in of(): each group hands its map backing back to
+                // the tracker that was bound when it was allocated. Reached on a failed open
+                // too, where a group that never got as far as reopen() frees a closed map.
+                if (windowMapGroups != null) {
+                    windowMapGroups.reset();
+                }
                 isOpen = false;
             }
         }
@@ -386,7 +426,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public long size() {
-            return isRecordChainBuilt ? recordChain.size() : -1;// in case recordChain starts returning actual size
+            return isRecordChainBuilt ? recordChain.size() : -1;
         }
 
         @Override
@@ -395,20 +435,40 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         private void buildRecordChain() {
-            // step #1: store source cursor in record list
-            // - add record list's row ids to all trees, which will put these row ids in necessary order
-            // for this we will be using out comparator, which helps tree compare long values
-            // based on record these values are addressing
+            // Consult the breaker before building, so even an empty base scan still observes cancellation.
+            // Runs once per cursor open, guarded by isRecordChainBuilt.
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             final Record record = baseCursor.getRecord();
             final Record chainRecord = recordChain.getRecord();
-            final Record chainRightRecord = recordChain.getRecordB();
-            if (orderedGroupCount > 0) {
+            final boolean hasOrdered = orderedGroupCount > 0;
+            final int forwardFnCount = forwardUnorderedFunctions != null ? forwardUnorderedFunctions.size() : 0;
+            final ObjList<WindowMapState> forwardStates =
+                    windowMapGroups != null ? windowMapGroups.getForwardUnorderedStates() : null;
+            final int forwardStateCount = forwardStates != null ? forwardStates.size() : 0;
+            if (hasOrdered || forwardFnCount > 0) {
                 while (baseCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     recordChainOffset = recordChain.put(record);
                     recordChain.recordAt(chainRecord, recordChainOffset);
+                    if (hasOrdered) {
+                        for (int i = 0; i < orderedGroupCount; i++) {
+                            sortBuffers.getQuick(i).put(chainRecord, recordChainOffset);
+                        }
+                    }
+                    // Groups first, and the whole of a group before any of it is read: a bound
+                    // function's pass1 is a no-op computeNext followed by the write of what the
+                    // group's projection loop has just materialized.
+                    for (int g = 0; g < forwardStateCount; g++) {
+                        forwardStates.getQuick(g).computeNext(chainRecord);
+                    }
+                    for (int j = 0; j < forwardFnCount; j++) {
+                        forwardUnorderedFunctions.getQuick(j).pass1(chainRecord, recordChainOffset, recordChain);
+                    }
+                }
+                if (hasOrdered) {
                     for (int i = 0; i < orderedGroupCount; i++) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
-                        orderedSources.getQuick(i).put(chainRecord, recordChain, chainRightRecord, comparators.getQuick(i));
+                        sortBuffers.getQuick(i).finishPut(circuitBreaker);
                     }
                 }
             } else {
@@ -418,19 +478,25 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 }
             }
 
-            // step #2: populate all window functions with records in order of respective tree
-            // run pass1 for all ordered functions
             long offset;
-            if (orderedGroupCount > 0) {
+            if (hasOrdered) {
                 for (int i = 0; i < orderedGroupCount; i++) {
-                    final LongTreeChain tree = orderedSources.getQuick(i);
+                    final WindowSortBuffer group = sortBuffers.getQuick(i);
                     final ObjList<WindowFunction> functions = orderedFunctions.getQuick(i);
-                    final LongTreeChain.TreeCursor cursor = tree.getCursor();
                     final int functionCount = functions.size();
-                    while (cursor.hasNext()) {
+                    // This sort group's own Map subgroups: sharing a sort is not sharing a
+                    // map, so a bucket holding several window specs drives one group each.
+                    final ObjList<WindowMapState> states =
+                            windowMapGroups != null ? windowMapGroups.getOrderedStates(i) : null;
+                    final int stateCount = states != null ? states.size() : 0;
+                    group.toTop();
+                    while (group.hasNext()) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
-                        offset = cursor.next();
+                        offset = group.next();
                         recordChain.recordAt(chainRecord, offset);
+                        for (int g = 0; g < stateCount; g++) {
+                            states.getQuick(g).computeNext(chainRecord);
+                        }
                         for (int j = 0; j < functionCount; j++) {
                             functions.getQuick(j).pass1(chainRecord, offset, recordChain);
                         }
@@ -438,27 +504,24 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 }
             }
 
-            // run pass1 for all unordered functions
-            if (unorderedFunctions != null) {
-                for (int j = 0, n = unorderedFunctions.size(); j < n; j++) {
-                    final WindowFunction f = unorderedFunctions.getQuick(j);
-                    if (f.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.FORWARD) {
-                        recordChain.toTop();
-                        while (recordChain.hasNext()) {
-                            circuitBreaker.statefulThrowExceptionIfTripped();
-                            f.pass1(chainRecord, chainRecord.getRowId(), recordChain);
-                        }
-                    } else {
-                        recordChain.toBottom();
-                        while (recordChain.hasPrev()) {
-                            circuitBreaker.statefulThrowExceptionIfTripped();
-                            f.pass1(chainRecord, chainRecord.getRowId(), recordChain);
-                        }
+            if (backwardUnorderedFunctions != null) {
+                final int fnCount = backwardUnorderedFunctions.size();
+                final ObjList<WindowMapState> backwardStates =
+                        windowMapGroups != null ? windowMapGroups.getBackwardUnorderedStates() : null;
+                final int backwardStateCount = backwardStates != null ? backwardStates.size() : 0;
+                recordChain.toBottom();
+                while (recordChain.hasPrev()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    final long rowId = chainRecord.getRowId();
+                    for (int g = 0; g < backwardStateCount; g++) {
+                        backwardStates.getQuick(g).computeNext(chainRecord);
+                    }
+                    for (int j = 0; j < fnCount; j++) {
+                        backwardUnorderedFunctions.getQuick(j).pass1(chainRecord, rowId, recordChain);
                     }
                 }
             }
 
-            // prepare pass 2 for ordered functions
             if (ordered2PassFunctions != null) {
                 for (int i = 0, n = ordered2PassFunctions.size(); i < n; i++) {
                     final ObjList<WindowFunction> functions = ordered2PassFunctions.getQuick(i);
@@ -470,27 +533,35 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                     }
                 }
             }
-            // prepare pass 2 for unordered functions
             if (unordered2PassFunctions != null) {
                 for (int j = 0, n = unordered2PassFunctions.size(); j < n; j++) {
                     unordered2PassFunctions.getQuick(j).preparePass2();
                 }
             }
 
-            // run pass2 for all ordered functions
             if (ordered2PassFunctions != null) {
                 for (int i = 0, n = ordered2PassFunctions.size(); i < n; i++) {
-                    final LongTreeChain tree = orderedSources.getQuick(i);
                     final ObjList<WindowFunction> functions = ordered2PassFunctions.getQuick(i);
                     if (functions == null) {
                         continue;
                     }
-                    final LongTreeChain.TreeCursor cursor = tree.getCursor();
+                    final WindowSortBuffer group = sortBuffers.getQuick(i);
                     final int functionCount = functions.size();
-                    while (cursor.hasNext()) {
+                    // This sort group's two-pass Map subgroups, whose accumulators pass 1 left
+                    // final. Driven per row before the pass2 loop, for the same reason the
+                    // pass-1 loops drive theirs first: a bound function's pass2 is the write of
+                    // what the group's projection loop has just materialized.
+                    final ObjList<WindowMapState> states =
+                            windowMapGroups != null ? windowMapGroups.getOrderedPass2States(i) : null;
+                    final int stateCount = states != null ? states.size() : 0;
+                    group.toTop();
+                    while (group.hasNext()) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
-                        offset = cursor.next();
+                        offset = group.next();
                         recordChain.recordAt(chainRecord, offset);
+                        for (int g = 0; g < stateCount; g++) {
+                            states.getQuick(g).projectPass2(chainRecord);
+                        }
                         for (int j = 0; j < functionCount; j++) {
                             functions.getQuick(j).pass2(chainRecord, offset, recordChain);
                         }
@@ -498,14 +569,20 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 }
             }
 
-            // run pass2 for all unordered functions
             if (unordered2PassFunctions != null) {
-                for (int j = 0, n = unordered2PassFunctions.size(); j < n; j++) {
-                    final WindowFunction f = unordered2PassFunctions.getQuick(j);
-                    recordChain.toTop();
-                    while (recordChain.hasNext()) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
-                        f.pass2(chainRecord, chainRecord.getRowId(), recordChain);
+                final int fnCount = unordered2PassFunctions.size();
+                final ObjList<WindowMapState> pass2States =
+                        windowMapGroups != null ? windowMapGroups.getUnorderedPass2States() : null;
+                final int pass2StateCount = pass2States != null ? pass2States.size() : 0;
+                recordChain.toTop();
+                while (recordChain.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    final long rowId = chainRecord.getRowId();
+                    for (int g = 0; g < pass2StateCount; g++) {
+                        pass2States.getQuick(g).projectPass2(chainRecord);
+                    }
+                    for (int j = 0; j < fnCount; j++) {
+                        unordered2PassFunctions.getQuick(j).pass2(chainRecord, rowId, recordChain);
                     }
                 }
             }
@@ -521,26 +598,46 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             if (!isOpen) {
                 isOpen = true;
                 recordChain.setSymbolTableResolver(this);
-                reopenTrees();
+                // Bind the per-query tracker on the record store, sort buffers and each
+                // window function's map before their backing is allocated under it.
+                final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+                recordChain.setMemoryTracker(memoryTracker);
+                reopenSortBuffers(memoryTracker);
+                for (int i = 0, n = allFunctions.size(); i < n; i++) {
+                    allFunctions.getQuick(i).setMemoryTracker(memoryTracker);
+                }
                 reopen(allFunctions);
+                if (windowMapGroups != null) {
+                    // After the functions and needing nothing from Function.init below: what
+                    // this allocates is map backing, and nothing here evaluates a key. An
+                    // expression-keyed group does read through compiled PARTITION BY terms,
+                    // and they are a member function's own, borrowed - so the Function.init
+                    // below binds them along with that function, well before the first
+                    // traversal reads a row.
+                    windowMapGroups.reopen(memoryTracker);
+                }
             }
             Function.init(allFunctions, this, executionContext, null);
+            final long expectedRows = baseCursor.size();
             for (int i = 0; i < orderedGroupCount; i++) {
-                SortKeyEncoder.buildRankMaps(this, perGroupRankMaps.getQuick(i), comparators.getQuick(i));
+                sortBuffers.getQuick(i).of(this, expectedRows);
             }
         }
 
         private void reopen(ObjList<?> list) {
             for (int i = 0, n = list.size(); i < n; i++) {
-                if (list.getQuick(i) instanceof Reopenable) {
-                    ((Reopenable) list.getQuick(i)).reopen();
+                if (list.getQuick(i) instanceof Reopenable r) {
+                    r.reopen();
                 }
             }
         }
 
-        private void reopenTrees() {
+        private void reopenSortBuffers(MemoryTracker memoryTracker) {
             for (int i = 0; i < orderedGroupCount; i++) {
-                orderedSources.getQuick(i).reopen();
+                final WindowSortBuffer buffer = sortBuffers.getQuick(i);
+                // Bind before reopen() so the first allocation is charged to the tracker.
+                buffer.setMemoryTracker(memoryTracker);
+                buffer.reopen();
             }
         }
     }

@@ -263,7 +263,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCalendarWithOffsetNegative() throws SqlException {
         assertQuery(
-                "select-choose b, sum, k1, k from (select-choose [b, sum, k1, k1 k, timestamp] b, sum, k1, k1 k, timestamp from (select-group-by [b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '-04:45', null) timestamp] b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '-04:45', null) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y) y order by timestamp)",
+                "select-choose b, sum, k1, k from (select-choose [b, sum, k1, k1 k, timestamp] b, sum, k1, k1 k, timestamp from (select-group-by [b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '-04:45', null) timestamp] b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '-04:45', null) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) offset '-04:45' stride 3h) y) y order by timestamp)",
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar with offset '-04:45'",
                 model()
         );
@@ -272,7 +272,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCalendarWithOffsetPositive() throws SqlException {
         assertQuery(
-                "select-choose b, sum, k1, k from (select-choose [b, sum, k1, k1 k, timestamp] b, sum, k1, k1 k, timestamp from (select-group-by [b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '01:45', null) timestamp] b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '01:45', null) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y) y order by timestamp)",
+                "select-choose b, sum, k1, k from (select-choose [b, sum, k1, k1 k, timestamp] b, sum, k1, k1 k, timestamp from (select-group-by [b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '01:45', null) timestamp] b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '01:45', null) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) offset '01:45' stride 3h) y) y order by timestamp)",
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar with offset '01:45'",
                 model()
         );

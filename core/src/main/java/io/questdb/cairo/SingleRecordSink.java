@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
@@ -33,23 +34,62 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenable {
+    // Name both knobs, not just *.max.pages. That one defaults to Integer.MAX_VALUE, so a user who
+    // reaches the budget on stock settings would be told to raise a property already pinned at its
+    // ceiling, and a user who lowered *.page.size instead would get no usable advice at all.
+    // Neither key dominates: the budget is the product, so a *.max.pages of 0 pins it at 0 whatever
+    // the page size, and the floor below then decides the printed limit.
+    public static final String CONFIG_KEYS_ASOF_JOIN =
+            PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE.getPropertyPath()
+                    + " or " + PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES.getPropertyPath();
+    public static final String CONFIG_KEYS_WINDOW_STORE =
+            PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE.getPropertyPath()
+                    + " or " + PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES.getPropertyPath();
+    public static final String OWNER_ASOF_JOIN = "ASOF join";
+    public static final String OWNER_DENSE_RANK_WINDOW_FUNCTION = "DENSE_RANK() window function";
+    public static final String OWNER_RANK_WINDOW_FUNCTION = "RANK() window function";
     private static final int INITIAL_CAPACITY_BYTES = 8;
+    // Property to raise when the budget is exceeded. Null when the owner has no single knob.
+    // The sink's budget rarely comes from a key the user would guess - the ASOF factories size
+    // these sinks from the hash-join value budget - so naming the feature alone leaves them stuck.
+    @Nullable
+    private final String configKey;
     private final long maxHeapSize;
     private final int memoryTag;
+    // Names the feature that owns this sink, so that an exceeded budget blames the query the
+    // user actually ran. The same sink backs ASOF joins and both the RANK() and DENSE_RANK()
+    // window functions, and those two share one implementation class, so the name has to come
+    // from the owner rather than from the class holding the sink.
+    @NotNull
+    private final String ownerName;
     private long appendAddress;
     private long heapLimit;
     private long heapStart;
+    // Per-query native memory tracker bound by the owning factory at cursor open time. Null when
+    // no per-query limit applies. The class is lazy by design (constructor does not allocate;
+    // reopen() does), so a factory that binds a tracker does so before calling reopen().
+    // RANK's sinks stay on the global counter because RankFunction.reset() does not free them, so
+    // they outlive the cursor a tracker is scoped to.
+    @Nullable
+    private MemoryTracker memoryTracker;
 
-    public SingleRecordSink(long maxHeapSizeBytes, int memoryTag) {
+    public SingleRecordSink(long maxHeapSizeBytes, int memoryTag, @NotNull String ownerName, @Nullable String configKey) {
         this.memoryTag = memoryTag;
-        this.maxHeapSize = maxHeapSizeBytes;
+        // reopen() allocates INITIAL_CAPACITY_BYTES regardless, so a smaller budget would report a
+        // limit the sink has already exceeded.
+        this.maxHeapSize = Math.max(maxHeapSizeBytes, INITIAL_CAPACITY_BYTES);
+        this.ownerName = ownerName;
+        this.configKey = configKey;
     }
 
     @Override
@@ -60,9 +100,12 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     @Override
     public void close() {
         if (appendAddress != 0) {
-            Unsafe.free(heapStart, heapLimit - heapStart, memoryTag);
+            Unsafe.free(heapStart, heapLimit - heapStart, memoryTag, memoryTracker);
             appendAddress = 0;
             heapStart = 0;
+            // Clear the limit too, otherwise a put() without reopen() compares against a stale
+            // one, finds room it does not have and writes through address 0.
+            heapLimit = 0;
         }
     }
 
@@ -273,10 +316,14 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     @Override
     public void reopen() {
         if (appendAddress == 0) {
-            heapStart = Unsafe.malloc(INITIAL_CAPACITY_BYTES, memoryTag);
+            heapStart = Unsafe.malloc(INITIAL_CAPACITY_BYTES, memoryTag, memoryTracker);
             heapLimit = heapStart + INITIAL_CAPACITY_BYTES;
         }
         appendAddress = heapStart;
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
     }
 
     @Override
@@ -299,16 +346,29 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
 
     private void resize(long entrySize, long appendAddress) {
         assert appendAddress >= heapStart;
+        final long target = appendAddress + entrySize - heapStart;
+        if (target > maxHeapSize) {
+            LimitOverflowException ex = LimitOverflowException.instance();
+            ex.put("limit of ").put(maxHeapSize).put(" memory exceeded in ").put(ownerName);
+            if (configKey != null) {
+                ex.put(" (raise ").put(configKey).put(')');
+            }
+            throw ex;
+        }
         long currentCapacity = heapLimit - heapStart;
         long newCapacity = currentCapacity << 1;
-        long target = appendAddress + entrySize - heapStart;
         if (newCapacity < target) {
             newCapacity = Numbers.ceilPow2(target);
         }
+        // Both the doubling and the ceilPow2 above yield a power of two, while the budget is
+        // derived from configuration and rarely is one. Clamp rather than reject: the data we
+        // have to fit still fits, and nothing downstream requires a power-of-two heap. Without
+        // the clamp the largest reachable heap is the largest power of two below the budget,
+        // stranding up to half of it.
         if (newCapacity > maxHeapSize) {
-            throw LimitOverflowException.instance().put("limit of ").put(maxHeapSize).put(" memory exceeded in ASOF join");
+            newCapacity = maxHeapSize;
         }
-        long newAddress = Unsafe.realloc(heapStart, currentCapacity, newCapacity, memoryTag);
+        long newAddress = Unsafe.realloc(heapStart, currentCapacity, newCapacity, memoryTag, memoryTracker);
 
         long delta = newAddress - heapStart;
         this.heapStart = newAddress;

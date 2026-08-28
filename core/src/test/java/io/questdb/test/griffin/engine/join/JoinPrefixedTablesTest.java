@@ -34,12 +34,15 @@ public class JoinPrefixedTablesTest extends AbstractCairoTest {
         execute("insert into 'a.b.c.d' select x, rnd_int(), timestamp_sequence(0, 1000)");
         execute("create table 'x.y.z' as (select x::int x, rnd_varchar() name from long_sequence(100))");
 
-        assertQuery(
-                "tableId\tb\tt\tx\tname\n" +
-                        "1\t-1148479920\t1970-01-01T00:00:00.000000Z\t1\t&BT+\n",
-                "SELECT * FROM a.b.c.d\n" +
-                        "LEFT OUTER JOIN (SELECT x, name from 'x.y.z') t ON t.x = tableId\n",
-                "t"
-        );
+        assertQuery("""
+                SELECT * FROM a.b.c.d
+                LEFT OUTER JOIN (SELECT x, name from 'x.y.z') t ON t.x = tableId
+                """)
+                .timestamp("t")
+                .noRandomAccess()
+                .returns("""
+                        tableId\tb\tt\tx\tname
+                        1\t-1148479920\t1970-01-01T00:00:00.000000Z\t1\t&BT+
+                        """);
     }
 }

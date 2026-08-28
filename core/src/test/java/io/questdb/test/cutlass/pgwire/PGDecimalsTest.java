@@ -37,6 +37,145 @@ import java.sql.Statement;
 
 public class PGDecimalsTest extends BasePGTest {
 
+    @Test
+    public void testBinaryResultSpansSendBuffer() throws Exception {
+        assertWithPgServerExtendedBinaryOnly(
+                (connection, _, _, _) -> {
+                    try (PreparedStatement statement = connection.prepareStatement(
+                            """
+                                    SELECT x,
+                                        lpad('', 600, 'x')::VARCHAR,
+                                        decimal_value::DECIMAL(18, 4),
+                                        decimal_value::DECIMAL(2, 1),
+                                        decimal_value::DECIMAL(4, 2),
+                                        decimal_value::DECIMAL(9, 4),
+                                        decimal_value::DECIMAL(38, 18),
+                                        decimal_value::DECIMAL(76, 38)
+                                    FROM (
+                                        SELECT x,
+                                            CASE
+                                                WHEN x % 10 = 0 THEN null
+                                                WHEN x % 2 = 0 THEN x % 9
+                                                ELSE -(x % 9)
+                                            END decimal_value
+                                        FROM long_sequence(100)
+                                    )
+                                    """
+                    )) {
+                        try (ResultSet resultSet = statement.executeQuery()) {
+                            final int[] scales = {4, 1, 2, 4, 18, 38};
+                            for (int i = 1; i <= 100; i++) {
+                                Assert.assertTrue(resultSet.next());
+                                Assert.assertEquals(i, resultSet.getLong(1));
+                                Assert.assertEquals(600, resultSet.getString(2).length());
+                                for (int column = 0; column < scales.length; column++) {
+                                    final BigDecimal actual = resultSet.getBigDecimal(column + 3);
+                                    if (i % 10 == 0) {
+                                        Assert.assertNull(actual);
+                                    } else {
+                                        final long value = i % 2 == 0 ? i % 9 : -(i % 9);
+                                        Assert.assertEquals(BigDecimal.valueOf(value).setScale(scales[column]), actual);
+                                    }
+                                }
+                            }
+                            Assert.assertFalse(resultSet.next());
+                        }
+                    }
+                },
+                () -> sendBufferSize = 512
+        );
+    }
+
+    @Test
+    public void testBinaryResultSpansSendBufferAtBase10000Boundaries() throws Exception {
+        assertWithPgServerExtendedBinaryOnly(
+                (connection, _, _, _) -> {
+                    try (PreparedStatement statement = connection.prepareStatement(
+                            """
+                                    SELECT
+                                        lpad('', 600, 'x')::VARCHAR,
+                                        '9999'::DECIMAL(18, 0),
+                                        '10000'::DECIMAL(18, 0),
+                                        '0.00010'::DECIMAL(18, 5),
+                                        '0.00001'::DECIMAL(18, 5),
+                                        '9999'::DECIMAL(38, 0),
+                                        '10000'::DECIMAL(38, 0),
+                                        '0.00010'::DECIMAL(38, 5),
+                                        '0.00001'::DECIMAL(38, 5),
+                                        '99999999999999999999999999999999999999'::DECIMAL(38, 0),
+                                        '0.0000000000000000000000000000000000001'::DECIMAL(38, 37),
+                                        '9999'::DECIMAL(76, 0),
+                                        '10000'::DECIMAL(76, 0),
+                                        '0.00010'::DECIMAL(76, 5),
+                                        '0.00001'::DECIMAL(76, 5),
+                                        '9999999999999999999999999999999999999999999999999999999999999999999999999999'::DECIMAL(76, 0),
+                                        '0.000000000000000000000000000000000000000000000000000000000000000000000000001'::DECIMAL(76, 75),
+                                        x + 1000
+                                    FROM long_sequence(1)
+                                    """
+                    )) {
+                        try (ResultSet resultSet = statement.executeQuery()) {
+                            final String[] expected = {
+                                    "9999",
+                                    "10000",
+                                    "0.00010",
+                                    "0.00001",
+                                    "9999",
+                                    "10000",
+                                    "0.00010",
+                                    "0.00001",
+                                    "99999999999999999999999999999999999999",
+                                    "0.0000000000000000000000000000000000001",
+                                    "9999",
+                                    "10000",
+                                    "0.00010",
+                                    "0.00001",
+                                    "9999999999999999999999999999999999999999999999999999999999999999999999999999",
+                                    "0.000000000000000000000000000000000000000000000000000000000000000000000000001"
+                            };
+                            Assert.assertTrue(resultSet.next());
+                            Assert.assertEquals(600, resultSet.getString(1).length());
+                            for (int i = 0; i < expected.length; i++) {
+                                Assert.assertEquals(new BigDecimal(expected[i]), resultSet.getBigDecimal(i + 2));
+                            }
+                            Assert.assertEquals(1001, resultSet.getLong(expected.length + 2));
+                            Assert.assertFalse(resultSet.next());
+                        }
+                    }
+                },
+                () -> sendBufferSize = 512
+        );
+    }
+
+    @Test
+    public void testBinaryResultWithRandomDecimalsSpansSendBuffer() throws Exception {
+        assertWithPgServerExtendedBinaryOnly(
+                (connection, _, _, _) -> {
+                    try (PreparedStatement statement = connection.prepareStatement(
+                            """
+                                    SELECT
+                                        lpad('', 600, 'x')::VARCHAR,
+                                        rnd_decimal(4, 1, 2),
+                                        x + 1000
+                                    FROM long_sequence(1)
+                                    """
+                    )) {
+                        try (ResultSet resultSet = statement.executeQuery()) {
+                            Assert.assertTrue(resultSet.next());
+                            Assert.assertEquals(600, resultSet.getString(1).length());
+                            Assert.assertEquals(new BigDecimal("667.2"), resultSet.getBigDecimal(2));
+                            Assert.assertEquals(1001, resultSet.getLong(3));
+                            Assert.assertFalse(resultSet.next());
+                        }
+                    }
+                },
+                () -> {
+                    allowFunctionMemoization();
+                    sendBufferSize = 512;
+                }
+        );
+    }
+
     // Test boundary values for each decimal type
     @Test
     public void testBoundaryValues() throws Exception {
@@ -430,6 +569,51 @@ public class PGDecimalsTest extends BasePGTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testTextResultReportsRequiredSizeWithDecimal() throws Exception {
+        // The reported size must be a send buffer size the row actually fits into, so the second half of this test
+        // runs the same query again at exactly that size and reads the row back.
+        // A negative value at the widest precision drives the tightest text: sign + '0' + '.' + scale fraction
+        // digits, one byte inside the precision + 3 estimateColumnTxtSize reserves (scale == precision, which would
+        // consume the bound exactly, is not a convertible decimal type). This exercises the sign and the fraction
+        // padding the original positive case did not.
+        final String query = "SELECT lpad('', 950, 'x')::VARCHAR, '-0.1'::DECIMAL(76, 75)";
+        final int requiredSize = 1044;
+        assertWithPgServer(
+                Mode.SIMPLE,
+                false,
+                -1,
+                (connection, _, _, _) -> {
+                    try (Statement statement = connection.createStatement()) {
+                        try (ResultSet ignore = statement.executeQuery(query)) {
+                            Assert.fail("exception expected");
+                        }
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(
+                                e.getMessage(),
+                                "not enough space in send buffer [sendBufferSize=512, requiredSize=" + requiredSize + ']'
+                        );
+                    }
+                },
+                () -> sendBufferSize = 512
+        );
+        assertWithPgServer(
+                Mode.SIMPLE,
+                false,
+                -1,
+                (connection, _, _, _) -> {
+                    try (Statement statement = connection.createStatement();
+                         ResultSet resultSet = statement.executeQuery(query)) {
+                        Assert.assertTrue(resultSet.next());
+                        Assert.assertEquals("x".repeat(950), resultSet.getString(1));
+                        Assert.assertEquals(new BigDecimal("-0.1").setScale(75), resultSet.getBigDecimal(2));
+                        Assert.assertFalse(resultSet.next());
+                    }
+                },
+                () -> sendBufferSize = requiredSize
+        );
     }
 
     // Test zero values with different scales

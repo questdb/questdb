@@ -31,6 +31,30 @@ public class SqlLoggingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateLiveView() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+
+                try (TestHttpClient httpClient = new TestHttpClient(HttpClientFactory.newPlainTextInstance())) {
+                    final int port = serverMain.getHttpServerPort();
+                    exec(httpClient, "{\"ddl\":\"OK\"}", "create table trades(symbol symbol, price double, ts timestamp) timestamp(ts) partition by hour wal", port);
+                    waitForRegex("fin.*?create table trades");
+                    exec(
+                            httpClient,
+                            "{\"ddl\":\"OK\"}",
+                            "create live view lv flush every 1s start from now as select symbol, price, ts, row_number() over w as rn"
+                                    + " from trades window w as (partition by symbol order by ts anchor daily '00:00')",
+                            port
+                    );
+                    waitForRegex("fin.*?create live view lv");
+                }
+            }
+            assertOnlyOnce("fin.*?create live view lv");
+        });
+    }
+
+    @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root)) {
@@ -58,6 +82,14 @@ public class SqlLoggingTest extends AbstractCairoTest {
                 }
             }
             assertOnlyOnce("fin.*?create table x");
+            // CREATE TABLE used to log "fin" twice: once from the keyword-executor's premature
+            // completion log at compile time (id=-1, before the table exists), and once from
+            // executeCreateTable() with the real query-registry id once the table is actually
+            // created. The assertion above is the double-log guard; this one only pins WHICH
+            // line survived. It cannot catch a double-log regression on its own -- \d+ never
+            // matches the id=-1 sentinel, so it stays green whenever both lines are present.
+            // It fails only if a fix dropped the real line and kept the sentinel.
+            assertOnlyOnce("fin \\[id=\\d+, sql=`create table x");
             assertOnlyOnce("fin.*?insert into x values");
             assertOnlyOnce("fin.*?select count\\(\\) from x");
             assertOnlyOnce("fin.*?alter table x add");

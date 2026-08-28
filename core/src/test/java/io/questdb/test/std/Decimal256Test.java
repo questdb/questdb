@@ -37,12 +37,17 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.math.RoundingMode;
+import java.util.Random;
 
 /**
  * Tests for the consolidated Decimal256 class
  */
 public class Decimal256Test {
+
+    private static final BigInteger U256_MOD = BigInteger.ONE.shiftLeft(256);
+    private static final BigInteger U64_MASK = BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
 
     @Test(expected = NumericException.class)
     public void testAddOverflow() {
@@ -103,6 +108,40 @@ public class Decimal256Test {
         Decimal256 m = new Decimal256();
         m.copyFrom(Decimal256.MAX_VALUE);
         m.add(new Decimal256(0, 0, 0, 1, 0));
+    }
+
+    @Test
+    public void testAdditionZeroOperandKeepsMaxScale() {
+        // Result scale must be max(leftScale, rightScale) even when an operand is zero.
+        Decimal256 a = Decimal256.fromBigDecimal(new BigDecimal("1.5"));
+        a.add(Decimal256.fromBigDecimal(new BigDecimal("0.000")));
+        Assert.assertEquals(3, a.getScale());
+        Assert.assertEquals("1.500", a.toString());
+
+        // Negative zero carries a scale too
+        a = Decimal256.fromBigDecimal(new BigDecimal("1.5"));
+        a.add(Decimal256.fromBigDecimal(new BigDecimal("-0.00000")));
+        Assert.assertEquals(5, a.getScale());
+        Assert.assertEquals("1.50000", a.toString());
+
+        // Zero operand with the lower scale leaves the accumulator's scale untouched
+        a = Decimal256.fromBigDecimal(new BigDecimal("1.500"));
+        a.add(Decimal256.fromBigDecimal(new BigDecimal("0.0")));
+        Assert.assertEquals(3, a.getScale());
+        Assert.assertEquals("1.500", a.toString());
+
+        // Zero accumulator
+        a = Decimal256.fromBigDecimal(new BigDecimal("0.0"));
+        a.add(Decimal256.fromBigDecimal(new BigDecimal("0.00000")));
+        Assert.assertEquals(5, a.getScale());
+        Assert.assertEquals("0.00000", a.toString());
+
+        // Widening past the range still raises
+        final Decimal256 max = new Decimal256(
+                Decimal256.MAX_VALUE.getHh(), Decimal256.MAX_VALUE.getHl(),
+                Decimal256.MAX_VALUE.getLh(), Decimal256.MAX_VALUE.getLl(), 0
+        );
+        Assert.assertThrows(NumericException.class, () -> max.add(new Decimal256(0, 0, 0, 0, 1)));
     }
 
     @Test(expected = NumericException.class)
@@ -227,12 +266,109 @@ public class Decimal256Test {
             BigDecimal bdA = a.toBigDecimal();
             BigDecimal bdB = b.toBigDecimal();
 
-            // The comparison may overflow during rescaling
-            try {
-                int actual = a.compareTo(b);
-                int expected = bdA.compareTo(bdB);
-                Assert.assertEquals("iteration: " + i + " expected:<" + expected + "> but was:<" + actual + ">", expected, actual);
-            } catch (NumericException ignore) {
+            // aligning the scales must never overflow, whatever the operands
+            int actual = a.compareTo(b);
+            int expected = bdA.compareTo(bdB);
+            Assert.assertEquals("iteration: " + i + " expected:<" + expected + "> but was:<" + actual + ">", expected, actual);
+        }
+    }
+
+    @Test
+    public void testCompareToScaleAlignmentAtRangeLimit() {
+        // 10^76-1 vs (10^76-1)/10: aligning the scales needs 77 digits and there is no wider decimal
+        final Decimal256 max = Decimal256.MAX_VALUE;
+        final Decimal256 a = new Decimal256(max.getHh(), max.getHl(), max.getLh(), max.getLl(), 0);
+        final Decimal256 b = new Decimal256(max.getHh(), max.getHl(), max.getLh(), max.getLl(), 1);
+        Assert.assertEquals(1, a.compareTo(b));
+        Assert.assertEquals(-1, b.compareTo(a));
+        Assert.assertEquals(a.toBigDecimal().compareTo(b.toBigDecimal()), a.compareTo(b));
+
+        final Decimal256 min = Decimal256.MIN_VALUE;
+        final Decimal256 negA = new Decimal256(min.getHh(), min.getHl(), min.getLh(), min.getLl(), 0);
+        final Decimal256 negB = new Decimal256(min.getHh(), min.getHl(), min.getLh(), min.getLl(), 1);
+        Assert.assertEquals(-1, negA.compareTo(negB));
+        Assert.assertEquals(1, negB.compareTo(negA));
+
+        // mixed signs
+        Assert.assertEquals(1, a.compareTo(negB));
+        Assert.assertEquals(-1, negA.compareTo(b));
+
+        // equal values expressed at different scales
+        Assert.assertEquals(0, new Decimal256(0, 0, 0, 1, 0).compareTo(new Decimal256(0, 0, 0, 10, 1)));
+
+        // zero always aligns
+        Assert.assertEquals(0, new Decimal256(0, 0, 0, 0, 0).compareTo(new Decimal256(0, 0, 0, 0, 76)));
+        Assert.assertEquals(-1, new Decimal256(0, 0, 0, 0, 0).compareTo(new Decimal256(0, 0, 0, 1, 76)));
+        Assert.assertEquals(1, new Decimal256(0, 0, 0, 1, 0).compareTo(new Decimal256(0, 0, 0, 1, 76)));
+
+        // null on either side
+        final Decimal256 nullValue = new Decimal256();
+        nullValue.ofNull();
+        Assert.assertEquals(-1, nullValue.compareTo(a));
+        Assert.assertEquals(1, a.compareTo(nullValue));
+    }
+
+    @Test
+    public void testCompareToScaleAlignmentExactTies() {
+        // Same shape as the near-ties walk, but over many random magnitudes per scale difference
+        // rather than one maximal value, so the carry chain of every scale-up width is exercised.
+        // compareTo dispatches on how many limbs 10^scaleDiff occupies: one up to 19, two up to 38,
+        // four beyond, and a carry dropped in any of the three flips one of these comparisons.
+        final BigInteger max = Decimal256.MAX_VALUE.toBigDecimal().toBigInteger();
+        final Random rnd = new Random(20260804L);
+        for (int scaleDiff = 1; scaleDiff <= Decimal256.MAX_SCALE; scaleDiff++) {
+            final BigInteger pow = BigInteger.TEN.pow(scaleDiff);
+            final BigInteger limit = max.divide(pow);
+            if (limit.signum() == 0) {
+                continue;
+            }
+            for (int i = 0; i < 60; i++) {
+                BigInteger unscaled = new BigInteger(limit.bitLength(), rnd);
+                if (unscaled.signum() == 0 || unscaled.compareTo(limit) > 0) {
+                    continue;
+                }
+                final BigInteger aligned = unscaled.multiply(pow);
+                for (int delta = -1; delta <= 1; delta++) {
+                    final BigInteger shifted = aligned.add(BigInteger.valueOf(delta));
+                    if (shifted.signum() < 0 || shifted.compareTo(max) > 0) {
+                        continue;
+                    }
+                    for (int sign = -1; sign <= 1; sign += 2) {
+                        final BigInteger s = BigInteger.valueOf(sign);
+                        final BigDecimal a = new BigDecimal(unscaled.multiply(s), 0);
+                        final BigDecimal b = new BigDecimal(shifted.multiply(s), scaleDiff);
+                        final Decimal256 da = Decimal256.fromBigDecimal(a);
+                        final Decimal256 db = Decimal256.fromBigDecimal(b);
+                        final String msg = "scaleDiff=" + scaleDiff + " delta=" + delta + " sign=" + sign
+                                + " unscaled=" + unscaled;
+                        Assert.assertEquals(msg, a.compareTo(b), da.compareTo(db));
+                        Assert.assertEquals(msg, b.compareTo(a), db.compareTo(da));
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testCompareToScaleAlignmentNearTies() {
+        // Operands that land one unit apart once aligned: a lost carry in the scale-up
+        // multiply flips the comparison.
+        final BigInteger max = Decimal256.MAX_VALUE.toBigDecimal().toBigInteger();
+        for (int scaleDiff = 1; scaleDiff <= Decimal256.MAX_SCALE; scaleDiff++) {
+            final BigInteger pow = BigInteger.TEN.pow(scaleDiff);
+            final BigInteger unscaled = max.divide(pow);
+            final BigInteger aligned = unscaled.multiply(pow);
+            for (int delta = -1; delta <= 1; delta++) {
+                for (int sign = -1; sign <= 1; sign += 2) {
+                    final BigInteger s = BigInteger.valueOf(sign);
+                    final BigDecimal a = new BigDecimal(unscaled.multiply(s), 0);
+                    final BigDecimal b = new BigDecimal(aligned.add(BigInteger.valueOf(delta)).multiply(s), scaleDiff);
+                    final Decimal256 da = Decimal256.fromBigDecimal(a);
+                    final Decimal256 db = Decimal256.fromBigDecimal(b);
+                    final String msg = "scaleDiff=" + scaleDiff + " delta=" + delta + " sign=" + sign;
+                    Assert.assertEquals(msg, a.compareTo(b), da.compareTo(db));
+                    Assert.assertEquals(msg, b.compareTo(a), db.compareTo(da));
+                }
             }
         }
     }
@@ -771,6 +907,88 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testFitsInStorageSizeMatchesStorageSize() {
+        // value -> narrowest storage size (pow 2 bytes) able to hold it
+        final Object[][] cases = new Object[][]{
+                {"0", 0},
+                {"127", 0},
+                {"-127", 0},
+                {"128", 1},
+                {"-128", 1},
+                {"32767", 1},
+                {"-32767", 1},
+                {"32768", 2},
+                {"-32768", 2},
+                {"2147483647", 2},
+                {"-2147483647", 2},
+                {"2147483648", 3},
+                {"-2147483648", 3},
+                {"9223372036854775807", 3},
+                {"-9223372036854775807", 3},
+                {"9223372036854775808", 4},
+                {"-9223372036854775808", 4},
+                {"170141183460469231731687303715884105727", 4},
+                {"-170141183460469231731687303715884105727", 4},
+                {"170141183460469231731687303715884105728", 5},
+                {"-170141183460469231731687303715884105728", 5},
+                {"9999999999999999999999999999999999999999999999999999999999999999999999999999", 5},
+                {"-9999999999999999999999999999999999999999999999999999999999999999999999999999", 5},
+        };
+        for (Object[] case0 : cases) {
+            final String value = (String) case0[0];
+            final int storageSize = (int) case0[1];
+            final Decimal256 d = Decimal256.fromBigDecimal(new BigDecimal(value));
+            Assert.assertEquals(value, storageSize, d.getStorageSize());
+            for (int size = 0; size <= 5; size++) {
+                Assert.assertEquals(value + " at size " + size, size >= storageSize, d.fitsInStorageSizePow2(size));
+            }
+        }
+    }
+
+    @Test
+    public void testFitsInStorageSizeMinValueSentinels() {
+        // storage size, NULL sentinel of that size, most negative value representable at that size
+        final Object[][] cases = new Object[][]{
+                {0, "-128", "-127"},
+                {1, "-32768", "-32767"},
+                {2, "-2147483648", "-2147483647"},
+                {3, "-9223372036854775808", "-9223372036854775807"},
+                {4, "-170141183460469231731687303715884105728", "-170141183460469231731687303715884105727"},
+        };
+        for (Object[] case0 : cases) {
+            final int size = (int) case0[0];
+            final String sentinel = (String) case0[1];
+            final String minValue = (String) case0[2];
+            final Decimal256 d = Decimal256.fromBigDecimal(new BigDecimal(sentinel));
+            // the sentinel would read back as NULL, it needs the next size up
+            Assert.assertFalse(sentinel, d.fitsInStorageSizePow2(size));
+            Assert.assertTrue(sentinel, d.fitsInStorageSizePow2(size + 1));
+            final Decimal256 min = Decimal256.fromBigDecimal(new BigDecimal(minValue));
+            Assert.assertTrue(minValue, min.fitsInStorageSizePow2(size));
+        }
+    }
+
+    @Test
+    public void testFitsInStorageSizeMixedLimbs() {
+        // every limb is 0 or -1 on its own, but the sign patterns disagree, so the
+        // value needs the full 256 bits
+        final long[][] limbs = new long[][]{
+                {0, -1, 0, 5},
+                {0, 0, -1, 5},
+                {0, -1, -1, -1},
+                {-1, 0, -1, -1},
+        };
+        final Decimal256 d = new Decimal256();
+        for (long[] limb : limbs) {
+            d.of(limb[0], limb[1], limb[2], limb[3], 0);
+            Assert.assertEquals(5, d.getStorageSize());
+            Assert.assertFalse(d.toString(), d.fitsInStorageSizePow2(3));
+            Assert.assertFalse(d.toString(), d.fitsInStorageSizePow2(4));
+            Assert.assertTrue(d.toString(), d.fitsInStorageSizePow2(5));
+        }
+    }
+
+    @Test
     public void testFromBigDecimal() {
         BigDecimal bd = new BigDecimal("1e37");
         Decimal256 decimal = Decimal256.fromBigDecimal(bd);
@@ -956,6 +1174,19 @@ public class Decimal256Test {
         // The result should be 2 * (2^64 - 1)
         Assert.assertEquals(0x1L, a.getLh());
         Assert.assertEquals(0xFFFFFFFFFFFFFFFEL, a.getLl());
+    }
+
+    @Test
+    public void testLossyScaleReductionToZero() throws NumericException {
+        // A non-zero literal whose significant digits are all truncated by a lossy scale reduction
+        // becomes a genuine zero. The isZero detection must run over the POST-truncation digits, not
+        // the original ones, or the dropped significant digits would inflate the reported precision
+        // and a value that is really zero would look like it needs more precision than it does.
+        assertParsedZero("0.001", -1, 0, false, true, "0", 1, 0);
+        assertParsedZero("0.001", -1, 2, false, true, "0.00", 2, 2);
+        assertParsedZero("-0.001", -1, 0, false, true, "0", 1, 0);
+        assertParsedZero("0.00123", -1, 2, false, true, "0.00", 2, 2);
+        assertParsedZero("0.0099", -1, 1, false, true, "0.0", 1, 1);
     }
 
     @Test
@@ -1329,7 +1560,7 @@ public class Decimal256Test {
     public void testOfStringDecimalPointAtStart() throws NumericException {
         Decimal256 d = new Decimal256();
         int precision = Numbers.decodeLowInt(d.ofString(".123"));
-        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, precision);
         Assert.assertEquals(3, d.getScale());
         Assert.assertEquals("0.123", d.toString());
     }
@@ -1440,7 +1671,7 @@ public class Decimal256Test {
 
         // Complex decimal with exponent
         int precision = Numbers.decodeLowInt(d.ofString("123.456789e-3"));
-        Assert.assertEquals(10, precision);
+        Assert.assertEquals(9, precision);
         Assert.assertEquals(9, d.getScale());
         Assert.assertEquals("0.123456789", d.toString());
 
@@ -1463,7 +1694,7 @@ public class Decimal256Test {
 
         // Large negative exponent within bounds
         precision = Numbers.decodeLowInt(d.ofString("1e-20"));
-        Assert.assertEquals(21, precision);
+        Assert.assertEquals(20, precision);
         Assert.assertEquals(20, d.getScale());
         Assert.assertEquals("0.00000000000000000001", d.toString());
     }
@@ -1530,7 +1761,7 @@ public class Decimal256Test {
 
         // Integer base with negative exponent
         precision = Numbers.decodeLowInt(d.ofString("456e-3"));
-        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, precision);
         Assert.assertEquals(3, d.getScale());
         Assert.assertEquals("0.456", d.toString());
     }
@@ -1564,7 +1795,7 @@ public class Decimal256Test {
 
         // Negative number with negative exponent
         precision = Numbers.decodeLowInt(d.ofString("-2.5e-2"));
-        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, precision);
         Assert.assertEquals(3, d.getScale());
         Assert.assertEquals("-0.025", d.toString());
     }
@@ -1581,7 +1812,7 @@ public class Decimal256Test {
 
         // With scale limit that matches the result scale
         precision = Numbers.decodeLowInt(d.ofString("1e-3", -1, 3));
-        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, precision);
         Assert.assertEquals(3, d.getScale());
         Assert.assertEquals("0.001", d.toString());
     }
@@ -1612,7 +1843,7 @@ public class Decimal256Test {
 
         // With m suffix
         precision = Numbers.decodeLowInt(d.ofString("2.5e-3m"));
-        Assert.assertEquals(5, precision);
+        Assert.assertEquals(4, precision);
         Assert.assertEquals(4, d.getScale());
         Assert.assertEquals("0.0025", d.toString());
     }
@@ -1832,7 +2063,7 @@ public class Decimal256Test {
         Assert.assertEquals(6, p3);
 
         int p4 = Numbers.decodeLowInt(d.ofString("00.001"));
-        Assert.assertEquals(4, p4); // Leading zeros don't count toward precision
+        Assert.assertEquals(3, p4); // Leading zeros don't count toward precision; 0.001 needs 3 fractional digits
     }
 
     @Test(expected = NumericException.class)
@@ -1946,25 +2177,25 @@ public class Decimal256Test {
 
         // Basic negative exponent
         int precision = Numbers.decodeLowInt(d.ofString("1.234e-2"));
-        Assert.assertEquals(6, precision);
+        Assert.assertEquals(5, precision);
         Assert.assertEquals(5, d.getScale());
         Assert.assertEquals("0.01234", d.toString());
 
         // Larger negative exponent
         precision = Numbers.decodeLowInt(d.ofString("5e-5"));
-        Assert.assertEquals(6, precision);
+        Assert.assertEquals(5, precision);
         Assert.assertEquals(5, d.getScale());
         Assert.assertEquals("0.00005", d.toString());
 
         // Negative exponent with E (uppercase)
         precision = Numbers.decodeLowInt(d.ofString("7.89E-3"));
-        Assert.assertEquals(6, precision);
+        Assert.assertEquals(5, precision);
         Assert.assertEquals(5, d.getScale());
         Assert.assertEquals("0.00789", d.toString());
 
         // Very small number
         precision = Numbers.decodeLowInt(d.ofString("1e-10"));
-        Assert.assertEquals(11, precision);
+        Assert.assertEquals(10, precision);
         Assert.assertEquals(10, d.getScale());
         Assert.assertEquals("0.0000000001", d.toString());
     }
@@ -2066,7 +2297,7 @@ public class Decimal256Test {
         Assert.assertEquals("0", d.toString());
 
         precision = Numbers.decodeLowInt(d.ofString("0.000m"));
-        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, precision);
         Assert.assertEquals(3, d.getScale());
         Assert.assertEquals("0.000", d.toString());
 
@@ -2418,6 +2649,20 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testScientificZeroForms() throws NumericException {
+        // Scientific-notation zero and exponent forms of zero parse to a zero value. The scale is the
+        // one the exponent implies, and the precision floor is 1 (a zero carries no significant digits,
+        // so it must not inflate precision regardless of how the literal is written).
+        assertParsedZero("0e3", -1, -1, false, false, "0", 1, 0);
+        assertParsedZero("0E3", -1, -1, false, false, "0", 1, 0);
+        assertParsedZero("+0e3", -1, -1, false, false, "0", 1, 0);
+        assertParsedZero("-0e3", -1, -1, false, false, "0", 1, 0);
+        assertParsedZero("0e-3", -1, -1, false, false, "0.000", 3, 3);
+        assertParsedZero("0.0e5", -1, -1, false, false, "0", 1, 0);
+        assertParsedZero("0.00e2", -1, -1, false, false, "0", 1, 0);
+    }
+
+    @Test
     public void testSetScale() {
         Decimal256 a = new Decimal256(0, 0, 0, 12345, 2);
         a.setScale(1);
@@ -2679,6 +2924,57 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testSubtractionZeroOperandKeepsMaxScale() {
+        // Result scale must be max(leftScale, rightScale) even when an operand is zero.
+        Decimal256 a = Decimal256.fromBigDecimal(new BigDecimal("1.5"));
+        a.subtract(Decimal256.fromBigDecimal(new BigDecimal("0.000")));
+        Assert.assertEquals(3, a.getScale());
+        Assert.assertEquals("1.500", a.toString());
+
+        a = Decimal256.fromBigDecimal(new BigDecimal("1.5"));
+        a.subtract(Decimal256.fromBigDecimal(new BigDecimal("0.00000000000000000000")));
+        Assert.assertEquals(20, a.getScale());
+        Assert.assertEquals("1.50000000000000000000", a.toString());
+
+        // Negative zero carries a scale too
+        a = Decimal256.fromBigDecimal(new BigDecimal("1.5"));
+        a.subtract(Decimal256.fromBigDecimal(new BigDecimal("-0.000")));
+        Assert.assertEquals(3, a.getScale());
+        Assert.assertEquals("1.500", a.toString());
+
+        // Zero minuend
+        a = Decimal256.fromBigDecimal(new BigDecimal("0.00"));
+        a.subtract(Decimal256.fromBigDecimal(new BigDecimal("1.5")));
+        Assert.assertEquals(2, a.getScale());
+        Assert.assertEquals("-1.50", a.toString());
+
+        // Both zero
+        a = Decimal256.fromBigDecimal(new BigDecimal("0.0"));
+        a.subtract(Decimal256.fromBigDecimal(new BigDecimal("0.00000")));
+        Assert.assertEquals(5, a.getScale());
+        Assert.assertEquals("0.00000", a.toString());
+
+        // Zero subtrahend with the lower scale leaves the minuend's scale untouched
+        a = Decimal256.fromBigDecimal(new BigDecimal("1.500"));
+        a.subtract(Decimal256.fromBigDecimal(new BigDecimal("0.0")));
+        Assert.assertEquals(3, a.getScale());
+        Assert.assertEquals("1.500", a.toString());
+
+        // Same scale, both non-zero
+        a = Decimal256.fromBigDecimal(new BigDecimal("1.500"));
+        a.subtract(Decimal256.fromBigDecimal(new BigDecimal("0.250")));
+        Assert.assertEquals(3, a.getScale());
+        Assert.assertEquals("1.250", a.toString());
+
+        // Widening past the range still raises
+        final Decimal256 max = new Decimal256(
+                Decimal256.MAX_VALUE.getHh(), Decimal256.MAX_VALUE.getHl(),
+                Decimal256.MAX_VALUE.getLh(), Decimal256.MAX_VALUE.getLl(), 0
+        );
+        Assert.assertThrows(NumericException.class, () -> max.subtract(new Decimal256(0, 0, 0, 0, 1)));
+    }
+
+    @Test
     public void testToBigDecimal() {
         // Test basic positive number
         Decimal256 a = Decimal256.fromDouble(123.456, 3);
@@ -2790,6 +3086,147 @@ public class Decimal256Test {
         Decimal256.uncheckedAdd(result, addend);
 
         Assert.assertEquals("-0.75", result.toString());
+    }
+
+    @Test
+    public void testUncheckedSubtractBigIntegerOracleFuzz() {
+        // uncheckedSubtract performs raw two's-complement 256-bit subtraction (no scale alignment,
+        // no overflow check), so its result must equal (a - b) reduced mod 2^256 for arbitrary
+        // limbs. A BigInteger oracle over random 256-bit operands pins the full borrow propagation
+        // and the negation carry-chain that the hand-picked cases below only sample, and the
+        // uncheckedAdd/uncheckedSubtract round-trip confirms the two helpers cancel exactly.
+        final Rnd rnd = TestUtils.generateRandom(null);
+        final Decimal256 a = new Decimal256();
+        final Decimal256 b = new Decimal256();
+        final Decimal256 result = new Decimal256();
+        for (int i = 0; i < 1_000_000; i++) {
+            final long aHH = rnd.nextLong(), aHL = rnd.nextLong(), aLH = rnd.nextLong(), aLL = rnd.nextLong();
+            final long bHH = rnd.nextLong(), bHL = rnd.nextLong(), bLH = rnd.nextLong(), bLL = rnd.nextLong();
+            a.ofRaw(aHH, aHL, aLH, aLL);
+            b.ofRaw(bHH, bHL, bLH, bLL);
+            final BigInteger expectedDiff = unsigned256(a).subtract(unsigned256(b)).mod(U256_MOD);
+
+            result.copyFrom(a);
+            Decimal256.uncheckedSubtract(result, b);
+            Assert.assertEquals("a - b at iteration " + i, expectedDiff, unsigned256(result));
+
+            // a + b - b must recover a exactly, regardless of either operand's limbs.
+            result.copyFrom(a);
+            Decimal256.uncheckedAdd(result, b);
+            Decimal256.uncheckedSubtract(result, b);
+            Assert.assertEquals("a + b - b at iteration " + i, unsigned256(a), unsigned256(result));
+        }
+    }
+
+    @Test
+    public void testUncheckedSubtractBorrowsAcrossLimbs() {
+        Decimal256 result = new Decimal256();
+        result.ofRaw(0, 0, 1, 0); // lh = 1, i.e. raw value 2^64
+        Decimal256 b = new Decimal256();
+        b.ofRaw(1);
+
+        Decimal256.uncheckedSubtract(result, b); // 2^64 - 1
+
+        Assert.assertEquals(0, result.getHh());
+        Assert.assertEquals(0, result.getHl());
+        Assert.assertEquals(0, result.getLh());
+        Assert.assertEquals(-1L, result.getLl()); // all-ones low limb
+    }
+
+    @Test
+    public void testUncheckedSubtractBorrowsThroughAllLimbs() {
+        // 2^192 - 1 forces the borrow to propagate the whole way: ll -> lh -> hl -> hh, leaving the
+        // three lower limbs all-ones and clearing the top limb.
+        Decimal256 result = new Decimal256();
+        result.ofRaw(1, 0, 0, 0); // raw value 2^192
+        Decimal256 b = new Decimal256();
+        b.ofRaw(0, 0, 0, 1); // raw value 1
+
+        Decimal256.uncheckedSubtract(result, b);
+
+        Assert.assertEquals(0L, result.getHh());
+        Assert.assertEquals(-1L, result.getHl());
+        Assert.assertEquals(-1L, result.getLh());
+        Assert.assertEquals(-1L, result.getLl());
+    }
+
+    @Test
+    public void testUncheckedSubtractIgnoresScale() {
+        // Raw limb subtraction must ignore the operands' scale fields, mirroring uncheckedAdd. The
+        // window sum/avg accumulators store same-scale raw limbs and pair the two helpers; a
+        // scale-aware subtract here would rescale the accumulator and corrupt the running total.
+        Decimal256 result = new Decimal256();
+        result.ofRaw(36_000_000L); // raw limbs only, scale left at 0
+        Decimal256 b = Decimal256.fromLong(1_000_000L, 6); // scale 6
+
+        Decimal256.uncheckedSubtract(result, b);
+
+        Assert.assertEquals(35_000_000L, result.getLl());
+        Assert.assertEquals(0, result.getLh());
+        Assert.assertEquals(0, result.getHl());
+        Assert.assertEquals(0, result.getHh());
+        Assert.assertEquals(0, result.getScale());
+    }
+
+    @Test
+    public void testUncheckedSubtractInvertsUncheckedAdd() {
+        Decimal256 acc = new Decimal256();
+        acc.ofRaw(0);
+        Decimal256 v = Decimal256.fromLong(123_456_789L, 3);
+
+        Decimal256.uncheckedAdd(acc, v);
+        Decimal256.uncheckedSubtract(acc, v);
+
+        Assert.assertTrue(acc.isZero());
+    }
+
+    @Test
+    public void testUncheckedSubtractNegationCarriesAcrossZeroLimbs() {
+        // Subtracting 2^128 from zero negates b, whose two's-complement carry must ripple across the
+        // two zero low limbs (ll and lh stay 0) before settling, yielding -(2^128) = all-ones in the
+        // two high limbs.
+        Decimal256 result = new Decimal256();
+        result.ofRaw(0, 0, 0, 0);
+        Decimal256 b = new Decimal256();
+        b.ofRaw(0, 1, 0, 0); // raw value 2^128
+
+        Decimal256.uncheckedSubtract(result, b);
+
+        Assert.assertEquals(-1L, result.getHh());
+        Assert.assertEquals(-1L, result.getHl());
+        Assert.assertEquals(0L, result.getLh());
+        Assert.assertEquals(0L, result.getLl());
+    }
+
+    private static void assertParsedZero(
+            String value,
+            int precision,
+            int scale,
+            boolean strict,
+            boolean lossy,
+            String expectedString,
+            int expectedPrecision,
+            int expectedScale
+    ) throws NumericException {
+        Decimal256 decimal = new Decimal256();
+        long metadata = DecimalParser.parse(decimal, value, 0, value.length(), precision, scale, strict, lossy);
+        Assert.assertTrue(value + " should parse to zero, got " + decimal, decimal.isZero());
+        Assert.assertEquals(value, expectedString, decimal.toString());
+        Assert.assertEquals(value + " precision", expectedPrecision, Numbers.decodeLowInt(metadata));
+        Assert.assertEquals(value + " scale", expectedScale, Numbers.decodeHighInt(metadata));
+    }
+
+    // Reconstructs the unsigned 256-bit value the four raw limbs encode, so a BigInteger oracle can
+    // mirror uncheckedSubtract's two's-complement (mod 2^256) arithmetic regardless of sign.
+    private static BigInteger unsigned256(Decimal256 d) {
+        return unsigned64(d.getHh()).shiftLeft(192)
+                .or(unsigned64(d.getHl()).shiftLeft(128))
+                .or(unsigned64(d.getLh()).shiftLeft(64))
+                .or(unsigned64(d.getLl()));
+    }
+
+    private static BigInteger unsigned64(long v) {
+        return BigInteger.valueOf(v).and(U64_MASK);
     }
 
     private void printTable(String name, long[][] table) {

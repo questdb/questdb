@@ -150,19 +150,17 @@ public class LtLong256FunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testSameRecordDifferentColumns_negativeCase() throws Exception {
-        assertQuery("a\tb\n",
-                "select * from tab where a < b",
-                "create table tab as (select 0x11111111 as a, 0x11111111 as b from long_sequence(1))",
-                null, true);
+        assertQuery("select * from tab where a < b")
+                .ddl("create table tab as (select 0x11111111 as a, 0x11111111 as b from long_sequence(1))")
+                .returns("a\tb\n");
     }
 
     @Test
     public void testSameRecordDifferentColumns_positiveCase() throws Exception {
-        assertQuery("a\tb\n" +
-                        "0x11111111\t0x11111112\n",
-                "select * from tab where a < b",
-                "create table tab as (select 0x11111111 as a, 0x11111112 as b from long_sequence(1))",
-                null, true);
+        assertQuery("select * from tab where a < b")
+                .ddl("create table tab as (select 0x11111111 as a, 0x11111112 as b from long_sequence(1))")
+                .returns("a\tb\n" +
+                        "0x11111111\t0x11111112\n");
     }
 
     @Override

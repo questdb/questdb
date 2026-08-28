@@ -34,7 +34,7 @@ public interface TableRecordMetadataSink extends Mutable {
     void addColumn(
             String columnName,
             int columnType,
-            boolean columnIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             int writerIndex,
@@ -43,6 +43,10 @@ public interface TableRecordMetadataSink extends Mutable {
             int symbolCapacity,
             boolean isNotNull
     );
+
+    default boolean requiresFullReadColumnOrder() {
+        return false;
+    }
 
     void of(
             TableToken tableToken,

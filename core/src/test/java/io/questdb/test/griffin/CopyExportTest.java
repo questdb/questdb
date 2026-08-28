@@ -38,7 +38,7 @@ import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
@@ -124,7 +124,7 @@ public class CopyExportTest extends AbstractCairoTest {
             drainWalQueue();
 
             Thread insertThread = new Thread(() -> {
-                try {
+                try (SqlExecutionContext threadCtx = TestUtils.createSqlExecutionCtx(engine)) {
                     for (int batch = 0; batch < 50; batch++) {
                         StringBuilder batchInsert = new StringBuilder("insert into fuzz_table values (");
                         for (int i = 0; i < 100; i++) {
@@ -141,7 +141,7 @@ public class CopyExportTest extends AbstractCairoTest {
                         }
 
                         batchInsert.append(')');
-                        execute(batchInsert);
+                        engine.execute(batchInsert, threadCtx);
                         drainWalQueue();
 //                        Os.sleep(10);
                     }
@@ -166,9 +166,11 @@ public class CopyExportTest extends AbstractCairoTest {
                             Thread.currentThread().interrupt();
                         }
 
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "fuzz_output.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "fuzz_output.parquet" + "\t1\tfinished\n");
 
                         // Verify exported data integrity - should have at least initial 10k records
                         String countQuery = "select count(*) from read_parquet('" + exportRoot + File.separator + "fuzz_output.parquet')";
@@ -181,22 +183,25 @@ public class CopyExportTest extends AbstractCairoTest {
                             assertTrue(count >= 1000);
                         }
 
-                        assertSql("""
+                        assertQuery("select id, value, name from read_parquet('" + exportRoot + File.separator + "fuzz_output.parquet') where id = 0")
+                                .noLeakCheck()
+                                .returns("""
                                         id\tvalue\tname
                                         0\t0.0\tname0
-                                        """,
-                                "select id, value, name from read_parquet('" + exportRoot + File.separator + "fuzz_output.parquet') where id = 0");
-                        assertSql("""
+                                        """);
+                        assertQuery("select id, value, name from read_parquet('" + exportRoot + File.separator + "fuzz_output.parquet') where id = 999")
+                                .noLeakCheck()
+                                .returns("""
                                         id\tvalue\tname
                                         999\t1498.5\tname999
-                                        """,
-                                "select id, value, name from read_parquet('" + exportRoot + File.separator + "fuzz_output.parquet') where id = 999");
+                                        """);
 
-                        assertSql("""
+                        assertQuery("SELECT path from export_files() order by modifiedTime")
+                                .noLeakCheck()
+                                .returns("""
                                         path
                                         fuzz_output.parquet
-                                        """,
-                                "SELECT path from export_files() order by modifiedTime");
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -205,11 +210,8 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyCancelSyntaxError() throws Exception {
-        assertException(
-                "copy 'foobar' cancel aw beans;",
-                21,
-                "unexpected token [aw]"
-        );
+        assertQuery("copy 'foobar' cancel aw beans;")
+                .fails(21, "unexpected token [aw]");
     }
 
     @Test
@@ -237,9 +239,10 @@ public class CopyExportTest extends AbstractCairoTest {
                     sink.clear();
                     sink.put("COPY '").put(copyIDStr).put("' CANCEL;");
                     try {
-                        assertSql("id\tstatus\n" +
-                                copyIDStr + "\tcancelled\n", sink);
-                    } catch (SqlException e) {
+                        assertQuery(sink)
+                                .noLeakCheck()
+                                .returnsOnce("id\tstatus\n" + copyIDStr + "\tcancelled\n");
+                    } catch (Exception e) {
                         throw new RuntimeException(e);
                     }
                     // wait cancel finish
@@ -256,16 +259,10 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyOptionError() throws Exception {
-        assertException(
-                "copy test_table to 'test_table'  with format parquet1;",
-                45,
-                "unsupported format, only 'parquet' is supported"
-        );
-        assertException(
-                "copy test_table to 'test_table'  with format parquet1;",
-                45,
-                "unsupported format, only 'parquet' is supported"
-        );
+        assertQuery("copy test_table to 'test_table'  with format parquet1;")
+                .fails(45, "unsupported format, only 'parquet' is supported");
+        assertQuery("copy test_table to 'test_table'  with format parquet1;")
+                .fails(45, "unsupported format, only 'parquet' is supported");
 
         execute("create table test_table (ts TIMESTAMP NOT NULL, x int) timestamp(ts) partition by day wal;");
         assertException(
@@ -274,94 +271,49 @@ public class CopyExportTest extends AbstractCairoTest {
                 "export format must be specified, supported formats: 'parquet'"
         );
 
-        assertException(
-                "copy test_table to 'test_table'  with partition_by Day1;",
-                51,
-                "invalid partition by option: Day1"
-        );
+        assertQuery("copy test_table to 'test_table'  with partition_by Day1;")
+                .fails(51, "invalid partition by option: Day1");
 
-        assertException(
-                "copy test_table to 'test_table'  with partition_by1 Day1;",
-                38,
-                "unrecognised option [option=partition_by1]"
-        );
+        assertQuery("copy test_table to 'test_table'  with partition_by1 Day1;")
+                .fails(38, "unrecognised option [option=partition_by1]");
 
-        assertException(
-                "copy test_table to 'test_table'  with partition_by1 Day1;",
-                38,
-                "unrecognised option [option=partition_by1]"
-        );
+        assertQuery("copy test_table to 'test_table'  with partition_by1 Day1;")
+                .fails(38, "unrecognised option [option=partition_by1]");
 
-        assertException(
-                "copy test_table to 'test_table'  with size_limit aa;",
-                38,
-                "size limit is not yet supported"
-        );
+        assertQuery("copy test_table to 'test_table'  with size_limit aa;")
+                .fails(38, "size limit is not yet supported");
 
-        assertException(
-                "copy test_table to 'test_table'  with compression_codec aa;",
-                56,
-                "invalid compression codec[aa], expected one of: uncompressed, snappy, gzip, brotli, zstd, lz4_raw"
-        );
+        assertQuery("copy test_table to 'test_table'  with compression_codec aa;")
+                .fails(56, "invalid compression codec[aa], expected one of: uncompressed, snappy, gzip, brotli, zstd, lz4_raw");
 
-        assertException(
-                "copy test_table to 'test_table'  with format parquet compression_codec uncompressed compression_level aa;",
-                102,
-                "found [tok='aa', len=2] bad integer"
-        );
+        assertQuery("copy test_table to 'test_table'  with format parquet compression_codec uncompressed compression_level aa;")
+                .fails(102, "found [tok='aa', len=2] bad integer");
 
-        assertException(
-                "copy test_table to 'test_table'  with format parquet compression_codec zstd compression_level 120;",
-                94,
-                "ZSTD compression level must be between 1 and 22"
-        );
+        assertQuery("copy test_table to 'test_table'  with format parquet compression_codec zstd compression_level 120;")
+                .fails(94, "ZSTD compression level must be between 1 and 22");
 
-        assertException(
-                "copy test_table to 'test_table'  with format parquet compression_codec GZIP compression_level 120;",
-                94,
-                "GZIP compression level must be between 0 and 9"
-        );
+        assertQuery("copy test_table to 'test_table'  with format parquet compression_codec GZIP compression_level 120;")
+                .fails(94, "GZIP compression level must be between 0 and 9");
 
-        assertException(
-                "copy test_table to 'test_table'  with format parquet compression_codec BROTLI compression_level 120;",
-                96,
-                "Brotli compression level must be between 0 and 11"
-        );
-        assertException(
-                "copy test_table to 'test_table'  with format parquet parquet_version 3;",
-                69,
-                "invalid parquet version: 3, expected 1 or 2"
-        );
+        assertQuery("copy test_table to 'test_table'  with format parquet compression_codec BROTLI compression_level 120;")
+                .fails(96, "Brotli compression level must be between 0 and 11");
+        assertQuery("copy test_table to 'test_table'  with format parquet parquet_version 3;")
+                .fails(69, "invalid parquet version: 3, expected 1 or 2");
 
-        assertException(
-                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp 0;",
-                70,
-                "bloom_filter_fpp must be between 0 and 1 (exclusive)"
-        );
+        assertQuery("copy test_table to 'test_table'  with format parquet bloom_filter_fpp 0;")
+                .fails(70, "bloom_filter_fpp must be between 0 and 1 (exclusive)");
 
-        assertException(
-                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp 1;",
-                70,
-                "bloom_filter_fpp must be between 0 and 1 (exclusive)"
-        );
+        assertQuery("copy test_table to 'test_table'  with format parquet bloom_filter_fpp 1;")
+                .fails(70, "bloom_filter_fpp must be between 0 and 1 (exclusive)");
 
-        assertException(
-                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp '1.5';",
-                70,
-                "bloom_filter_fpp must be between 0 and 1 (exclusive)"
-        );
+        assertQuery("copy test_table to 'test_table'  with format parquet bloom_filter_fpp '1.5';")
+                .fails(70, "bloom_filter_fpp must be between 0 and 1 (exclusive)");
 
-        assertException(
-                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp '-0.1';",
-                70,
-                "bloom_filter_fpp must be between 0 and 1 (exclusive)"
-        );
+        assertQuery("copy test_table to 'test_table'  with format parquet bloom_filter_fpp '-0.1';")
+                .fails(70, "bloom_filter_fpp must be between 0 and 1 (exclusive)");
 
-        assertException(
-                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp abc;",
-                70,
-                "bad number"
-        );
+        assertQuery("copy test_table to 'test_table'  with format parquet bloom_filter_fpp abc;")
+                .fails(70, "bad number");
     }
 
     @Test
@@ -375,10 +327,14 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet row_group_size 2147483647", sqlExecutionContext);
 
             CopyExportRunnable test = () -> {
-                assertEventually(() -> assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                exportRoot + File.separator + "test_table.parquet" + "\t1\tfinished\n",
-                        "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"));
-                assertSql("""
+                assertEventually(() -> assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("export_path\tnum_exported_files\tstatus\n" +
+                                exportRoot + File.separator + "test_table.parquet" + "\t1\tfinished\n"));
+                assertQuery("select path, diskSizeHuman from export_files()  order by modifiedTime")
+                        .noLeakCheck()
+                        .returns("""
                                 path\tdiskSizeHuman
                                 test_table.parquet\t602.0 B
                                 """,
@@ -399,9 +355,11 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet row_group_size 1", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                    exportRoot + File.separator + "test_table.parquet" + "\t1\tfinished\n",
-                            "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"));
+                    assertEventually(() -> assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("export_path\tnum_exported_files\tstatus\n" +
+                                    exportRoot + File.separator + "test_table.parquet" + "\t1\tfinished\n"));
 
             testCopyExport(stmt, test);
         });
@@ -418,9 +376,11 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet row_group_size -1", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                    exportRoot + File.separator + "test_table.parquet" + "\t1\tfinished\n",
-                            "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"));
+                    assertEventually(() -> assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("export_path\tnum_exported_files\tstatus\n" +
+                                    exportRoot + File.separator + "test_table.parquet" + "\t1\tfinished\n"));
 
             testCopyExport(stmt, test);
         });
@@ -529,11 +489,13 @@ public class CopyExportTest extends AbstractCairoTest {
                         // Before the fix, the export failed with status=failed
                         // because into_designated_with_order() errored on the
                         // DOUBLE column that was incorrectly flagged.
-                        assertSql(
-                                "status\n" +
-                                        "finished\n",
-                                "SELECT status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
+                        assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        status
+                                        finished
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -562,32 +524,113 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("COPY t TO 'empty_drop_col' WITH FORMAT parquet", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> assertSql(
-                            "status\nfinished\n",
-                            "SELECT status FROM \"sys.copy_export_log\" LIMIT -1"
-                    ));
+                    assertEventually(() -> assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("status\nfinished\n"));
 
             testCopyExport(stmt, test);
         });
     }
 
     @Test
+    public void testCopyParquetEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table all_types_empty (" +
+                    "bool_col boolean, " +
+                    "byte_col byte, " +
+                    "short_col short, " +
+                    "int_col int, " +
+                    "long_col long, " +
+                    "float_col float, " +
+                    "double_col double, " +
+                    "string_col string, " +
+                    "symbol_col symbol, " +
+                    "t_ns timestamp_ns, " +
+                    "d_array DOUBLE[], " +
+                    "ts timestamp" +
+                    ") timestamp(ts)");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy all_types_empty to 'all_types_empty' with format parquet", sqlExecutionContext);
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "all_types_empty.parquet" + "\t1\tfinished\n");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "all_types_empty" + ".parquet')")
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .returns("""
+                                        bool_col\tbyte_col\tshort_col\tint_col\tlong_col\tfloat_col\tdouble_col\tstring_col\tsymbol_col\tt_ns\td_array\tts
+                                        """);
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyParquetExportFixedToVarConvertedColumn() throws Exception {
+        // fixed->var lazy conversion (INT->STRING) over a parquet partition, exported via the
+        // DIRECT_PAGE_FRAME path. The exported file must hold the formatted strings, not the
+        // raw INT bytes reinterpreted as a var column.
+        assertMemoryLeak(() -> assertParquetExportOfConvertedColumn("INT", "(x * 3)::INT", "STRING", """
+                s\tts
+                3\t2024-01-01T00:00:00.000000Z
+                6\t2024-01-01T00:10:00.000000Z
+                9\t2024-01-01T00:20:00.000000Z
+                12\t2024-01-01T00:30:00.000000Z
+                15\t2024-01-01T00:40:00.000000Z
+                18\t2024-01-01T00:50:00.000000Z
+                """));
+    }
+
+    @Test
+    public void testCopyParquetExportSymbolToFixedConvertedColumn() throws Exception {
+        // symbol->fixed lazy conversion (SYMBOL->LONG; parquet stores the symbol as a UTF-8
+        // BYTE_ARRAY decoded as VARCHAR_SLICE) over a parquet partition, exported via the
+        // DIRECT_PAGE_FRAME path. (A symbol->VARCHAR export is layout-compatible and is fine;
+        // only conversions that change the fixed/var storage class are affected.)
+        assertMemoryLeak(() -> assertParquetExportOfConvertedColumn("SYMBOL", "(x * 3)::STRING", "LONG", """
+                s\tts
+                3\t2024-01-01T00:00:00.000000Z
+                6\t2024-01-01T00:10:00.000000Z
+                9\t2024-01-01T00:20:00.000000Z
+                12\t2024-01-01T00:30:00.000000Z
+                15\t2024-01-01T00:40:00.000000Z
+                18\t2024-01-01T00:50:00.000000Z
+                """));
+    }
+
+    @Test
+    public void testCopyParquetExportVarToFixedConvertedColumn() throws Exception {
+        // var->fixed lazy conversion (STRING->LONG) over a parquet partition, exported via the
+        // DIRECT_PAGE_FRAME path (COPY (SELECT *) -> determineExportMode -> DIRECT_PAGE_FRAME,
+        // which has no hasParquetConvertedColumns gate). The parquet decode buffer holds the
+        // source STRING layout; shipping it to the Rust encoder configured for LONG yields
+        // wrong values / silent data loss.
+        assertMemoryLeak(() -> assertParquetExportOfConvertedColumn("STRING", "(x * 3)::STRING", "LONG", """
+                s\tts
+                3\t2024-01-01T00:00:00.000000Z
+                6\t2024-01-01T00:10:00.000000Z
+                9\t2024-01-01T00:20:00.000000Z
+                12\t2024-01-01T00:30:00.000000Z
+                15\t2024-01-01T00:40:00.000000Z
+                18\t2024-01-01T00:50:00.000000Z
+                """));
+    }
+
+    @Test
     public void testCopyParquetFailsWithIllegalSql() throws Exception {
-        assertException(
-                "copy (select x from non_existing_table) to 'tmp' with format parquet",
-                20,
-                "table does not exist [table=non_existing_table]"
-        );
-        assertException(
-                "copy (select a+1 from1 v) to 'tmp' with format parquet",
-                23,
-                "found [tok='v', len=1] ',', 'from' or 'over' expected"
-        );
-        assertException(
-                "copy (select 1) to 'tmp' with format csv",
-                37,
-                "unsupported format, only 'parquet' is supported"
-        );
+        assertQuery("copy (select x from non_existing_table) to 'tmp' with format parquet")
+                .fails(20, "table does not exist [table=non_existing_table]");
+        assertQuery("copy (select a+1 from1 v) to 'tmp' with format parquet")
+                .fails(23, "found [tok='v', len=1] ',', 'from' or 'over' expected");
+        assertQuery("copy (select 1) to 'tmp' with format csv")
+                .fails(37, "unsupported format, only 'parquet' is supported");
     }
 
     @Test
@@ -632,13 +675,13 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                """
+                        assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         status
                                         failed
-                                        """,
-                                "SELECT status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
+                                        """);
 
                         ObjHashSet<TableToken> bucket = new ObjHashSet<>();
                         engine.getTableTokens(bucket, false);
@@ -657,11 +700,8 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyParquetFailsWithNonExistentTable() throws Exception {
-        assertException(
-                "copy test_table to 'blah blah blah' with format parquet",
-                0,
-                "table does not exist [table=test_table]"
-        );
+        assertQuery("copy test_table to 'blah blah blah' with format parquet")
+                .fails(0, "table does not exist [table=test_table]");
     }
 
     @Test
@@ -722,7 +762,10 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tphase\tstatus\tmessage\terrors\n" +
+                        assertQuery("SELECT export_path, num_exported_files,phase,status,message,errors FROM sys.copy_export_log")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tphase\tstatus\tmessage\terrors\n" +
                                         "\tnull\twait_to_run\tstarted\tqueued\t0\n" +
                                         "\tnull\twait_to_run\tfinished\t\t0\n" +
                                         "\tnull\tpopulating_data_to_temp_table\tstarted\t\t0\n" +
@@ -733,16 +776,22 @@ public class CopyExportTest extends AbstractCairoTest {
                                         "\tnull\tmove_files\tfinished\t\t0\n" +
                                         "\tnull\tdropping_temp_table\tstarted\t\t0\n" +
                                         "\tnull\tdropping_temp_table\tfinished\t\t0\n" +
-                                        exportRoot + File.separator + "test_table" + File.separator + "\t2\tsuccess\tfinished\t\t0\n",
-                                "SELECT export_path, num_exported_files,phase,status,message,errors FROM sys.copy_export_log");
+                                        exportRoot + File.separator + "test_table" + File.separator + "\t2\tsuccess\tfinished\t\t0\n");
                         // Verify count and sample data
-                        assertSql("""
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "test_table" + File.separator + "2023-01.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         ts\tx
                                         2023-01-01T10:00:00.000000Z\t1
                                         2023-01-02T10:00:00.000000Z\t2
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "test_table" + File.separator + "2023-01.parquet')");
-                        assertSql("""
+                                        """);
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "test_table" + File.separator + "2023-02.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         ts\tx
                                         2023-02-01T10:00:00.000000Z\t3
                                         2023-02-02T10:00:00.000000Z\t4
@@ -770,9 +819,11 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                    exportRoot + File.separator + "test_table" + File.separator + "\t2\tfinished\n",
-                            "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"));
+                    assertEventually(() -> assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("export_path\tnum_exported_files\tstatus\n" +
+                                    exportRoot + File.separator + "test_table" + File.separator + "\t2\tfinished\n"));
             testCopyExport(stmt, test);
         });
     }
@@ -787,11 +838,13 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> assertSql("""
+                    assertEventually(() -> assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     export_path\tnum_exported_files\tstatus
                                     \t0\tfinished
-                                    """,
-                            "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"));
+                                    """));
 
             testCopyExport(stmt, test);
         });
@@ -813,10 +866,16 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\tmessage\n" +
-                                        exportRoot + File.separator + "test_table" + File.separator + "\t2\tfinished\t\n",
-                                "SELECT export_path, num_exported_files, status, message FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status, message FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\tmessage\n" +
+                                        exportRoot + File.separator + "test_table" + File.separator + "\t2\tfinished\t\n");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "test_table" + File.separator + "2020-01-01.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         ts\tx
                                         2020-01-01T00:00:00.000000Z\t0
                                         2020-01-01T00:00:01.000000Z\t10
@@ -849,21 +908,29 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output_large.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output_large.parquet" + "\t1\tfinished\n");
                         // Verify count and sample data
-                        assertSql("count\n10000\n",
-                                "select count(*) from read_parquet('" + exportRoot + File.separator + "output_large.parquet')");
-                        assertSql("id\tvalue\n0\tvalue0\n",
-                                "select * from read_parquet('" + exportRoot + File.separator + "output_large.parquet') where id = 0");
-                        assertSql("id\tvalue\n999\tvalue999\n",
-                                "select * from read_parquet('" + exportRoot + File.separator + "output_large.parquet') where id = 999");
-                        assertSql("""
+                        assertQuery("select count(*) from read_parquet('" + exportRoot + File.separator + "output_large.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("count\n10000\n");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output_large.parquet') where id = 0")
+                                .noLeakCheck()
+                                .returns("id\tvalue\n0\tvalue0\n");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output_large.parquet') where id = 999")
+                                .noLeakCheck()
+                                .returns("id\tvalue\n999\tvalue999\n");
+                        assertQuery("select path, diskSizeHuman from export_files()  order by path")
+                                .noLeakCheck()
+                                .returns("""
                                         path\tdiskSizeHuman
-                                        output_large.parquet\t122.7 KiB
-                                        """,
-                                "select path, diskSizeHuman from export_files()  order by path");
+                                        output_large.parquet\t126.2 KiB
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -900,15 +967,24 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "price_1h" + File.separator + "\t2\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "price_1h" + File.separator + "\t2\tfinished\n");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "price_1h" + File.separator + "2023-09.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         sym\tprice\tts
                                         gbpusd\t1.323\t2023-09-10T12:00:00.000000000Z
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "price_1h" + File.separator + "2023-09.parquet')");
-                        assertSql("""
+                                        """);
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "price_1h" + File.separator + "2023-11.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         sym\tprice\tts
                                         jpyusd\t1.321\t2023-11-10T12:00:00.000000000Z
                                         """,
@@ -925,83 +1001,56 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyParquetSyntaxErrorInvalidCompressionLevel() throws Exception {
-        assertException(
-                "copy test_table to 'output' with format parquet compression_level 'invalid'",
-                66,
-                "found [tok=''invalid'', len=9] bad integer"
-        );
+        assertQuery("copy test_table to 'output' with format parquet compression_level 'invalid'")
+                .fails(66, "found [tok=''invalid'', len=9] bad integer");
     }
 
     @Test
     public void testCopyParquetSyntaxErrorInvalidDataPageSize() throws Exception {
-        assertException(
-                "copy test_table to 'output' with format parquet data_page_size 'invalid'",
-                63,
-                "found [tok=''invalid'', len=9] bad integer"
-        );
+        assertQuery("copy test_table to 'output' with format parquet data_page_size 'invalid'")
+                .fails(63, "found [tok=''invalid'', len=9] bad integer");
     }
 
     @Test
     public void testCopyParquetSyntaxErrorInvalidFormat() throws Exception {
-        assertException(
-                "copy test_table to 'output' with format invalid",
-                40,
-                "unsupported format, only 'parquet' is supported"
-        );
+        assertQuery("copy test_table to 'output' with format invalid")
+                .fails(40, "unsupported format, only 'parquet' is supported");
     }
 
     @Test
     public void testCopyParquetSyntaxErrorInvalidOptionName() throws Exception {
-        assertException(
-                "copy test_table to 'output' with format parquet invalid_option 'value'",
-                48,
-                "unrecognised option [option=invalid_option]"
-        );
+        assertQuery("copy test_table to 'output' with format parquet invalid_option 'value'")
+                .fails(48, "unrecognised option [option=invalid_option]");
     }
 
     @Test
     public void testCopyParquetSyntaxErrorInvalidParquetVersion() throws Exception {
-        assertException(
-                "copy test_table to 'output' with format parquet parquet_version 'invalid'",
-                64,
-                "found [tok=''invalid'', len=9] bad integer"
-        );
+        assertQuery("copy test_table to 'output' with format parquet parquet_version 'invalid'")
+                .fails(64, "found [tok=''invalid'', len=9] bad integer");
     }
 
     @Test
     public void testCopyParquetSyntaxErrorInvalidRowGroupSize() throws Exception {
-        assertException(
-                "copy test_table to 'output' with format parquet row_group_size 'invalid'",
-                63,
-                "found [tok=''invalid'', len=9] bad integer"
-        );
+        assertQuery("copy test_table to 'output' with format parquet row_group_size 'invalid'")
+                .fails(63, "found [tok=''invalid'', len=9] bad integer");
     }
 
     @Test
     public void testCopyParquetSyntaxErrorInvalidStatisticsValue() throws Exception {
-        assertException(
-                "copy test_table to 'output' with format parquet statistics_enabled 'invalid'",
-                67,
-                "unexpected token ['invalid']"
-        );
+        assertQuery("copy test_table to 'output' with format parquet statistics_enabled 'invalid'")
+                .fails(67, "unexpected token ['invalid']");
     }
 
     @Test
     public void testCopyParquetSyntaxErrorMissingFormat() throws Exception {
-        assertException(
-                "copy test_table to 'output' with parquet",
-                33,
-                "unrecognised option [option=parquet]"
-        );
+        assertQuery("copy test_table to 'output' with parquet")
+                .fails(33, "unrecognised option [option=parquet]");
     }
 
     @Test
     public void testCopyParquetSyntaxErrorMissingOptionValue() throws Exception {
-        assertException(
-                "copy test_table to 'output' with format parquet compression_codec unknown",
-                66,
-                "invalid compression codec[unknown], expected one of: uncompressed, snappy, gzip, brotli, zstd, lz4_raw"
-        );
+        assertQuery("copy test_table to 'output' with format parquet compression_codec unknown")
+                .fails(66, "invalid compression codec[unknown], expected one of: uncompressed, snappy, gzip, brotli, zstd, lz4_raw");
     }
 
     @Test
@@ -1031,15 +1080,20 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output_all_types.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output_all_types.parquet" + "\t1\tfinished\n");
                         // Verify all data types are preserved correctly
-                        assertSql("""
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output_all_types" + ".parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         bool_col\tbyte_col\tshort_col\tint_col\tlong_col\tfloat_col\tdouble_col\tstring_col\tsymbol_col\tt_ns\td_array\tts
                                         true\t1\t100\t1000\t10000\t1.5\t2.5\ttest\tsym1\t2023-01-01T10:00:00.123456789Z\t[1.0,2.0,3.0]\t2023-01-01T10:00:00.000000Z
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "output_all_types" + ".parquet')");
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -1074,13 +1128,19 @@ public class CopyExportTest extends AbstractCairoTest {
             assertTrue(exportFileExists("async_types"));
 
             String query = "select status from \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" limit -1";
-            assertSql("status\nfinished\n", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("status\nfinished\n");
 
-            assertSql("""
+            assertQuery("select * from read_parquet('" + exportRoot + File.separator + "async_types" + ".parquet')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             bool_col\tbyte_col\tshort_col\tint_col\tlong_col\tfloat_col\tdouble_col\tstring_col\tsymbol_col\tts
                             true\t42\t1000\t100000\t1000000\t3.14\t2.718\thello world\tsymbol1\t2023-06-15T14:30:00.000000Z
-                            """,
-                    "select * from read_parquet('" + exportRoot + File.separator + "async_types" + ".parquet')");
+                            """);
         };
 
         testCopyExport(statement, test);
@@ -1106,14 +1166,22 @@ public class CopyExportTest extends AbstractCairoTest {
             assertTrue(exportFileExists("async_large"));
 
             String query = "select status from " + configuration.getSystemTableNamePrefix() + "copy_export_log limit -1";
-            assertSql("status\nfinished\n", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("status\nfinished\n");
 
-            assertSql("count\n500\n",
-                    "select count(*) from read_parquet('" + exportRoot + File.separator + "async_large" + ".parquet')");
-            assertSql("id\tdata\n0\tdata0\n",
-                    "select * from read_parquet('" + exportRoot + File.separator + "async_large" + ".parquet') where id = 0");
-            assertSql("id\tdata\n499\tdata499\n",
-                    "select * from read_parquet('" + exportRoot + File.separator + "async_large" + ".parquet') where id = 499");
+            assertQuery("select count(*) from read_parquet('" + exportRoot + File.separator + "async_large" + ".parquet')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n500\n");
+            assertQuery("select * from read_parquet('" + exportRoot + File.separator + "async_large" + ".parquet') where id = 0")
+                    .noLeakCheck()
+                    .returns("id\tdata\n0\tdata0\n");
+            assertQuery("select * from read_parquet('" + exportRoot + File.separator + "async_large" + ".parquet') where id = 499")
+                    .noLeakCheck()
+                    .returns("id\tdata\n499\tdata499\n");
         };
 
         testCopyExport(statement, test);
@@ -1134,15 +1202,20 @@ public class CopyExportTest extends AbstractCairoTest {
             assertTrue(exportFileExists("async_output1"));
 
             String query = "select status from \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" limit -1";
-            assertSql("status\nfinished\n", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("status\nfinished\n");
 
-            assertSql("""
+            assertQuery("select * from read_parquet('" + exportRoot + File.separator + "async_output1" + ".parquet') order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tname\tvalue
                             1\talpha\t1.1
                             2\tbeta\t2.2
                             3\tgamma\t3.3
-                            """,
-                    "select * from read_parquet('" + exportRoot + File.separator + "async_output1" + ".parquet') order by id");
+                            """);
         };
 
         testCopyExport(statement, test);
@@ -1167,16 +1240,21 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output_complex.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output_complex.parquet" + "\t1\tfinished\n");
                         // Verify complex query results
-                        assertSql("""
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output_complex" + ".parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("order_date")
+                                .returns("""
                                         id\tname\tamount\torder_date
                                         1\tJohn\t100.5\t2023-01-01T10:00:00.000000Z
                                         2\tJane\t200.75\t2023-01-02T11:00:00.000000Z
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "output_complex" + ".parquet')");
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -1194,17 +1272,21 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output_nulls.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output_nulls.parquet" + "\t1\tfinished\n");
                         // Verify null values are handled correctly
-                        assertSql("""
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output_nulls" + ".parquet') order by x")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         x\ty\tz
                                         null\t\tnull
                                         1\thello\t1.5
                                         3\tworld\t3.5
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "output_nulls" + ".parquet') order by x");
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -1222,16 +1304,20 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output_special.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output_special.parquet" + "\t1\tfinished\n");
                         // Verify special characters are preserved
-                        assertSql("""
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output_special" + ".parquet') order by x")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         x\ty
                                         1\thello\\nworld
                                         2\ttab\\there
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "output_special" + ".parquet') order by x");
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -1249,20 +1335,25 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "❤️🍺.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "❤️🍺.parquet" + "\t1\tfinished\n");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "❤️🍺" + ".parquet') order by x")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         x\ty
                                         1\thello\\nworld11
                                         2\ttab\\there
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "❤️🍺" + ".parquet') order by x");
-                        assertSql("""
+                                        """);
+                        assertQuery("select path, diskSizeHuman from export_files()  order by path")
+                                .noLeakCheck()
+                                .returns("""
                                         path\tdiskSizeHuman
-                                        ❤️🍺.parquet\t639.0 B
-                                        """,
-                                "select path, diskSizeHuman from export_files()  order by path");
+                                        ❤️🍺.parquet\t697.0 B
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -1307,11 +1398,11 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        parquetPath + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n");
                         assertParquetMatchesQuery(query, parquetPath);
                         ParquetTestUtils.assertColumnsUseDictionaryEncoding(
                                 parquetPath,
@@ -1364,11 +1455,11 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        parquetPath + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n");
                         assertParquetMatchesQuery(query, parquetPath);
                         ParquetTestUtils.assertColumnsUseDictionaryEncoding(
                                 parquetPath,
@@ -1444,11 +1535,11 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        parquetPath + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n");
                         assertParquetMatchesQuery(query, parquetPath);
                         // Output column order: id, metric, ts, id1, total, ts1.
                         // metric is column 1 and total is column 4.
@@ -1500,11 +1591,11 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        parquetPath + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n");
                         // Source col 0 (metric) must still be dict-encoded despite the memoizer wrap.
                         ParquetTestUtils.assertColumnsUseDictionaryEncoding(
                                 parquetPath, configuration.getFilesFacade(), 0
@@ -1557,11 +1648,11 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        parquetPath + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n");
                         // Col 0 (metric) is a pass-through through both nested VRCFs and
                         // must retain its RLE_DICTIONARY override.
                         ParquetTestUtils.assertColumnsUseDictionaryEncoding(
@@ -1611,11 +1702,11 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        parquetPath + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n");
                         assertParquetMatchesQuery(query, parquetPath);
 
                         // Col 0 (label, SYMBOL->STRING) is type-changed; col 2 (computed_label)
@@ -1642,14 +1733,20 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable test = () ->
                     assertEventually(
                             () -> {
-                                assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output3.parquet" + "\t1\tfinished\n", "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                                assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                        .noLeakCheck()
+                                        .expectSize()
+                                        .returns("export_path\tnum_exported_files\tstatus\n" +
+                                                exportRoot + File.separator + "output3.parquet" + "\t1\tfinished\n");
                                 // Verify only filtered data was exported
-                                assertSql("""
-                                        id\tvalue
-                                        2\t2.5
-                                        3\t3.5
-                                        """, "select * from read_parquet('" + exportRoot + File.separator + "output3" + ".parquet') order by id");
+                                assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output3" + ".parquet') order by id")
+                                        .noLeakCheck()
+                                        .expectSize()
+                                        .returns("""
+                                                id\tvalue
+                                                2\t2.5
+                                                3\t3.5
+                                                """);
                             }
                     );
 
@@ -1697,21 +1794,22 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "vc_output.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "vc_output.parquet\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_output.parquet') ORDER BY id")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         id\tvc
                                         1\thello
                                         2\t
                                         3\t
                                         4\tcafé ☕
                                         5\tworld
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_output.parquet') ORDER BY id"
-                        );
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -1732,19 +1830,20 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "arith_output.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "arith_output.parquet\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "arith_output.parquet') ORDER BY x_plus")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         x_plus\ty_doubled\tname
                                         11\t3.0\ta
                                         21\t5.0\tb
                                         31\t7.0\tc
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "arith_output.parquet') ORDER BY x_plus"
-                        );
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -1773,23 +1872,27 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "bind_output" + File.separator + "\t2\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "bind_output" + File.separator + "\t2\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "bind_output" + File.separator + "2024-01-01.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         x\tts
                                         1\t2024-01-01T00:00:00.000000Z
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bind_output" + File.separator + "2024-01-01.parquet')"
-                        );
-                        assertSql("""
+                                        """);
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "bind_output" + File.separator + "2024-01-02.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         x\tts
                                         2\t2024-01-02T00:00:00.000000Z
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bind_output" + File.separator + "2024-01-02.parquet')"
-                        );
+                                        """);
                         Assert.assertFalse("excluded partition should not exist",
                                 exportFileExists("bind_output" + File.separator + "2024-01-03"));
                     });
@@ -1820,18 +1923,19 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "bind_streaming.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "bind_streaming.parquet\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "bind_streaming.parquet') ORDER BY x")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         x\tts
                                         1\t2024-01-01T00:00:00.000000Z
                                         2\t2024-01-02T00:00:00.000000Z
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bind_streaming.parquet') ORDER BY x"
-                        );
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -1857,19 +1961,20 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "cast_output.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "cast_output.parquet\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "cast_output.parquet') ORDER BY x_int")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         x_int\ty_float\tts
                                         100\t1.5\t2024-01-01T00:00:00.000000Z
                                         200\t2.5\t2024-01-02T00:00:00.000000Z
                                         300\t3.5\t2024-01-03T00:00:00.000000Z
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "cast_output.parquet') ORDER BY x_int"
-                        );
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -1895,19 +2000,20 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "mixed_output.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "mixed_output.parquet\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "mixed_output.parquet') ORDER BY x")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         x\tcombined\tname\tts
                                         1\t101\talpha\t2024-01-01T00:00:00.000000Z
                                         2\t202\tbeta\t2024-01-02T00:00:00.000000Z
                                         3\t303\tgamma\t2024-01-03T00:00:00.000000Z
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "mixed_output.parquet') ORDER BY x"
-                        );
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -1936,26 +2042,29 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "desc_comp_output.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("count\n100\n",
-                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "desc_comp_output.parquet')");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "desc_comp_output.parquet\t1\tfinished\n");
+                        assertQuery("SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "desc_comp_output.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("count\n100\n");
                         // Verify computed column values at boundaries
-                        assertSql("""
+                        assertQuery("SELECT cx, dbl_col FROM read_parquet('" + exportRoot + File.separator + "desc_comp_output.parquet') WHERE cx = 2")
+                                .noLeakCheck()
+                                .returns("""
                                         cx\tdbl_col
                                         2\t2.0
-                                        """,
-                                "SELECT cx, dbl_col FROM read_parquet('" + exportRoot + File.separator + "desc_comp_output.parquet') WHERE cx = 2"
-                        );
-                        assertSql("""
+                                        """);
+                        assertQuery("SELECT cx, dbl_col FROM read_parquet('" + exportRoot + File.separator + "desc_comp_output.parquet') WHERE cx = 101")
+                                .noLeakCheck()
+                                .returns("""
                                         cx\tdbl_col
                                         101\t200.0
-                                        """,
-                                "SELECT cx, dbl_col FROM read_parquet('" + exportRoot + File.separator + "desc_comp_output.parquet') WHERE cx = 101"
-                        );
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -1983,26 +2092,29 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "pfb_rg_output.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("count\n5000\n",
-                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "pfb_rg_output.parquet')");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "pfb_rg_output.parquet\t1\tfinished\n");
+                        assertQuery("SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "pfb_rg_output.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("count\n5000\n");
                         // Verify computed column values including the STRING column
-                        assertSql("""
+                        assertQuery("SELECT computed_x, str_x, dbl_col FROM read_parquet('" + exportRoot + File.separator + "pfb_rg_output.parquet') WHERE computed_x = 2")
+                                .noLeakCheck()
+                                .returns("""
                                         computed_x\tstr_x\tdbl_col
                                         2\t1\t2.0
-                                        """,
-                                "SELECT computed_x, str_x, dbl_col FROM read_parquet('" + exportRoot + File.separator + "pfb_rg_output.parquet') WHERE computed_x = 2"
-                        );
-                        assertSql("""
+                                        """);
+                        assertQuery("SELECT computed_x, str_x, dbl_col FROM read_parquet('" + exportRoot + File.separator + "pfb_rg_output.parquet') WHERE computed_x = 5001")
+                                .noLeakCheck()
+                                .returns("""
                                         computed_x\tstr_x\tdbl_col
                                         5001\t5000\t10000.0
-                                        """,
-                                "SELECT computed_x, str_x, dbl_col FROM read_parquet('" + exportRoot + File.separator + "pfb_rg_output.parquet') WHERE computed_x = 5001"
-                        );
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -2023,19 +2135,20 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "null_output.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "null_output.parquet\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "null_output.parquet') ORDER BY x_long")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         x_long\ty_float\tname
                                         null\tnull\t
                                         1\t1.5\ta
                                         3\t3.5\tc
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "null_output.parquet') ORDER BY x_long"
-                        );
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -2064,23 +2177,31 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "null_rg_output.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("count\n1000\n",
-                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "null_rg_output.parquet')");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "null_rg_output.parquet\t1\tfinished\n");
+                        assertQuery("SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "null_rg_output.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("count\n1000\n");
                         // Verify NULL count matches original
-                        assertSql("null_count\n333\n",
-                                "SELECT count(*) AS null_count FROM read_parquet('" + exportRoot + File.separator + "null_rg_output.parquet') WHERE val_long IS NULL");
+                        assertQuery("SELECT count(*) AS null_count FROM read_parquet('" + exportRoot + File.separator + "null_rg_output.parquet') WHERE val_long IS NULL")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("null_count\n333\n");
                         // Verify non-NULL values preserved correctly
-                        assertSql("""
+                        assertQuery("SELECT val_long FROM read_parquet('" + exportRoot + File.separator + "null_rg_output.parquet') WHERE val_long IS NOT NULL ORDER BY val_long LIMIT 2")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         val_long
                                         1
                                         2
-                                        """,
-                                "SELECT val_long FROM read_parquet('" + exportRoot + File.separator + "null_rg_output.parquet') WHERE val_long IS NOT NULL ORDER BY val_long LIMIT 2");
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -2103,19 +2224,20 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "comp_sym_output.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "comp_sym_output.parquet\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "comp_sym_output.parquet') ORDER BY x")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         x\tsym_name
                                         1\thello
                                         2\tworld
                                         3\ttest
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "comp_sym_output.parquet') ORDER BY x"
-                        );
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -2147,13 +2269,16 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "cb_rg_output.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("count\n5000\n",
-                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "cb_rg_output.parquet')");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "cb_rg_output.parquet\t1\tfinished\n");
+                        assertQuery("SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "cb_rg_output.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("count\n5000\n");
                     });
 
             testCopyExport(stmt, test);
@@ -2183,16 +2308,22 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "cb_null_rg_output.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("count\n500\n",
-                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "cb_null_rg_output.parquet')");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "cb_null_rg_output.parquet\t1\tfinished\n");
+                        assertQuery("SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "cb_null_rg_output.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("count\n500\n");
                         // Every 4th value of a is NULL: 50 rows * 10 = 500, 12 NULLs per set of 50 * 10 = 120
-                        assertSql("null_count\n120\n",
-                                "SELECT count(*) AS null_count FROM read_parquet('" + exportRoot + File.separator + "cb_null_rg_output.parquet') WHERE a IS NULL");
+                        assertQuery("SELECT count(*) AS null_count FROM read_parquet('" + exportRoot + File.separator + "cb_null_rg_output.parquet') WHERE a IS NULL")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("null_count\n120\n");
                     });
 
             testCopyExport(stmt, test);
@@ -2213,17 +2344,19 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "empty_output.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "empty_output.parquet\t1\tfinished\n");
+                        assertQuery("SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "empty_output.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("""
                                         count
                                         0
-                                        """,
-                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "empty_output.parquet')"
-                        );
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -2247,19 +2380,20 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "full_mat_output.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "full_mat_output.parquet\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "full_mat_output.parquet') ORDER BY x")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         x\tlabel
                                         1\talpha
                                         2\tbeta
                                         3\tgamma
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "full_mat_output.parquet') ORDER BY x"
-                        );
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -2281,19 +2415,20 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "sym_output.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "sym_output.parquet\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "sym_output.parquet') ORDER BY x")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         x\tsym\tname
                                         1\tSYM_A\tfirst
                                         2\tSYM_B\tsecond
                                         3\tSYM_A\tthird
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "sym_output.parquet') ORDER BY x"
-                        );
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -2315,13 +2450,19 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable test = () ->
                     assertEventually(
                             () -> {
-                                assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "pivot_output.parquet" + "\t1\tfinished\n", "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                                assertSql("""
-                                        empid\tJAN\tFEB\tMAR
-                                        1\t10400\t8000\t11000
-                                        2\t39500\t90700\t12000
-                                        """, "select * from read_parquet('" + exportRoot + File.separator + "pivot_output" + ".parquet') order by empid");
+                                assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                        .noLeakCheck()
+                                        .expectSize()
+                                        .returns("export_path\tnum_exported_files\tstatus\n" +
+                                                exportRoot + File.separator + "pivot_output.parquet" + "\t1\tfinished\n");
+                                assertQuery("select * from read_parquet('" + exportRoot + File.separator + "pivot_output" + ".parquet') order by empid")
+                                        .noLeakCheck()
+                                        .expectSize()
+                                        .returns("""
+                                                empid\tJAN\tFEB\tMAR
+                                                1\t10400\t8000\t11000
+                                                2\t39500\t90700\t12000
+                                                """);
                             }
                     );
 
@@ -2364,13 +2505,13 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                """
+                        assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         status
                                         failed
-                                        """,
-                                "SELECT status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
+                                        """);
 
                         // Verify no tmp_ directories remain in export root
                         File exportDir = new File(exportRoot);
@@ -2411,13 +2552,13 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                """
+                        assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         status
                                         failed
-                                        """,
-                                "SELECT status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
+                                        """);
 
                         // Verify no tmp_ directories remain in export root
                         File exportDir = new File(exportRoot);
@@ -2464,24 +2605,28 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "str_inl_out.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "str_inl_out.parquet\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "str_inl_out.parquet') ORDER BY ts")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         ts\tid\ts
                                         2024-01-01T00:00:00.000000Z\t1\talpha
                                         2024-01-01T01:00:00.000000Z\t2\t
                                         2024-01-01T02:00:00.000000Z\t3\tbravo
                                         2024-01-01T03:00:00.000000Z\t4\tlonger string than nine bytes
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "str_inl_out.parquet') ORDER BY ts"
-                        );
+                                        """);
                         // Verify the NULL row is actually NULL, not an empty string.
-                        assertSql("count\n1\n",
-                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "str_inl_out.parquet') WHERE s IS NULL"
-                        );
+                        assertQuery("SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "str_inl_out.parquet') WHERE s IS NULL")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("count\n1\n");
                     });
 
             testCopyExport(stmt, test);
@@ -2499,16 +2644,20 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output1.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output1.parquet" + "\t1\tfinished\n");
                         // Verify exported data can be read back and matches original
-                        assertSql("""
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output1" + ".parquet') order by x")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         x\ty\tz
                                         1\t100\thello
                                         2\t200\tworld
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "output1" + ".parquet') order by x");
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -2528,15 +2677,20 @@ public class CopyExportTest extends AbstractCairoTest {
         CopyExportRunnable test = () -> assertEventually(() -> {
             // Verify export completed successfully
             String query = "select status from \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" limit -1";
-            assertSql("status\nfinished\n", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("status\nfinished\n");
 
             // Verify exported data can be read back and matches original
-            assertSql("""
+            assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output1" + ".parquet') order by x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             x\ty\tz
                             1\t100\thello
                             2\t200\tworld
-                            """,
-                    "select * from read_parquet('" + exportRoot + File.separator + "output1" + ".parquet') order by x");
+                            """);
         });
         testCopyExport(statement, test);
     }
@@ -2552,16 +2706,20 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output2.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output2.parquet" + "\t1\tfinished\n");
                         // Verify exported data
-                        assertSql("""
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output2" + ".parquet') order by x")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         x\ty
                                         1\t100
                                         2\t200
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "output2" + ".parquet') order by x");
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -2572,11 +2730,8 @@ public class CopyExportTest extends AbstractCairoTest {
     public void testCopyUseInsert() throws Exception {
         assertMemoryLeak(() -> {
             engine.execute("CREATE TABLE reject_non_select_test AS (SELECT x FROM long_sequence(2))", sqlExecutionContext);
-            assertException(
-                    "copy (INSERT INTO reject_non_select_test SELECT * FROM reject_non_select_test) to 'test_table' with format parquet;",
-                    6,
-                    "table and column names that are SQL keywords have to be enclosed in double quotes, such as"
-            );
+            assertQuery("copy (INSERT INTO reject_non_select_test SELECT * FROM reject_non_select_test) to 'test_table' with format parquet;")
+                    .fails(6, "table and column names that are SQL keywords have to be enclosed in double quotes, such as");
         });
     }
 
@@ -2610,19 +2765,21 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "vc_hyb_out.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "vc_hyb_out.parquet\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_hyb_out.parquet') ORDER BY ts")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         ts\tid_plus\tvc
                                         2024-01-01T00:00:00.000000Z\t11\talpha
                                         2024-01-01T01:00:00.000000Z\t12\tbravo
                                         2024-01-01T02:00:00.000000Z\t13\tcharlie
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_hyb_out.parquet') ORDER BY ts"
-                        );
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -2660,32 +2817,38 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "vc_mp_out" + File.separator + "\t3\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "vc_mp_out" + File.separator + "\t3\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_mp_out" + File.separator + "2024-01-01.parquet') ORDER BY ts")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         ts\tid\tvc
                                         2024-01-01T00:00:00.000000Z\t1\talpha
                                         2024-01-01T12:00:00.000000Z\t2\tbravo
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_mp_out" + File.separator + "2024-01-01.parquet') ORDER BY ts"
-                        );
-                        assertSql("""
+                                        """);
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_mp_out" + File.separator + "2024-01-02.parquet') ORDER BY ts")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         ts\tid\tvc
                                         2024-01-02T00:00:00.000000Z\t3\tcharlie
                                         2024-01-02T12:00:00.000000Z\t4\tdelta
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_mp_out" + File.separator + "2024-01-02.parquet') ORDER BY ts"
-                        );
-                        assertSql("""
+                                        """);
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_mp_out" + File.separator + "2024-01-03.parquet') ORDER BY ts")
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .expectSize()
+                                .returns("""
                                         ts\tid\tvc
                                         2024-01-03T00:00:00.000000Z\t5\techo
                                         2024-01-03T12:00:00.000000Z\t6\tfoxtrot
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_mp_out" + File.separator + "2024-01-03.parquet') ORDER BY ts"
-                        );
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -2721,19 +2884,21 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "vc_inl_out.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "vc_inl_out.parquet\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_inl_out.parquet') ORDER BY ts")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         ts\tid\tvc
                                         2024-01-01T00:00:00.000000Z\t1\talpha
                                         2024-01-01T01:00:00.000000Z\t2\tbravo
                                         2024-01-01T02:00:00.000000Z\t3\tcharlie
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_inl_out.parquet') ORDER BY ts"
-                        );
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -2770,28 +2935,34 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "vc_inl_nulls_out.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "vc_inl_nulls_out.parquet\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_inl_nulls_out.parquet') ORDER BY ts")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         ts\tid\tvc
                                         2024-01-01T00:00:00.000000Z\t1\talpha
                                         2024-01-01T01:00:00.000000Z\t2\t
                                         2024-01-01T02:00:00.000000Z\t3\tbravo
                                         2024-01-01T03:00:00.000000Z\t4\t
                                         2024-01-01T04:00:00.000000Z\t5\tcharlie
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_inl_nulls_out.parquet') ORDER BY ts"
-                        );
+                                        """);
                         // The two NULL rows must be encoded as NULL, not as empty strings.
-                        assertSql("count\n2\n",
-                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "vc_inl_nulls_out.parquet') WHERE vc IS NULL"
-                        );
-                        assertSql("count\n3\n",
-                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "vc_inl_nulls_out.parquet') WHERE vc IS NOT NULL"
-                        );
+                        assertQuery("SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "vc_inl_nulls_out.parquet') WHERE vc IS NULL")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("count\n2\n");
+                        assertQuery("SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "vc_inl_nulls_out.parquet') WHERE vc IS NOT NULL")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("count\n3\n");
                     });
 
             testCopyExport(stmt, test);
@@ -2827,20 +2998,22 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "vc_mixed_out.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "vc_mixed_out.parquet\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_mixed_out.parquet') ORDER BY ts")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         ts\tid\tvc
                                         2024-01-01T00:00:00.000000Z\t1\tshort
                                         2024-01-01T01:00:00.000000Z\t2\tthis is definitely longer than nine bytes
                                         2024-01-01T02:00:00.000000Z\t3\ttiny
                                         2024-01-01T03:00:00.000000Z\t4\tanother spilled value bigger than nine bytes
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_mixed_out.parquet') ORDER BY ts"
-                        );
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -2858,15 +3031,19 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "bloom_cols.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "bloom_cols.parquet" + "\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "bloom_cols.parquet') ORDER BY x")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         x\ty\tz
                                         1\thello\t1.5
                                         2\tworld\t2.5
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bloom_cols.parquet') ORDER BY x");
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -2884,15 +3061,19 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "bloom_both.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "bloom_both.parquet" + "\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "bloom_both.parquet') ORDER BY x")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         x\ty\tz
                                         1\thello\t1.5
                                         2\tworld\t2.5
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bloom_both.parquet') ORDER BY x");
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -2910,11 +3091,15 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "bloom_fpp.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("x\ty\n1\ttest\n",
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bloom_fpp.parquet')");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "bloom_fpp.parquet" + "\t1\tfinished\n");
+                        assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "bloom_fpp.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("x\ty\n1\ttest\n");
                     });
 
             testCopyExport(stmt, test);
@@ -2926,11 +3111,8 @@ public class CopyExportTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test_table (x INT, y STRING)");
             execute("INSERT INTO test_table VALUES (1, 'test')");
-            assertException(
-                    "copy test_table to 'bloom_bad_col' with format parquet bloom_filter_columns 'x,nonexistent'",
-                    79,
-                    "bloom_filter_columns contains non-existent column: nonexistent"
-            );
+            assertQuery("copy test_table to 'bloom_bad_col' with format parquet bloom_filter_columns 'x,nonexistent'")
+                    .fails(79, "bloom_filter_columns contains non-existent column: nonexistent");
         });
     }
 
@@ -2945,12 +3127,16 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output14.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output14.parquet" + "\t1\tfinished\n");
                         // Verify case-insensitive options work
-                        assertSql("x\ty\n1\ttest\n",
-                                "select * from read_parquet('" + exportRoot + File.separator + "output14" + ".parquet')");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output14" + ".parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("x\ty\n1\ttest\n");
                     });
 
             testCopyExport(stmt, test);
@@ -2968,12 +3154,16 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output4.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output4.parquet" + "\t1\tfinished\n");
                         // Verify compressed data is readable
-                        assertSql("x\ty\n1\ttest\n",
-                                "select * from read_parquet('" + exportRoot + File.separator + "output4" + ".parquet')");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output4" + ".parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("x\ty\n1\ttest\n");
                     });
 
             testCopyExport(stmt, test);
@@ -2991,12 +3181,16 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output5.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output5.parquet" + "\t1\tfinished\n");
                         // Verify data with compression level
-                        assertSql("x\ty\n1\ttest\n",
-                                "select * from read_parquet('" + exportRoot + File.separator + "output5" + ".parquet')");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output5" + ".parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("x\ty\n1\ttest\n");
                     });
 
             testCopyExport(stmt, test);
@@ -3014,12 +3208,16 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output7.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output7.parquet" + "\t1\tfinished\n");
                         // Verify data with custom page size
-                        assertSql("x\ty\n1\ttest\n",
-                                "select * from read_parquet('" + exportRoot + File.separator + "output7" + ".parquet')");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output7" + ".parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("x\ty\n1\ttest\n");
                     });
 
             testCopyExport(stmt, test);
@@ -3039,16 +3237,20 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output13.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output13.parquet" + "\t1\tfinished\n");
                         // Verify data with multiple options
-                        assertSql("""
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output13.parquet" + "') order by x")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         x\ty\tz
                                         1\thello\t1.5
                                         2\tworld\t2.5
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "output13.parquet" + "') order by x");
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -3066,15 +3268,20 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output11.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output11.parquet" + "\t1\tfinished\n");
                         // Verify partitioned data
-                        assertSql("""
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output11.parquet') order by ts")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         ts	x
                                         2023-01-01T10:00:00.000000Z	1
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "output11.parquet') order by ts");
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -3092,17 +3299,22 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "💗❤️.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "💗❤️.parquet" + "\t1\tfinished\n");
                         // Verify data with custom page size
-                        assertSql("x\ty\n1\ttest\n",
-                                "select * from read_parquet('" + exportRoot + File.separator + "💗❤️" + ".parquet')");
-                        assertSql("""
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "💗❤️" + ".parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("x\ty\n1\ttest\n");
+                        assertQuery("select path, diskSizeHuman from export_files()  order by path")
+                                .noLeakCheck()
+                                .returns("""
                                         path\tdiskSizeHuman
-                                        💗❤️.parquet\t543.0 B
-                                        """,
-                                "select path, diskSizeHuman from export_files()  order by path");
+                                        💗❤️.parquet\t601.0 B
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -3129,12 +3341,13 @@ public class CopyExportTest extends AbstractCairoTest {
             };
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> assertSql("export_path\tnum_exported_files\tstatus\n" +
+                    assertEventually(() -> assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" where export_path != null order by export_path, ts")
+                            .noLeakCheck()
+                            .returns("export_path\tnum_exported_files\tstatus\n" +
                                     exportRoot + File.separator + "output10.parquet" + "\t1\tfinished\n" +
                                     exportRoot + File.separator + "output11.parquet" + "\t1\tfinished\n" +
                                     exportRoot + File.separator + "output8.parquet" + "\t1\tfinished\n" +
-                                    exportRoot + File.separator + "output9.parquet" + "\t1\tfinished\n",
-                            "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" where export_path != null order by export_path, ts")
+                                    exportRoot + File.separator + "output9.parquet" + "\t1\tfinished\n")
                     );
             testCopyExport(stmt, test, true, 4);
         });
@@ -3151,12 +3364,16 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output10.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output10.parquet" + "\t1\tfinished\n");
                         // Verify data with specific Parquet version
-                        assertSql("x\ty\n1\ttest\n",
-                                "select * from read_parquet('" + exportRoot + File.separator + "output10" + ".parquet')");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output10" + ".parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("x\ty\n1\ttest\n");
                     });
 
             testCopyExport(stmt, test);
@@ -3174,20 +3391,28 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output11" + File.separator + "\t2\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output11" + File.separator + "\t2\tfinished\n");
                         // Verify partitioned data
-                        assertSql("""
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output11" + File.separator + "2023-01-01.parquet') order by ts")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         ts\tx
                                         2023-01-01T10:00:00.000000Z\t1
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "output11" + File.separator + "2023-01-01.parquet') order by ts");
-                        assertSql("""
+                                        """);
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output11" + File.separator + "2023-01-02.parquet') order by ts")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
                                         ts\tx
                                         2023-01-02T10:00:00.000000Z\t2
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "output11" + File.separator + "2023-01-02.parquet') order by ts");
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -3227,12 +3452,16 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output6.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output6.parquet" + "\t1\tfinished\n");
                         // Verify data with custom row group size
-                        assertSql("x\ty\n1\ttest\n",
-                                "select * from read_parquet('" + exportRoot + File.separator + "output6" + ".parquet')");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output6" + ".parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("x\ty\n1\ttest\n");
                     });
 
             testCopyExport(stmt, test);
@@ -3249,29 +3478,35 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output13.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output13.parquet" + "\t1\tfinished\n");
+                        assertQuery("select path, diskSizeHuman from export_files() order by path")
+                                .noLeakCheck()
+                                .returns("""
                                         path\tdiskSizeHuman
-                                        output13.parquet\t818.0 B
-                                        """,
-                                "select path, diskSizeHuman from export_files() order by path");
+                                        output13.parquet\t905.0 B
+                                        """);
                     });
 
             CopyExportRunnable stmt1 = () -> runAndFetchCopyExportID("copy test_table to 'output14' with format parquet ", sqlExecutionContext);
 
             CopyExportRunnable test1 = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output14.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output14.parquet" + "\t1\tfinished\n");
+                        assertQuery("select path, diskSizeHuman from export_files() order by path")
+                                .noLeakCheck()
+                                .returns("""
                                         path\tdiskSizeHuman
-                                        output13.parquet\t818.0 B
-                                        output14.parquet\t818.0 B
-                                        """,
-                                "select path, diskSizeHuman from export_files() order by path");
+                                        output13.parquet\t905.0 B
+                                        output14.parquet\t905.0 B
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -3280,15 +3515,18 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable stmt2 = () -> runAndFetchCopyExportID("copy test_table to 'output13' with format parquet ", sqlExecutionContext);
             CopyExportRunnable test2 = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output13.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output13.parquet" + "\t1\tfinished\n");
+                        assertQuery("select path, diskSizeHuman from export_files() order by path")
+                                .noLeakCheck()
+                                .returns("""
                                         path\tdiskSizeHuman
-                                        output13.parquet\t865.0 B
-                                        output14.parquet\t818.0 B
-                                        """,
-                                "select path, diskSizeHuman from export_files() order by path");
+                                        output13.parquet\t952.0 B
+                                        output14.parquet\t905.0 B
+                                        """);
                     });
             execute("insert into test_table values (4, 'hello1', 3.5), (5, 'world1', 4.5)");
             testCopyExport(stmt2, test2);
@@ -3296,29 +3534,35 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable stmt3 = () -> runAndFetchCopyExportID("copy test_table to 'output13" + File.separator + "dir1" + File.separator + "dir2' with format parquet ", sqlExecutionContext);
             CopyExportRunnable test3 = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output13" + File.separator + "dir1" + File.separator + "dir2.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("path\tdiskSizeHuman\n" +
-                                        "output13.parquet\t865.0 B\n" +
-                                        "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t865.0 B\n" +
-                                        "output14.parquet\t818.0 B\n",
-                                "select path, diskSizeHuman from export_files() order by path");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output13" + File.separator + "dir1" + File.separator + "dir2.parquet" + "\t1\tfinished\n");
+                        assertQuery("select path, diskSizeHuman from export_files() order by path")
+                                .noLeakCheck()
+                                .returns("path\tdiskSizeHuman\n" +
+                                        "output13.parquet\t952.0 B\n" +
+                                        "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t952.0 B\n" +
+                                        "output14.parquet\t905.0 B\n");
                     });
             testCopyExport(stmt3, test3);
 
             CopyExportRunnable stmt4 = () -> runAndFetchCopyExportID("copy test_table to 'output15" + File.separator + "dir1" + File.separator + "dir2' with format parquet ", sqlExecutionContext);
             CopyExportRunnable test4 = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output15" + File.separator + "dir1" + File.separator + "dir2.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("path\tdiskSizeHuman\n" +
-                                        "output13.parquet\t865.0 B\n" +
-                                        "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t865.0 B\n" +
-                                        "output14.parquet\t818.0 B\n" +
-                                        "output15" + File.separator + "dir1" + File.separator + "dir2.parquet\t865.0 B\n",
-                                "select path, diskSizeHuman from export_files() order by path");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output15" + File.separator + "dir1" + File.separator + "dir2.parquet" + "\t1\tfinished\n");
+                        assertQuery("select path, diskSizeHuman from export_files() order by path")
+                                .noLeakCheck()
+                                .returns("path\tdiskSizeHuman\n" +
+                                        "output13.parquet\t952.0 B\n" +
+                                        "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t952.0 B\n" +
+                                        "output14.parquet\t905.0 B\n" +
+                                        "output15" + File.separator + "dir1" + File.separator + "dir2.parquet\t952.0 B\n");
                     });
             testCopyExport(stmt4, test4);
         });
@@ -3344,12 +3588,13 @@ public class CopyExportTest extends AbstractCairoTest {
             };
 
             CopyExportRunnable test4 = () ->
-                    assertEventually(() -> assertSql("path\tdiskSizeHuman\n" +
-                                    "output13.parquet\t818.0 B\n" +
-                                    "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t866.0 B\n" +
-                                    "output14.parquet\t819.0 B\n" +
-                                    "output15" + File.separator + "dir1" + File.separator + "dir2.parquet\t819.0 B\n",
-                            "select path, diskSizeHuman from export_files() order by path"));
+                    assertEventually(() -> assertQuery("select path, diskSizeHuman from export_files() order by path")
+                            .noLeakCheck()
+                            .returns("path\tdiskSizeHuman\n" +
+                                    "output13.parquet\t905.0 B\n" +
+                                    "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t953.0 B\n" +
+                                    "output14.parquet\t906.0 B\n" +
+                                    "output15" + File.separator + "dir1" + File.separator + "dir2.parquet\t906.0 B\n"));
             testCopyExport(stmt, test4, true, 4);
         });
     }
@@ -3399,14 +3644,18 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output8.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("""
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output8.parquet" + "\t1\tfinished\n");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output8" + ".parquet') LIMIT 1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         x
                                         1
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "output8" + ".parquet') LIMIT 1");
+                                        """);
                     });
 
             testCopyExport(stmt, test, callback);
@@ -3456,11 +3705,15 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output8.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("x\ty\n1\t1\n",
-                                "select * from read_parquet('" + exportRoot + File.separator + "output8" + ".parquet') LIMIT 1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output8.parquet" + "\t1\tfinished\n");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output8" + ".parquet') LIMIT 1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("x\ty\n1\t1\n");
                     });
 
             testCopyExport(stmt, test, callback);
@@ -3498,11 +3751,15 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output8.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("x\ty\n1\ttest\n",
-                                "select * from read_parquet('" + exportRoot + File.separator + "output8" + ".parquet')");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output8.parquet" + "\t1\tfinished\n");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output8" + ".parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("x\ty\n1\ttest\n");
                     });
 
             testCopyExport(() -> {
@@ -3516,11 +3773,8 @@ public class CopyExportTest extends AbstractCairoTest {
             execute("CREATE TABLE test_table (x INT, y LONG)");
             execute("INSERT INTO test_table VALUES (1, 100), (2, 200), (3, 300)");
 
-            assertException(
-                    "COPY test_table TO 'output12' WITH FORMAT PARQUET size_limit 1000",
-                    50,
-                    "size limit is not yet supported"
-            );
+            assertQuery("COPY test_table TO 'output12' WITH FORMAT PARQUET size_limit 1000")
+                    .fails(50, "size limit is not yet supported");
         });
     }
 
@@ -3535,12 +3789,16 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "test_table.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "test_table.parquet" + "\t1\tfinished\n");
                         // Verify data with statistics disabled
-                        assertSql("x\ty\n1\ttest\n",
-                                "select * from read_parquet('" + exportRoot + File.separator + "test_table" + ".parquet')");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "test_table" + ".parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("x\ty\n1\ttest\n");
                     });
 
             testCopyExport(stmt, test);
@@ -3558,12 +3816,16 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output8.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output8.parquet" + "\t1\tfinished\n");
                         // Verify data with statistics enabled
-                        assertSql("x\ty\n1\ttest\n",
-                                "select * from read_parquet('" + exportRoot + File.separator + "output8" + ".parquet')");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output8" + ".parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("x\ty\n1\ttest\n");
                     });
 
             testCopyExport(stmt, test);
@@ -3586,11 +3848,8 @@ public class CopyExportTest extends AbstractCairoTest {
     public void testExportDisabled() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, "");
-            assertException(
-                    "copy test_table to 'output' with format parquet",
-                    28,
-                    "COPY TO is disabled ['cairo.sql.copy.export.root' is not set?]"
-            );
+            assertQuery("copy test_table to 'output' with format parquet")
+                    .fails(28, "COPY TO is disabled ['cairo.sql.copy.export.root' is not set?]");
         });
     }
 
@@ -3614,13 +3873,18 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "batch_test.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "batch_test.parquet" + "\t1\tfinished\n");
 
                         // Verify the file was created with correct row count
-                        assertSql("count\n" + rowCount + "\n",
-                                "select count() from read_parquet('" + exportRoot + File.separator + "batch_test.parquet')");
+                        assertQuery("select count() from read_parquet('" + exportRoot + File.separator + "batch_test.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("count\n" + rowCount + "\n");
                     });
 
             testCopyExport(stmt, test);
@@ -3665,21 +3929,24 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "symbol_export.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "symbol_export.parquet\t1\tfinished\n");
                         // Verify distinct symbol count matches
-                        assertSql("count_distinct\n" + symbolCount + "\n",
-                                "SELECT count_distinct(sym) FROM read_parquet('" + exportRoot + File.separator + "symbol_export.parquet')");
+                        assertQuery("SELECT count_distinct(sym) FROM read_parquet('" + exportRoot + File.separator + "symbol_export.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("count_distinct\n" + symbolCount + "\n");
                         // Verify computed column
-                        assertSql("""
+                        assertQuery("SELECT adjusted_value FROM read_parquet('" + exportRoot + File.separator + "symbol_export.parquet') WHERE sym = 'sym1'")
+                                .noLeakCheck()
+                                .returns("""
                                         adjusted_value
                                         2
-                                        """,
-                                "SELECT adjusted_value FROM read_parquet('" + exportRoot + File.separator + "symbol_export.parquet') WHERE sym = 'sym1'"
-                        );
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -3697,17 +3964,20 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "output1.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output1.parquet" + "\t1\tfinished\n");
                         // Verify exported data can be read back and matches original
-                        assertSql("""
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output1" + ".parquet')")
+                                .noLeakCheck()
+                                .returnsOnce("""
                                         x
                                         1970-01-01T00:00:00.000005Z
                                         1970-01-01T00:00:00.000002Z
                                         1970-01-01T00:00:00.000000Z
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "output1" + ".parquet')");
+                                        """);
                     });
 
             testCopyExport(stmt, test);
@@ -3744,18 +4014,18 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        parquetPath + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n");
 
                         final FilesFacade ff = configuration.getFilesFacade();
                         final Log log = LogFactory.getLog(CopyExportTest.class);
                         long fd = -1;
                         long addr = 0;
                         long fileSize = 0;
-                        try (Path path = new Path(); PartitionDecoder decoder = new PartitionDecoder()) {
+                        try (Path path = new Path(); ParquetFileDecoder decoder = new ParquetFileDecoder()) {
                             path.of(parquetPath).$();
                             fd = TableUtils.openRO(ff, path.$(), log);
                             fileSize = ff.length(fd);
@@ -3798,7 +4068,7 @@ public class CopyExportTest extends AbstractCairoTest {
         return new Thread(() -> {
             try {
                 while (!stop.get()) {
-                    if (job.run(workerId)) {
+                    if (job.run()) {
                         break;
                     }
                     Os.sleep(10);
@@ -3808,14 +4078,6 @@ public class CopyExportTest extends AbstractCairoTest {
                 workCount.countDown();
             }
         });
-    }
-
-    private void assertParquetMatchesQuery(String query, String parquetPath) throws Exception {
-        StringSink expectedSink = new StringSink();
-        StringSink actualSink = new StringSink();
-        TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
-        TestUtils.printSql(engine, sqlExecutionContext, "SELECT * FROM read_parquet('" + parquetPath + "')", actualSink);
-        TestUtils.assertEquals(expectedSink, actualSink);
     }
 
     // Helper methods for copy export operations
@@ -3873,6 +4135,48 @@ public class CopyExportTest extends AbstractCairoTest {
 
     private void assertEventually(TestUtils.EventualCode assertion) throws Exception {
         TestUtils.assertEventually(assertion, 5, exceptionTypesToCatch);
+    }
+
+    private void assertParquetExportOfConvertedColumn(String srcType, String srcValueExpr, String dstType, String expectedReadback) throws Exception {
+        // Seed a WAL table, convert its single partition to parquet, then ALTER the column
+        // type so the parquet partition carries a lazily-converted column. COPY (SELECT *)
+        // forces the DIRECT_PAGE_FRAME export path; read the exported file back via
+        // read_parquet (which reads the file as-is, with no lazy conversion) and compare to
+        // the converted values the normal query path produces.
+        execute("CREATE TABLE pt (s " + srcType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO pt SELECT " + srcValueExpr + " AS s, " +
+                "timestamp_sequence('2024-01-01T00:00:00.000000Z', 600_000_000) AS ts FROM long_sequence(6)");
+        drainWalQueue();
+        execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+        drainWalQueue();
+        execute("ALTER TABLE pt ALTER COLUMN s TYPE " + dstType);
+        drainWalQueue();
+
+        CopyExportRunnable stmt = () ->
+                runAndFetchCopyExportID("COPY (SELECT * FROM pt) TO 'converted_col_export' WITH FORMAT parquet", sqlExecutionContext);
+
+        CopyExportRunnable test = () ->
+                assertEventually(() -> {
+                    assertQuery("SELECT status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" LIMIT -1")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("status\nfinished\n");
+                    assertQuery("SELECT s, ts FROM read_parquet('" + exportRoot + File.separator + "converted_col_export.parquet')")
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns(expectedReadback);
+                });
+
+        testCopyExport(stmt, test);
+    }
+
+    private void assertParquetMatchesQuery(String query, String parquetPath) throws Exception {
+        StringSink expectedSink = new StringSink();
+        StringSink actualSink = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
+        TestUtils.printSql(engine, sqlExecutionContext, "SELECT * FROM read_parquet('" + parquetPath + "')", actualSink);
+        TestUtils.assertEquals(expectedSink, actualSink);
     }
 
     private boolean exportFileExists(String fileName) {

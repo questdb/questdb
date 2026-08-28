@@ -21,12 +21,12 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-#![allow(dead_code)]
 
-use crate::parquet::error::{fmt_err, ParquetErrorReason, ParquetResult};
-use qdb_core::col_type::ColumnType;
-use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
+//! QuestDB-specific parquet footer metadata.
+//!
+//! The types live in the shared `qdb-parquet-meta` crate so any crate can
+//! use them without linking `qdbr`. This module re-exports them under the
+//! historical `crate::parquet::qdb_metadata` path used across qdbr.
 
 pub const QDB_META_KEY: &str = "questdb";
 

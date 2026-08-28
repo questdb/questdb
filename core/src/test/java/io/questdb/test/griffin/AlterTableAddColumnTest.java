@@ -109,8 +109,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             """;
 
-                    assertQueryNoLeakCheck(
-                            isWal
+                    assertQuery("show columns from x")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns(isWal
                                     ? originalColumns
                                     : originalColumns +
                                     "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\ttrue\tfalse\n" +
@@ -195,8 +197,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     execute("alter table x add column mycol int");
                     drainWalQueue();
 
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select c, mycol from x")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     c\tmycol
                                     XYZ\tnull
                                     ABC\tnull
@@ -208,9 +212,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                                     ABC\tnull
                                     \tnull
                                     XYZ\tnull
-                                    """,
-                            "select c, mycol from x"
-                    );
+                                    """);
                 }
         );
     }
@@ -263,8 +265,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     execute("alter table x add \"mycol\" int not null");
                     drainWalQueue();
 
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select c, mycol from x")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     c\tmycol
                                     XYZ\t-2147483648
                                     ABC\t-2147483648
@@ -292,8 +296,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     execute("alter table x add column \"mycol\" int not null");
                     drainWalQueue();
 
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select c, mycol from x")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     c\tmycol
                                     XYZ\t-2147483648
                                     ABC\t-2147483648
@@ -321,8 +327,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     execute("alter table x add \"spa ce\" string");
                     drainWalQueue();
 
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select c, \"spa ce\" from x")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     c\tspa ce
                                     XYZ\t
                                     ABC\t
@@ -334,9 +342,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                                     ABC\t
                                     \t
                                     XYZ\t
-                                    """,
-                            "select c, \"spa ce\" from x"
-                    );
+                                    """);
                 }
         );
     }
@@ -350,8 +356,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     execute("alter table x add mycol int");
                     drainWalQueue();
 
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select c, mycol from x")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     c\tmycol
                                     XYZ\tnull
                                     ABC\tnull
@@ -363,9 +371,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                                     ABC\tnull
                                     \tnull
                                     XYZ\tnull
-                                    """,
-                            "select c, mycol from x"
-                    );
+                                    """);
                 }
         );
     }
@@ -379,8 +385,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     execute("alter table x add mycol int not null");
                     drainWalQueue();
 
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select c, mycol from x")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     c\tmycol
                                     XYZ\t-2147483648
                                     ABC\t-2147483648
@@ -408,8 +416,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     execute("alter table x add mycol int null");
                     drainWalQueue();
 
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select c, mycol from x")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     c\tmycol
                                     XYZ\tnull
                                     ABC\tnull
@@ -421,9 +431,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                                     ABC\tnull
                                     \tnull
                                     XYZ\tnull
-                                    """,
-                            "select c, mycol from x"
-                    );
+                                    """);
                 }
         );
     }
@@ -460,8 +468,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertQuery(
-                    """
+            assertQuery("x")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tdec8\tdec16\tdec32\tdec64\tdec128\tdec256
                             2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
                             2024-01-02T00:00:00.000000Z\t\t\t\t\t\t
@@ -473,12 +483,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             2024-01-04T00:00:00.000000Z\t12\t123.4\t\t\t\t
                             2024-01-04T00:00:00.000000Z\t12\t123.4\t123456.78\t12345678.901\t\t
                             2024-01-04T00:00:00.000000Z\t12\t123.4\t123456.78\t12345678.901\t1234567890.1234\t1234567890123.45678
-                            """,
-                    "x",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -496,16 +501,13 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertQuery(
-                    """
+            assertQuery("x")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tdec
                             2024-01-01T00:00:00.000000Z\t123.456
-                            """,
-                    "x",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -520,8 +522,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
         execute("alter table x add column a int");
         execute("alter table x add column if not exists a int");
 
-        assertException("alter table x add column if not exists a hohoho", 41, "unsupported column type: hohoho");
-        assertException("alter table x add column if not exists a long", 41, "column already exists with a different column type [current type=INT, requested type=LONG]");
+        assertQuery("alter table x add column if not exists a hohoho")
+                .fails(41, "unsupported column type: hohoho");
+        assertQuery("alter table x add column if not exists a long")
+                .fails(41, "column already exists with a different column type [current type=INT, requested type=LONG]");
     }
 
     @Test
@@ -532,11 +536,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
         execute("alter table x add column if not exists arr_col double[]");
 
         // different dimensionality — should fail
-        assertException(
-                "alter table x add column if not exists arr_col double[][]",
-                47,
-                "column already exists with a different column type"
-        );
+        assertQuery("alter table x add column if not exists arr_col double[][]")
+                .fails(47, "column already exists with a different column type");
     }
 
     @Test
@@ -544,11 +545,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
         createX();
         execute("alter table x add column int_col int");
         // INT[] is not a supported array type — should fail with the same error as normal ADD COLUMN
-        assertException(
-                "alter table x add column if not exists int_col int[]",
-                47,
-                "unsupported array element type [type=INT]"
-        );
+        assertQuery("alter table x add column if not exists int_col int[]")
+                .fails(47, "unsupported array element type [type=INT]");
     }
 
     @Test
@@ -559,11 +557,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
         execute("alter table x add column if not exists dec_col decimal(48, 18)");
 
         // different precision/scale — should fail
-        assertException(
-                "alter table x add column if not exists dec_col decimal(18, 3)",
-                47,
-                "column already exists with a different column type"
-        );
+        assertQuery("alter table x add column if not exists dec_col decimal(18, 3)")
+                .fails(47, "column already exists with a different column type");
     }
 
     @Test
@@ -582,22 +577,16 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
         execute("alter table x add column if not exists geo_col geohash(5c)");
 
         // different precision — should fail
-        assertException(
-                "alter table x add column if not exists geo_col geohash(3c)",
-                47,
-                "column already exists with a different column type"
-        );
+        assertQuery("alter table x add column if not exists geo_col geohash(3c)")
+                .fails(47, "column already exists with a different column type");
     }
 
     @Test
     public void testAddDuplicateColumnIfNotExistsUnmatchedBracket() throws Exception {
         createX();
         execute("alter table x add column d_col double");
-        assertException(
-                "alter table x add column if not exists d_col double]",
-                45,
-                "has an unmatched `]` - were you trying to define an array?"
-        );
+        assertQuery("alter table x add column if not exists d_col double]")
+                .fails(45, "has an unmatched `]` - were you trying to define an array?");
     }
 
     @Test
@@ -634,11 +623,9 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
             createX();
             execute("alter table x add column a_col int");
             // trailing garbage after the type should be rejected, not silently consumed
-            assertExceptionNoLeakCheck(
-                    "alter table x add column if not exists a_col int FOOBAR",
-                    49,
-                    "',' expected"
-            );
+            assertQuery("alter table x add column if not exists a_col int FOOBAR")
+                    .noLeakCheck()
+                    .fails(49, "',' expected");
         });
     }
 
@@ -654,11 +641,9 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
             // same type — should be a no-op
             execute("alter table x add column if not exists \"d\" double");
             // different type — should fail
-            assertExceptionNoLeakCheck(
-                    "alter table x add column if not exists \"d\" int",
-                    43,
-                    "column already exists with a different column type [current type=DOUBLE, requested type=INT]"
-            );
+            assertQuery("alter table x add column if not exists \"d\" int")
+                    .noLeakCheck()
+                    .fails(43, "column already exists with a different column type [current type=DOUBLE, requested type=INT]");
         });
     }
 
@@ -939,7 +924,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     execute("alter table x add column nscol timestamp_ns");
                     drainWalQueue();
 
-                    assertSql("ddl\n" +
+                    assertQuery("show create table x;")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("ddl\n" +
                                     "CREATE TABLE 'x' ( \n" +
                                     "\ti INT,\n" +
                                     "\tsym SYMBOL,\n" +
@@ -958,11 +946,12 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                                     "\tm BINARY,\n" +
                                     "\tn STRING,\n" +
                                     "\tnscol TIMESTAMP_NS\n" +
-                                    ") timestamp(timestamp) PARTITION BY DAY" + (isWal ? "" : " BYPASS WAL") + ";\n",
-                            "show create table x;");
+                                    ") timestamp(timestamp) PARTITION BY DAY" + (isWal ? "" : " BYPASS WAL") + ";\n");
 
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select c, nscol from x")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     c\tnscol
                                     XYZ\t
                                     ABC\t
@@ -974,9 +963,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                                     ABC\t
                                     \t
                                     XYZ\t
-                                    """,
-                            "select c, nscol from x"
-                    );
+                                    """);
                 }
         );
     }
@@ -1023,8 +1010,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             """;
 
-                    assertQueryNoLeakCheck(
-                            isWal
+                    assertQuery("show columns from x")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns(isWal
                                     ? originalColumns
                                     : originalColumns +
                                     "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n" +
@@ -1052,8 +1041,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     execute("alter table x add column second symbol;");
                     drainWalQueue();
 
-                    assertQueryNoLeakCheck(
-                            """
+                    assertQuery("select c, mycol, second from x")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
                                     c\tmycol\tsecond
                                     XYZ\tnull\t
                                     ABC\tnull\t
@@ -1065,9 +1056,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                                     ABC\tnull\t
                                     \tnull\t
                                     XYZ\tnull\t
-                                    """,
-                            "select c, mycol, second from x"
-                    );
+                                    """);
                 }
         );
     }
@@ -1081,7 +1070,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("ddl\n" +
+            assertQuery("show create table x;")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("ddl\n" +
                             "CREATE TABLE 'x' ( \n" +
                             "\ti INT,\n" +
                             "\tsym SYMBOL,\n" +
@@ -1099,9 +1091,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             "\tl BYTE,\n" +
                             "\tm BINARY,\n" +
                             "\tn STRING,\n" +
-                            "\tarr DOUBLE[]\n" + // <-- array should be present
-                            ") timestamp(timestamp) PARTITION BY DAY" + (isWal ? "" : " BYPASS WAL") + ";\n",
-                    "show create table x;");
+                            "\tarr DOUBLE[]\n" +
+                            ") timestamp(timestamp) PARTITION BY DAY" + (isWal ? "" : " BYPASS WAL") + ";\n");
         });
     }
 
@@ -1109,7 +1100,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     public void testAlterTableAddArrayColumnWithInvalidArrayType() throws Exception {
         assertMemoryLeak(() -> {
             createX();
-            assertException("alter table x add column arr varchar[];", 29, "unsupported array element type [type=VARCHAR]");
+            assertQuery("alter table x add column arr varchar[];")
+                    .fails(29, "unsupported array element type [type=VARCHAR]");
         });
     }
 
@@ -1117,10 +1109,14 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     public void testAlterTableAddArrayColumnWithMismatchedBrackets() throws Exception {
         assertMemoryLeak(() -> {
             createX();
-            assertException("alter table x add column arr double[;", 35, "syntax error at column type definition, expected array type: 'DOUBLE[]...', but found: 'double['");
-            assertException("alter table x add column arr double[][;", 37, "syntax error at column type definition, expected array type: 'DOUBLE[][]...', but found: 'double[]['");
-            assertException("alter table x add column arr double];", 29, "arr has an unmatched `]` - were you trying to define an array?");
-            assertException("alter table x add column arr double[]];", 29, "arr has an unmatched `]` - were you trying to define an array?");
+            assertQuery("alter table x add column arr double[;")
+                    .fails(35, "syntax error at column type definition, expected array type: 'DOUBLE[]...', but found: 'double['");
+            assertQuery("alter table x add column arr double[][;")
+                    .fails(37, "syntax error at column type definition, expected array type: 'DOUBLE[][]...', but found: 'double[]['");
+            assertQuery("alter table x add column arr double];")
+                    .fails(29, "arr has an unmatched `]` - were you trying to define an array?");
+            assertQuery("alter table x add column arr double[]];")
+                    .fails(29, "arr has an unmatched `]` - were you trying to define an array?");
         });
     }
 
@@ -1131,12 +1127,12 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
     @Test
     public void testExpectTableKeyword() throws Exception {
-        assertFailure("alter x", 6, "'table' or 'materialized' or 'view' expected");
+        assertFailure("alter x", 6, "'table' or 'materialized' or 'live' or 'view' expected");
     }
 
     @Test
     public void testExpectTableKeyword2() throws Exception {
-        assertFailure("alter", 5, "'table' or 'materialized' or 'view' expected");
+        assertFailure("alter", 5, "'table' or 'materialized' or 'live' or 'view' expected");
     }
 
     @Test
@@ -1166,8 +1162,9 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             " ('2025-01-07', 'B'), " +
                             "('2025-02-01', 'A')");
                     drainWalQueue();
-                    assertQuery(
-                            """
+                    assertQuery("select sym, ts from x order by  sym")
+                            .expectSize()
+                            .returns("""
                                     sym\tts
                                     \t2025-01-01T00:00:00.000000Z
                                     \t2025-01-02T00:00:00.000000Z
@@ -1177,12 +1174,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                                     A\t2025-02-01T00:00:00.000000Z
                                     B\t2025-01-06T00:00:00.000000Z
                                     B\t2025-01-07T00:00:00.000000Z
-                                    """,
-                            "select sym, ts from x order by  sym",
-                            null,
-                            true,
-                            true
-                    );
+                                    """);
                 }
         );
     }
@@ -1193,9 +1185,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
             execute("create table x as (select x id, from long_sequence(3))");
             execute("alter table x add column a_varchar varchar");
             execute("insert into x values (4, 'added-1'), (5, 'added-2')");
-            assertQuery("a_varchar\n\n\n\nadded-1\nadded-2\n",
-                    "select a_varchar from x", null, null, true, true
-            );
+            assertQuery("select a_varchar from x")
+                    .ddl(null)
+                    .expectSize()
+                    .returns("a_varchar\n\n\n\nadded-1\nadded-2\n");
         });
     }
 
@@ -1207,7 +1200,9 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     private void assertFailure(String sql, int position, String message) throws Exception {
         assertMemoryLeak(() -> {
             createX();
-            assertExceptionNoLeakCheck(sql, position, message);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(position, message);
         });
     }
 

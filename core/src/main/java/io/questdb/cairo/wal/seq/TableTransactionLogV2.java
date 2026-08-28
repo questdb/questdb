@@ -35,6 +35,7 @@ import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -74,7 +75,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public static final long RESERVED_OFFSET = ROW_COUNT_OFFSET + Long.BYTES;
     public static final long RECORD_SIZE = RESERVED_OFFSET + Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV2.class);
-    private static final ThreadLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new ThreadLocal<>();
+    private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();

@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.functions.table;
 
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -175,7 +175,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
                         dataPages += touchMemory(pageSize, columnBaseAddress, columnMemorySize);
 
                         if (metadata.isColumnIndexed(columnIndex)) {
-                            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+                            final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
 
                             final long keyBaseAddress = indexReader.getKeyBaseAddress();
                             final long keyMemorySize = indexReader.getKeyMemorySize();

@@ -57,6 +57,7 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         cursor.of(base, executionContext);
         return cursor;
     }
@@ -137,12 +138,20 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
         }
 
         public void of(RecordCursorFactory base, SqlExecutionContext executionContext) throws SqlException {
-            // open the cursor to ensure bind variable types are initialized
-            try (RecordCursor ignored = base.getCursor(executionContext)) {
-                planSink.of(base, executionContext);
+            final long previousIntervalPlanGeneration = executionContext.getIntervalPlanGeneration();
+            final long preparingIntervalPlanGeneration = executionContext.nextIntervalPlanGeneration();
+            try {
+                // Open the cursor to initialize bind-variable types and dynamic intervals. Only a
+                // successful open promotes the preparation generation for the following render.
+                try (RecordCursor ignored = base.getCursor(executionContext)) {
+                    executionContext.setIntervalPlanGeneration(-preparingIntervalPlanGeneration);
+                    planSink.of(base, executionContext);
+                }
+                rowCount = planSink.getLineCount();
+                toTop();
+            } finally {
+                executionContext.setIntervalPlanGeneration(previousIntervalPlanGeneration);
             }
-            rowCount = planSink.getLineCount();
-            toTop();
         }
 
         @Override

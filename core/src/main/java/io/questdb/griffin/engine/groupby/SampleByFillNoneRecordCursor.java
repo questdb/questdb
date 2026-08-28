@@ -84,7 +84,9 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         this.keyMapSink = keyMapSink;
         record.of(map.getRecord());
         mapCursor = map.getCursor();
-        isOpen = true;
+        // Lazy map (openOnInit=false): start closed so of() allocates the backing
+        // under the bound MemoryTracker on the first cursor.
+        isOpen = false;
     }
 
     @Override
@@ -115,11 +117,12 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
 
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
+        // isOpen before super.of() so an of() breach frees the base cursor via close().
+        isOpen = true;
         super.of(base, executionContext);
-        if (!isOpen) {
-            isOpen = true;
-            map.reopen();
-        }
+        // Bind+reopen the map as super.of() does the allocator; reopen() is idempotent.
+        map.setMemoryTracker(executionContext.getMemoryTracker());
+        map.reopen();
         rowId = 0;
         isMapBuildPending = true;
     }

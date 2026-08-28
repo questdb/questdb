@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -53,13 +55,13 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
      */
     protected final IntList columnSizeShifts;
     /**
-     * The partition frame cursor factory.
-     */
-    protected final PartitionFrameCursorFactory partitionFrameCursorFactory;
-    /**
      * The page frame cursor.
      */
     protected TablePageFrameCursor pageFrameCursor;
+    /**
+     * The partition frame cursor factory.
+     */
+    protected PartitionFrameCursorFactory partitionFrameCursorFactory;
 
     /**
      * Constructs a new page frame record cursor factory.
@@ -103,14 +105,37 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
+    public boolean hasParquetConvertedColumns(SqlExecutionContext executionContext) {
+        if (!partitionFrameCursorFactory.hasParquetFormatPartitions(executionContext)) {
+            return false;
+        }
+        // A column re-keyed by ALTER COLUMN TYPE has writerIndex != originalWriterIndex.
+        // The reader metadata held by partitionFrameCursorFactory carries the chain head
+        // (originalWriterIndex), unlike the projected query metadata seen downstream.
+        final RecordMetadata metadata = partitionFrameCursorFactory.getMetadata();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final TableColumnMetadata columnMetadata = metadata.getColumnMetadata(i);
+            if (columnMetadata.getWriterIndex() != columnMetadata.getOriginalWriterIndex()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return partitionFrameCursorFactory.supportsTableRowId(tableToken);
     }
 
     @Override
     protected void _close() {
-        Misc.free(pageFrameCursor);
-        Misc.free(partitionFrameCursorFactory);
+        final TablePageFrameCursor pageFrameCursor = this.pageFrameCursor;
+        this.pageFrameCursor = null;
+        final PartitionFrameCursorFactory partitionFrameCursorFactory = this.partitionFrameCursorFactory;
+        this.partitionFrameCursorFactory = null;
+        Throwable failure = Misc.freeBestEffort(null, pageFrameCursor);
+        failure = Misc.freeBestEffort(failure, partitionFrameCursorFactory);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     /**

@@ -25,10 +25,10 @@
 package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.PropertyKey;
-import io.questdb.client.ClientTlsConfiguration;
+import io.questdb.client.Sender;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.cutlass.qwp.AbstractQwpBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TlsProxyRule;
 import org.junit.Before;
@@ -45,7 +45,7 @@ import java.time.temporal.ChronoUnit;
  * stored and queryable. The TlsProxy terminates TLS and forwards plaintext
  * to the QuestDB HTTP server.
  */
-public class QwpWebSocketSenderTlsE2ETest extends AbstractBootstrapTest {
+public class QwpWebSocketSenderTlsE2ETest extends AbstractQwpBootstrapTest {
 
     @Rule
     public TlsProxyRule tlsProxy = TlsProxyRule.toHostAndPort("localhost", HTTP_PORT);
@@ -61,12 +61,12 @@ public class QwpWebSocketSenderTlsE2ETest extends AbstractBootstrapTest {
     @Test
     public void testTlsAsyncMode() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int tlsPort = tlsProxy.getListeningPort();
 
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", tlsPort, ClientTlsConfiguration.INSECURE_NO_VALIDATION)) {
+                try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig("wss::addr=localhost:" + tlsPort + ";tls_verify=unsafe_off;")) {
                     for (int i = 0; i < 50; i++) {
                         sender.table("tls_async")
                                 .longColumn("id", i)
@@ -85,12 +85,12 @@ public class QwpWebSocketSenderTlsE2ETest extends AbstractBootstrapTest {
     @Test
     public void testTlsMultipleColumns() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int tlsPort = tlsProxy.getListeningPort();
 
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", tlsPort, ClientTlsConfiguration.INSECURE_NO_VALIDATION)) {
+                try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig("wss::addr=localhost:" + tlsPort + ";tls_verify=unsafe_off;")) {
                     sender.table("tls_multi_col")
                             .symbol("city", "london")
                             .doubleColumn("temperature", 18.5)
@@ -115,12 +115,12 @@ public class QwpWebSocketSenderTlsE2ETest extends AbstractBootstrapTest {
     @Test
     public void testTlsMultipleRows() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int tlsPort = tlsProxy.getListeningPort();
 
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", tlsPort, ClientTlsConfiguration.INSECURE_NO_VALIDATION)) {
+                try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig("wss::addr=localhost:" + tlsPort + ";tls_verify=unsafe_off;")) {
                     for (int i = 0; i < 100; i++) {
                         sender.table("tls_multi_row")
                                 .longColumn("value", i)
@@ -141,12 +141,12 @@ public class QwpWebSocketSenderTlsE2ETest extends AbstractBootstrapTest {
     @Test
     public void testTlsSingleRow() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int tlsPort = tlsProxy.getListeningPort();
 
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", tlsPort, ClientTlsConfiguration.INSECURE_NO_VALIDATION)) {
+                try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig("wss::addr=localhost:" + tlsPort + ";tls_verify=unsafe_off;")) {
                     sender.table("tls_single")
                             .longColumn("value", 42L)
                             .at(1_000_000_000_000L, ChronoUnit.MICROS);

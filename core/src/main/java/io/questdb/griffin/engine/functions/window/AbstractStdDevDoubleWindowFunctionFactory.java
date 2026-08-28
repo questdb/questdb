@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -41,25 +42,32 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
+import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractStdDevDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
-    private static final ArrayColumnTypes STDDEV_COLUMN_TYPES;
+    static final ArrayColumnTypes STDDEV_COLUMN_TYPES;
+    static final ArrayColumnTypes STDDEV_COLUMN_TYPES_LV;
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES;
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES;
 
@@ -149,10 +157,11 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            STDDEV_COLUMN_TYPES
+                            liveView ? STDDEV_COLUMN_TYPES_LV : STDDEV_COLUMN_TYPES
                     );
 
                     return new StdDevOverUnboundedPartitionRowsFrameFunction(
@@ -162,7 +171,10 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                             args.get(0),
                             isSample,
                             isSqrt,
-                            name
+                            name,
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
@@ -209,10 +221,11 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            STDDEV_COLUMN_TYPES
+                            liveView ? STDDEV_COLUMN_TYPES_LV : STDDEV_COLUMN_TYPES
                     );
 
                     return new StdDevOverUnboundedPartitionRowsFrameFunction(
@@ -222,7 +235,10 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                             args.get(0),
                             isSample,
                             isSqrt,
-                            name
+                            name,
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -589,7 +605,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                             if (count > 0) {
                                 double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                                 sum -= val;
@@ -625,7 +641,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     for (long i = count; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
+                        long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                         if (diff <= maxDiff && diff >= minDiff) {
                             double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
@@ -641,7 +657,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
+                        if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             sum += val;
                             sumSq += val * val;
@@ -700,6 +716,12 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             super.reset();
             memory.close();
             freeList.clear();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -891,6 +913,12 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -991,7 +1019,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             this.name = name;
 
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             count = 0;
             size = 0;
@@ -1018,7 +1046,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) > maxDiff) {
                         if (count > 0) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             sum -= val;
@@ -1063,7 +1091,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 for (long i = count, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
+                    long diff = Numbers.saturatedAbsDiff(ts, timestamp);
 
                     if (diff <= maxDiff && diff >= minDiff) {
                         double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
@@ -1079,7 +1107,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
+                    if (Numbers.saturatedAbsDiff(timestamp, ts) >= minDiff) {
                         double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                         sum += val;
                         sumSq += val * val;
@@ -1133,6 +1161,11 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -1206,12 +1239,6 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
 
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -1337,20 +1364,132 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     // - stddev(a) over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
     static class StdDevOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+        private final CairoConfiguration configuration;
         private final boolean isSample;
         private final boolean isSqrt;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final String name;
         private double stddev = Double.NaN;
+        // Welford's other two slots in LiveViewWindow's fused map value. The base class
+        // caches the counter, which every family has; these two are this family's own.
+        private int windowStateM2Slot = -1;
+        private int windowStateMeanSlot = -1;
 
-        StdDevOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, boolean isSample, boolean isSqrt, String name) {
+        StdDevOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                boolean isSample,
+                boolean isSqrt,
+                String name,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.isSample = isSample;
             this.isSqrt = isSqrt;
             this.name = name;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = STDDEV_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(STDDEV_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 3;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+        }
+
+        /**
+         * Runs one Welford step against the window's fused value. The same arithmetic
+         * {@link #computeNext(Record)} runs, against slots the window has already loaded -
+         * and run once for the whole group, so a view naming {@code stddev_samp} beside
+         * {@code var_pop} over one column absorbs each row exactly once.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value) {
+            final double d = arg.getDouble(record);
+            if (Numbers.isFinite(d)) {
+                final long count = value.getLong(windowStateNonNullCountSlot) + 1;
+                final double oldMean = value.getDouble(windowStateMeanSlot);
+                final double mean = oldMean + (d - oldMean) / count;
+                value.putDouble(windowStateMeanSlot, mean);
+                value.putDouble(
+                        windowStateM2Slot,
+                        value.getDouble(windowStateM2Slot) + (d - mean) * (d - oldMean)
+                );
+                value.putLong(windowStateNonNullCountSlot, count);
+            }
+        }
+
+        /**
+         * Takes the counter off the base class and Welford's own two fields beside it.
+         */
+        @Override
+        public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
+            super.bindWindowStateSlots(projection);
+            windowStateMeanSlot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_MEAN);
+            windowStateM2Slot = projection == null
+                    ? -1
+                    : projection.getFieldSlot(WindowAccumulatorDescriptor.FIELD_M2);
+        }
+
+        @Override
+        public Function windowAccumulatorArgument() {
+            return arg;
+        }
+
+        /**
+         * Welford's running {@code (mean, m2, nonNullCount)}, which is one accumulator for
+         * all four of {@code stddev_samp}, {@code stddev_pop}, {@code var_samp} and
+         * {@code var_pop} - they are this class with two flags flipped, and the flags
+         * decide only what is read off the state, never what goes into it.
+         */
+        @Override
+        public int windowAccumulatorFamily() {
+            return WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD;
+        }
+
+        @Override
+        public int windowAccumulatorProjection() {
+            if (isSqrt) {
+                return isSample
+                        ? WindowAccumulatorProjection.PROJECTION_STDDEV_SAMP
+                        : WindowAccumulatorProjection.PROJECTION_STDDEV_POP;
+            }
+            return isSample
+                    ? WindowAccumulatorProjection.PROJECTION_VAR_SAMP
+                    : WindowAccumulatorProjection.PROJECTION_VAR_POP;
         }
 
         @Override
         public void computeNext(Record record) {
+            if (isWindowStateOwned()) {
+                // The window absorbed this row into the group's one accumulator and
+                // materialized the projection before the cursor got here.
+                return;
+            }
             // Welford's online algorithm: map stores [0]=mean, [1]=m2, [2]=count
             partitionByRecord.of(record);
             MapKey key = map.withKey();
@@ -1362,6 +1501,9 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             long count;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 mean = 0.0;
                 m2 = 0.0;
                 count = 0;
@@ -1401,9 +1543,111 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getCheckpointKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getCheckpointKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : STDDEV_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), stddev);
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            tombstoneCount = 0;
+        }
+
+        /**
+         * Materializes this call's result off the shared accumulator. The two flags are
+         * where {@code stddev_samp} and {@code var_pop} part company, and they part company
+         * here rather than in the state.
+         */
+        @Override
+        public void projectWindowState(Record record, MapValue value) {
+            stddev = computeResultWelford(
+                    value.getDouble(windowStateM2Slot),
+                    value.getLong(windowStateNonNullCountSlot),
+                    isSample,
+                    isSqrt
+            );
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            if (isWindowStateOwned()) {
+                // The window zeroes the component in the fused value it has already
+                // loaded, so the crossing costs no probe of this function's own.
+                return;
+            }
+            // ANCHOR-driven reset. Welford's [mean, m2, count] all return to
+            // zero. The next finite value re-runs Welford with mean=0, m2=0, count=0
+            // and produces (mean=d, m2=0, count=1) — identical to the isNew init.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putDouble(1, 0.0);
+                value.putLong(2, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            value.putDouble(0, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putDouble(1, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putLong(2, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putDouble(value.getDouble(0));
+            sink.putDouble(value.getDouble(1));
+            sink.putLong(value.getLong(2));
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -1414,6 +1658,12 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            tombstoneCount = 0;
         }
     }
 
@@ -1572,6 +1822,12 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         STDDEV_COLUMN_TYPES.add(ColumnType.DOUBLE);
         STDDEV_COLUMN_TYPES.add(ColumnType.DOUBLE);
         STDDEV_COLUMN_TYPES.add(ColumnType.LONG);
+
+        STDDEV_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        STDDEV_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // mean (Welford) / sum (naive)
+        STDDEV_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // m2 (Welford) / sumSq (naive)
+        STDDEV_COLUMN_TYPES_LV.add(ColumnType.LONG);   // count
+        STDDEV_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // tombstone (anchor-driven compaction)
 
         STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES = new ArrayColumnTypes();
         STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.DOUBLE); // sum

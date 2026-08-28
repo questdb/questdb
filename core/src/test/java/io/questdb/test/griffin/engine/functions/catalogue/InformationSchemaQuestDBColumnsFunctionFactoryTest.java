@@ -36,22 +36,21 @@ public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends Abstract
             execute("create table B(col0 long, col1 string, col2 float)");
             execute("create table C(col0 double, col1 char, col2 byte)");
             drainWalQueue();
-            assertQueryNoLeakCheck(
-                    "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                            "qdb\tpublic\tA\tcol0\t0\t\tyes\tINT\n" +
-                            "qdb\tpublic\tA\tcol1\t1\t\tyes\tSYMBOL\n" +
-                            "qdb\tpublic\tA\tcol2\t2\t\tyes\tDOUBLE\n" +
-                            "qdb\tpublic\tB\tcol0\t0\t\tyes\tLONG\n" +
-                            "qdb\tpublic\tB\tcol1\t1\t\tyes\tSTRING\n" +
-                            "qdb\tpublic\tB\tcol2\t2\t\tyes\tFLOAT\n" +
-                            "qdb\tpublic\tC\tcol0\t0\t\tyes\tDOUBLE\n" +
-                            "qdb\tpublic\tC\tcol1\t1\t\tyes\tCHAR\n" +
-                            "qdb\tpublic\tC\tcol2\t2\t\tyes\tBYTE\n",
-                    "SELECT * FROM information_schema.questdb_columns() ORDER BY table_name",
-                    null,
-                    null,
-                    true
-            );
+            assertQuery("SELECT * FROM information_schema.questdb_columns() ORDER BY table_name")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .returns("""
+                            table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
+                            qdb\tpublic\tA\tcol0\t0\t\tyes\tINT
+                            qdb\tpublic\tA\tcol1\t1\t\tyes\tSYMBOL
+                            qdb\tpublic\tA\tcol2\t2\t\tyes\tDOUBLE
+                            qdb\tpublic\tB\tcol0\t0\t\tyes\tLONG
+                            qdb\tpublic\tB\tcol1\t1\t\tyes\tSTRING
+                            qdb\tpublic\tB\tcol2\t2\t\tyes\tFLOAT
+                            qdb\tpublic\tC\tcol0\t0\t\tyes\tDOUBLE
+                            qdb\tpublic\tC\tcol1\t1\t\tyes\tCHAR
+                            qdb\tpublic\tC\tcol2\t2\t\tyes\tBYTE
+                            """);
         });
     }
 

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.idx.ConcurrentBitmapIndexFwdReader;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
@@ -136,11 +137,12 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     public int keyOf(CharSequence value) {
         if (value != null) {
             int hash = Hash.boundedHash(value, maxHash);
-            final RowCursor cursor = indexReader.getCursor(true, hash, 0, maxOffset - Long.BYTES);
-            while (cursor.hasNext()) {
-                final long offsetOffset = cursor.next();
-                if (Chars.equals(value, charMem.getStrA(offsetMem.getLong(offsetOffset)))) {
-                    return SymbolMapWriter.offsetToKey(offsetOffset);
+            try (RowCursor cursor = indexReader.getCursor(hash, 0, maxOffset - Long.BYTES)) {
+                while (cursor.hasNext()) {
+                    final long offsetOffset = cursor.next();
+                    if (Chars.equals(value, charMem.getStrA(offsetMem.getLong(offsetOffset)))) {
+                        return SymbolMapWriter.offsetToKey(offsetOffset);
+                    }
                 }
             }
             return SymbolTable.VALUE_NOT_FOUND;
@@ -199,7 +201,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
             // index reader is used to identify attempts to store duplicate symbol value
             // partition txn does not matter, because symbol is at the root of the table dir (not at partition level)
-            indexReader.of(configuration, path.trimTo(plen), columnName, columnNameTxn, -1, 0);
+            // Symbol-table de-dup index is BITMAP — metadata + cover params unused.
+            indexReader.of(configuration, path.trimTo(plen), columnName, columnNameTxn, -1, 0, null, null, 0);
 
             long charSize = offsetMem.getLong(maxOffset);
             // char file size can be zero only if symbolCount is zero
@@ -219,9 +222,14 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // theoretically should require 2 value cells in index per hash
             // we use 4 cells to compensate for occasionally unlucky hash distribution
             this.maxHash = Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 1);
-            if (cached) {
-                cache.setPos(symbolCapacity);
-            }
+            // The cache grows on demand in fetchAndCache, which is why it is not
+            // pre-sized here. Pre-sizing allocated and zero-filled an Object[] of
+            // the column's DECLARED capacity on every open - 16 MB for a column
+            // declared CAPACITY 2097152, retained for the reader's life, whether or
+            // not a single value was ever resolved through it. It bought nothing
+            // even then: the clear() below immediately reset the position to zero,
+            // so only the backing array survived, and extendAndSet grows that
+            // geometrically anyway.
             cache.clear();
             LOG.debug().$("open [columnName=").$(path.trimTo(plen).concat(columnName).$())
                     .$(", fd=").$(offsetMem.getFd())
@@ -250,14 +258,15 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             assert charSize > 0 || symbolCount == 0;
             charMem.extend(charSize);
         } else if (symbolCount < this.symbolCount) {
-            cache.remove(symbolCount + 1, this.symbolCount);
+            cache.remove(symbolCount, this.symbolCount - 1);
             this.symbolCount = symbolCount;
+            this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
         }
         // Refresh contains null flag.
         this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
         // Refresh index reader to avoid memory remapping on keyOf() calls.
         // partition txn does not matter, because symbol is at the root of the table dir (not at partition level)
-        indexReader.of(configuration, path, columnNameSink, columnNameTxn, -1, 0);
+        indexReader.of(configuration, path, columnNameSink, columnNameTxn, -1, 0, null, null, 0);
     }
 
     @Override
@@ -278,6 +287,25 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 return cachedValue(key);
             }
             return uncachedValue(key);
+        }
+        return null;
+    }
+
+    /**
+     * Binds the caller's {@code view} to the value stored for {@code key}, reading the
+     * mapped char file directly. Two differences from {@link #valueOf(int)} make this the
+     * accessor a bulk consumer wants: the caller owns the view, so two live values can be
+     * held at once without the A/B pair this class keeps for itself, and the read always
+     * goes to the mapping rather than the heap cache - a cached column would otherwise
+     * retain a {@code String} per resolved key, which is precisely the footprint a reader
+     * that resolves millions of keys must not build.
+     * <p>
+     * The view stays valid until this reader is rebound by {@link #of} or closed, or until
+     * the caller rebinds it.
+     */
+    public CharSequence valueOf(int key, DirectString view) {
+        if (key > -1 && key < symbolCount) {
+            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), view);
         }
         return null;
     }

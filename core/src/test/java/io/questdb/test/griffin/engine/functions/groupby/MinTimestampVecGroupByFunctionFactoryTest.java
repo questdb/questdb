@@ -53,101 +53,74 @@ public class MinTimestampVecGroupByFunctionFactoryTest extends AbstractCairoTest
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
-        assertQuery(
-                """
+        assertQuery("select round(avg(f),9) avg from tab")
+                .ddl("create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))")
+                .mutateWith("alter table tab add column b " + timestampType.getTypeName())
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         avg
                         5261.376146789
-                        """,
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b " + timestampType.getTypeName(),
-                """
+                        """, """
                         avg
                         5261.376146789
-                        """,
-                false,
-                true,
-                false
-        );
+                        """);
 
-        assertQuery(
-                "avg\tmin\n" +
-                        (timestampType == TestTimestampType.MICRO ? "14.792007\t1970-01-01T00:00:00.016772Z\n" : "14.792007\t1970-01-01T00:00:00.000016772Z\n"),
-                "select round(avg(f),6) avg, min(b) min from tab",
-                "insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)",
-                null,
-                false,
-                true
-        );
+        assertQuery("select round(avg(f),6) avg, min(b) min from tab")
+                .ddl("insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("avg\tmin\n" +
+                        (timestampType == TestTimestampType.MICRO ? "14.792007\t1970-01-01T00:00:00.016772Z\n" : "14.792007\t1970-01-01T00:00:00.000016772Z\n"));
     }
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select min(f) from tab")
+                .ddl("create table tab as (select cast(null as " + timestampType.getTypeName() + ") f from long_sequence(33))")
+                .mutateWith("insert into tab select 999999999999999L::timestamp from long_sequence(1)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         min
                         
-                        """,
-                "select min(f) from tab",
-                "create table tab as (select cast(null as " + timestampType.getTypeName() + ") f from long_sequence(33))",
-                null,
-                "insert into tab select 999999999999999L::timestamp from long_sequence(1)",
-                "min\n" + (timestampType == TestTimestampType.MICRO ? "2001-09-09T01:46:39.999999Z\n" : "2001-09-09T01:46:39.999999000Z\n"),
-                false,
-                true,
-                false
-        );
+                        """, "min\n" + (timestampType == TestTimestampType.MICRO ? "2001-09-09T01:46:39.999999Z\n" : "2001-09-09T01:46:39.999999000Z\n"));
     }
 
     @Test
     public void testKeyedMaxTimestampOrNullThenMaxLong() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select i, min(f) from tab")
+                .ddl("create table tab as (select cast(1 as int) i, cast(null as " + timestampType.getTypeName() + ") f from long_sequence(33))")
+                .mutateWith("insert into tab select 1, 9223372036854775807L from long_sequence(1)")
+                .expectSize()
+                .returns("""
                         i\tmin
                         1\t
-                        """,
-                "select i, min(f) from tab",
-                "create table tab as (select cast(1 as int) i, cast(null as " + timestampType.getTypeName() + ") f from long_sequence(33))",
-                null,
-                "insert into tab select 1, 9223372036854775807L from long_sequence(1)",
-                "i\tmin\n" +
-                        (timestampType == TestTimestampType.MICRO ? "1\t294247-01-10T04:00:54.775807Z\n" : "1\t2262-04-11T23:47:16.854775807Z\n"),
-                true,
-                true,
-                false
-        );
+                        """, "i\tmin\n" +
+                        (timestampType == TestTimestampType.MICRO ? "1\t294247-01-10T04:00:54.775807Z\n" : "1\t2262-04-11T23:47:16.854775807Z\n"));
     }
 
     @Test
     public void testMaxTimestampOrNullThenMaxLong() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select min(f) from tab")
+                .ddl("create table tab as (select cast(null as " + timestampType.getTypeName() + ") f from long_sequence(33))")
+                .mutateWith("insert into tab select 9223372036854775807L from long_sequence(1)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         min
                         
-                        """,
-                "select min(f) from tab",
-                "create table tab as (select cast(null as " + timestampType.getTypeName() + ") f from long_sequence(33))",
-                null,
-                "insert into tab select 9223372036854775807L from long_sequence(1)",
-                "min\n" +
-                        (timestampType == TestTimestampType.MICRO ? "294247-01-10T04:00:54.775807Z\n" : "2262-04-11T23:47:16.854775807Z\n"),
-                false,
-                true,
-                false
-        );
+                        """, "min\n" +
+                        (timestampType == TestTimestampType.MICRO ? "294247-01-10T04:00:54.775807Z\n" : "2262-04-11T23:47:16.854775807Z\n"));
     }
 
     @Test
     public void testSimple() throws Exception {
-        assertQuery(
-                "min\n" +
-                        (timestampType == TestTimestampType.MICRO ? "1969-12-31T23:59:59.999956Z\n" : "1969-12-31T23:59:59.999999956Z\n"),
-                "select min(f) from tab",
-                "create table tab as (select cast(rnd_long(-55, 9009, 2) as " + timestampType.getTypeName() + ") f from long_sequence(131))",
-                null,
-                false,
-                true
-        );
+        assertQuery("select min(f) from tab")
+                .ddl("create table tab as (select cast(rnd_long(-55, 9009, 2) as " + timestampType.getTypeName() + ") f from long_sequence(131))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("min\n" +
+                        (timestampType == TestTimestampType.MICRO ? "1969-12-31T23:59:59.999956Z\n" : "1969-12-31T23:59:59.999999956Z\n"));
     }
 }

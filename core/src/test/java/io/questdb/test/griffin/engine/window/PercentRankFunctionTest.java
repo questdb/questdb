@@ -24,10 +24,26 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.PropertyKey;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
+import static io.questdb.test.tools.TestUtils.generateRandom;
+
 public class PercentRankFunctionTest extends AbstractCairoTest {
+    private final boolean isCacheLightWindowEnabled;
+
+    public PercentRankFunctionTest() {
+        Rnd rnd = generateRandom(LOG);
+        this.isCacheLightWindowEnabled = rnd.nextBoolean();
+    }
+
+    @Override
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.isCacheLightWindowEnabled));
+        super.setUp();
+    }
 
     @Test
     public void testPercentRankAllTies() throws Exception {
@@ -35,19 +51,17 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // All rows have the same ORDER BY value - all are rank 1
             execute("create table tab (ts timestamp NOT NULL, v int) timestamp(ts)");
             execute("insert into tab values (0, 1), (1, 1), (2, 1), (3, 1)");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, percent_rank() over (order by v) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tpercent_rank
                             1970-01-01T00:00:00.000000Z\t0.0
                             1970-01-01T00:00:00.000001Z\t0.0
                             1970-01-01T00:00:00.000002Z\t0.0
                             1970-01-01T00:00:00.000003Z\t0.0
-                            """,
-                    "select ts, percent_rank() over (order by v) from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -61,24 +75,22 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // rank():        1, 1, 3, 4, 4
             // dense_rank():  1, 1, 2, 3, 3
             // percent_rank(): (1-1)/4=0.0, (1-1)/4=0.0, (3-1)/4=0.5, (4-1)/4=0.75, (4-1)/4=0.75
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, v, " +
+                    "rank() over (order by v) as rank, " +
+                    "dense_rank() over (order by v) as dense_rank, " +
+                    "percent_rank() over (order by v) as percent_rank " +
+                    "from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tv\trank\tdense_rank\tpercent_rank
                             1970-01-01T00:00:00.000000Z\t1\t1\t1\t0.0
                             1970-01-01T00:00:00.000001Z\t1\t1\t1\t0.0
                             1970-01-01T00:00:00.000002Z\t2\t3\t2\t0.5
                             1970-01-01T00:00:00.000003Z\t3\t4\t3\t0.75
                             1970-01-01T00:00:00.000004Z\t3\t4\t3\t0.75
-                            """,
-                    "select ts, v, " +
-                            "rank() over (order by v) as rank, " +
-                            "dense_rank() over (order by v) as dense_rank, " +
-                            "percent_rank() over (order by v) as percent_rank " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -89,18 +101,16 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (0, 1), (1, 2), (2, 3)");
             // With DESC order: ts=2 has rank 1, ts=1 has rank 2, ts=0 has rank 3
             // percent_rank: (1-1)/2=0.0, (2-1)/2=0.5, (3-1)/2=1.0
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, percent_rank() over (order by ts desc) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tpercent_rank
                             1970-01-01T00:00:00.000000Z\t1.0
                             1970-01-01T00:00:00.000001Z\t0.5
                             1970-01-01T00:00:00.000002Z\t0.0
-                            """,
-                    "select ts, percent_rank() over (order by ts desc) from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -125,56 +135,71 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             execute("create table tab (ts timestamp NOT NULL, i long, s symbol) timestamp(ts)");
 
             // Test plan for percent_rank() over () - no partition, no order
-            assertSql(
-                    """
-                            QUERY PLAN
+            assertQuery("select ts, percent_rank() over () from tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [percent_rank() over ()]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, percent_rank() over () from tab"
-            );
+                            """);
 
             // Test plan for percent_rank() over (partition by s) - with partition, no order
-            assertSql(
-                    """
-                            QUERY PLAN
+            assertQuery("select ts, percent_rank() over (partition by s) from tab")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Window
                               functions: [percent_rank() over (partition by [s])]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, percent_rank() over (partition by s) from tab"
-            );
+                            """);
 
             // Test plan for percent_rank() over (order by ts) - no partition, with order
-            assertSql(
-                    """
-                            QUERY PLAN
-                            CachedWindow
-                              unorderedFunctions: [percent_rank() over (order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """,
-                    "explain select ts, percent_rank() over (order by ts) from tab"
-            );
+            assertQuery("select ts, percent_rank() over (order by ts) from tab")
+                    .noLeakCheck()
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [percent_rank() over (order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
 
             // Test plan for percent_rank() over (partition by s order by ts) - with partition and order
-            assertSql(
-                    """
-                            QUERY PLAN
-                            CachedWindow
-                              unorderedFunctions: [percent_rank() over (partition by [s] order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """,
-                    "explain select ts, percent_rank() over (partition by s order by ts) from tab"
-            );
+            assertQuery("select ts, percent_rank() over (partition by s order by ts) from tab")
+                    .noLeakCheck()
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [percent_rank() over (partition by [s] order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
+
+            // ORDER BY non-timestamp -> dismissOrder=false (grouped) path. Before the
+            // SqlCodeGenerator fix that forwards ac.getOrderBy() to initRecordComparator,
+            // this branch left orderBy null and toPlan rendered "order by null".
+            assertQuery("select ts, percent_rank() over (order by i) from tab")
+                    .noLeakCheck()
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      orderedFunctions: [[i] => [percent_rank() over (order by [i])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
+
+            assertQuery("select ts, percent_rank() over (partition by s order by i) from tab")
+                    .noLeakCheck()
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      orderedFunctions: [[i] => [percent_rank() over (partition by [s] order by [i])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
         });
     }
 
@@ -208,13 +233,14 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // First row: (1-1)/(1000-1) = 0.0
             // Last row: (1000-1)/(1000-1) = 1.0
             // Row 501: (501-1)/(1000-1) = 500/999 = 0.5005005005...
-            assertSql(
-                    """
+            assertQuery("select min(pr), max(pr) from (select percent_rank() over (order by v) as pr from tab)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             min\tmax
                             0.0\t1.0
-                            """,
-                    "select min(pr), max(pr) from (select percent_rank() over (order by v) as pr from tab)"
-            );
+                            """);
         });
     }
 
@@ -226,19 +252,17 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // Ordered by a, b: (1,1), (1,2), (2,1), (2,2)
             // All distinct values, so ranks are 1, 2, 3, 4
             // percent_rank: 0/3=0.0, 1/3=0.333..., 2/3=0.666..., 3/3=1.0
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, a, b, percent_rank() over (order by a, b) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\ta\tb\tpercent_rank
                             1970-01-01T00:00:00.000000Z\t1\t1\t0.0
                             1970-01-01T00:00:00.000001Z\t1\t2\t0.3333333333333333
                             1970-01-01T00:00:00.000002Z\t2\t1\t0.6666666666666666
                             1970-01-01T00:00:00.000003Z\t2\t2\t1.0
-                            """,
-                    "select ts, a, b, percent_rank() over (order by a, b) from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -250,8 +274,14 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
 
             // percent_rank() over (partition by) - no order by, all rows are peers with rank 1
             // percent_rank = (1-1)/(n-1) = 0 for all rows
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, " +
+                    "percent_rank() over (partition by s) " +
+                    "from tab ")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             ts\tpercent_rank
                             1970-01-01T00:00:00.000000Z\t0.0
                             1970-01-01T00:00:00.000000Z\t0.0
@@ -265,18 +295,17 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000002Z\t0.0
                             1970-01-01T00:00:00.000002Z\t0.0
                             1970-01-01T00:00:00.000003Z\t0.0
-                            """,
-                    "select ts, " +
-                            "percent_rank() over (partition by s) " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
 
             // percent_rank() over () - no order by, all rows have percent_rank = 0
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, " +
+                    "percent_rank() over () " +
+                    "from tab ")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             ts\tpercent_rank
                             1970-01-01T00:00:00.000000Z\t0.0
                             1970-01-01T00:00:00.000000Z\t0.0
@@ -290,14 +319,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000002Z\t0.0
                             1970-01-01T00:00:00.000002Z\t0.0
                             1970-01-01T00:00:00.000003Z\t0.0
-                            """,
-                    "select ts, " +
-                            "percent_rank() over () " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -313,8 +335,14 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
 
             // percent_rank() over () returns 0 for all rows (ZERO_PASS, no ORDER BY means all peers)
             // percent_rank() over (order by ts) is TWO_PASS and computes actual percent ranks
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, " +
+                    "percent_rank() over () as no_order, " +
+                    "percent_rank() over (order by ts) as with_order " +
+                    "from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tno_order\twith_order
                             1970-01-01T00:00:00.000000Z\t0.0\t0.0
                             1970-01-01T00:00:00.000000Z\t0.0\t0.0
@@ -328,15 +356,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000002Z\t0.0\t0.6363636363636364
                             1970-01-01T00:00:00.000002Z\t0.0\t0.6363636363636364
                             1970-01-01T00:00:00.000003Z\t0.0\t1.0
-                            """,
-                    "select ts, " +
-                            "percent_rank() over () as no_order, " +
-                            "percent_rank() over (order by ts) as with_order " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -356,20 +376,18 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, v VARCHAR) TIMESTAMP(ts)");
             execute("INSERT INTO tab VALUES " +
                     "(0, 'cherry'), (1, 'apple'), (2, 'banana'), (3, 'apple'), (4, 'cherry')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, v::SYMBOL vs, percent_rank() OVER (ORDER BY vs) FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts	vs	percent_rank
                             1970-01-01T00:00:00.000000Z	cherry	0.75
                             1970-01-01T00:00:00.000001Z	apple	0.0
                             1970-01-01T00:00:00.000002Z	banana	0.5
                             1970-01-01T00:00:00.000003Z	apple	0.0
                             1970-01-01T00:00:00.000004Z	cherry	0.75
-                            """,
-                    "SELECT ts, v::SYMBOL vs, percent_rank() OVER (ORDER BY vs) FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -379,20 +397,18 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, s SYMBOL) TIMESTAMP(ts)");
             execute("INSERT INTO tab VALUES " +
                     "(0, 'cherry'), (1, 'apple'), (2, 'banana'), (3, 'apple'), (4, 'cherry')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, s, percent_rank() OVER (ORDER BY s) FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts	s	percent_rank
                             1970-01-01T00:00:00.000000Z	cherry	0.75
                             1970-01-01T00:00:00.000001Z	apple	0.0
                             1970-01-01T00:00:00.000002Z	banana	0.5
                             1970-01-01T00:00:00.000003Z	apple	0.0
                             1970-01-01T00:00:00.000004Z	cherry	0.75
-                            """,
-                    "SELECT ts, s, percent_rank() OVER (ORDER BY s) FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -402,18 +418,16 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, s SYMBOL) TIMESTAMP(ts)");
             execute("INSERT INTO tab VALUES " +
                     "(0, 'cherry'), (1, 'apple'), (2, 'banana')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, s, percent_rank() OVER (ORDER BY s DESC) FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts	s	percent_rank
                             1970-01-01T00:00:00.000000Z	cherry	0.0
                             1970-01-01T00:00:00.000001Z	apple	1.0
                             1970-01-01T00:00:00.000002Z	banana	0.5
-                            """,
-                    "SELECT ts, s, percent_rank() OVER (ORDER BY s DESC) FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -423,19 +437,17 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, s SYMBOL) TIMESTAMP(ts)");
             execute("INSERT INTO tab VALUES " +
                     "(0, null), (1, 'banana'), (2, null), (3, 'apple')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, s, percent_rank() OVER (ORDER BY s) FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\ts\tpercent_rank
                             1970-01-01T00:00:00.000000Z\t\t0.0
                             1970-01-01T00:00:00.000001Z\tbanana\t1.0
                             1970-01-01T00:00:00.000002Z\t\t0.0
                             1970-01-01T00:00:00.000003Z\tapple\t0.6666666666666666
-                            """,
-                    "SELECT ts, s, percent_rank() OVER (ORDER BY s) FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -446,20 +458,18 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             execute("INSERT INTO tab VALUES " +
                     "(0, 'g1', 'cherry'), (1, 'g1', 'apple'), (2, 'g1', 'banana'), " +
                     "(3, 'g2', 'banana'), (4, 'g2', 'apple')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT ts, grp, s, percent_rank() OVER (PARTITION BY grp ORDER BY s) FROM tab ORDER BY grp, s")
+                    .noLeakCheck()
+                    .timestamp("")
+                    .expectSize()
+                    .returns("""
                             ts	grp	s	percent_rank
                             1970-01-01T00:00:00.000001Z	g1	apple	0.0
                             1970-01-01T00:00:00.000002Z	g1	banana	0.5
                             1970-01-01T00:00:00.000000Z	g1	cherry	1.0
                             1970-01-01T00:00:00.000004Z	g2	apple	0.0
                             1970-01-01T00:00:00.000003Z	g2	banana	1.0
-                            """,
-                    "SELECT ts, grp, s, percent_rank() OVER (PARTITION BY grp ORDER BY s) FROM tab ORDER BY grp, s",
-                    "",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -480,16 +490,14 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // TWO_PASS function uses CachedWindowRecordCursorFactory which supports random access
             execute("create table single_row (ts timestamp NOT NULL, v int) timestamp(ts)");
             execute("insert into single_row values (0, 1)");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, percent_rank() over (order by ts) from single_row")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tpercent_rank
                             1970-01-01T00:00:00.000000Z\t0.0
-                            """,
-                    "select ts, percent_rank() over (order by ts) from single_row",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -500,18 +508,16 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // This tests the totalRows <= 1 branch in PercentRankOverPartitionFunction.pass2
             execute("create table mixed_partitions (ts timestamp NOT NULL, s symbol) timestamp(ts)");
             execute("insert into mixed_partitions values (0, 'a'), (1, 'b'), (2, 'b')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, s, percent_rank() over (partition by s order by ts) from mixed_partitions order by s, ts")
+                    .noLeakCheck()
+                    .timestamp("")
+                    .expectSize()
+                    .returns("""
                             ts\ts\tpercent_rank
                             1970-01-01T00:00:00.000000Z\ta\t0.0
                             1970-01-01T00:00:00.000001Z\tb\t0.0
                             1970-01-01T00:00:00.000002Z\tb\t1.0
-                            """,
-                    "select ts, s, percent_rank() over (partition by s order by ts) from mixed_partitions order by s, ts",
-                    "",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -522,17 +528,15 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // percent_rank: (1-1)/(2-1)=0.0, (2-1)/(2-1)=1.0
             execute("create table tab (ts timestamp NOT NULL, v int) timestamp(ts)");
             execute("insert into tab values (0, 1), (1, 2)");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, percent_rank() over (order by v) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tpercent_rank
                             1970-01-01T00:00:00.000000Z\t0.0
                             1970-01-01T00:00:00.000001Z\t1.0
-                            """,
-                    "select ts, percent_rank() over (order by v) from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -545,8 +549,11 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                     "(0, 'a', 1), " +  // partition 'a' - 1 row
                     "(1, 'b', 1), (2, 'b', 2), " +  // partition 'b' - 2 rows
                     "(3, 'c', 1), (4, 'c', 2), (5, 'c', 3)");  // partition 'c' - 3 rows
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, s, v, percent_rank() over (partition by s order by v) from tab order by s, v")
+                    .noLeakCheck()
+                    .timestamp("")
+                    .expectSize()
+                    .returns("""
                             ts\ts\tv\tpercent_rank
                             1970-01-01T00:00:00.000000Z\ta\t1\t0.0
                             1970-01-01T00:00:00.000001Z\tb\t1\t0.0
@@ -554,12 +561,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000003Z\tc\t1\t0.0
                             1970-01-01T00:00:00.000004Z\tc\t2\t0.5
                             1970-01-01T00:00:00.000005Z\tc\t3\t1.0
-                            """,
-                    "select ts, s, v, percent_rank() over (partition by s order by v) from tab order by s, v",
-                    "",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -572,19 +574,17 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // Order by v: null, null, 1, 2
             // Ranks: 1, 1, 3, 4 (nulls are peers with rank 1)
             // percent_rank: 0/3=0.0, 0/3=0.0, 2/3=0.666..., 3/3=1.0
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, v, percent_rank() over (order by v) from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tv\tpercent_rank
                             1970-01-01T00:00:00.000000Z\tnull\t0.0
                             1970-01-01T00:00:00.000001Z\t1\t0.6666666666666666
                             1970-01-01T00:00:00.000002Z\tnull\t0.0
                             1970-01-01T00:00:00.000003Z\t2\t1.0
-                            """,
-                    "select ts, v, percent_rank() over (order by v) from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -595,20 +595,18 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (0, null), (1, 'a'), (2, null), (3, 'a'), (4, null)");
             // Partition null: 3 rows at ts=0,2,4
             // Partition 'a': 2 rows at ts=1,3
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, s, percent_rank() over (partition by s order by ts) from tab order by s desc, ts")
+                    .noLeakCheck()
+                    .timestamp("")
+                    .expectSize()
+                    .returns("""
                             ts\ts\tpercent_rank
                             1970-01-01T00:00:00.000001Z\ta\t0.0
                             1970-01-01T00:00:00.000003Z\ta\t1.0
                             1970-01-01T00:00:00.000000Z\t\t0.0
                             1970-01-01T00:00:00.000002Z\t\t0.5
                             1970-01-01T00:00:00.000004Z\t\t1.0
-                            """,
-                    "select ts, s, percent_rank() over (partition by s order by ts) from tab order by s desc, ts",
-                    "",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -624,8 +622,13 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // rank 8 at ts=2 (4 rows): (8-1)/(12-1) = 7/11 = 0.6363636363636364
             // rank 12 at ts=3 (1 row): (12-1)/(12-1) = 11/11 = 1.0
             // TWO_PASS function uses CachedWindowRecordCursorFactory which supports random access
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts," +
+                    "percent_rank() over (order by ts) " +
+                    "from tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             ts\tpercent_rank
                             1970-01-01T00:00:00.000000Z\t0.0
                             1970-01-01T00:00:00.000000Z\t0.0
@@ -639,14 +642,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000002Z\t0.6363636363636364
                             1970-01-01T00:00:00.000002Z\t0.6363636363636364
                             1970-01-01T00:00:00.000003Z\t1.0
-                            """,
-                    "select ts," +
-                            "percent_rank() over (order by ts) " +
-                            "from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -661,8 +657,13 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // k1: 6 rows - ts=0(2 rows, rank=1), ts=1(2 rows, rank=3), ts=2(2 rows, rank=5)
             // percent_rank = (rank - 1) / (total_rows - 1)
             // TWO_PASS function uses CachedWindowRecordCursorFactory which supports random access
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select ts, s," +
+                    "percent_rank() over (partition by s order by ts) " +
+                    "from tab order by s, ts")
+                    .noLeakCheck()
+                    .timestamp("")
+                    .expectSize()
+                    .returns("""
                             ts\ts\tpercent_rank
                             1970-01-01T00:00:00.000000Z\tk0\t0.0
                             1970-01-01T00:00:00.000001Z\tk0\t0.2
@@ -676,14 +677,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000001Z\tk1\t0.4
                             1970-01-01T00:00:00.000002Z\tk1\t0.8
                             1970-01-01T00:00:00.000002Z\tk1\t0.8
-                            """,
-                    "select ts, s," +
-                            "percent_rank() over (partition by s order by ts) " +
-                            "from tab order by s, ts",
-                    "",
-                    true,
-                    true
-            );
+                            """);
         });
     }
 }

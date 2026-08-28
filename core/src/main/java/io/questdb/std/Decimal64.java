@@ -4,6 +4,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -79,6 +80,7 @@ public class Decimal64 implements Sinkable, Decimal {
             100000000000000000L,    // 10^17
             1000000000000000000L,   // 10^18
     };
+    private int[] ryuE10;
     private int scale;   // Number of decimal places
     private long value;  // The decimal value as an unscaled long
 
@@ -431,20 +433,22 @@ public class Decimal64 implements Sinkable, Decimal {
             return Long.compare(this.value, otherValue);
         }
 
-        // Different scales - need to align for comparison
-        long thisScaled, otherScaled;
-
+        // Different scales - align by scaling up the operand with the smaller scale. When the aligned
+        // value no longer fits, its magnitude is past MAX_VALUE and therefore past the other operand,
+        // so the ordering is already known and there is no need to materialise it.
         if (this.scale < otherScale) {
             int scaleDiff = otherScale - this.scale;
-            thisScaled = scaleUp(this.value, scaleDiff);
-            otherScaled = otherValue;
-        } else {
-            int scaleDiff = this.scale - otherScale;
-            thisScaled = this.value;
-            otherScaled = scaleUp(otherValue, scaleDiff);
+            if (scaleUpOverflows(this.value, scaleDiff)) {
+                return this.value > 0 ? 1 : -1;
+            }
+            return Long.compare(this.value * TEN_POWERS_TABLE[scaleDiff], otherValue);
         }
 
-        return Long.compare(thisScaled, otherScaled);
+        int scaleDiff = this.scale - otherScale;
+        if (scaleUpOverflows(otherValue, scaleDiff)) {
+            return otherValue > 0 ? -1 : 1;
+        }
+        return Long.compare(this.value, otherValue * TEN_POWERS_TABLE[scaleDiff]);
     }
 
     /**
@@ -818,6 +822,14 @@ public class Decimal64 implements Sinkable, Decimal {
         divide(1, 0, targetScale, roundingMode);
     }
 
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
+    }
+
     /**
      * Set the scale forcefully without doing any rescaling operations
      */
@@ -893,6 +905,7 @@ public class Decimal64 implements Sinkable, Decimal {
     /**
      * Convert to double (may lose precision)
      */
+    @TestOnly
     public double toDouble() {
         return toBigDecimal().doubleValue();
     }
@@ -951,6 +964,14 @@ public class Decimal64 implements Sinkable, Decimal {
 
         long multiplier = TEN_POWERS_TABLE[scaleDiff];
         return value * multiplier;
+    }
+
+    /**
+     * Returns true when {@code value * 10^scaleDiff} is out of the Decimal64 range.
+     */
+    private static boolean scaleUpOverflows(long value, int scaleDiff) {
+        final long limit = MAX_SAFE_MULTIPLY[scaleDiff];
+        return value > limit || value < -limit;
     }
 
     private static long scaleUpPositive(long value, int scaleDiff) {

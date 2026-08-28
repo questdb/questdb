@@ -272,7 +272,10 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     @Test
     public void testHammer() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        testHammerScoreboard(rnd.nextInt(1000) + 1, 10000);
+        // Cap readers to available CPUs: the readers busy-spin, so a near-1000 draw oversubscribes
+        // a CI runner's few cores, starves the writer, and times the test out.
+        int maxReaders = 8 * Runtime.getRuntime().availableProcessors();
+        testHammerScoreboard(Math.min(rnd.nextInt(1000) + 1, maxReaders), 10000);
     }
 
     @Test
@@ -587,6 +590,9 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                         }
                         scoreboard.releaseTxn(id, t);
                         LockSupport.parkNanos(10);
+                    } else {
+                        // Acquire lost a race with the writer; back off so readers don't starve it.
+                        Os.pause();
                     }
                 }
             } catch (Throwable e) {

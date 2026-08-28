@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MapWriter;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.PartitionBy;
@@ -53,7 +54,6 @@ import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.Job;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Chars;
@@ -1383,7 +1383,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void stealWork() {
-        if (localImportJob.run(0, Job.RUNNING_STATUS)) {
+        if (localImportJob.run()) {
             return;
         }
         Os.pause();
@@ -1647,6 +1647,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         @Override
         public int getIndexBlockCapacity(int columnIndex) {
             return configuration.getIndexValueBlockSize();
+        }
+
+        @Override
+        public byte getIndexType(int columnIndex) {
+            return !ignoreColumnIndexedFlag && Numbers.decodeHighInt(columnBits.getQuick(columnIndex)) != 0
+                    ? IndexType.BITMAP : IndexType.NONE;
         }
 
         @Override
