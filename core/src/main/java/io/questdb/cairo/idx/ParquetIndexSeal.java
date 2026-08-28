@@ -483,7 +483,29 @@ public final class ParquetIndexSeal {
      * group needs.
      */
     private static int groupBitWidth(LongList groupRowIdMins, LongList groupRowIdMaxs, int group) {
-        return BitpackUtils.bitsNeeded(groupRowIdMaxs.getQuick(group) - groupRowIdMins.getQuick(group));
+        final int needed = BitpackUtils.bitsNeeded(groupRowIdMaxs.getQuick(group) - groupRowIdMins.getQuick(group));
+        // Rounded to a byte-aligned width, which COSTS bytes: a 2M-row
+        // partition needs 17 bits and is given 32. It buys decode speed, and
+        // measurably more than the bytes are worth. The AVX2 unpack has
+        // dedicated widen paths at 8, 16 and 32 that load and widen four values
+        // at a time; every other width falls to a per-value shift, and every
+        // scenario in the benchmark ladder happens to need 17.
+        //
+        // Measured, forward, against the same native and per-posting controls
+        // in one run (ops/s, packed at 17 bits -> packed byte-aligned):
+        //   16-key point read     2,351 -> 3,107   (1.56x slower than native -> 1.19x)
+        //   16-key range read     3,354 -> 5,019   (2.09x -> 1.39x)
+        //   1M-key scan              29 ->    38   (parity -> 1.29x FASTER)
+        //   200k-key range        4,010 -> 3,674   (the one real loss, 2.27x -> 2.54x)
+        // Byte-aligning wins 10 of the 12 cells and is what removes the
+        // low-cardinality regression outright, so it is not optional.
+        if (needed <= 8) {
+            return 8;
+        }
+        if (needed <= 16) {
+            return 16;
+        }
+        return needed <= 32 ? 32 : 64;
     }
 
     /**

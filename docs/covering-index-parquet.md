@@ -207,29 +207,83 @@ indistinguishable from good news.
 Closing this means reducing per-cursor bind cost, not traversal cost -- the same
 per-mapping cost the high-cardinality point reads pay, seen from another angle.
 
-### Arm B: a packed payload (in progress)
+### Arm B: a packed payload (built, measured, off by default)
 
-The gap above is width, not code, so the fix is to stop storing `row_id` as PLAIN
-int64. `_im` already reserves `PAYLOAD_KIND 1` for a second on-disk arm, and the
-foundations for it are now in place:
+`PAYLOAD_KIND 1` stores one parquet row per ROW GROUP, holding that group's row
+ids frame-of-reference packed at the width the group needs, as a single REQUIRED
+PLAIN BINARY blob. Enabled with:
 
-| piece | state |
-| --- | --- |
-| REQUIRED page for a var-size column | **done** -- without it a blob column always carries definition levels, and `plain_column_data_offset` refuses those, so the blob could never be read without decoding |
-| `ROW_ID_BLOB_COLUMN` in `_im` | **done** -- spent from the RESERVED area, biased by one so zero still means absent; header stays 128 bytes and arm N files are byte-identical |
-| `BitpackUtils.packAllValues` | **done** -- the inverse of three existing unpackers, which had no public producer outside `PostingIndexWriter` |
-| `PostingIndexUtils.encodeFlatBlob` | **done** -- emits the native FLAT stride layout, which the existing reader already understands |
-| seal writes the arm B layout | **not started** |
-| arm B reader cursor | **not started** |
+```
+cairo.posting.index.parquet.packed.payload=true    # default: false
+```
 
-The remaining work is one integration: per planned row group, derive
-`baseValue`/`bitWidth` from the group's row-id range, call `encodeFlatBlob`, and
-emit the result as a REQUIRED PLAIN BINARY column with one parquet row per row
-group. The obstacle is that the seal's row model is currently "one parquet row
-per posting", which `planRowGroups`, the key directory and the chunk-statistics
-key-alignment check all assume.
+Ignored -- silently, falling back to the per-posting arm -- when the index covers
+any column, or under a compressing codec. Every column of a parquet row group
+shares one row count, so a per-group `row_id` blob would force covered columns to
+become per-group blobs too, buying nothing since the covered gather is already at
+parity; and a compressed chunk cannot be addressed in the mapping at all, which is
+the entire point of the arm. `PAYLOAD_KIND` in the `_im` is what records which arm
+actually ran, so any measurement must assert it rather than assume the property
+took effect.
 
-Two design decisions are worth carrying forward:
+**The result does not meet what this arm was designed for, and the reason is
+worth more than the arm.**
+
+Measured forward, one run, native and per-posting arms as in-run controls
+(ops/s, higher better; verdicts against native):
+
+| benchmark | keys | native | per-posting | packed | v-plain | v-packed |
+| --- | --- | --- | --- | --- | --- | --- |
+| point read | 16 | 3,699 | 3,146 | 3,107 | 1.18S | 1.19S |
+| point read | 2,000 | 718 | 206 | 219 | 3.48S | **3.28S** |
+| point read | 200,000 | 2,555 | 1,733 | 1,937 | 1.47S | 1.32S |
+| point read | 1,000,000 | 2,227 | 863 | 972 | 2.58S | 2.29S |
+| scan | 200,000 | 113 | 162 | 144 | 1.43F | 1.27F |
+| scan | 1,000,000 | 29 | 45 | 38 | 1.52F | 1.29F |
+| range | 2,000 | 4,161 | 1,639 | 1,943 | 2.54S | 2.14S |
+| range | 200,000 | 9,325 | 2,754 | 3,674 | 3.39S | 2.54S |
+| range | 1,000,000 | 4,957 | 1,060 | 1,219 | 4.68S | 4.07S |
+
+Against the design's own success criteria: the 2,000-key point read was to come
+under **1.5x** and came in at **3.28x**, against 3.48x for the arm it replaces --
+a 6% move. The 1M range read improved (4.68x to 4.07x). Low cardinality does not
+regress. High-cardinality SCANS get worse: the per-posting arm beats native there
+(1.43F/1.52F) and packing gives part of that back (1.27F/1.29F).
+
+**What this falsifies.** The design argued the 2,000-key gap was width, on the
+strength of a control whose only distinguishing feature was a wider row-id base.
+It is not. Quartering the bytes on the wire moved that cell by 6%; if width were
+the mechanism it would have moved far more. Both arms sit at 3.3-3.5x there, so
+what dominates is the per-cursor bind cost -- which the design explicitly placed
+out of scope. The S8 control was consistent with the width story but did not
+establish it, and building the fix is what settled it.
+
+**Byte-aligned widths are not optional.** The packed width is rounded up to 8, 16,
+32 or 64, which costs bytes -- a 2M-row partition needs 17 bits and is given 32 --
+and buys more than it costs, because the AVX2 unpack has dedicated widen paths at
+those three widths and every other width falls to a per-value shift. Every
+scenario in the ladder happens to need 17. At the natural width the arm was a
+clear LOSS: the 16-key point read went 1.56x slower than native against the
+per-posting arm's 1.18x, and the 16-key range read 2.09x against 1.31x. Aligning
+wins 10 of 12 cells and is what removes that regression:
+
+| cell | packed @17 bits | packed byte-aligned |
+| --- | --- | --- |
+| 16-key point read | 2,351 (1.56S) | 3,107 (1.19S) |
+| 16-key range read | 3,354 (2.09S) | 5,019 (1.39S) |
+| 1M-key scan | 29 (~) | 38 (1.29F) |
+| 200k-key range | 4,010 (2.27S) | 3,674 (2.54S) |
+
+The last row is the one real loss and is why the trade is recorded rather than
+assumed.
+
+**Why the widen is not free.** The arm reads fewer bytes from the mapping and
+then writes and re-reads them as int64 through a per-cursor buffer. That
+materialisation is a pure ADD wherever the mapping read already hits cache, which
+is most of a sequential scan -- hence the scan regression. It pays only where the
+mapping read dominates, which is what the range reads at high cardinality are.
+
+Two design decisions worth carrying forward:
 
 - **Flat mode, not delta.** Delta compresses better above ~10 values per key, but
   its per-key blocks must be walked; flat mode shares one base and one bitWidth
@@ -239,6 +293,11 @@ Two design decisions are worth carrying forward:
   per key -- a new `_im` section and a format version bump. Per row group, key
   *k* sits at bit offset `posting_index * bitWidth` and `KEY_ROW_OFFSET` already
   stores that index, so neither is needed.
+- **The blob is NOT the native flat stride**, though its header is byte-identical.
+  A native stride follows its base with a cumulative per-key prefix-count array;
+  the `_im` key directory already stores exactly that, and a native stride spans
+  at most 256 keys while a row group's key SPAN is unbounded, so copying it would
+  import a bound that does not hold.
 
 ### Mechanisms tried and rejected
 
