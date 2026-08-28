@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnPurgeOperator;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -207,6 +208,51 @@ public class CompositeColumnPurgeTest extends AbstractCompositeTwinTest {
             drainWalQueue();
             engine.releaseInactive();
             assertTwinEqual("");
+        });
+    }
+
+    /**
+     * THE PURGE'S SAFETY ARGUMENT DEPENDS ON UPDATE BEING REFUSED. This test is the link.
+     * <p>
+     * The cell-blind column purge is safe here because nothing STRANDS a per-cell column version:
+     * every operation that supersedes a column generation also changes its partition's nameTxn, so a
+     * composite column file's lifetime coincides with its partition's and the cell-aware partition
+     * purge covers it. {@code UpdateOperatorImpl}'s own gate spells this out -- UPDATE is the one
+     * remaining operation that would supersede a generation WITHOUT changing the nameTxn, and it is
+     * refused "PERMANENT, decided 2026-08-18 -- not a deferral" for exactly that reason.
+     * <p>
+     * That argument lives in a comment in a different file, where a future author lifting the UPDATE
+     * ban would not necessarily read it. This test makes the dependency fail loudly instead: if UPDATE
+     * is ever reinstated for composite tables, it breaks here, next to the purge behaviour it
+     * invalidates, and the reasoning has to be revisited before the ban moves -- which is what that
+     * comment asks for.
+     */
+    @Test(timeout = 120_000)
+    public void testUpdateStaysRefusedBecauseThePurgeDependsOnIt() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            insertIntoBoth("('2023-01-01T01:00:00.000000Z','E0',1.0),"
+                    + "('2023-01-01T02:00:00.000000Z','E1',2.0)");
+            drainWalQueue();
+
+            try {
+                execute("UPDATE c SET px = 99.0 WHERE exch = 'E0'");
+                drainWalQueue();
+                Assert.fail("UPDATE is refused for composite tables BY DESIGN, and this suite's "
+                        + "harmlessness argument for the cell-blind column purge depends on it. If UPDATE "
+                        + "now works, revisit ColumnPurgeOperator: a superseded column generation whose "
+                        + "partition keeps its nameTxn would strand a per-cell file the purge cannot "
+                        + "address.");
+            } catch (Exception e) {
+                TestUtils.assertContains(e.getMessage(), "composite partitioning does not support UPDATE");
+            }
+
+            // The plain twin is unaffected -- UPDATE is a normal operation there.
+            execute("UPDATE p SET px = 99.0 WHERE exch = 'E0'");
+            drainWalQueue();
+            engine.releaseInactive();
+            printSql("SELECT count() FROM p WHERE px = 99.0");
+            Assert.assertEquals("count\n1\n", sink.toString());
         });
     }
 
